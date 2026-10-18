@@ -106,6 +106,7 @@ mod research_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
+mod hyde_doors;
 pub(super) mod role_picks;
 mod run_read_doors;
 mod run_review_doors;

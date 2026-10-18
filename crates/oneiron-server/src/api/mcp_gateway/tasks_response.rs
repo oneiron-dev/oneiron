@@ -922,6 +922,11 @@ fn mcp_agent_verb_input(
         "vault.retrieval.aging.configure" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.weights.get" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.weights.configure" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.hyde.configure" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.hyde.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.hyde.pending" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.hyde.complete" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.hyde.receipt" => a.spec.clone().ok_or_else(invalid),
         "vault.affect.annotations.put" => a.spec.clone().ok_or_else(invalid),
         "vault.tagging.status" => a.spec.clone().ok_or_else(invalid),
         "vault.tagging.tags" => a.spec.clone().ok_or_else(invalid),
@@ -1616,6 +1621,11 @@ fn mcp_agent_verb_input(
         "vault.booking.constraint_turn" => a.spec.clone().ok_or_else(invalid),
         "vault.booking.page_token" => a.spec.clone().ok_or_else(invalid),
         "calendar.invite" => a.spec.clone().ok_or_else(invalid),
+        "calendar.ics.configure" => a.spec.clone().ok_or_else(invalid),
+        "calendar.ics.poll" => a.spec.clone().ok_or_else(invalid),
+        "calendar.ics.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.calendar.passports.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.calendar.passports.history" => a.spec.clone().ok_or_else(invalid),
         "calendar.connector.configure" => a.spec.clone().ok_or_else(invalid),
         "calendar.connector.get" => a.spec.clone().ok_or_else(invalid),
         "calendar.connector.pull" => a.spec.clone().ok_or_else(invalid),
@@ -2095,6 +2105,21 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.retrieval.weights.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.hyde.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.hyde.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.hyde.pending" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.hyde.complete" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.hyde.receipt" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.affect.annotations.put" => {
@@ -3873,6 +3898,21 @@ pub(crate) fn mcp_agent_verb_arguments(
         "calendar.invite" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "calendar.ics.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.ics.poll" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "calendar.ics.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.calendar.passports.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.calendar.passports.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "calendar.connector.configure" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -5641,6 +5681,100 @@ async fn execute_agent_verb_row(
                     server, auth, input,
                 )
                 .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.hyde.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::query_expansion::host::HydeHostConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_hyde_configure(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.hyde.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_hyde_get(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.hyde.pending" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.pending", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::query_expansion::host::HydeHostPendingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_hyde_pending(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.hyde.complete" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.complete", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::query_expansion::host::HydeHostCompleteRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_hyde_complete(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.hyde.receipt" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.receipt", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::query_expansion::host::HydeHostReceiptRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_hyde_receipt(server, auth, input)
+                    .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)
@@ -15465,6 +15599,76 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::CalendarInviteSurfaceInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::calendar_invite(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.ics.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.ics.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_ics_configure(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.ics.poll" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.ics.poll", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_ics_poll(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "calendar.ics.status" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("calendar.ics.status", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::calendar_ics_status(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.calendar.passports.read" => {
+            let input: oneiron::calendar::query::passport::CalendarPassportReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_calendar_passports_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.calendar.passports.history" => {
+            let input: oneiron::calendar::query::passport::CalendarPassportReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_calendar_passports_history(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

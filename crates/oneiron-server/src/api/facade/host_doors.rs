@@ -174,6 +174,7 @@ pub(crate) use super::coach_offer_doors::*;
 pub(crate) use super::eval_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
+pub(crate) use super::hyde_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1111,6 +1112,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.runs.settlement"
         | "vault.revert_run"
         | "ai.reply"
+        | "calendar.ics.configure"
+        | "calendar.ics.poll"
+        | "calendar.ics.status"
         | "calendar.connector.configure"
         | "calendar.connector.get"
         | "calendar.connector.kill"
@@ -1238,6 +1242,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.aging.configure"
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
+        | "vault.retrieval.hyde.configure"
+        | "vault.retrieval.hyde.get"
         | "vault.affect.claims.consolidate"
         | "vault.affect.coping.record"
         | "vault.affect.coping.update"
@@ -1565,6 +1571,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"
         | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
+        "vault.retrieval.hyde.pending"
+        | "vault.retrieval.hyde.complete"
+        | "vault.retrieval.hyde.receipt" => super::hyde_doors::hyde_caller(server, auth).map(drop),
         "fetch" | "crawl" => super::facade_actor(server, auth)
             .map(drop)
             .map_err(super::FacadeApiError::into_memory_error),

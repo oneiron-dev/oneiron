@@ -16,6 +16,8 @@ use crate::retrieval_depth::RecallQueryVectors;
 /// `rerank` is how the door serves high, xhigh and max. It is the host's
 /// alone: no field of the request names a lease or a reranker.
 pub struct RecallDoor<'a> {
+    /// The host binding, never a caller-selected recall field.
+    pub hyde: Option<crate::query_expansion::HydeBinding<'a>>,
     pub arrived: std::time::Instant,
     pub on_cut: Option<&'a (dyn Fn(crate::memory::MemoryPack) + Sync)>,
     pub rerank: crate::memory::RecallRerank<'a>,
@@ -27,6 +29,7 @@ impl RecallDoor<'_> {
     #[must_use]
     pub fn now() -> Self {
         Self {
+            hyde: None,
             arrived: std::time::Instant::now(),
             on_cut: None,
             rerank: crate::memory::RecallRerank::Required,
@@ -124,6 +127,7 @@ pub fn recall_at_door_seeded(
         .on_cut
         .map(|on_cut| move |pack: crate::memory::MemoryPack| on_cut(stamp(pack)));
     let stamped = RecallDoor {
+        hyde: door.hyde,
         arrived: door.arrived,
         on_cut: on_cut
             .as_ref()
@@ -191,7 +195,7 @@ fn recall_within_ceiling(
     };
     // Before the query embeds: a door whose deadline comes due during the
     // embedding still answers.
-    let fallback = door
+    let mut fallback = door
         .on_cut
         .map(|on_cut| {
             let mut pack = memory.recall_cut_pack(&scope)?;
@@ -203,8 +207,45 @@ fn recall_within_ceiling(
     let vectors = embed(&input.query);
     let embedding = vectors.text_index.as_deref();
     let media = vectors.media_seeds();
+    // Keep admitted evidence ready while the optional host expansion waits.
+    if effort.requires_rerank() && door.hyde.is_some() && deadline.is_some()
+        && !deadline.as_ref().is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+    {
+        let mut ready = memory.recall_with_execution(
+            &input.query,
+            effort,
+            &scope,
+            limit,
+            input.format.as_deref(),
+            None,
+            &crate::retrieval_depth::RecallExecution {
+                deadline: deadline.as_ref(),
+                embedding,
+                media: &media,
+                as_of: input.as_of,
+                query_affect,
+                door_fallback: fallback.as_ref(),
+                rerank_unavailable: true,
+                ..Default::default()
+            },
+        )?;
+        ready.retrieval_meta.partial = true;
+        ready.retrieval_meta.rerank.clone_from(&cut_report);
+        if let Some(on_cut) = door.on_cut {
+            on_cut(ready.clone());
+        }
+        fallback = Some(ready);
+    }
+    let at_deadline = |answer: MemoryResult<crate::memory::MemoryPack>| {
+        if deadline.as_ref().is_some_and(crate::retrieval_depth::RetrievalDeadline::answer_due)
+            && let Some(fallback) = fallback.as_ref()
+        {
+            return Ok(fallback.clone());
+        }
+        answer
+    };
     if let Some(host) = host {
-        return memory.recall_reranked_at_door(
+        return at_deadline(memory.recall_reranked_at_door(
             &input,
             effort,
             &scope,
@@ -216,7 +257,7 @@ fn recall_within_ceiling(
             door,
             fallback.as_ref(),
             host,
-        );
+        ));
     }
     // A host with no reranker runs the paid expansion unreranked, and every
     // pack it answers with says so.
@@ -231,7 +272,7 @@ fn recall_within_ceiling(
             on_cut(pack);
         }
     });
-    let mut pack = memory.recall_with_execution(
+    let mut pack = at_deadline(memory.recall_with_execution(
         &input.query,
         effort,
         &scope,
@@ -239,6 +280,7 @@ fn recall_within_ceiling(
         input.format.as_deref(),
         None,
         &crate::retrieval_depth::RecallExecution {
+            hyde: door.hyde,
             deadline: deadline.as_ref(),
             telemetry: input.telemetry.as_ref(),
             embedding,
@@ -252,7 +294,7 @@ fn recall_within_ceiling(
             rerank_unavailable: unreranked,
             ..Default::default()
         },
-    )?;
+    ))?;
     skipped(&mut pack);
     Ok(pack)
 }

@@ -434,6 +434,18 @@ export class Oneiron {
         /** The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority. */
         configure: (input: Facade.RetrievalWeightsConfigureRequest): Facade.RetrievalWeightsReceipt => this.#call(() => this.#client.vaultRetrievalWeightsConfigure(input) as Facade.RetrievalWeightsReceipt),
       },
+      hyde: {
+        /** The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work. */
+        configure: (input: Facade.HydeHostConfigureRequest): Facade.HydeHostConfiguration => this.#call(() => this.#client.vaultRetrievalHydeConfigure(input) as Facade.HydeHostConfiguration),
+        /** The owner reads the serving host HyDE binding, grounding and bounded retry options. */
+        get: (input: Facade.EmptyRequest = {}): Facade.HydeHostConfiguration => this.#call(() => this.#client.vaultRetrievalHydeGet(input) as Facade.HydeHostConfiguration),
+        /** Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing. */
+        pending: (input: Facade.HydeHostPendingRequest): Facade.HydeHostWork[] => this.#call(() => this.#client.vaultRetrievalHydePending(input) as Facade.HydeHostWork[]),
+        /** Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded. */
+        complete: (input: Facade.HydeHostCompleteRequest): Facade.HydeHostReceipt => this.#call(() => this.#client.vaultRetrievalHydeComplete(input) as Facade.HydeHostReceipt),
+        /** Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline. */
+        receipt: (input: Facade.HydeHostReceiptRequest): Facade.HydeHostReceipt | null => this.#call(() => this.#client.vaultRetrievalHydeReceipt(input) as Facade.HydeHostReceipt | null),
+      },
       /** Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle. */
       recall: (input: Facade.RecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultRetrievalRecall(input) as Facade.MemoryPack),
       /** The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first. */
@@ -1836,6 +1848,12 @@ export class Oneiron {
       page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
     },
     calendar: {
+      passports: {
+        /** Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence. */
+        read: (input: Facade.CalendarPassportReadRequest): Facade.ScopedReadResult<Facade.CalendarPassportRevision | null> => this.#call(() => this.#client.vaultCalendarPassportsRead(input) as Facade.ScopedReadResult<Facade.CalendarPassportRevision | null>),
+        /** Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate. */
+        history: (input: Facade.CalendarPassportReadRequest): Facade.ScopedReadResult<Facade.CalendarPassportRevision[]> => this.#call(() => this.#client.vaultCalendarPassportsHistory(input) as Facade.ScopedReadResult<Facade.CalendarPassportRevision[]>),
+      },
       /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
       create: (input: Facade.CalendarEventCreateRequest): Facade.CalendarEventCreated => this.#call(() => this.#client.vaultCalendarCreate(input) as Facade.CalendarEventCreated),
       ics: {
@@ -2417,6 +2435,14 @@ export class Oneiron {
   readonly calendar = {
     /** Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe. */
     invite: (input: Facade.CalendarInviteSurfaceInput): Facade.OutboundIntentReceipt => this.#call(() => this.#client.calendarInvite(input) as Facade.OutboundIntentReceipt),
+    ics: {
+      /** Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent. */
+      configure: (input: Facade.CalendarIcsFeedConfigureRequest): Facade.CalendarIcsFeedRegistration => this.#call(() => this.#client.calendarIcsConfigure(input) as Facade.CalendarIcsFeedRegistration),
+      /** Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence. */
+      poll: (input: Facade.CalendarIcsFeedRequest): Facade.CalendarIcsPollCompletion => this.#call(() => this.#client.calendarIcsPoll(input) as Facade.CalendarIcsPollCompletion),
+      /** Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL. */
+      status: (input: Facade.CalendarIcsFeedRequest): Facade.CalendarIcsFeedStatus | null => this.#call(() => this.#client.calendarIcsStatus(input) as Facade.CalendarIcsFeedStatus | null),
+    },
     connector: {
       /** Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence. */
       configure: (input: Facade.CalendarConnectorConfigureRequest): Facade.CalendarConnectorRegistration => this.#call(() => this.#client.calendarConnectorConfigure(input) as Facade.CalendarConnectorRegistration),

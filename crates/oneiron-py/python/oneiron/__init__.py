@@ -947,6 +947,9 @@ class Oneiron:
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs":
             return Oneiron._VaultRetrievalWeightsVerbs(self._client)
+        @property
+        def hyde(self) -> "Oneiron._VaultRetrievalHydeVerbs":
+            return Oneiron._VaultRetrievalHydeVerbs(self._client)
         def recall(self, spec):
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_recall(json.dumps(spec))))
@@ -989,6 +992,24 @@ class Oneiron:
         def configure(self, spec):
             """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_weights_configure(json.dumps(spec))))
+    class _VaultRetrievalHydeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_configure(json.dumps(spec))))
+        def get(self, spec=None):
+            """The owner reads the serving host HyDE binding, grounding and bounded retry options."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_get(json.dumps({} if spec is None else spec))))
+        def pending(self, spec):
+            """Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_pending(json.dumps(spec))))
+        def complete(self, spec):
+            """Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_complete(json.dumps(spec))))
+        def receipt(self, spec):
+            """Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_hyde_receipt(json.dumps(spec))))
     class _VaultRetrievalOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3401,6 +3422,9 @@ class Oneiron:
     class _VaultCalendarVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def passports(self) -> "Oneiron._VaultCalendarPassportsVerbs":
+            return Oneiron._VaultCalendarPassportsVerbs(self._client)
         def create(self, spec):
             """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
             return json.loads(_translate(lambda: self._client.vault_calendar_create(json.dumps(spec))))
@@ -3425,6 +3449,15 @@ class Oneiron:
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
             return Oneiron._VaultCalendarTranscriptVerbs(self._client)
+    class _VaultCalendarPassportsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_passports_read(json.dumps(spec))))
+        def history(self, spec):
+            """Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_passports_history(json.dumps(spec))))
     class _VaultCalendarIcsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4388,11 +4421,26 @@ class Oneiron:
             """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
             return json.loads(_translate(lambda: self._client.calendar_invite(json.dumps(spec))))
         @property
+        def ics(self) -> "Oneiron._CalendarIcsVerbs":
+            return Oneiron._CalendarIcsVerbs(self._client)
+        @property
         def connector(self) -> "Oneiron._CalendarConnectorVerbs":
             return Oneiron._CalendarConnectorVerbs(self._client)
         @property
         def imip(self) -> "Oneiron._CalendarImipVerbs":
             return Oneiron._CalendarImipVerbs(self._client)
+    class _CalendarIcsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent."""
+            return json.loads(_translate(lambda: self._client.calendar_ics_configure(json.dumps(spec))))
+        def poll(self, spec):
+            """Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence."""
+            return json.loads(_translate(lambda: self._client.calendar_ics_poll(json.dumps(spec))))
+        def status(self, spec):
+            """Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL."""
+            return json.loads(_translate(lambda: self._client.calendar_ics_status(json.dumps(spec))))
     class _CalendarConnectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
