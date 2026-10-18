@@ -653,7 +653,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.budget.land",
@@ -665,7 +666,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease.open",
@@ -724,7 +726,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.hold.resume",
@@ -738,7 +741,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.local",
@@ -3462,7 +3466,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.off_record.notes.create",
@@ -3564,7 +3569,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.archive.install",
@@ -3656,7 +3662,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.evals.cohorts.setup",
