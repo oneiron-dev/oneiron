@@ -590,6 +590,12 @@ impl OneironClient {
                 "vault.packs.hooks.list" => remote_agent_verb_output::<
                     Vec<oneiron::task_verb::sdk::HubHookBindingRow>,
                 >(client, verb, &input),
+                "vault.packs.hooks.grant.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HookGrantView,
+                >(client, verb, &input),
+                "vault.packs.hooks.grant.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HookGrantView,
+                >(client, verb, &input),
                 "vault.packs.hooks.qualify" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubHookQualificationReceipt,
                 >(client, verb, &input),
@@ -4853,6 +4859,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.hooks.list", value)
+    }
+    pub fn vault_packs_hooks_grant_set(
+        &self,
+        input: &oneiron::task_verb::sdk::HookGrantSetRequest,
+    ) -> Result<oneiron::task_verb::sdk::HookGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.hooks.grant.set", value)
+    }
+    pub fn vault_packs_hooks_grant_get(
+        &self,
+        input: &oneiron::task_verb::sdk::HookGrantRequest,
+    ) -> Result<oneiron::task_verb::sdk::HookGrantView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.packs.hooks.grant.get", value)
     }
     pub fn vault_packs_hooks_qualify(
         &self,

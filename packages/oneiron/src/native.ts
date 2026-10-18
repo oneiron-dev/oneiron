@@ -207,6 +207,8 @@ vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
+vaultPacksHooksGrantSet(input: unknown): unknown
+vaultPacksHooksGrantGet(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksConnectorPrepare(input: unknown): unknown

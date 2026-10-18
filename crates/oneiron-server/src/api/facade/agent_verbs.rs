@@ -188,6 +188,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.skills.governance.set", post(facade_route))
         .route("/vault.packs.hooks.bind", post(facade_route))
         .route("/vault.packs.hooks.list", post(facade_route))
+        .route("/vault.packs.hooks.grant.set", post(facade_route))
+        .route("/vault.packs.hooks.grant.get", post(facade_route))
         .route("/vault.packs.hooks.qualify", post(facade_route))
         .route("/vault.packs.put", post(facade_route))
         .route("/vault.packs.connector.prepare", post(facade_route))
