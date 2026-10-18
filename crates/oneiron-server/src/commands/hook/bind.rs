@@ -6,14 +6,18 @@
 //! 2. a running local vault: a runtime file ([`local_servers`]) whose pid
 //!    lives and whose server answers `GET /.well-known/oneiron`, the newest
 //!    when several do;
-//! 3. the hosted vault, when the person is logged into the cloud. This
-//!    engine keeps no login yet (`oneiron connect` brings it), so the step is
-//!    passed over;
+//! 3. the hosted vault the person's cloud login selected ([`HostedDiscovery`]).
+//!    No authenticated hosted-login discovery is integrated yet, so the step
+//!    answers [`HostedDiscovery::Unavailable`]: that binds nothing and is not
+//!    proof of no login, and a session that starts local because of it says
+//!    so in one line naming the pins ([`HOSTED_DISCOVERY_UNAVAILABLE`]);
 //! 4. a local server, started from the config every command reads when none
 //!    is named. With no config there is no vault to start, and the line
 //!    names the setup step.
 //!
-//! The session's first line names the vault bound.
+//! The session's first line names the vault bound. A prompt takes steps 1 to
+//! 3 exactly as a session does ([`choose`]), so it never recalls from a vault
+//! the session would not have bound.
 
 use std::io::Read as _;
 use std::net::IpAddr;
@@ -44,6 +48,12 @@ const HOLDER_GRACE: Duration = Duration::from_millis(500);
 const MAX_READ_BYTES: u64 = 64 * 1024;
 const NO_VAULT: &str = "Oneiron: no vault bound; set one up with `oneiron init ~/.oneiron/default` \
                         (docs/ops/claude-code-hooks.md).";
+/// The line a session that binds a local vault at step 4 prints, because
+/// step 3 could not look for a hosted vault (H41). One constant, so the
+/// adapter that integrates discovery changes one line.
+const HOSTED_DISCOVERY_UNAVAILABLE: &str = "Oneiron: hosted login discovery is not integrated; \
+                                            started local; pin a hosted vault with --url, \
+                                            ONEIRON_URL or hook config.";
 
 pub(super) struct Bound {
     /// The origin to recall from, when a vault there answers.
@@ -61,57 +71,102 @@ impl Bound {
     }
 }
 
+/// What step 3 found: the hosted vault the person's cloud login selected
+/// (H41). An authenticated selection adapter (the host integration's seam)
+/// would answer a selected vault with its origin and credential, or no login
+/// or no selection; until one is integrated the only answer is
+/// `Unavailable`, which is not proof of no login.
+enum HostedDiscovery {
+    /// No hosted-login discovery is integrated: no login store is read, no
+    /// cloud URL guessed and no credential looked up.
+    Unavailable,
+}
+
+/// Step 3, as both a session and a prompt ask it.
+const fn hosted_discovery() -> HostedDiscovery {
+    HostedDiscovery::Unavailable
+}
+
+/// Steps 1 to 3, the one choice a session and a prompt both take.
+enum Choice {
+    /// Step 1: the pin, and whether it answered one probe. A pin that does
+    /// not answer binds nothing; it never falls back to local.
+    Pinned { pin: Pin, answers: bool },
+    /// Step 2: the newest running local vault that answers, and how many
+    /// answer.
+    Running { newest: LocalServer, count: usize },
+    /// Step 3 bound no hosted vault, and why; a session goes on to step 4.
+    NoHosted(HostedDiscovery),
+}
+
+fn choose(flag: Option<&str>, deadline: Instant) -> Choice {
+    if let Some(pin) = pin(flag) {
+        // One probe: a pin that does not answer would hold a prompt for the
+        // whole recall budget.
+        let answered = answers(&pin.url, deadline);
+        return Choice::Pinned {
+            pin,
+            answers: answered,
+        };
+    }
+    let running = running(deadline);
+    let count = running.len();
+    match running.into_iter().next() {
+        Some(newest) => Choice::Running { newest, count },
+        None => Choice::NoHosted(hosted_discovery()),
+    }
+}
+
 /// Binds a vault for a session, in the order above.
 pub(super) fn session(flag: Option<&str>, oneiron: &Path, deadline: Instant) -> Bound {
-    if let Some(pin) = pin(flag) {
-        if !answers(&pin.url, deadline) {
-            return Bound::none(format!(
-                "Oneiron: the vault pinned by {} at {} is not answering; this session has no vault.",
-                pin.by, pin.url
-            ));
-        }
-        return Bound {
+    match choose(flag, deadline) {
+        Choice::Pinned { pin, answers: false } => Bound::none(format!(
+            "Oneiron: the vault pinned by {} at {} is not answering; this session has no vault.",
+            pin.by, pin.url
+        )),
+        Choice::Pinned { pin, answers: true } => Bound {
             lines: vec![format!(
                 "Oneiron: this session uses the vault at {}, pinned by {}.",
                 pin.url, pin.by
             )],
             url: Some(pin.url),
-        };
-    }
-    let running = running(deadline);
-    if let Some(newest) = running.first() {
-        let mut lines = vec![uses(newest, running.len())];
-        if running.len() > 1
-            && let Some(pin) = pin_file()
-        {
-            lines.push(format!(
-                "Oneiron: to keep using this vault, pin it: echo 'url = \"{}\"' > '{}'",
-                newest.url,
-                pin.display()
-            ));
+        },
+        Choice::Running { newest, count } => {
+            let mut lines = vec![uses(&newest, count)];
+            if count > 1
+                && let Some(pin) = pin_file()
+            {
+                lines.push(format!(
+                    "Oneiron: to keep using this vault, pin it: echo 'url = \"{}\"' > '{}'",
+                    newest.url,
+                    pin.display()
+                ));
+            }
+            Bound {
+                url: Some(newest.url),
+                lines,
+            }
         }
-        return Bound {
-            url: Some(newest.url.clone()),
-            lines,
-        };
+        Choice::NoHosted(HostedDiscovery::Unavailable) => {
+            // Local start stays; the session is told why it is local.
+            let mut bound = start(oneiron, deadline);
+            if bound.url.is_some() {
+                bound.lines.push(HOSTED_DISCOVERY_UNAVAILABLE.to_owned());
+            }
+            bound
+        }
     }
-    // Step 3, the hosted vault, waits for a login to read.
-    start(oneiron, deadline)
 }
 
-/// The vault a prompt recalls from: the pin, if one is set and it answers;
-/// with no pin, the newest running local vault. A prompt never starts a
-/// server and prints no line of its own.
+/// The vault a prompt recalls from, by the session's own choice: the pin, if
+/// one is set and it answers; with no pin, the newest running local vault.
+/// A prompt never starts a server and prints no line of its own.
 pub(super) fn quietly(flag: Option<&str>, deadline: Instant) -> Option<String> {
-    if let Some(pin) = pin(flag) {
-        // One probe, as at session start: a pin that does not answer would
-        // hold the prompt for the whole recall budget.
-        return answers(&pin.url, deadline).then_some(pin.url);
+    match choose(flag, deadline) {
+        Choice::Pinned { pin, answers } => answers.then_some(pin.url),
+        Choice::Running { newest, .. } => Some(newest.url),
+        Choice::NoHosted(HostedDiscovery::Unavailable) => None,
     }
-    running(deadline)
-        .into_iter()
-        .next()
-        .map(|server| server.url)
 }
 
 /// The config of the running local vault a hand-over queues to: with a pin,

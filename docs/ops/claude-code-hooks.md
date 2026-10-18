@@ -78,8 +78,12 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    hook asks each with `GET /.well-known/oneiron`, which needs no credential,
    and binds the one that answers. When several answer it binds the newest,
    says so, and prints the one command that pins it.
-3. **The hosted vault, when you are logged into the cloud.** Not built yet:
-   `oneiron connect` brings the login. The hook passes over this step.
+3. **The hosted vault your cloud login selected.** Hosted login discovery is
+   not integrated yet, so this step binds nothing (it does not mean you are
+   not logged in). When the hook then binds a local vault at step 4, the
+   session prints one more line: "hosted login discovery is not integrated;
+   started local; pin a hosted vault with --url, ONEIRON_URL or hook config".
+   To use a hosted vault today, pin it (step 1).
 4. **A local server it starts.** The hook runs `oneiron serve --host
    127.0.0.1` with the config every command reads when none is named
    (`ONEIRON_CONFIG`, else the default `oneiron.toml`), in a process of its
@@ -92,8 +96,8 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
    `--timeout`. With no config there is no
    vault to start: the line says to set one up with `oneiron init`.
 
-`prompt` binds the same way but never starts a server and prints no line of
-its own. A pinned vault that does not answer one probe gets no recall, so a
+`prompt` binds the same way, by the same choice of steps 1 to 3, but never
+starts a server and prints no line of its own. A pinned vault that does not answer one probe gets no recall, so a
 vault that is down costs a prompt at most 2 seconds. `hand-over` queues into the queue of `--config` if you give it;
 else, with a pin, of the running local vault at the pin; with no pin, of the
 newest running local vault; else of the default config. A pin is never

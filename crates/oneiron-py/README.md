@@ -121,9 +121,11 @@ credential.
 | `handle.vault.rooms.*` | `list`, `messages`, `render`, `find`, `get`, `trunk`, `claim`, `speak` |
 
 `lens_frame_event` and `close_lens_frame` are the two lens-card routes outside
-the facade (OF-181), not verbs. A card's frame lives only on the server that
-rendered it (`vault.lenses.default`), so they need a connected handle: an
-embedded one raises `BAD_REQUEST`. Their dicts keep the wire's camelCase keys
+the facade (OF-181), not verbs. A card's frame lives only on the served host
+that rendered it (`vault.lenses.default`), so render the lens through a
+connected handle and send its events and close on that same handle. An
+embedded handle keeps no frame and raises `BAD_REQUEST`; a card it rendered is
+rendered again through the connected handle. Their dicts keep the wire's camelCase keys
 (`idempotencyKey`, `occurredAt`, `readReceipt`, `$state`).
 
 Every other verb in the SDK verb table sits at its SDK path on the handle and
