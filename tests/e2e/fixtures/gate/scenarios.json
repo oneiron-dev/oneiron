@@ -1,0 +1,848 @@
+{
+  "version": 1,
+  "area": "Authority and consent",
+  "authorship": "Synthetic owner-authored scenarios and canon-derived expected invariants; no engine output is an oracle.",
+  "binding_head": "5ecd5af5bea2c70e25760f0583f276790f49fba4",
+  "constants": {
+    "worker_slots": 1,
+    "burst_writes": 40,
+    "burst_concurrency": 40,
+    "fixture_threshold": 5,
+    "fixture_window_seconds": 1,
+    "checker_band": [
+      0.35,
+      0.65
+    ],
+    "critical_confidence": 0.05,
+    "pack_item_budget": 1,
+    "engine_constants_changed": false
+  },
+  "assumptions": [
+    "Fresh real server and vault per ID when unblocked",
+    "Owner plus automatic first-party, proposed foreign and read-only actors are enrolled through public doors only",
+    "Logical actor/project/note keys must be resolved from public setup, never treated as actual engine references",
+    "Schema-valid claim values are canonical string variants",
+    "Missing public doors remain TODO; scenarios are not fallback implementations",
+    "Inference providers are loopback scripted production adapters, not gate stubs",
+    "No model prompt string matching, generated expected answers, private clock, storage writes or queue ticks",
+    "All source and consent authority is host-bound; carrier metadata is not authority",
+    "Thresholds and confidence/budget choices are explicit fixture policy, not product defaults"
+  ],
+  "scenarios": {
+    "GATE-01": {
+      "requires": [
+        "typed owner actor-ceiling/source-trust policy read/edit"
+      ],
+      "actors": [
+        {
+          "key": "owner",
+          "kind": "human",
+          "policy_power": true
+        },
+        {
+          "key": "automatic",
+          "kind": "agent",
+          "approval_ceiling": "Auto",
+          "write_capability": "per_op"
+        },
+        {
+          "key": "foreign",
+          "kind": "agent",
+          "approval_ceiling": "Proposed",
+          "write_capability": "per_op"
+        },
+        {
+          "key": "reader",
+          "kind": "agent",
+          "approval_ceiling": "Proposed",
+          "write_capability": "none"
+        }
+      ],
+      "predicates": [
+        {
+          "predicate": "person.habit",
+          "criticality": "normal",
+          "value": {
+            "kind": "string",
+            "value": "walk in the courtyard"
+          }
+        },
+        {
+          "predicate": "health.allergy",
+          "criticality": "critical",
+          "value": {
+            "kind": "string",
+            "value": "fixture pollen allergy"
+          }
+        }
+      ],
+      "source_policy": [
+        {
+          "source": "generated",
+          "explicit_auto_permit": true,
+          "checker": "enforce_allow"
+        },
+        {
+          "source": "tool_output",
+          "explicit_auto_permit": false
+        }
+      ],
+      "carriers": [
+        "HTTP facade vault.claims.upsert",
+        "MCP tool-first vault.claims.upsert",
+        "HTTP vault.claims.seed"
+      ],
+      "oracle": [
+        {
+          "actor": "automatic",
+          "source": "generated",
+          "criticality": "normal",
+          "automatic": true
+        },
+        {
+          "actor": "automatic",
+          "source": "generated",
+          "criticality": "critical",
+          "automatic": false,
+          "authorized_confirmation_required": true
+        },
+        {
+          "actor": "automatic",
+          "source": "tool_output",
+          "criticality": "normal",
+          "automatic": false
+        },
+        {
+          "actor": "automatic",
+          "source": "tool_output",
+          "criticality": "critical",
+          "automatic": false
+        },
+        {
+          "actor": "foreign",
+          "source": "generated",
+          "criticality": "normal",
+          "automatic": false
+        },
+        {
+          "actor": "foreign",
+          "source": "generated",
+          "criticality": "critical",
+          "automatic": false
+        },
+        {
+          "actor": "foreign",
+          "source": "tool_output",
+          "criticality": "normal",
+          "automatic": false
+        },
+        {
+          "actor": "foreign",
+          "source": "tool_output",
+          "criticality": "critical",
+          "automatic": false
+        },
+        {
+          "actor": "reader",
+          "write": "refused",
+          "durable_claim_count": 0
+        }
+      ],
+      "carrier_rules": {
+        "batch": "vault.claims.seed intentionally narrows to Proposed; it may never strengthen the meet",
+        "mcp": "MCP is not a source of actor authority",
+        "critical_create": "Auto plus pending-confirm is not confirmed authority"
+      },
+      "forgeries": [
+        {
+          "actor": "foreign",
+          "metadata": {
+            "approval": "Auto",
+            "actor": "owner",
+            "source": "user_stated"
+          },
+          "authority_increase": false
+        },
+        {
+          "actor": "reader",
+          "metadata": {
+            "approval": "Auto",
+            "source": "generated"
+          },
+          "authority_increase": false
+        }
+      ],
+      "observations": [
+        "pending-write decision references",
+        "gate receipts and reasons",
+        "stored author and source",
+        "no reader writes",
+        "all batch outcomes checked"
+      ],
+      "name": "Three-axis write decisions should work",
+      "rows": [
+        "OF-038",
+        "OF-054",
+        "OF-055",
+        "OF-060",
+        "OF-071",
+        "OF-074",
+        "OF-075",
+        "OF-079"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#memory-board-source-trust",
+        "/registry/oneiron/#OF-038",
+        "/registry/oneiron/#OF-054",
+        "/registry/oneiron/#OF-055",
+        "/registry/oneiron/#OF-060",
+        "/registry/oneiron/#OF-071",
+        "/registry/oneiron/#OF-074",
+        "/registry/oneiron/#OF-075",
+        "/registry/oneiron/#OF-079"
+      ]
+    },
+    "GATE-02": {
+      "requires": [
+        "typed owner generated auto-permit policy read/edit"
+      ],
+      "predicate": "person.habit",
+      "value": {
+        "kind": "string",
+        "value": "use the east courtyard path"
+      },
+      "verdict_role": {
+        "slot": "fixture-verdict",
+        "floor": {
+          "low": 0.35,
+          "high": 0.65
+        },
+        "mode": "enforce"
+      },
+      "provider_cases": [
+        {
+          "fixture_id": "gate-check-allow",
+          "value": "allow",
+          "calibrated_confidence": 0.99,
+          "basis": true,
+          "expected_approval": "Auto"
+        },
+        {
+          "fixture_id": "gate-check-uncertain",
+          "value": "allow",
+          "calibrated_confidence": 0.5,
+          "basis": true,
+          "expected_approval": "Proposed"
+        },
+        {
+          "fixture_id": "gate-check-failure",
+          "http_status": 503,
+          "body": {
+            "error": {
+              "type": "server_error",
+              "message": "scripted fixture unavailable"
+            }
+          },
+          "expected_approval": "Proposed"
+        }
+      ],
+      "denied_actor_allow": {
+        "write_capability": "none",
+        "checker_value": "allow",
+        "authorized": false
+      },
+      "retry": {
+        "identity": [
+          "content hash",
+          "policy version",
+          "same intent"
+        ],
+        "durable_effect_count": 1,
+        "never_retry_mutation_implicitly": true
+      },
+      "observations": [
+        "real write door invokes configured verdict provider",
+        "checker cannot grant authority",
+        "provider outage cannot auto-approve",
+        "receipt reason and pending state",
+        "one effect on same-intent replay"
+      ],
+      "name": "Veto-only content checker should work",
+      "rows": [
+        "OF-037",
+        "OF-048"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#content-check",
+        "/registry/oneiron/#OF-037",
+        "/registry/oneiron/#OF-048"
+      ]
+    },
+    "GATE-03": {
+      "requires": [
+        "typed Gate PolicyManifest read/edit",
+        "typed untrusted policy proposal"
+      ],
+      "manifest": {
+        "pack_id": "gate-fixture-policy",
+        "pack_version": "1",
+        "min_engine_version": "0.0.0",
+        "defaults": {
+          "criticality": "normal"
+        },
+        "rules": [
+          {
+            "predicate": "health.allergy",
+            "criticality": "critical"
+          }
+        ],
+        "actor_ceilings": [
+          {
+            "actor_class": "agent",
+            "actor_ref": "automatic",
+            "approval_ceiling": "Proposed"
+          }
+        ],
+        "source_trust": {
+          "tool_output": {
+            "max_auto_sensitivity": 0,
+            "receipted": false,
+            "warned": false
+          }
+        },
+        "auto_checker": {
+          "generated_lens_static_analysis": "required",
+          "generated_claim_auto_permit": "explicit_only"
+        }
+      },
+      "steps": [
+        "read fresh defaults",
+        "verify usable first-party ordinary write baseline",
+        "owner writes restriction",
+        "restart same vault",
+        "read owner restriction and decisions",
+        "apply another authorized restriction",
+        "submit untrusted wider replacement",
+        "submit untrusted tighter replacement",
+        "submit manifest-looking product content"
+      ],
+      "oracle": {
+        "owner_restriction_persists": true,
+        "policy_precedence": "most_restrictive",
+        "untrusted_authority_contribution": false,
+        "untrusted_contribution": "proposal in either direction",
+        "signature_marker_is_authority": false,
+        "content_marker_is_policy": false
+      },
+      "name": "Policy manifest defaults and owner control should work",
+      "rows": [
+        "OF-051",
+        "OF-070",
+        "OF-077"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/identity/#authority-log",
+        "/registry/oneiron/#OF-051",
+        "/registry/oneiron/#OF-070",
+        "/registry/oneiron/#OF-077"
+      ]
+    },
+    "GATE-04": {
+      "requires": [
+        "typed approve_once",
+        "typed create_standing_grant",
+        "typed grant registry",
+        "typed revoke"
+      ],
+      "bound": {
+        "actor": "foreign",
+        "class": "fixture.external_send",
+        "envelope": {
+          "project": "project-a",
+          "audience": [
+            "recipient-a"
+          ],
+          "budget": 3
+        }
+      },
+      "intents": [
+        {
+          "key": "send-1",
+          "owner_answer": "approve_once",
+          "result": "one execution"
+        },
+        {
+          "key": "send-1-replay",
+          "effect": "send-1",
+          "result": "no second execution"
+        },
+        {
+          "key": "send-2",
+          "result": "fresh ask"
+        },
+        {
+          "key": "send-2",
+          "owner_answer": "approve_and_stop_asking",
+          "result": "execution and lineage standing grant"
+        },
+        {
+          "key": "send-3",
+          "result": "execution without new ask"
+        },
+        {
+          "key": "send-4",
+          "result": "execution without new ask"
+        },
+        {
+          "key": "send-project-b",
+          "project": "project-b",
+          "result": "fresh ask"
+        },
+        {
+          "key": "send-recipient-b",
+          "audience": [
+            "recipient-b"
+          ],
+          "result": "fresh ask"
+        },
+        {
+          "key": "send-over-budget",
+          "result": "fresh ask"
+        },
+        {
+          "key": "revoke",
+          "result": "grant revoked"
+        },
+        {
+          "key": "send-after-revoke",
+          "result": "fresh ask before any transport"
+        }
+      ],
+      "oracle": {
+        "once_consumptions": 1,
+        "standing_grant_residence": "lineage not fork",
+        "expiry_field": false,
+        "manual_choices": [
+          "approve_once",
+          "approve_and_stop_asking",
+          "deny"
+        ],
+        "settlements_per_ask": 1
+      },
+      "name": "Standing consent lifecycle should work",
+      "rows": [
+        "OF-050",
+        "OF-367",
+        "OF-399"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/sync/oneiron-arch-0043-federation-membership-v1/#guest-grants",
+        "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#model",
+        "/registry/oneiron/#OF-050",
+        "/registry/oneiron/#OF-367",
+        "/registry/oneiron/#OF-399"
+      ]
+    },
+    "GATE-05": {
+      "requires": [
+        "typed agent delegation",
+        "typed delegated read/action grant",
+        "typed parent-grant revoke"
+      ],
+      "parent": {
+        "key": "parent",
+        "read": {
+          "projects": [
+            "project-a"
+          ],
+          "records": [
+            "note-a",
+            "note-b"
+          ]
+        },
+        "actions": [
+          {
+            "class": "fixture.external_send",
+            "budget": 3
+          }
+        ]
+      },
+      "delegates": [
+        {
+          "key": "child-a",
+          "parent": "parent",
+          "read": {
+            "projects": [
+              "project-a"
+            ],
+            "records": [
+              "note-a"
+            ]
+          },
+          "action_budget": 2
+        },
+        {
+          "key": "child-b",
+          "parent": "parent",
+          "read": {
+            "projects": [
+              "project-a"
+            ],
+            "records": [
+              "note-b"
+            ]
+          },
+          "action_budget": 1
+        },
+        {
+          "key": "wider-child",
+          "parent": "parent",
+          "requested_projects": [
+            "project-a",
+            "project-b"
+          ],
+          "requested_action_budget": 4
+        },
+        {
+          "key": "grandchild",
+          "parent": "child-a",
+          "requested_records": [
+            "note-a",
+            "note-b"
+          ],
+          "requested_action_budget": 3
+        }
+      ],
+      "carriers": [
+        "HTTP",
+        "MCP"
+      ],
+      "oracle": {
+        "child_authority": "no greater than live parent-chain meet",
+        "outside_project_reads": false,
+        "wider_grandchild_authority": false,
+        "revoke_only": "parent grant",
+        "per_child_cleanup": false,
+        "reuse_existing_credentials": true,
+        "next_descendant_read_authorized": false,
+        "next_descendant_action_authorized": false
+      },
+      "name": "Delegation attenuation and subtree revoke should work",
+      "rows": [
+        "OF-043",
+        "OF-057",
+        "OF-180",
+        "OF-053"
+      ],
+      "source": [
+        "/oneiron/identity/#authority-log",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/registry/oneiron/#OF-043",
+        "/registry/oneiron/#OF-057",
+        "/registry/oneiron/#OF-180",
+        "/registry/oneiron/#OF-053"
+      ]
+    },
+    "GATE-06": {
+      "requires": [
+        "typed owner scoped bypass create",
+        "typed bypass-active read",
+        "typed bypass revoke",
+        "bypassed effect receipts"
+      ],
+      "catastrophe_classes": [
+        "WidenOwnAuthority",
+        "KeyRecovery",
+        "VaultWideDestruction",
+        "SecurityControlDisable",
+        "MassSecretExport"
+      ],
+      "bypass": {
+        "creator": "owner",
+        "actor": "automatic",
+        "scope": {
+          "project": "project-a"
+        },
+        "off_by_default": true
+      },
+      "attempts": [
+        {
+          "key": "agent-self-grant",
+          "actor": "automatic",
+          "expected": "refused"
+        },
+        {
+          "key": "owner-create",
+          "actor": "owner",
+          "expected": "one warning and receipted explicit grant"
+        },
+        {
+          "key": "project-a-covered-first",
+          "expected": "no ask; bypassed receipt"
+        },
+        {
+          "key": "project-a-covered-second",
+          "expected": "no repeat ask; bypassed receipt"
+        },
+        {
+          "key": "project-b",
+          "expected": "ask"
+        },
+        {
+          "key": "vault-wide-destruction",
+          "expected": "ask; composed target exceeds project-a"
+        },
+        {
+          "key": "agent-erase",
+          "expected": "agent never erases or requests erase"
+        },
+        {
+          "key": "owner-erase",
+          "expected": "separate manual preview and confirm"
+        },
+        {
+          "key": "shared-owner-objection-window",
+          "expected": "pending window is not bypassed"
+        },
+        {
+          "key": "owner-revoke",
+          "expected": "inactive; next catastrophe asks"
+        }
+      ],
+      "oracle": {
+        "scope_may_be_entire_vault": false,
+        "erase_covered": false,
+        "active_state_typed": true,
+        "every_bypassed_act_receipted": true,
+        "other_owner_objection_window_skipped": false
+      },
+      "name": "Catastrophe floor scoped bypass should work",
+      "rows": [
+        "OF-465"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/identity/#authority-log",
+        "/oneiron/decisions/oneiron-dec-0006-unified-consent-mode/#bypass-grant",
+        "/registry/oneiron/#OF-465"
+      ]
+    },
+    "GATE-07": {
+      "requires": [
+        "typed cross-kind review bundle settlement",
+        "settlement revert handle",
+        "typed selective/full revert_run"
+      ],
+      "run": "fixture-review-run",
+      "changes": [
+        {
+          "key": "claim-change",
+          "kind": "claim",
+          "undo_class": "undoable"
+        },
+        {
+          "key": "edge-change",
+          "kind": "edge",
+          "undo_class": "undoable"
+        },
+        {
+          "key": "note-change",
+          "kind": "note",
+          "undo_class": "undoable"
+        },
+        {
+          "key": "topology-change",
+          "kind": "topology",
+          "undo_class": "undoable"
+        },
+        {
+          "key": "sent-effect",
+          "kind": "external_send",
+          "undo_class": "one_way"
+        }
+      ],
+      "steps": [
+        "read explainer and its cited forks",
+        "accept all; inspect group and per-change verdicts",
+        "append later note work depending on note-change",
+        "undo only claim-change",
+        "undo all remaining changes",
+        "read original and compensating receipts"
+      ],
+      "oracle": {
+        "ruling": "G05=A",
+        "later_note_work": "preserved",
+        "selected_undo": [
+          "claim-change"
+        ],
+        "remainder_compensates": [
+          "edge-change",
+          "topology-change"
+        ],
+        "not_undone": [
+          {
+            "change": "note-change",
+            "reason": "dependent"
+          },
+          {
+            "change": "sent-effect",
+            "reason": "one_way"
+          }
+        ],
+        "receipt_history": "append compensations; never reset",
+        "explainer": "derived text, not a memory row",
+        "opener_may_settle_own_proposal": false,
+        "verdicts": [
+          "landed",
+          "rejected",
+          "waiting",
+          "let_go"
+        ]
+      },
+      "name": "Review bundle accept and undo should work",
+      "rows": [
+        "OF-062",
+        "OF-211",
+        "OF-234",
+        "OF-485",
+        "OF-487"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#forks-proposals",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#revert-run",
+        "/registry/oneiron/#OF-062",
+        "/registry/oneiron/#OF-211",
+        "/registry/oneiron/#OF-234",
+        "/registry/oneiron/#OF-485",
+        "/registry/oneiron/#OF-487"
+      ]
+    },
+    "GATE-08": {
+      "requires": [
+        "typed nonce/frontier-bound owner critical-claim confirmation",
+        "observable confirmation receipt"
+      ],
+      "critical_claims": [
+        {
+          "key": "allergy",
+          "predicate": "health.allergy",
+          "confidence": 0.05,
+          "salience": 0.01,
+          "value": {
+            "kind": "string",
+            "value": "courtyard pollen allergy"
+          }
+        },
+        {
+          "key": "safety",
+          "predicate": "safety.limit",
+          "confidence": 0.1,
+          "salience": 0.01,
+          "value": {
+            "kind": "string",
+            "value": "avoid the north stairway"
+          }
+        }
+      ],
+      "ordinary": {
+        "count": 8,
+        "predicate": "person.habit",
+        "confidence": 0.99,
+        "salience": 1,
+        "value_prefix": "courtyard ordinary habit"
+      },
+      "budget": {
+        "max_items": 1,
+        "critical_count": 2
+      },
+      "steps": [
+        "submit generated critical candidates",
+        "recall before confirmation",
+        "attempt unauthorized confirmation",
+        "confirm as owner",
+        "read confirmed candidates under small budget",
+        "read with only critical candidates over budget",
+        "retract one critical and verify exclusion",
+        "verify withheld-world critical never leaks"
+      ],
+      "oracle": {
+        "ruling": "G07=B",
+        "criticality_residence": "predicate class",
+        "confidence_promotes_authority": false,
+        "unauthorized_confirmation_changes_authority": false,
+        "owner_confirmation_receipted": true,
+        "ordering": "critical before higher-salience normal",
+        "budget_bypass": false,
+        "critical_over_budget": true,
+        "critical_count": 2,
+        "display": "low-confidence critical remains legible and explicitly unverified",
+        "status_and_partition_floors_remain": true
+      },
+      "name": "Critical confirmation and read floors should work",
+      "rows": [
+        "OF-011",
+        "OF-279"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#claim-type",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#criticality",
+        "/registry/oneiron/#OF-011",
+        "/registry/oneiron/#OF-279"
+      ]
+    },
+    "GATE-09": {
+      "requires": [
+        "typed owner wire-health detection threshold read/edit"
+      ],
+      "owner_threshold_rows": {
+        "window_secs": 1,
+        "per_verb": 5,
+        "per_actor": 5
+      },
+      "writes": {
+        "count": 40,
+        "concurrency": 40,
+        "distinct_subjects": true,
+        "predicate": "person.habit",
+        "source": "user_stated",
+        "value_prefix": "courtyard burst item"
+      },
+      "observations": [
+        "collect all 40 receipts or explicit durable queue references",
+        "list every exact subject rather than top-k recall",
+        "read the typed health question and its verdict",
+        "associate question/verdict with actor and crossing",
+        "no fixed-rate refusal; no dropped intents"
+      ],
+      "oracle": {
+        "distinct_intents": 40,
+        "accounted_intents": 40,
+        "fixed_rate_refusal_count": 0,
+        "silently_dropped_count": 0,
+        "known_granted_actor_verdict": "valid_burst",
+        "hold": "only an explained durable queue, never a drop",
+        "mutation_retries": 0,
+        "public_await_only": true
+      },
+      "name": "No fixed burst refusal should work",
+      "rows": [
+        "OF-294",
+        "OF-487",
+        "OF-520"
+      ],
+      "source": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+        "/registry/oneiron/#OF-294",
+        "/registry/oneiron/#OF-487",
+        "/registry/oneiron/#OF-520"
+      ]
+    }
+  }
+}

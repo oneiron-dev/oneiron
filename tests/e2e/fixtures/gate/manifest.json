@@ -1,0 +1,141 @@
+{
+  "version": 1,
+  "area": "gate",
+  "assets": [
+    {
+      "id": "gate-authority-consent-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "owner-authored:e2e-authority-consent-20261018",
+        "revision": "gate-canon-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a9fff3fed51ceb3f7240d076eeee59790d869ca3d6aa93b20518f8092dacdfde",
+      "expectedFacts": {
+        "plannedIds": [
+          "GATE-01",
+          "GATE-02",
+          "GATE-03",
+          "GATE-04",
+          "GATE-05",
+          "GATE-06",
+          "GATE-07",
+          "GATE-08",
+          "GATE-09"
+        ],
+        "registryRows": [
+          "OF-011",
+          "OF-037",
+          "OF-038",
+          "OF-043",
+          "OF-048",
+          "OF-050",
+          "OF-051",
+          "OF-053",
+          "OF-054",
+          "OF-055",
+          "OF-057",
+          "OF-060",
+          "OF-062",
+          "OF-070",
+          "OF-071",
+          "OF-074",
+          "OF-075",
+          "OF-077",
+          "OF-079",
+          "OF-180",
+          "OF-211",
+          "OF-234",
+          "OF-279",
+          "OF-294",
+          "OF-367",
+          "OF-399",
+          "OF-465",
+          "OF-485",
+          "OF-487",
+          "OF-520"
+        ],
+        "bindingHead": "5ecd5af5bea2c70e25760f0583f276790f49fba4",
+        "canonFiles": [
+          {
+            "path": "oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+            "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+          },
+          {
+            "path": "oneiron/core/oneiron-arch-0003-semantic-memory.md",
+            "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+          },
+          {
+            "path": "oneiron/core/oneiron-arch-0032-agentic-notes-v1.md",
+            "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
+          },
+          {
+            "path": "oneiron/decisions/oneiron-dec-0006-unified-consent-mode.md",
+            "sha256": "6a5361c8670d1e86e218fd32b89f2a6752b969df406f43343d9f225f0c7a0c81"
+          },
+          {
+            "path": "oneiron/identity.md",
+            "sha256": "cfce80cc03e867bf2a2340c01372bae03330271b740de8f012ab2f87b5f7730c"
+          },
+          {
+            "path": "oneiron/extraction/oneiron-arch-0036-model-families-v1.md",
+            "sha256": "f1d847a24975aa46e00bc43f8ec6ce52d53f806045b587772e71380a3670372c"
+          },
+          {
+            "path": "oneiron/surfaces/oneiron-arch-0044-public-surface-ws.md",
+            "sha256": "e29ef93a3f343377411b6226964f0e9d3da0ca7b85df4a8845f859bf1af0b48b"
+          },
+          {
+            "path": "oneiron/sync/oneiron-arch-0043-federation-membership-v1.md",
+            "sha256": "9a9f83242578b5e90c6faf5cec009ef1c9e6d0b1633e3e4c92476a2f170433e7"
+          },
+          {
+            "path": "oneiron/decisions/oneiron-dec-0005-policy-residence.md",
+            "sha256": "739ebc32ce0f5abee95cea28f1663dd6b18bc89cb0c6e063b199391703f7231d"
+          }
+        ],
+        "registrySha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+        "rulings": {
+          "G01": "typed call or wait; no generic escape hatch",
+          "G05": "preserve later work and report partial undo",
+          "G07": "critical priority within hard budget; overflow warns"
+        },
+        "oracle": "Author-provided meet cases, consent lifecycle, scope boundaries, append-only compensation and exact 40-intent accounting; never engine-derived."
+      },
+      "scenarios": [
+        "GATE-01",
+        "GATE-02",
+        "GATE-03",
+        "GATE-04",
+        "GATE-05",
+        "GATE-06",
+        "GATE-07",
+        "GATE-08",
+        "GATE-09"
+      ],
+      "requires": [
+        "bypassed effect receipts",
+        "observable confirmation receipt",
+        "settlement revert handle",
+        "typed Gate PolicyManifest read/edit",
+        "typed agent delegation",
+        "typed approve_once",
+        "typed bypass revoke",
+        "typed bypass-active read",
+        "typed create_standing_grant",
+        "typed cross-kind review bundle settlement",
+        "typed delegated read/action grant",
+        "typed grant registry",
+        "typed nonce/frontier-bound owner critical-claim confirmation",
+        "typed owner actor-ceiling/source-trust policy read/edit",
+        "typed owner generated auto-permit policy read/edit",
+        "typed owner scoped bypass create",
+        "typed owner wire-health detection threshold read/edit",
+        "typed parent-grant revoke",
+        "typed revoke",
+        "typed selective/full revert_run",
+        "typed untrusted policy proposal"
+      ]
+    }
+  ]
+}
