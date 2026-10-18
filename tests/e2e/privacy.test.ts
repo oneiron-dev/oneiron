@@ -137,7 +137,9 @@ async function expectBlobGone(client: PublicHttpClient, record: string, version:
     // Both its typed missing-reference error and an absent version mean no body.
     if (!(error instanceof PublicHttpError)) throw error;
     expect([404, 422]).toContain(error.reply.status);
-    expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(error.error?.code);
+    const code = error.error?.code;
+    if (code === undefined) throw error;
+    expect(["NOT_FOUND", "INVENTED_REFERENCE"]).toContain(code);
   }
 }
 
