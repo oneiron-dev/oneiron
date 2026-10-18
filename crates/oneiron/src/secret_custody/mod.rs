@@ -93,7 +93,10 @@ mod floor_keys {
 pub(crate) use self::carrier_marks::{CarrierMark, carrier_mark_in_txn, put_carrier_mark_in_txn};
 pub(crate) use self::codec::{CUSTODY_SEAL_REASON, reject_secret_custody_byte};
 pub use self::codec::{decode_secret_custody_body, encode_secret_custody_body};
-pub(crate) use self::control::input::{RelayedInput, held_inputs, keep_input_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use self::control::input::{
+    RelayedInput, held_input_in_txn, held_inputs, keep_input_in_txn,
+};
 pub(crate) use self::control::{
     ActiveChange, Material, custody_work_executor, refuse_revoked_use_in_txn,
 };
@@ -137,6 +140,8 @@ pub(crate) use self::reveal::{
     RevealAsker, RevealAuthority, erase_reveal_actor_in_txn, parse_secret_handle,
     reveal_value_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::transition::holds_custody_carrier_in_txn;
 pub(crate) use self::transition::{
     CustodyApplied, CustodyTransition, apply_custody_transition_in_txn, custody_portable,
     custody_transitions, remember_custody_transition_in_txn,

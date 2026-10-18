@@ -268,6 +268,19 @@ pub(crate) fn remember_custody_transition_in_txn(
     Ok(true)
 }
 
+/// Whether this vault holds `transition`, byte for byte, as its record's
+/// latest: what it applied and kept before.
+#[cfg(feature = "sync")]
+pub(crate) fn holds_custody_carrier_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    transition: &CustodyTransition,
+) -> Result<bool> {
+    Ok(TRANSITIONS
+        .get(&vault.store, txn, &HexId(transition.id))?
+        .is_some_and(|held| held == transition.encode()))
+}
+
 /// The record id and record, value out, of the latest live transition this
 /// vault holds under `name`: what an install the value was never sealed to
 /// knows of a portable secret. Revoked ones are left out.

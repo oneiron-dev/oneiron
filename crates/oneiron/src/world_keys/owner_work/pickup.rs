@@ -91,6 +91,10 @@ impl Vault {
                 "answered custody inputs were not forgotten on this install"
             );
         }
+        // A custody transition or input that arrived before its request
+        // stands now that the request is in.
+        #[cfg(feature = "sync")]
+        self.reapply_custody_in_live_windows();
         let (machine, pending): (EntityId, Vec<(AuthorityEntryHash, bool)>) = {
             let txn = self.store.env.read_txn()?;
             let Some(machine) = crate::identity::read_machine_id_in_txn(self, &txn)? else {
@@ -140,6 +144,12 @@ impl Vault {
                     drain.failed += 1;
                 }
             }
+        }
+        // A custody change enacted here rides the live windows now, not at
+        // their next rematerialization.
+        #[cfg(feature = "sync")]
+        if drain.enacted > 0 {
+            self.refresh_custody_in_live_windows();
         }
         Ok(drain)
     }

@@ -43,7 +43,8 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::secret_custody::{
     CustodyApplied, CustodyTransition, RelayedInput, apply_custody_transition_in_txn,
-    custody_transitions, held_inputs, keep_input_in_txn, remember_custody_transition_in_txn,
+    custody_transitions, held_input_in_txn, held_inputs, holds_custody_carrier_in_txn,
+    keep_input_in_txn, remember_custody_transition_in_txn,
 };
 
 /// The base window root map that carries custody transitions and inputs.
@@ -256,6 +257,12 @@ fn holds_custody_map(doc: &LoroDoc) -> bool {
 /// custody, as a window open does. A transition that fails is logged and
 /// left; it never stops the open.
 pub(crate) fn apply_custody_map(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
+    apply_custody_rows(vault, doc, key, false);
+}
+
+/// [`apply_custody_map`]'s body: with `skip_held`, a transition this vault
+/// already holds byte for byte is not judged again.
+fn apply_custody_rows(vault: &Vault, doc: &LoroDoc, key: &WindowKey, skip_held: bool) {
     if key.world().is_some() || !holds_custody_map(doc) {
         return;
     }
@@ -265,7 +272,7 @@ pub(crate) fn apply_custody_map(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
             rows.push((map_key.to_owned(), bytes.to_vec()));
         }
     });
-    apply_carriers(vault, key.as_str(), rows);
+    apply_carriers(vault, key.as_str(), rows, skip_held);
 }
 
 /// Observer B for the custody map: each transition an import changed.
@@ -286,15 +293,16 @@ pub(crate) fn materialize_custody_from_delta(
             _ => None,
         })
         .collect();
-    apply_carriers(vault, window_key, rows);
+    apply_carriers(vault, window_key, rows, false);
     Some(Vec::new())
 }
 
 /// Judges each carrier against this vault's fold, opens the value sealed to
 /// this machine, and writes what stands through the custody door. Each that
 /// stands is kept as the record's latest when it supersedes the one this
-/// vault holds. Input rows go to [`keep_relayed_inputs`].
-fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
+/// vault holds. Input rows go to [`keep_relayed_inputs`]. With `skip_held`,
+/// a transition this vault already holds byte for byte is left alone.
+fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>, skip_held: bool) {
     let (inputs, rows): (Vec<_>, Vec<_>) = rows
         .into_iter()
         .partition(|(map_key, _)| map_key.starts_with(INPUT_ROW_PREFIX));
@@ -318,6 +326,9 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
                         continue;
                     }
                 };
+                if skip_held && holds_custody_carrier_in_txn(vault, &rtxn, &transition)? {
+                    continue;
+                }
                 if let Err(error) = transition.verify(&fold) {
                     tracing::warn!(window, key = %map_key, error = %error, "custody transition does not stand on its request here; left out");
                     continue;
@@ -332,6 +343,9 @@ fn apply_carriers(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
             }
             judged
         };
+        if judged.is_empty() {
+            return Ok(0);
+        }
         vault.with_write_txn_grouped(|wtxn| {
             let mut written = 0;
             for (transition, value) in &judged {
@@ -393,13 +407,20 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
                     _ => None,
                 })
                 .collect();
-            rows.iter()
-                .filter_map(|(map_key, bytes)| {
-                    let input = RelayedInput::decode(bytes)?;
-                    let digest = input.digest();
-                    (*map_key == input_row(&digest) && wanted.contains(&digest)).then_some(input)
-                })
-                .collect()
+            let mut due = Vec::new();
+            for (map_key, bytes) in &rows {
+                let Some(input) = RelayedInput::decode(bytes) else {
+                    continue;
+                };
+                let digest = input.digest();
+                if *map_key == input_row(&digest)
+                    && wanted.contains(&digest)
+                    && held_input_in_txn(&vault.store, &rtxn, &digest)?.is_none()
+                {
+                    due.push(input);
+                }
+            }
+            due
         };
         if due.is_empty() {
             return Ok(0);
@@ -423,6 +444,17 @@ fn keep_relayed_inputs(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>
 }
 
 impl Vault {
+    /// Judges again every custody transition and input the live base
+    /// windows carry, as a window open does: one whose request this vault
+    /// had not folded when it arrived stands once the request is in, and
+    /// the holder a request names keeps its input. The owner work drain runs
+    /// it after an authority catch-up and on the served tick.
+    pub(crate) fn reapply_custody_in_live_windows(&self) {
+        for window in self.live_windows() {
+            apply_custody_rows(self, &window.doc, &window.key, true);
+        }
+    }
+
     /// Mirrors this vault's latest custody transitions, and the inputs it
     /// relays, into every live base window after a door or an executor wrote
     /// one (OF-422): the window a transition rides takes it, and one it left

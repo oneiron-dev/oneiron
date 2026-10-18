@@ -1272,6 +1272,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/secrets/custody",
+        summary: "A secret's custody record id, generation, custody revision and live requests, and every linked install a surface may offer as holder or recipient, value-free (WILL L04 row 04).",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/custody",
+        summary: "A register or rotate whose protected input the surface sealed to the holder itself: this install takes only the ciphertext.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/secrets/found",
         summary: "Each record the write door lifted keys out of, newest first, with its keys.",
         row: None,
@@ -1333,7 +1345,13 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     OwnerRoute {
         method: "post",
         path: "/secrets/revoke",
-        summary: "The record goes terminal and every lease over it is revoked (OF-422).",
+        summary: "The record goes terminal and every lease over it is revoked (OF-422); a portable one's revoke is carried to the owner's other machines.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/secrets/rewrap",
+        summary: "Seals a portable secret again, same generation, to the installs the owner names, by its holder.",
         row: None,
     },
     OwnerRoute {

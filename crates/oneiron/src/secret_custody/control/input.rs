@@ -245,6 +245,7 @@ pub(crate) fn drop_input_in_txn(
 }
 
 /// Every input this vault keeps, by digest, as stored.
+#[cfg(feature = "sync")]
 pub(crate) fn held_inputs(vault: &Vault) -> Result<Vec<([u8; 32], Vec<u8>)>> {
     let rtxn = vault.store.env.read_txn()?;
     INPUTS.scan(&vault.store, &rtxn)
