@@ -1065,6 +1065,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         }),
         admitted(),
     );
+    // The supervisor reaches the loop on the vault VM's voice port.
+    #[cfg(unix)]
+    if voice.is_some()
+        && let Some(socket) = config
+            .models
+            .as_ref()
+            .and_then(|models| models.voice.socket.clone())
+    {
+        host.bridge_voice(socket)?;
+    }
     // The managed surface, not the bare one: the reap freeze has to be
     // enforceable by the socket the supervisor routes traffic to, or
     // `quiescent: true` is a claim about a gate that nothing reaches.
