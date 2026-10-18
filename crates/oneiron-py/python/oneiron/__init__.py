@@ -1244,6 +1244,24 @@ class Oneiron:
         def close_erase_ask(self, spec):
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
             return json.loads(_translate(lambda: self._client.vault_shared_close_erase_ask(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultSharedPolicyVerbs":
+            return Oneiron._VaultSharedPolicyVerbs(self._client)
+    class _VaultSharedPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_get(json.dumps(spec))))
+        def propose(self, spec):
+            """A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_propose(json.dumps(spec))))
+        def answer(self, spec):
+            """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_answer(json.dumps(spec))))
+        def change(self, spec):
+            """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

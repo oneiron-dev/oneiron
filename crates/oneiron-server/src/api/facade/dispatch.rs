@@ -2960,6 +2960,99 @@ async fn vault_shared_close_erase_ask(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_shared_policy_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.policy.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.policy.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.policy.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_shared_policy_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_shared_policy_propose(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.policy.propose")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.policy.propose", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.policy.propose", value).await?;
+    let (output, listed) = super::host_doors::vault_shared_policy_propose(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_shared_policy_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.policy.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.policy.answer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.policy.answer", value).await?;
+    let (output, listed) = super::host_doors::vault_shared_policy_answer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_shared_policy_change(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.policy.change")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.policy.change", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.shared.policy.change", value).await?;
+    let (output, listed) = super::host_doors::vault_shared_policy_change(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10283,6 +10376,10 @@ pub(crate) async fn call_verb(
         "vault.shared.erase_ask" => vault_shared_erase_ask(server, call, input).await,
         "vault.shared.erase_asks" => vault_shared_erase_asks(server, call, input).await,
         "vault.shared.close_erase_ask" => vault_shared_close_erase_ask(server, call, input).await,
+        "vault.shared.policy.get" => vault_shared_policy_get(server, call, input).await,
+        "vault.shared.policy.propose" => vault_shared_policy_propose(server, call, input).await,
+        "vault.shared.policy.answer" => vault_shared_policy_answer(server, call, input).await,
+        "vault.shared.policy.change" => vault_shared_policy_change(server, call, input).await,
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
         "vault.residence.mode" => vault_residence_mode(server, call, input).await,

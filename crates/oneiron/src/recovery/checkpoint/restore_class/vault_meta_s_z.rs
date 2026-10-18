@@ -84,6 +84,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SHARED_ACT_EVENT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_MATURED, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_OUTCOME, SHARED_VAULT_MEMBERSHIP),
+    // A proposed policy change binds the digest of the rows it was proposed
+    // against, so a restore that moves the policy manifest leaves it stale:
+    // it stays as the live vault holds it and never blocks a restore.
+    (&t::SHARED_ACT_POLICY_CHANGE, LIVE),
     (&t::SHARED_ACT_RECEIPT, SHARED_VAULT_MEMBERSHIP),
     (&t::SHARED_ACT_RECORD, SHARED_VAULT_MEMBERSHIP),
     // An archive delivered to a removed Owner has left the vault: a restore

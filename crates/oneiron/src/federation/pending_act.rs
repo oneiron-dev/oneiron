@@ -125,7 +125,7 @@ pub(super) fn decode<T: serde::de::DeserializeOwned>(row: &[u8]) -> Result<T> {
 }
 
 /// A data row, not a compiled-in act list. A zero wait means immediate completion.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActPolicy {
     pub wait_secs: u64,
@@ -139,11 +139,24 @@ pub struct SharedActPolicy {
     pub precedence: SharedActPrecedence,
 }
 /// Whether an individual holder may request a stricter setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SharedActPrecedence {
     VaultOnly,
     HolderMayNarrow,
+}
+/// A requested row change: a valid act name and, unless it removes the
+/// vault's own row, a valid row for that name.
+fn check_policy_request(act: &str, policy: Option<&SharedActPolicy>) -> Result<()> {
+    if !valid_name(act) {
+        return Err(invalid());
+    }
+    if let Some(row) = policy {
+        row.validate_named(act)?;
+    }
+    Ok(())
 }
 impl SharedActPolicy {
     pub(crate) fn validate(&self) -> Result<()> {
@@ -419,6 +432,8 @@ impl Vault {
     /// wait is turned off by storing `wait_secs: 0`. The row is written into the
     /// vault's manifest through the owner door in the same transaction. New
     /// acts snapshot the new row; existing acts keep their original window.
+    /// The durable change doors (`policy_change`) collect the same approvals
+    /// over time and write through the same helper.
     pub fn set_shared_act_policy(
         &self,
         owner: &AuthenticatedOwner,
@@ -428,57 +443,22 @@ impl Vault {
         policy: Option<SharedActPolicy>,
         now: u64,
     ) -> Result<()> {
-        if !valid_name(act) {
-            return Err(invalid());
-        }
-        if let Some(row) = &policy {
-            row.validate_named(act)?;
-        }
+        check_policy_request(act, policy.as_ref())?;
         let mut txn = self.store.env.write_txn()?;
         // Person tier, own holder check: the approvals must be exactly the live
-        // policy editors below, each a named holder.
-        let actor = owner.revalidate_person_in_txn(self, &txn)?;
-        let creation = check_vault(self, &txn, vault_id)?;
-        let mut policies = self.act_policies_in_txn(&txn, &creation)?;
-        let default = policies.effective(DEFAULT_ROW)?;
-        let current = policies.effective(act)?;
-        if policy
-            .as_ref()
-            .is_some_and(|row| !row.is_narrowing_of(&default))
-        {
-            return Err(invalid());
-        }
-        let required: BTreeSet<EntityId> = self
-            .live_act_holders(&txn, vault_id, now)?
-            .into_iter()
-            .filter(|holder| holder.can(&current.policy_editor_roles, &current.required_verb))
-            .map(|holder| holder.member)
-            .collect();
-        let mut approvals = BTreeSet::from([actor]);
+        // policy editors the shared write names, each a named holder.
+        let mut approvals = BTreeSet::from([owner.revalidate_person_in_txn(self, &txn)?]);
         for co_owner in co_owners {
-            let co_owner_actor = co_owner.revalidate_person_in_txn(self, &txn)?;
-            if !approvals.insert(co_owner_actor) {
+            if !approvals.insert(co_owner.revalidate_person_in_txn(self, &txn)?) {
                 return Err(invalid());
             }
         }
-        if approvals != required || required.is_empty() {
-            return Err(invalid());
-        }
-        if let Some(row) = policy {
-            policies.stored.insert(act.to_owned(), row);
-        } else {
-            policies.stored.remove(act);
-        }
-        let id = crate::gate::default_policy_manifest_id()?;
-        let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
-            .ok_or_else(invalid)?;
-        let body = raw.get(ENTITY_METADATA_HEADER_LEN..).ok_or_else(invalid)?;
-        // Build only on bytes that passed the owner door, never on a received manifest.
-        if !crate::gate::manifest_authenticity::manifest_is_trusted(&self.store, &txn, &id, body)? {
-            return Err(invalid());
-        }
-        let data = with_act_table(body, &policies.stored)?;
-        self.write_holder_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        let edit = policy_change::PolicyEdit {
+            vault_id,
+            act,
+            policy: policy.as_ref(),
+        };
+        self.write_shared_act_policy_in_txn(owner, &mut txn, edit, &approvals, now)?;
         txn.commit()?;
         Ok(())
     }
@@ -864,7 +844,12 @@ fn reconcile(record: &mut PendingAuthorityAct, holders: &[LiveActHolder], now: u
 }
 
 mod matured;
+mod policy_change;
 pub use matured::PendingActMatured;
+pub use policy_change::{
+    NOTIFICATION_PRODUCER_POLICY_CHANGE, SharedActPoliciesView, SharedActPolicyChange,
+    SharedActPolicyChangeState,
+};
 
 #[cfg(test)]
 mod tests;
