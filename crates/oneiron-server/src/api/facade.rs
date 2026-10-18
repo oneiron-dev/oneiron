@@ -63,6 +63,7 @@ pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::connector_call_as;
 pub(crate) use dispatch::call_verb;
+pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;
@@ -1177,6 +1178,10 @@ struct FacadeErrorBody {
     /// on an ask with the invocation and the ask, or hidden.
     #[serde(skip_serializing_if = "Option::is_none")]
     hook: Option<Box<VerbHookStop>>,
+    /// When to call again, in seconds, on a refusal no provider answered
+    /// (FIX 3194); the reply carries it as `Retry-After` too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    retry_after: Option<u64>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -1206,6 +1211,7 @@ pub(crate) struct MemoryErrorBodySchema {
     request_id: String,
     suggestions: Vec<String>,
     receipt_ref: Option<String>,
+    retry_after: Option<u64>,
 }
 
 impl FacadeApiError {
@@ -1226,6 +1232,7 @@ impl FacadeApiError {
                     receipt_ref: None,
                     wrong_root: None,
                     hook: None,
+                    retry_after: None,
                 },
                 narrowing: None,
             },
@@ -1327,6 +1334,7 @@ impl From<MemoryError> for FacadeApiError {
                     receipt_ref: None,
                     wrong_root: error.wrong_root,
                     hook: error.hook,
+                    retry_after: error.retry_after,
                 },
                 narrowing: error.read_receipt,
             },
@@ -1350,9 +1358,16 @@ impl From<ApiError> for FacadeApiError {
 }
 
 impl FacadeApiError {
-    /// The refusal's wire reply: its status and `{error, narrowing?}` body.
+    /// The refusal's wire reply: its status and `{error, narrowing?}` body,
+    /// and `Retry-After` when the refusal says when to call again.
     fn reply(&self) -> Response {
-        (self.status, Json(&self.body)).into_response()
+        let mut response = (self.status, Json(&self.body)).into_response();
+        if let Some(seconds) = self.body.error.retry_after {
+            response
+                .headers_mut()
+                .insert(axum::http::header::RETRY_AFTER, HeaderValue::from(seconds));
+        }
+        response
     }
 
     /// The refusal as the engine's typed error, for a door outside the
@@ -1366,6 +1381,7 @@ impl FacadeApiError {
         refusal.read_receipt = narrowing;
         refusal.wrong_root = error.wrong_root;
         refusal.hook = error.hook;
+        refusal.retry_after = error.retry_after;
         refusal
     }
 }

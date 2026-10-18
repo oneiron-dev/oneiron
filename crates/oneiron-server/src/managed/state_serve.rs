@@ -395,12 +395,16 @@ async fn refuse_frozen_writes(
     next: Next,
 ) -> Response {
     if state.server.managed_issuer.is_some() {
-        // This one route needs the SUPERVISOR'S holder action, not the host
-        // root. Verify the account-authenticated assertion against the
-        // per-spawn secret and the exact request body before removing every
-        // forwarded credential. Unverified headers never become extensions.
+        // The widen answer routes need the SUPERVISOR'S holder action, not
+        // the host root. Verify the account-authenticated assertion against
+        // the per-spawn secret and the exact request body before removing
+        // every forwarded credential. Unverified headers never become
+        // extensions.
         if request.method() == Method::POST
-            && request.uri().path() == "/v1/core/consent/widen/accept"
+            && matches!(
+                request.uri().path(),
+                "/v1/core/consent/widen/accept" | "/v1/core/consent/widen/reject"
+            )
         {
             let assertion = request
                 .headers()
@@ -886,6 +890,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Documents whose signing finished are sealed as a task (OF-415).
+    #[cfg(unix)]
+    ladder_workers.push(crate::api::spawn_esign_seal_worker_admitted(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Due standing questions are answered through the ladder (OF-506).
     if !ai.bind_question_timer(&sync_server) {
         ladder_workers.push(crate::decision_graph::spawn(&sync_server, admitted()));

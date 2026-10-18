@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::claim::ScopedReadReceipt;
 use crate::error::Result;
 use crate::interlocutor::InterlocutorSet;
 use crate::policy_model::PolicyEnforcementAction;
@@ -221,6 +222,24 @@ pub enum ControlEvent {
         generation: GenerationEpoch,
         notice: GateSystemNoticeRecord,
     },
+    /// What a turn's memories read found and what its audience heard, for
+    /// the owner's client to show; never said.
+    Memories {
+        generation: GenerationEpoch,
+        memories: TurnMemories,
+    },
+}
+
+/// What one turn's memories read found and what its audience heard: the
+/// read's narrowing receipts, one per row it looked up, those withheld from
+/// the audience included, even when the brain heard none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnMemories {
+    /// Rows the turn's retrieval found.
+    pub found: usize,
+    /// Rows the brain heard.
+    pub heard: usize,
+    pub receipts: Vec<ScopedReadReceipt>,
 }
 
 /// Adapter methods SUBMIT work; they must not wait for a provider's response.

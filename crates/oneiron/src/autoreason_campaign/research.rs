@@ -5,8 +5,10 @@
 //! experiment is an existing attempt under it. No second tree exists. This
 //! module records what the workflow did to that tree (bind, fork, measure,
 //! weave, prune, select, promote) and reserves its spend on the RSI line. It
-//! runs no experiment, calls no model and schedules nothing: execution stays
-//! with the workflow skill, under the existing Grant and gate.
+//! calls no model itself. A campaign bound with an execution spec lets the
+//! Coach host drive the loop through `continuation`: it dispatches the spec's
+//! agents and records their answers through these doors. Without one, the
+//! workflow skill drives its own record. Selection stays the Coach tick's.
 //!
 //! - The ruler is bound once. A skill campaign's metric set must be the
 //!   skill's authenticated goal axes; only the goal-intake door changes those,
@@ -17,9 +19,11 @@
 //! - "Surprise picks the next experiment. It never prunes." A prune names a
 //!   cause and ends a branch's eligibility; its attempts, claims and outputs
 //!   stay as evidence. A buggy node takes debug children instead.
-//! - Every weave names the claim it landed through the gate, its common
-//!   ancestor and its validation overlap, and is refused until a held-out win
-//!   in this campaign turned merge crossover on.
+//! - Every weave names the claim it landed through the gate, the gate's own
+//!   record of that landing, its common ancestor and its validation overlap,
+//!   and is refused until a held-out win in this campaign turned merge
+//!   crossover on. A controller weaves only a claim it wrote; one past
+//!   Proposed stands only on the gate's Allow for it under the owner's Grant.
 //! - Parents rank by the DGM formula until the engine estimator's information
 //!   gain wins a held-out selection benchmark (`estimator`). Each round
 //!   receipts every branch's Beta belief either way.
@@ -34,6 +38,7 @@ use super::selection::{
     decide_experiment_for, selection_policy_for,
 };
 use super::{CampaignDatasetRef, CampaignError};
+use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::run_tree::{RunTree, RunTreeNode, render_run_tree};
 use crate::side_table::{self, Named, SideTable};
@@ -44,6 +49,7 @@ use crate::{
 };
 
 mod budget;
+mod continuation;
 mod estimator;
 mod promotion;
 
@@ -51,6 +57,11 @@ pub use budget::{
     ResearchBudgetRead, ResearchReservation, ResearchReservationLine, refund_research_work,
     research_budget, research_reservations, reserve_research_exploration, reserve_research_work,
     settle_research_work,
+};
+pub use continuation::{
+    ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
+    ResearchWork, advance_research_continuations, ensure_research_continuations,
+    research_work_pending,
 };
 pub use estimator::{
     BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,
@@ -75,6 +86,10 @@ const ROUND: SideTable<([u8; 16], u64), SelectionReceipt, Named> =
 const MAX_REF_BYTES: usize = 256;
 const MAX_REFS: usize = 64;
 const MAX_WEAVE_PARENTS: usize = 8;
+/// The gate's recorded content kind and outcomes a weave claim is read by.
+const WEAVE_CONTENT_KIND: &str = "claim";
+const OUTCOME_ALLOW: &str = "allow";
+const OUTCOME_DENY: &str = "deny";
 
 /// What a campaign improves, and so which ruler it is bound to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +131,24 @@ pub struct CandidateRef {
     pub config_sha256: String,
 }
 
+/// The agents the host runs a campaign's work with (FIX 886). Each is an
+/// AGENT_DEF running its own workflow skill; each answers with one JSON
+/// object and never writes the campaign record itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchExecution {
+    /// Writes one candidate configuration in its own sandbox.
+    pub experimenter: EntityId,
+    /// The campaign's judge: scores one candidate on one split.
+    pub scorer: EntityId,
+    /// Runs the sealed confirmation; set exactly when a confirmation seat is.
+    pub referee: Option<EntityId>,
+    /// RSI units one experiment, one measurement and one confirmation reserve.
+    pub experiment_units: u64,
+    pub measure_units: u64,
+    pub confirm_units: u64,
+}
+
 /// The bound ruler and resources of one campaign. Written once.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -135,6 +168,9 @@ pub struct ResearchBinding {
     /// The cold-start ladder the root's belief seeds from: user, persona,
     /// then global data. Empty starts uniform.
     pub prior_ladder: Vec<PriorSeed>,
+    /// The agents the Coach host drives the loop with; `None` leaves the
+    /// workflow driving its own record.
+    pub execution: Option<ResearchExecution>,
     pub bound_at: u64,
 }
 
@@ -150,6 +186,7 @@ pub struct ResearchBindRequest {
     /// The incumbent configuration, pinned as the root node.
     pub incumbent: CandidateRef,
     pub prior_ladder: Vec<PriorSeed>,
+    pub execution: Option<ResearchExecution>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,7 +283,18 @@ pub struct WeaveReceipt {
     /// The claim's approval when the weave was recorded: proposed, unless an
     /// owner grant let the gate approve it.
     pub claim_approval: ClaimApprovalStatus,
+    /// The gate's recorded decision on the claim's landing, by hex id: the
+    /// claim door's record of its writer's write.
+    pub gate_decision: String,
     pub at: u64,
+}
+
+/// Who records a weave, as `vault.research.weave` authenticated them: the
+/// vault owner, or the campaign's controller agent by its actor entity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeaveWriter {
+    Owner,
+    Controller { actor: EntityId },
 }
 
 /// One experiment: an existing attempt annotated with its campaign record.
@@ -392,6 +440,37 @@ impl CandidateRef {
     }
 }
 
+impl ResearchExecution {
+    /// Every run reserves units, a referee comes exactly with a confirmation
+    /// seat, and each agent is an AGENT_DEF the dispatcher would run.
+    fn validate(&self, vault: &Vault, confirms: bool) -> Result<()> {
+        if self.experiment_units == 0 || self.measure_units == 0 || self.confirm_units == 0 {
+            return Err(invalid("an execution spec reserves units for every run"));
+        }
+        if self.referee.is_some() != confirms {
+            return Err(invalid(
+                "an execution spec names a referee exactly when the campaign confirms",
+            ));
+        }
+        let dispatcher = AgentDispatcher::new(vault);
+        for agent in [Some(self.experimenter), Some(self.scorer), self.referee]
+            .into_iter()
+            .flatten()
+        {
+            match dispatcher.dispatchable_definition(&AgentDispatchTarget::Custom(agent)) {
+                Ok(_) => {}
+                Err(Error::Artifact(_)) => {
+                    return Err(invalid(
+                        "an execution agent is not a dispatchable AGENT_DEF",
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The ruler of a skill campaign is the skill's goal: the same axes, each in
 /// the same role. A campaign cannot add, drop or re-role one.
 fn check_ruler(config: &CampaignConfig, goal: &[GoalAxisSpec]) -> Result<()> {
@@ -439,7 +518,9 @@ pub(super) fn check_goal_current(vault: &Vault, binding: &ResearchBinding) -> Re
 /// # Errors
 /// An invalid config or candidate, a missing root or run, a skill metric set
 /// that is not the skill's goal, a missing selection policy, a missing or
-/// retired cohort, an already-bound root, or storage errors.
+/// retired cohort, an execution spec with a zero unit count, a referee
+/// without a confirmation seat (or the reverse) or an agent that is not a
+/// dispatchable AGENT_DEF, an already-bound root, or storage errors.
 pub fn bind_research(
     vault: &Vault,
     request: ResearchBindRequest,
@@ -447,6 +528,9 @@ pub fn bind_research(
 ) -> Result<ResearchBinding> {
     request.config.validate().map_err(campaign_error)?;
     request.incumbent.validate()?;
+    if let Some(execution) = &request.execution {
+        execution.validate(vault, request.confirmation.is_some())?;
+    }
     if let Some(holder) = &request.holder {
         bounded(holder, "a campaign holder is a bounded id")?;
     }
@@ -502,6 +586,7 @@ pub fn bind_research(
         confirmation: request.confirmation,
         share: request.share,
         prior_ladder: request.prior_ladder,
+        execution: request.execution,
         bound_at: at,
     };
     let root = ExperimentNode {
@@ -593,7 +678,9 @@ pub fn bound_research_roots(vault: &Vault) -> Result<Vec<AttemptId>> {
 /// it has an eligible measured branch, no round stopped it, and its last
 /// round either paused on budget or saw a different branch set than the
 /// campaign holds now. A campaign with nothing new since its last round
-/// waits; the scheduler never re-rules unchanged evidence.
+/// waits; the scheduler never re-rules unchanged evidence. Under an
+/// execution spec, a round's host continuation that is still open or held
+/// holds the next round, and one that ended failed releases it.
 /// # Errors
 /// Storage errors.
 pub fn research_round_due(vault: &Vault, root: AttemptId) -> Result<bool> {
@@ -615,6 +702,9 @@ pub fn research_round_due(vault: &Vault, root: AttemptId) -> Result<bool> {
         .collect();
     if eligible.is_empty() {
         return Ok(false);
+    }
+    if let Some(due) = continuation::round_due_gate(vault, &txn, root, last.as_ref())? {
+        return Ok(due);
     }
     Ok(match last {
         None => true,
@@ -702,18 +792,89 @@ fn put_new_node(
     node: &ExperimentNode,
     parents: &[AttemptId],
 ) -> Result<()> {
-    vault.with_write_txn_grouped(|txn| {
-        let key = (*root.as_bytes(), *node.attempt.as_bytes());
-        if NODE.contains(&vault.store, txn, &key)? {
-            return Err(invalid("the experiment is already recorded"));
-        }
-        // A parent pruned while the child was checked cannot take it.
-        let nodes = nodes_in_txn(vault, txn, root)?;
-        if parents.iter().any(|parent| pruned_lineage(&nodes, parent)) {
-            return Err(invalid("a pruned branch takes no new experiments"));
-        }
-        NODE.put(&vault.store, txn, &key, node)
-    })
+    vault.with_write_txn_grouped(|txn| put_new_node_in_txn(vault, txn, root, node, parents))
+}
+
+fn put_new_node_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    node: &ExperimentNode,
+    parents: &[AttemptId],
+) -> Result<()> {
+    let key = (*root.as_bytes(), *node.attempt.as_bytes());
+    if NODE.contains(&vault.store, txn, &key)? {
+        return Err(invalid("the experiment is already recorded"));
+    }
+    // A parent pruned while the child was checked cannot take it.
+    let nodes = nodes_in_txn(vault, txn, root)?;
+    if parents.iter().any(|parent| pruned_lineage(&nodes, parent)) {
+        return Err(invalid("a pruned branch takes no new experiments"));
+    }
+    NODE.put(&vault.store, txn, &key, node)
+}
+
+/// The weave claim's approval and the gate's recorded decision on its
+/// landing. The claim must be live and have landed through the gated claim
+/// door: its locally attested writer, and that writer's latest decision on
+/// it that let a row land. A controller weaves only a claim it wrote. A claim
+/// past Proposed stands for anyone but the owner only on an Allow for its
+/// writer: the owner's Grant (actor ceilings, source trust) let this writer
+/// land it there, which is the auto-weave grant ([`auto_weave_granted`]).
+fn weave_claim_landing_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    writer: WeaveWriter,
+    claim: &EntityId,
+) -> Result<(ClaimApprovalStatus, String)> {
+    let body = vault
+        .get_claim_in_txn(txn, claim)?
+        .ok_or(invalid("the weave's claim is missing"))?;
+    if body.lifecycle != ClaimLifecycleStatus::Active
+        || body.approval == ClaimApprovalStatus::Rejected
+    {
+        return Err(invalid("the weave's claim was rejected or closed"));
+    }
+    let author = crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, claim, &body)?
+        .ok_or(invalid("the weave's claim has no attested writer"))?
+        .entity_ref();
+    if let WeaveWriter::Controller { actor } = writer
+        && actor != author
+    {
+        return Err(invalid(
+            "a campaign controller weaves only a claim it wrote",
+        ));
+    }
+    let author = author.to_hex();
+    let decision = vault
+        .store
+        .gate_decisions_for_claim_in_txn(txn, claim.as_bytes())?
+        .into_iter()
+        .filter(|record| {
+            record.redacted_at.is_none()
+                && record.content_kind == WEAVE_CONTENT_KIND
+                && record.actor_ref.as_deref() == Some(author.as_str())
+                && record.outcome != OUTCOME_DENY
+        })
+        .last()
+        .ok_or(invalid("the weave's claim did not land through the gate"))?;
+    if body.approval != ClaimApprovalStatus::Proposed
+        && writer != WeaveWriter::Owner
+        && !auto_weave_granted(&decision)
+    {
+        return Err(invalid(
+            "a weave lands past Proposed only under an owner auto-weave grant",
+        ));
+    }
+    Ok((body.approval, decision.decision_id.to_hex()))
+}
+
+/// Whether the gate's decision on a weave claim carries an owner auto-weave
+/// grant: an Allow for its writer, which the owner's Grant alone gives a
+/// non-owner landing past Proposed. A narrower, weave-scoped grant changes
+/// this one test.
+fn auto_weave_granted(decision: &crate::store::GateDecisionRecord) -> bool {
+    decision.outcome == OUTCOME_ALLOW
 }
 
 /// Record a fork: a variation of a live parent, or a debug child of a buggy
@@ -770,15 +931,19 @@ pub fn record_fork(
 
 /// Record a weave: a crossover child of several measured parents with a
 /// common ancestor, landed as a claim through the gate. Refused until a
-/// held-out win in this campaign turned merge crossover on.
+/// held-out win in this campaign turned merge crossover on. The receipt
+/// binds the gate's decision on the claim, read in the node's transaction.
 /// # Errors
 /// Crossover not requested or not yet earned, fewer than two or duplicate
 /// parents, an unmeasured, buggy or pruned parent, an ancestor common to not
 /// every parent, an overlap under the floor, a child not under a parent on
-/// the run, a missing, retracted or rejected claim, or storage errors.
+/// the run, a missing, retracted or rejected claim, a claim the controller
+/// did not write or that has no gate decision, a non-owner landing past
+/// Proposed without an auto-weave grant, or storage errors.
 pub fn record_weave(
     vault: &Vault,
     root: AttemptId,
+    writer: WeaveWriter,
     input: WeaveInput,
     at: u64,
 ) -> Result<ExperimentNode> {
@@ -825,34 +990,31 @@ pub fn record_weave(
         }
     }
     check_child(vault, &binding, input.child, &input.parents)?;
-    let claim = vault
-        .get_claim(&input.claim)?
-        .ok_or(invalid("the weave's claim is missing"))?;
-    if claim.lifecycle != ClaimLifecycleStatus::Active
-        || claim.approval == ClaimApprovalStatus::Rejected
-    {
-        return Err(invalid("the weave's claim was rejected or closed"));
-    }
-    let node = ExperimentNode {
-        attempt: input.child,
-        kind: ExperimentKind::Weave,
-        parents: input.parents.clone(),
-        candidate: input.candidate,
-        search: None,
-        held_out: None,
-        invalid: None,
-        weave: Some(WeaveReceipt {
-            common_ancestor: input.common_ancestor,
-            validation_overlap: input.validation_overlap,
-            claim: input.claim,
-            claim_approval: claim.approval,
-            at,
-        }),
-        pruned: None,
-        recorded_at: at,
-    };
-    put_new_node(vault, root, &node, &input.parents)?;
-    Ok(node)
+    vault.with_write_txn_grouped(|txn| {
+        let (claim_approval, gate_decision) =
+            weave_claim_landing_in_txn(vault, txn, writer, &input.claim)?;
+        let node = ExperimentNode {
+            attempt: input.child,
+            kind: ExperimentKind::Weave,
+            parents: input.parents.clone(),
+            candidate: input.candidate.clone(),
+            search: None,
+            held_out: None,
+            invalid: None,
+            weave: Some(WeaveReceipt {
+                common_ancestor: input.common_ancestor,
+                validation_overlap: input.validation_overlap,
+                claim: input.claim,
+                claim_approval,
+                gate_decision,
+                at,
+            }),
+            pruned: None,
+            recorded_at: at,
+        };
+        put_new_node_in_txn(vault, txn, root, &node, &input.parents)?;
+        Ok(node)
+    })
 }
 
 fn check_measurement(

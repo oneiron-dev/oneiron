@@ -1271,7 +1271,7 @@ export_facade! {
     let output = client.connector_call_status(&input)?;
     crate::codec::lift_record("connector.call_status", &output)
 };
-"vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
+"vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitOutcome> = |client| {
     let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
     let output = client.vault_commit(&input)?;
     Lift::lift(output)
@@ -1360,6 +1360,11 @@ export_facade! {
     let input: oneiron::blob_artifact::ArtifactCreateRequest = crate::codec::lower_record("vault.artifacts.create", input)?;
     let output = client.vault_artifacts_create(&input)?;
     crate::codec::lift_record("vault.artifacts.create", &output)
+};
+"vault.esign.create" => fn vault_esign_create(&self, input: EsignCreateRequest) -> EsignDraftView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignCreateRequest = crate::codec::lower_record("vault.esign.create", input)?;
+    let output = client.vault_esign_create(&input)?;
+    crate::codec::lift_record("vault.esign.create", &output)
 };
 "vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
@@ -1506,7 +1511,7 @@ export_facade! {
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
 };
-"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitReceipt> = |client| {
+"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitOutcome> = |client| {
     let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
     let output = client.vault_claims_seed(&input)?;
     Lift::lift(output)
