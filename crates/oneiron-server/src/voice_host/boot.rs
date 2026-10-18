@@ -9,6 +9,14 @@
 //! at the on-device locality of a kernel-checked local socket. The socket's
 //! 0600 mode alone proves no owner. A bad or missing token closes the socket
 //! before any audio is admitted; an admitted call is answered `accepted`.
+//! On a managed vault (FIX 2391) the hello carries no slip. It carries
+//! `managed_owner`, a supervisor's `ManagedOwnerAction` for the vault's
+//! owner, signed over the room and roster the hello names and its
+//! `issued_at`; the vault takes it once, near its time, through the
+//! verifier managed serve hands in. The call's auth is the host root
+//! projected onto that person, off-device, and the owner door then admits
+//! it as it admits a managed facade request. A plain host takes no managed
+//! hello, and a managed host no slip.
 //! The hello may name the `room` the call is heard in and the voice
 //! `roster` its speakers are matched under. A room the caller cannot read
 //! closes the socket. A bound call is live in its room until it ends: each
@@ -35,6 +43,7 @@ use oneiron::voice_cascade::{
     VOICE_IDENTITY_ASK_SECONDS, VoiceContainerBinding, VoiceSessionConfig,
 };
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, Vault, WriteActor};
+use oneiron_vault_contract::ManagedOwnerAction;
 use serde::Deserialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -50,14 +59,15 @@ use crate::ai_host::payer_funding::room_launch_funding;
 use crate::auth::{BindingProof, CoreAuth, CoreScope};
 use crate::config::models::VoiceSettings;
 use crate::managed::{ManagedShutdown, ShutdownSignal};
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer};
 
 /// The agent that answers a call, as the chat route's default.
 const DEFAULT_AGENT: &str = "sys.default";
 /// How long a connection may take to say hello.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
-/// How often a call's slip is checked again: a slip revoked mid-call ends
-/// the call within this.
+/// How often a call's credential is checked again: a slip revoked mid-call,
+/// or a managed owner no longer the vault's live owner, ends the call
+/// within this.
 const LIVENESS_EVERY: Duration = Duration::from_secs(5);
 /// Brain events the host holds before the brain waits.
 const BRAIN_QUEUE: usize = 256;
@@ -72,8 +82,19 @@ const MAX_ROOM_CANDIDATES: usize = 32;
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Hello {
     Hello {
-        token: String,
-        binding: BindingProof,
+        /// The owner's capability slip, on a plain host.
+        #[serde(default)]
+        token: Option<String>,
+        /// Its fresh transport binding proof.
+        #[serde(default)]
+        binding: Option<BindingProof>,
+        /// The supervisor's attestation of the vault's owner, on a managed
+        /// host.
+        #[serde(default)]
+        managed_owner: Option<ManagedOwnerAction>,
+        /// When the supervisor attested the hello, in Unix seconds.
+        #[serde(default)]
+        issued_at: Option<u64>,
         sample_rate: u32,
         channels: u16,
         /// The room the call is heard in, by its id.
@@ -83,6 +104,21 @@ enum Hello {
         #[serde(default)]
         roster: Option<String>,
     },
+}
+
+/// A managed host's check of a hello's supervisor attestation: the owner it
+/// names, given the room and roster the hello names (empty when absent) and
+/// its `issued_at`, or `None`.
+pub(crate) type ManagedVoiceVerifier =
+    Arc<dyn Fn(&ManagedOwnerAction, &str, &str, u64) -> Option<EntityId> + Send + Sync>;
+
+/// What a call is admitted under, and how its hello is authenticated.
+#[derive(Clone)]
+struct CallDoors {
+    /// `Some` on a managed host: its hellos carry an attestation, not a slip.
+    managed: Option<ManagedVoiceVerifier>,
+    /// Held for each call's whole length, as a served write is.
+    admit: HousekeepingAdmission,
 }
 
 /// The running voice loop; [`Self::stop`] ends it.
@@ -95,10 +131,15 @@ impl VoiceBoot {
     /// Off unless `settings` names a socket. A socket that cannot be bound
     /// (a missing or shared directory, an occupied path, a path past the
     /// platform's socket length, a platform other than Linux or macOS) is
-    /// logged and leaves voice off.
+    /// logged and leaves voice off. `managed` checks a managed host's hellos
+    /// (`None` on a plain host, whose hellos carry a slip), and each call
+    /// holds an admission from `admit` for its whole length; a refused one
+    /// closes the connection.
     pub(crate) fn start(
         server: &Arc<SyncServer>,
         settings: Option<&VoiceSettings>,
+        managed: Option<ManagedVoiceVerifier>,
+        admit: HousekeepingAdmission,
     ) -> Option<Self> {
         let settings = settings?;
         let socket = settings.socket.as_ref()?;
@@ -122,6 +163,7 @@ impl VoiceBoot {
         let task = tokio::spawn(accept(
             Arc::clone(server),
             settings.clone(),
+            CallDoors { managed, admit },
             guard,
             listener,
             shutdown.clone(),
@@ -140,6 +182,7 @@ impl VoiceBoot {
 async fn accept(
     server: Arc<SyncServer>,
     settings: VoiceSettings,
+    doors: CallDoors,
     guard: SocketGuard,
     listener: tokio::net::UnixListener,
     shutdown: ManagedShutdown,
@@ -158,7 +201,7 @@ async fn accept(
             },
         };
         // One call at a time: the next connection waits in the backlog.
-        if let Err(error) = call(&server, &settings, stream, &shutdown).await {
+        if let Err(error) = call(&server, &settings, &doors, stream, &shutdown).await {
             tracing::warn!(%error, "voice: call ended");
         }
     }
@@ -177,12 +220,17 @@ fn failed(reason: impl std::fmt::Display) -> io::Error {
 async fn call(
     server: &Arc<SyncServer>,
     settings: &VoiceSettings,
+    doors: &CallDoors,
     mut stream: UnixStream,
     shutdown: &ManagedShutdown,
 ) -> io::Result<()> {
+    // Held until the call and its teardown end, first taken and last dropped.
+    let _admission = (doors.admit)().ok_or_else(|| refused("writes are frozen"))?;
     let Hello::Hello {
         token,
         binding,
+        managed_owner,
+        issued_at,
         sample_rate,
         channels,
         room,
@@ -191,14 +239,39 @@ async fn call(
         .await
         .map_err(|_| refused("no hello"))??;
     let vault = server.vault();
-    // The same doors as the HTTP API: the slip with a fresh binding proof,
-    // admitted once, then the owner door.
-    if !token.starts_with("v2.slip.") {
-        return Err(refused("not a capability slip"));
-    }
-    let auth = CoreAuth::bind_transport_once(&token, &binding, vault)
-        .map_err(|_| refused("credential"))?
-        .at(CallerLocality::OnDevice);
+    let auth = match (token, binding, managed_owner, issued_at, &doors.managed) {
+        // The same doors as the HTTP API: the slip with a fresh binding
+        // proof, admitted once, then the owner door.
+        (Some(token), Some(binding), None, None, None) => {
+            if !token.starts_with("v2.slip.") {
+                return Err(refused("not a capability slip"));
+            }
+            CoreAuth::bind_transport_once(&token, &binding, vault)
+                .map_err(|_| refused("credential"))?
+                .at(CallerLocality::OnDevice)
+        }
+        // The managed facade's door: the host root projected onto the
+        // person the supervisor attests, once the attestation checks out.
+        (None, None, Some(action), Some(issued_at), Some(verify)) => {
+            if server.managed_issuer.is_none() {
+                return Err(refused("credential"));
+            }
+            if room.as_deref() == Some("") || roster.as_deref() == Some("") {
+                return Err(refused("room"));
+            }
+            let holder = verify(
+                &action,
+                room.as_deref().unwrap_or_default(),
+                roster.as_deref().unwrap_or_default(),
+                issued_at,
+            )
+            .ok_or_else(|| refused("managed owner"))?;
+            CoreAuth::for_server(&axum::http::HeaderMap::new(), server)
+                .map_err(|_| refused("credential"))?
+                .as_managed_owner(holder)
+        }
+        _ => return Err(refused("credential")),
+    };
     for scope in [CoreScope::Read, CoreScope::Write] {
         auth.require(scope).map_err(|_| refused("scope"))?;
     }
@@ -325,14 +398,14 @@ async fn call(
         .take()
         .map_err(failed)?
         .ok_or_else(|| failed("connection already claimed"))?;
-    // The slip passed the door once, at hello; it is checked again through
-    // the call, and a revoked one ends it as the server's stop would.
+    // The credential passed the door once, at hello; it is checked again
+    // through the call, and a revoked one ends it as the server's stop would.
     let stopping = shutdown.triggered();
-    let vault = Arc::clone(vault);
+    let server = Arc::clone(server);
     let stop: ShutdownSignal = Box::pin(async move {
         tokio::select! {
             () = stopping => {}
-            () = revoked(&auth, &vault) => {
+            () = revoked(&auth, &server) => {
                 tracing::info!("voice: the call's credential was revoked; ending the call");
             }
         }
@@ -374,12 +447,18 @@ fn bind_room(
     })
 }
 
-/// Resolves once the call's credential is no longer live.
-async fn revoked(auth: &CoreAuth, vault: &Vault) {
+/// Resolves once the call's credential is no longer live: its slip, or for
+/// a managed owner, the person's standing as the vault's live owner.
+async fn revoked(auth: &CoreAuth, server: &SyncServer) {
     let mut every = tokio::time::interval(LIVENESS_EVERY);
     loop {
         every.tick().await;
-        if !auth.credential_is_live(vault) {
+        let live = if auth.managed_owner().is_some() {
+            crate::api::owner(auth, server).is_ok()
+        } else {
+            auth.credential_is_live(server.vault())
+        };
+        if !live {
             return;
         }
     }

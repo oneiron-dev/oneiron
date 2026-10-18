@@ -59,8 +59,8 @@ pub(crate) struct DocumentTail {
 pub(crate) struct DocumentWriter<'v> {
     vault: &'v Vault,
     cut: ExportCut,
-    /// OF-222: a whole-vault archive carries each stored file an ASSET body
-    /// is as it is stored; a records archive and OKF keep today's cut.
+    /// OF-222, FIX 3681: an archive, whole-vault or records, carries each
+    /// stored file an ASSET body is as it is stored; OKF keeps today's cut.
     attaches_files: bool,
     groups: BTreeMap<String, RecordSpool>,
     files: FileSpool,
@@ -344,9 +344,10 @@ impl<'v> DocumentWriter<'v> {
     }
 
     /// FIX 2768: one side row in its table's codec, read alone by the nulling
-    /// pass at its depth; one the pass would change, or one that does not
-    /// read back through its table, is held out and named in the manifest. A
-    /// long binary value goes beside the document as a file.
+    /// pass at its depth; one the pass would change, one in its table's own
+    /// binary codec the release scan reads a credential in, or one that does
+    /// not read back through its table, is held out and named in the
+    /// manifest. A long binary value goes beside the document as a file.
     pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
         let Some((row, files)) = raw.portable()? else {
             self.side_withheld
@@ -354,7 +355,7 @@ impl<'v> DocumentWriter<'v> {
             return Ok(());
         };
         let value = serde_json::to_value(&row).map_err(|_| encode_failed())?;
-        if null_document_member("", &value, 2) != value {
+        if raw.opaque_credential() || null_document_member("", &value, 2) != value {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::Credential));
             return Ok(());
@@ -363,6 +364,16 @@ impl<'v> DocumentWriter<'v> {
             self.files.attach(&bytes)?;
         }
         self.push(ArchiveRecordKind::SideTable, &value)
+    }
+
+    /// FIX 3681: the side-row families held out whole, each named once with
+    /// its carried record: a row of one names a carrier not carried, or does
+    /// not read.
+    pub(crate) fn side_rows_withheld(
+        &mut self,
+        withheld: impl IntoIterator<Item = ArchiveSideWithheld>,
+    ) {
+        self.side_withheld.extend(withheld);
     }
 
     /// Builds the agent bundles and the manifest, then writes the archive, or

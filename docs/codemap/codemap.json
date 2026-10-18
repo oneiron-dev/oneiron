@@ -4313,9 +4313,9 @@
       "ArchiveSideWithheldReason"
      ],
      "path": "src/batch/export/archive_side_tables.rs",
-     "purpose": "OF-222 (FIX 2768): the side tables a whole-vault archive carries beside the records they index",
+     "purpose": "OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 5,
       "struct": 3
      }
@@ -4758,7 +4758,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 1,
       "re-export": 3
      }
@@ -5346,7 +5346,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
@@ -5982,7 +5982,7 @@
      "path": "src/blob_artifact/mod.rs",
      "purpose": "ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 8
      }
@@ -6008,7 +6008,7 @@
      "path": "src/blob_artifact/references.rs",
      "purpose": "Which artifacts hold which version bytes, on every vault (H125)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -10937,7 +10937,7 @@
      "path": "src/code_memory.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 1
      }
     },
@@ -11027,6 +11027,7 @@
      "purpose": "—",
      "surface": {
       "const": 7,
+      "crate-vis": 1,
       "enum": 3,
       "fn": 8,
       "struct": 7
@@ -13520,7 +13521,7 @@
       "enum": 1,
       "fn": 10,
       "mod": 1,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 3
      }
     },
@@ -13607,6 +13608,19 @@
      "purpose": "The intent a compaction epoch is born from (ARCH-0035 Rule A; owner 2026-09-17: a summary's birth names the…",
      "surface": {
       "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EpochEmbedder"
+     ],
+     "path": "src/compaction/epoch_vector.rs",
+     "purpose": "The vector an off-record room's epoch summary carries (ARCH-0052 K6)",
+     "surface": {
+      "crate-vis": 3,
+      "trait": 1
      }
     },
     {
@@ -21191,7 +21205,7 @@
      "path": "src/edit_roundtrip/deck.rs",
      "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -21616,7 +21630,7 @@
      "path": "src/edit_settle/codec.rs",
      "purpose": "Row and anchor codec",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -21637,7 +21651,7 @@
      "path": "src/edit_settle/mod.rs",
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 7
      }
     },
@@ -22028,7 +22042,7 @@
      "surface": {
       "crate-vis": 29,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2,
       "trait": 1
      }
@@ -22410,7 +22424,7 @@
      "path": "src/entity_doc/registry.rs",
      "purpose": "Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 8,
       "struct": 3
      }
@@ -27684,7 +27698,7 @@
      "purpose": "Vault-scoped lens intent records and the upgrade regeneration door",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 1
      }
@@ -40810,7 +40824,7 @@
      "path": "src/serialize/vault_document.rs",
      "purpose": "Whole-vault export (OF-222), written row by row (FIX 2766, rule 5): each snapshot row becomes its typed…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -41133,7 +41147,7 @@
      "purpose": "What travels with a body when it leaves the vault (OF-491)",
      "surface": {
       "const": 1,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 3,
       "fn": 7,
       "mod": 1,
@@ -46109,7 +46123,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 14,
       "re-export": 10,
       "struct": 2
@@ -46156,7 +46170,7 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 12,
       "struct": 3
@@ -46339,7 +46353,7 @@
      "path": "src/sync/selector/born_with.rs",
      "purpose": "Born-with text on a copy to another vault (OF-491)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -53748,7 +53762,7 @@
      "purpose": "Commitment timer-wake bridge (CMT-3, ONE-1540): due phase → Dreamer attempt → inbox proposal → OF-327 delivery"
     },
     "compaction": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -54954,7 +54968,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3345,
+   "source_files": 3346,
    "test_files": 902
   },
   "oneiron-android": {
@@ -55100,6 +55114,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "MachineDeviceClass",
       "MachineEncryptionKey",
       "MachineOwnership",
       "MachineProfile",
@@ -55110,8 +55125,8 @@
      "surface": {
       "const": 4,
       "crate-vis": 5,
-      "enum": 2,
-      "fn": 5,
+      "enum": 3,
+      "fn": 6,
       "struct": 2
      }
     },
@@ -59020,6 +59035,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/deck-gate-cases.rs",
+     "purpose": "`deck-gate-cases`: the engine half of the OF-510 deck gate runner",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -59874,8 +59897,132 @@
      "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain",
      "surface": {
       "enum": 1,
-      "mod": 2,
+      "mod": 3,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/assets.rs",
+     "purpose": "The runner's one picture asset, generated rather than shipped",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/checks.rs",
+     "purpose": "The engine-side checks: package corruption (step 5), the part diff and unknown-XML probes (step 2), the…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/edits.rs",
+     "purpose": "The path every exported edit takes: apply the operations to the import, project over the retained package…",
+     "surface": {
+      "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/merge.rs",
+     "purpose": "Step 4: the concurrent cases, each merged in both landing orders through the review flow (fork, preflight…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunOptions",
+      "RunSummary"
+     ],
+     "path": "src/live/oracle_run/mod.rs",
+     "purpose": "The OF-510 deck gate runner, engine half: the `pptx-live-v1` case set through the current projector…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/nonpdf.rs",
+     "purpose": "Step 7, the checks a PDF cannot show: a modern comment kept through edits of its slide (PowerPoint must…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/recipes.rs",
+     "purpose": "The live mutations step 2 exercises, each over the first slide and its first text shape: the operations, the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/record.rs",
+     "purpose": "What a run writes: candidates with their hashes and owed Office checks, each step's engine cases, and the…",
+     "surface": {
+      "crate-vis": 40
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/regression.rs",
+     "purpose": "Step 8: the preservation corpus and the adversarial fixtures through the same path as the core set…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/spec.rs",
+     "purpose": "The `pptx-live-v1` case manifest and the two fixture manifests it names",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/suite.rs",
+     "purpose": "One pinned baseline through steps 1 to 7: its no-op export, the probed variant and every mutation over it…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/variants.rs",
+     "purpose": "Fixture variants derived from a pinned baseline by narrow XML surgery: unknown-XML probes beside the mutated…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -60383,7 +60530,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 6,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60448,7 +60595,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 76,
+   "source_files": 89,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -70966,7 +71113,7 @@
      "path": "src/embedder/mod.rs",
      "purpose": "The embedder provider slot",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -71693,7 +71840,7 @@
      "path": "src/managed/host.rs",
      "purpose": "Managed process entry behind the shared six-verb Host contract",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71867,7 +72014,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -71892,7 +72039,7 @@
      "path": "src/managed/vm_guest.rs",
      "purpose": "Managed mode as a Firecracker vault VM's engine (VAULT-VM = B: built now, adopted after the owner's answer…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71908,7 +72055,7 @@
      "purpose": "The microVM adapter's host half: one Firecracker VM per vault",
      "surface": {
       "enum": 1,
-      "fn": 14,
+      "fn": 15,
       "struct": 3
      }
     },
@@ -73841,7 +73988,7 @@
      "path": "src/voice_host/boot.rs",
      "purpose": "The server's own voice loop at serve start (OF-410)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -76500,8 +76647,8 @@
      "path": "src/lib/managed_holder.rs",
      "purpose": "Host-attested account actions: one managed widen request, and one facade request the vault owner makes in…",
      "surface": {
-      "const": 2,
-      "fn": 4,
+      "const": 5,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -76592,7 +76739,7 @@
      "path": "src/lib/vm.rs",
      "purpose": "The vault-VM wire: vsock ports and boot-channel frames",
      "surface": {
-      "const": 8,
+      "const": 10,
       "enum": 2,
       "fn": 4
      }
