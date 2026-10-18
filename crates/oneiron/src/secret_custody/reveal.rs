@@ -24,6 +24,7 @@
 //! Every row here, every receipt and every error holds the handle, never the
 //! value.
 
+mod actor_erase;
 mod agent;
 mod file;
 mod owner;
@@ -47,6 +48,10 @@ use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::vault::Vault;
+
+pub(crate) use self::actor_erase::erase_reveal_actor_in_txn;
+pub(super) use self::actor_erase::names_no_actor;
+pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
 
 /// How long a pending reveal waits for its answer and its collection, in
 /// seconds. Canon names no window; a widen proposal's one-hour cap is the
@@ -447,9 +452,11 @@ fn value_in_txn(
 struct RevealRow {
     /// `agent` or `owner`.
     reader: String,
-    /// The agent that asked, or the owner who read.
-    actor: EntityId,
-    /// The model connection; `None` for the owner's read.
+    /// The agent that asked, or the owner who read; `None` once that actor
+    /// was erased (FIX 3520).
+    actor: Option<EntityId>,
+    /// The model connection; `None` for the owner's read. It names no one
+    /// once its agent was erased.
     connection: Option<String>,
     provider: Option<String>,
     secret: EntityId,
@@ -495,7 +502,7 @@ impl RevealRow {
     }
 
     fn is_agents(&self, agent: &EntityId) -> bool {
-        self.reader == READER_AGENT && self.actor == *agent
+        self.reader == READER_AGENT && self.actor == Some(*agent)
     }
 
     /// The bound this reveal asks for: this connection × this class × this
@@ -521,7 +528,9 @@ impl RevealRow {
         let expires_at = self.expires_at.to_be_bytes();
         let fields: [&[u8]; 13] = [
             reveal.as_bytes(),
-            self.actor.as_bytes(),
+            self.actor
+                .as_ref()
+                .map_or(&[][..], |actor| &actor.as_bytes()[..]),
             self.connection.as_deref().unwrap_or_default().as_bytes(),
             self.provider.as_deref().unwrap_or_default().as_bytes(),
             self.secret.as_bytes(),
@@ -580,7 +589,14 @@ impl RevealRow {
             handle: self.handle.clone(),
             class: self.class()?,
             why: self.why.clone(),
-            reader: format!("{}:{}", self.reader, self.actor.to_hex()),
+            reader: format!(
+                "{}:{}",
+                self.reader,
+                self.actor.map_or_else(
+                    || crate::receipt::ERASED_CALL_IDENTITY.to_owned(),
+                    |actor| actor.to_hex()
+                )
+            ),
             connection: self.connection.clone(),
             provider: self.provider.clone(),
             project: self.project,
@@ -799,7 +815,7 @@ fn append_reveal_decision_in_txn(
             ],
         ),
         actor_class: act.actor_class().into(),
-        actor_ref: Some(row.actor.to_hex()),
+        actor_ref: row.actor.map(|actor| actor.to_hex()),
         content_kind: SECRET_REVEAL_CONTENT_KIND.into(),
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
         claim_id: None,

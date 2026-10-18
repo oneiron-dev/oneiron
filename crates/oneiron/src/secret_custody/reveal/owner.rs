@@ -175,7 +175,7 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let mut row = RevealRow {
                 reader: READER_OWNER.to_owned(),
-                actor,
+                actor: Some(actor),
                 connection: None,
                 provider: None,
                 secret,
@@ -271,7 +271,8 @@ fn ask_view(
         } else {
             None
         },
-        grant_ref: if agents {
+        // An erased agent's reveal names no connection a grant could cover.
+        grant_ref: if agents && row.actor.is_some() {
             Some(row.bound()?.digest().to_hex())
         } else {
             None

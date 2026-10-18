@@ -14483,9 +14483,9 @@ pub struct ConsentDenial {
     pub answer_ref: String,
 }
 
-/// `oneiron::workspace_roster::join_consent::ConsentState` with `T` = `EntityId`.
+/// `oneiron::workspace_roster::join_consent::ConsentState` with `T` = `RosterActor`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ConsentStateEntityId {
+pub enum ConsentStateRosterActor {
     #[serde(rename = "missing")]
     Missing(ConsentNeed),
     #[serde(rename = "granted")]
@@ -14629,7 +14629,7 @@ pub enum ConsentStateAdmissionConsent {
 #[serde(deny_unknown_fields)]
 pub struct ConsentSet {
     #[serde(rename = "subject")]
-    pub subject: ConsentStateEntityId,
+    pub subject: ConsentStateRosterActor,
     #[serde(rename = "spend")]
     pub spend: ConsentStateSpendConsent,
     #[serde(rename = "membership")]

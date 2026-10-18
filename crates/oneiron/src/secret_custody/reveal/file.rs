@@ -98,7 +98,7 @@ impl Vault {
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let row = |state| RevealRow {
                 reader: READER_AGENT.to_owned(),
-                actor: asker.agent,
+                actor: Some(asker.agent),
                 connection: Some(asker.connection()),
                 provider: asker.provider.clone(),
                 secret: first,

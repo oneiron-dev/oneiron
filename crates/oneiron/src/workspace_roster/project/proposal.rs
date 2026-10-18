@@ -23,8 +23,9 @@ use crate::memory::{Memory, MemoryResult};
 use crate::ports::JobQueue;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, Named, Raw, SideTable};
-use crate::workspace_roster::OwnerProjectSigner;
+use crate::workspace_roster::join_receipt::names_no_actor;
 use crate::workspace_roster::rooms;
+use crate::workspace_roster::{OwnerProjectSigner, RosterActor, RosterErase};
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -46,6 +47,13 @@ const PENDING: SideTable<EntityId, ProjectDetectionSource, Named> =
 /// (source message).
 const VERDICTS: SideTable<EntityId, ProjectDetectionVerdict, Named> =
     SideTable::new(&side_table::PROJECT_PROPOSAL_VERDICT);
+
+/// A pending project question, or a card no tap answered, stages an act for
+/// its person, its drafter, its leader and its board. Once one of them is
+/// erased the act cannot happen as staged, so the erase deletes it (FIX
+/// 3520). A minted or dismissed card is history and stays, naming no
+/// drafter.
+pub const ACTOR_ERASE_PENDING_PROJECT: RosterErase = RosterErase::Delete;
 
 /// Where a project question's source sits: one person's on-record turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +109,8 @@ pub struct ProjectCardRecord {
     pub conversation: EntityId,
     /// The source message whose detection verdict and receipt this card answers.
     pub detection: EntityId,
-    pub drafted_by: EntityId,
+    /// The drafting agent; no one once it was erased.
+    pub drafted_by: RosterActor,
     pub state: ProjectCardState,
     pub at: u64,
 }
@@ -130,6 +139,80 @@ pub struct ProjectCardConfirmRequest {
 
 fn refused(reason: &str) -> Error {
     Error::InvalidConfig(format!("project card: {reason}"))
+}
+
+/// Erasing `actor` from the host-held cards (FIX 3520): a card no tap
+/// answered that the actor drafted, is for, would lead or sits on the board
+/// of goes with its place in its conversation, when
+/// [`ACTOR_ERASE_PENDING_PROJECT`] says so. A minted or dismissed card keeps
+/// its row, its card and its time, and names no drafter. One-way, in the
+/// erase's own transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a card row that cannot be read.
+pub(crate) fn erase_card_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let hex = actor.to_hex();
+    let mut doomed = Vec::new();
+    let mut erased = Vec::new();
+    for (key, mut record) in CARDS.scan(&vault.store, wtxn)? {
+        let card = &record.card;
+        let staged = record.state == ProjectCardState::Proposed
+            && (record.drafted_by.is(*actor)
+                || card.principal_ref == hex
+                || card.leader_agent_def_ref == hex
+                || card.board_human_refs.contains(&hex));
+        if staged && ACTOR_ERASE_PENDING_PROJECT == RosterErase::Delete {
+            doomed.push((key, record.conversation));
+        } else if record.drafted_by.forget(*actor) {
+            erased.push((key, record));
+        }
+    }
+    for (key, conversation) in &doomed {
+        CARDS.delete(&vault.store, wtxn, key)?;
+        CONVERSATION_CARDS.delete(&vault.store, wtxn, &(*conversation, *key))?;
+    }
+    for (key, record) in &erased {
+        CARDS.put(&vault.store, wtxn, key, record)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the pending project questions (FIX 3520): a
+/// conversation's latest source the actor wrote goes, when
+/// [`ACTOR_ERASE_PENDING_PROJECT`] says so, and its queued question then
+/// finds nothing to ask. A question already running keeps no answer on it
+/// ([`settle_project_detection`]). One-way, in the erase's own transaction.
+/// An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a pending row that cannot be read.
+pub(crate) fn erase_pending_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if ACTOR_ERASE_PENDING_PROJECT != RosterErase::Delete || names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let doomed: Vec<EntityId> = PENDING
+        .scan(&vault.store, wtxn)?
+        .into_iter()
+        .filter(|(_, source)| source.author == *actor)
+        .map(|(conversation, _)| conversation)
+        .collect();
+    for conversation in &doomed {
+        PENDING.delete(&vault.store, wtxn, conversation)?;
+    }
+    Ok(())
 }
 
 fn card_key(card_id: &str) -> [u8; 32] {
@@ -278,15 +361,26 @@ pub(crate) fn claim_project_detection(
 
 /// Settles a claimed question with its kept answer, if any, in one write. A
 /// person asked keeps the source pending; a newer person turn that landed
-/// while the question ran is asked again.
+/// while the question ran is asked again. An answer on a source whose person
+/// was erased while it ran is not kept (FIX 3520): its card would be for no
+/// one. Returns whether an answer was kept.
 pub(crate) fn settle_project_detection(
     vault: &Vault,
     claimed: &ClaimedProjectDetection,
     lease_owner: &str,
     verdict: Option<&ProjectDetectionVerdict>,
-) -> Result<()> {
-    let keep = verdict.is_some_and(|verdict| verdict.answer == ProjectDetectionAnswer::AskedPerson);
+) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
+        let verdict = match verdict {
+            Some(verdict)
+                if vault.local_hard_delete_marker_exists_in_txn(txn, &verdict.source.author)? =>
+            {
+                None
+            }
+            verdict => verdict,
+        };
+        let keep =
+            verdict.is_some_and(|verdict| verdict.answer == ProjectDetectionAnswer::AskedPerson);
         if let Some(verdict) = verdict {
             VERDICTS.put(&vault.store, txn, &verdict.source.message, verdict)?;
         }
@@ -308,7 +402,7 @@ pub(crate) fn settle_project_detection(
             Some(latest) => enqueue_detection_in_txn(vault, txn, claimed.conversation, latest.at)?,
             None => {}
         }
-        Ok(())
+        Ok(verdict.is_some())
     })
 }
 
@@ -513,6 +607,11 @@ impl Memory<'_> {
             if verdict.answer != ProjectDetectionAnswer::Yes || verdict.house != Some(drafter) {
                 return Err(refused("this agent was not asked to draft this card").into());
             }
+            // A drafter dispatched before its source's person was erased
+            // drafts no card for no one (FIX 3520).
+            if vault.local_hard_delete_marker_exists_in_txn(txn, &verdict.source.author)? {
+                return Err(refused("the person this card is for was erased").into());
+            }
             let source = verdict.source;
             let mut card = ProjectProposalCard::new(
                 input.card_id.clone(),
@@ -542,7 +641,7 @@ impl Memory<'_> {
                     card: card.clone(),
                     conversation: source.conversation,
                     detection: message,
-                    drafted_by: drafter,
+                    drafted_by: RosterActor::Actor(drafter),
                     state: ProjectCardState::Proposed,
                     at,
                 },
@@ -572,7 +671,8 @@ impl Memory<'_> {
                 Some(room) => rooms::require_member(vault, &txn, canonical(room)?, actor).is_ok(),
                 None => false,
             };
-            if member || record.drafted_by == actor || record.card.principal_ref == actor.to_hex() {
+            if member || record.drafted_by.is(actor) || record.card.principal_ref == actor.to_hex()
+            {
                 cards.push(record);
             }
         }
