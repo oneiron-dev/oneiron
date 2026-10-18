@@ -669,6 +669,15 @@ vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
+vaultSieveQueue(input: unknown): unknown
+vaultSieveRetained(input: unknown): unknown
+vaultSieveReceipts(input: unknown): unknown
+vaultSievePolicy(input: unknown): unknown
+vaultSievePolicySet(input: unknown): unknown
+vaultSieveRecipePolicy(input: unknown): unknown
+vaultSieveRecipePolicySet(input: unknown): unknown
+vaultSieveLease(input: unknown): unknown
+vaultSieveLeaseRefill(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
 vaultClaimsVetting(input: unknown): unknown
 vaultMemorySignalExtraction(input: unknown): unknown
