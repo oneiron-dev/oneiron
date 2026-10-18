@@ -340,7 +340,7 @@ fn import_promotion_snapshot_with(
     snapshot: &[u8],
 ) -> bool {
     crate::sync::window::validate_promotion_snapshot(vault, doc, snapshot).is_ok()
-        && doc.import(snapshot).is_ok()
+        && crate::sync::ingest::with_promotion(vault, || doc.import(snapshot)).is_ok()
 }
 
 fn refused() -> TransportError {
@@ -640,7 +640,9 @@ impl SyncClient {
         let Some(world) = window.world() else {
             return;
         };
-        if let Err(error) = self.manager.materialize_sealed_mirror(world, window) {
+        if let Err(error) = crate::sync::ingest::with_promotion(&self.vault, || {
+            self.manager.materialize_sealed_mirror(world, window)
+        }) {
             tracing::warn!(%error, %window, "sealed mirror not materialized on promotion");
         }
     }
