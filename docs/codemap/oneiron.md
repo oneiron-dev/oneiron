@@ -255,7 +255,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/owner_act.rs` | src | m | 1 struct · 2 enum · 4 fn · 11 crate-vis | ActAuthority, GrantedAct, KeyWork | The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged… |
 | `src/authority/owner_project_slip.rs` | src | s | 1 fn | — | The host's owner-project slip (OF-497): the host-held project.write slip an [`OwnerProjectSigner`] signs the… |
 | `src/authority/owner_roots.rs` | src | s | 2 struct · 2 fn · 2 crate-vis | AwaitedRoot, OwnerRootView | The owner roots this vault stores, as this install sees them (world privacy P6b, R1) |
-| `src/authority/owner_work.rs` | src | m | 16 crate-vis | — | Folds the owner's work requests and their results: which install is to do the key, custody or root work an… |
+| `src/authority/owner_work.rs` | src | m | 17 crate-vis | — | Folds the owner's work requests and their results: which install is to do the key, custody or root work an… |
 | `src/authority/pinned_root.rs` | src | s | 8 crate-vis | — | This install's pin: the owner recovery root whose anchor it trusts (world privacy P6b, R1) |
 | `src/authority/readonly_fold.rs` | src | m | 17 crate-vis | — | One read-snapshot authority evaluator shared by Vault and the batch write door |
 | `src/authority/recover_many.rs` | src | s | 2 struct · 2 enum · 1 fn | VaultRecovered, VaultRecoveryOutcome, VaultRecoveryProof, VaultRecoveryStep | M-vault recovery (OF-169): each vault recovers on its own chain |
@@ -4401,10 +4401,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/content_window.rs` | src | s | 1 fn · 2 crate-vis | — | The window side of the sealed cloud bundle's world sections (OF-570 (d), FIX 922): what a reader packs from… |
 | `src/world_keys/doors.rs` | src | L | 1 enum · 4 fn · 25 crate-vis | WorldKeyStatus | The doors that mint, wrap and open a world's key (contract §5), and what every world-key door shares: this… |
 | `src/world_keys/doors/provenance.rs` | src | s | 1 crate-vis | — | A key record's provenance, under its signature (CALLS WORLD_KEY_WRAP_AUTH): the owner work request it does… |
-| `src/world_keys/kit.rs` | src | m | 6 struct · 5 fn · 1 const · 1 crate-vis | ConfirmedWorldKit, IssuedWorldKit, StoredCost, StoredKit, WorldKitRestore, WorldKitStatus | The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of… |
+| `src/world_keys/kit.rs` | src | m | 6 struct · 5 fn · 1 const · 8 crate-vis | ConfirmedWorldKit, IssuedWorldKit, StoredCost, StoredKit, WorldKitRestore, WorldKitStatus | The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of… |
 | `src/world_keys/machine.rs` | src | s | 2 fn · 2 crate-vis | — | This install's machine secret: a 32-byte seed in the this-device-only keystore, expanded to the hybrid… |
-| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 18 re-export · 12 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
-| `src/world_keys/owner_work/mod.rs` | src | s | 1 struct · 2 enum · 1 fn · 1 re-export · 3 crate-vis | OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned | The owner's work an install records for another to do, and what the named install did with it (owner work… |
+| `src/world_keys/mod.rs` | src | s | 2 struct · 3 fn · 19 re-export · 12 crate-vis | WorldKey, WorldKeyBinding | Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the… |
+| `src/world_keys/owner_work/mod.rs` | src | s | 1 struct · 2 enum · 2 fn · 1 re-export · 3 crate-vis | OwnerWorkReceipt, OwnerWorkStatus, OwnerWorkUnassigned | The owner's work an install records for another to do, and what the named install did with it (owner work… |
 | `src/world_keys/owner_work/pickup.rs` | src | s | 1 struct · 1 fn | OwnerWorkDrain | The executor's pickup: every owner work request naming this install, each rechecked and done in a writer… |
 | `src/world_keys/owner_work/record.rs` | src | s | 3 crate-vis | — | Recording one owner work request in the act's own transaction, and the one rule that names its executor |
 | `src/world_keys/owner_work/result.rs` | src | s | 1 fn · 1 crate-vis | — | The executor's signed result for one request, and the receipt door that reads where a request stands |
@@ -4415,8 +4415,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/repin.rs` | src | m | 2 struct · 1 enum · 6 crate-vis | NarrowedWorld, RepinReport, Withheld | The one re-wrap sequence (contract §4) |
 | `src/world_keys/root.rs` | src | s | 2 struct · 1 enum · 9 fn · 1 re-export | RecoveryRoot, RecoveryRootSeed, SeedOrigin | The owner's recovery root: 32 random bytes that only the recovery kit carries |
 | `src/world_keys/root/tests.rs` | test | s | — | — | The owner anchor's stack (RustCrypto/meta#38; Wonder code-R4 W4-F1, Sol code-R5 S5-F1, Wonder W5-F1)… |
-| `src/world_keys/root_doors.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 crate-vis | ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore | The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring… |
+| `src/world_keys/root_doors.rs` | src | m | 3 struct · 1 enum · 4 fn · 10 crate-vis | ActivatedRoot, AnchoredMachine, KitConfirmation, RootRestore | The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring… |
 | `src/world_keys/root_issue.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | PreparedRoot | Kit issue, phase 1: a fresh recovery root and its signed record, held in memory until the kit issuer reports… |
+| `src/world_keys/root_work/execute.rs` | src | m | 1 fn | — | The target's door for a root request and the material its change needs ([`Vault::run_root_request`]): the… |
+| `src/world_keys/root_work/mod.rs` | src | m | 3 enum · 3 fn · 2 crate-vis | RootMaterial, RootSecret, RootWorkDone | Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is… |
 | `src/world_keys/session.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | WorldKeyFrontierCheck | What one vault handle keeps for world privacy P6b, in memory only: this install's keystore, the world keys… |
 | `src/world_keys/state.rs` | src | s | 1 enum · 1 fn | WorldRecoveryState | The no-kit warning (ruling fix 10): a typed state |
 | `src/world_keys/tests.rs` | test | m | — | — | P6b done-means checks on the key core |

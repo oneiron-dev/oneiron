@@ -3108,7 +3108,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -56533,7 +56533,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 8,
       "fn": 5,
       "struct": 6
      }
@@ -56561,7 +56561,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 18,
+      "re-export": 19,
       "struct": 2
      }
     },
@@ -56578,7 +56578,7 @@
      "surface": {
       "crate-vis": 3,
       "enum": 2,
-      "fn": 1,
+      "fn": 2,
       "re-export": 1,
       "struct": 1
      }
@@ -56723,7 +56723,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -56741,6 +56741,32 @@
       "crate-vis": 2,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/root_work/execute.rs",
+     "purpose": "The target's door for a root request and the material its change needs ([`Vault::run_root_request`]): the…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RootMaterial",
+      "RootSecret",
+      "RootWorkDone"
+     ],
+     "path": "src/world_keys/root_work/mod.rs",
+     "purpose": "Root work (WILL L04 row 02): the owner decides a change to one install's recovery root on any surface he is…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 3,
+      "fn": 3
      }
     },
     {
@@ -59206,7 +59232,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 29,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59222,7 +59248,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3613,
+   "source_files": 3615,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59471,15 +59497,16 @@
       "OwnerWorkRefusal",
       "OwnerWorkRequest",
       "OwnerWorkResult",
+      "RootChange",
       "WorldKeyMode"
      ],
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
-      "const": 2,
+      "const": 3,
       "crate-vis": 6,
-      "enum": 5,
-      "fn": 12,
+      "enum": 6,
+      "fn": 14,
       "struct": 2
      }
     },
