@@ -103,11 +103,13 @@ impl PathRecorder {
 
     /// Writes the refusals folded into `key`'s window from `since` when it
     /// ends, unless a later refusal's receipt counted them first. It holds
-    /// the sink weakly, so it never keeps a dropped transport's vault open;
-    /// [`IrohTransport::shutdown`] writes them itself.
+    /// the sink until then, so a transport dropped without
+    /// [`IrohTransport::shutdown`] still leaves them, and its vault stays
+    /// open until that window ([`REFUSAL_RECEIPT_WINDOW`]) ends; `shutdown`
+    /// writes them itself.
     fn flush_at(&self, key: RefusalKey, since: Instant) {
         let refusals = Arc::clone(&self.refusals);
-        let sink = Arc::downgrade(&self.sink);
+        let sink = Arc::clone(&self.sink);
         tokio::spawn(async move {
             tokio::time::sleep_until((since + REFUSAL_RECEIPT_WINDOW).into()).await;
             let folded = match refusals
@@ -122,7 +124,7 @@ impl PathRecorder {
                 }
                 _ => None,
             };
-            if let (Some(receipt), Some(sink)) = (folded, sink.upgrade()) {
+            if let Some(receipt) = folded {
                 write_receipt(&sink, &receipt).await;
             }
         });
