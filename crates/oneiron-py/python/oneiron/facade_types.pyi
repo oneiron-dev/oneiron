@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 396 facade rows, 1549 declarations.
-Inputs: 353 of 396 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 351 of 396 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 400 facade rows, 1558 declarations.
+Inputs: 357 of 400 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 355 of 400 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -6219,6 +6219,61 @@ class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):
     page_token: str
+class CalendarRangeDto(TypedDict):
+    start: int
+    end: int
+class CalendarEventCreateRequestNative(TypedDict):
+    origin: Literal["native"]
+    summary: str
+    occurredAt: CalendarRangeDto
+class CalendarEventCreateRequestDreamer(TypedDict):
+    origin: Literal["dreamer"]
+    summary: str
+    occurredAt: CalendarRangeDto
+    evidenceTurnIds: list[str]
+    sourceFrontiers: list[str]
+CalendarEventCreateRequest = CalendarEventCreateRequestNative | CalendarEventCreateRequestDreamer
+class CalendarEventCreated(TypedDict):
+    event_ref: str
+    origin: str
+    recorded_at: int
+class CalendarIcsImportRequest(TypedDict):
+    system: str
+    source_blob_ref: str
+    source_version: int
+class CalendarImportClaimReceipt(TypedDict):
+    claim_ref: str
+    predicate: str
+    approval: str
+    lifecycle: str
+class CalendarImportedEvent(TypedDict):
+    event_ref: str
+    uid: str
+    original_start_utc: NotRequired[int | None]
+    claims: list[CalendarImportClaimReceipt]
+class CalendarIcsImportReceipt(TypedDict):
+    source_blob_ref: str
+    source_version: int
+    events: list[CalendarImportedEvent]
+    screen_verdict: str
+class CalendarOccurrencesRequest(TypedDict):
+    master_ref: str
+    range: CalendarRangeDto
+class CalendarOccurrenceView(TypedDict):
+    event_ref: str
+    master_ref: str
+    uid: str
+    original_start_utc: int
+    start_utc: int
+    end_utc: int
+class CalendarInstanceMoveRequest(TypedDict):
+    system: str
+    source_blob_ref: str
+    source_version: int
+    uid: str
+    original_start_utc: int
+    start_utc: int
+    end_utc: int
 class CalendarReadRequest(TypedDict):
     event_ref: str
 class CalendarEventView(TypedDict):
@@ -6231,9 +6286,6 @@ class CalendarEventView(TypedDict):
     blocks_time: bool
 class CalendarSel(TypedDict):
     system: NotRequired[str | None]
-class CalendarRangeDto(TypedDict):
-    start: int
-    end: int
 class CalendarSearchRequest(TypedDict):
     calendars: list[CalendarSel]
     range: NotRequired[CalendarRangeDto | None]

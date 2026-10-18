@@ -2764,6 +2764,37 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_calendar_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_ics_import(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.ics.import")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.ics.import", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_occurrences(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.occurrences")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.calendar.occurrences", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_calendar_instances_move(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.instances.move")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.calendar.instances.move", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_calendar_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.calendar.read")?;
         let output = py
