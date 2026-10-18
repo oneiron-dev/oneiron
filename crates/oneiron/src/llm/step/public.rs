@@ -354,6 +354,36 @@ pub fn receipt_as_owner(
     view(vault, id, &row).map_err(MemoryError::from)
 }
 
+/// Payload-free projection of the existing live checkpoint or terminal step claim.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ModelStepCheckpoint {
+    pub progression: StepProgression,
+    /// The live row is retired at completion; its timestamp is then absent.
+    pub updated_ms: Option<u64>,
+    pub claim_ref: Option<String>,
+}
+
+pub(crate) fn resume_checkpoint(
+    vault: &Vault,
+    id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Option<ModelStepCheckpoint>> {
+    let state = step_state_read(vault, id, step_hash)?;
+    let claim_ref = step_index_lookup(vault, id, step_hash)?.map(|id| id.to_hex());
+    Ok(match state {
+        Some(state) => Some(ModelStepCheckpoint {
+            progression: state.progression,
+            updated_ms: Some(state.updated_at),
+            claim_ref,
+        }),
+        None => claim_ref.map(|claim_ref| ModelStepCheckpoint {
+            progression: StepProgression::Finished,
+            updated_ms: None,
+            claim_ref: Some(claim_ref),
+        }),
+    })
+}
+
 fn view(vault: &Vault, id: AttemptId, row: &Submission) -> Result<ModelStepReceipt> {
     let progression = match &row.result {
         Some(ModelStepResult::Finished { .. }) => Some(StepProgression::Finished),
