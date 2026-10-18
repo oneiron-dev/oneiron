@@ -45,11 +45,8 @@ pub(crate) struct HostSelfBriefSession {
     pub(crate) emitted_epoch: Option<u64>,
 }
 
-/// One piece of task work's turn on a vault ([`SyncServer::admit_task_work`]):
-/// dropping it hands the turn to the next caller in line. Work that waited
-/// out its turn holds none.
-#[must_use = "task work keeps its turn only while it is held"]
-pub struct TaskWorkTurn(Option<crate::admission::Permit>);
+/// One piece of task work's turn on a vault ([`SyncServer::admit_task_work`]).
+pub use oneiron::work_line::TaskWorkTurn;
 
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
@@ -104,7 +101,7 @@ pub struct SyncServer {
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
-    pub(crate) lens_frames: crate::lens_frames::LensFrameStore,
+    pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -155,9 +152,6 @@ pub struct SyncServer {
     pub(crate) decision_read: Option<(crate::models::DecisionReadDoor, oneiron::BudgetGuard)>,
     /// Reads that route holds at once (`limits.decision_reads`).
     pub(crate) decision_reads: crate::admission::Admission<()>,
-    /// Task work this vault runs at once (`limits.task_work`), each caller's
-    /// in a fair line: see [`Self::admit_task_work`].
-    pub(crate) task_work: crate::admission::Admission<oneiron::EntityId>,
     /// The host's decision ladder: the rule table and the owner's ask queue
     /// on every server, with the rungs `[models]` binds once the AI host
     /// attaches.
@@ -362,11 +356,16 @@ impl SyncServer {
             config.limits.decision_reads,
             config.limits.queue_wait(),
         );
-        let task_work = crate::admission::Admission::new(
-            crate::wire_telemetry::LimitRow::TaskWork,
-            Arc::clone(wire_telemetry.limit_questions()),
+        // Task work waits in the vault's own line, which the embedded SDK, a
+        // code run's own ask and wait and a pumped agent share with the
+        // served doors; this server sets its `[limits]` row on it.
+        vault.set_task_work(
             config.limits.task_work,
             config.limits.queue_wait(),
+            Some(crate::admission::row_crossing(
+                crate::wire_telemetry::LimitRow::TaskWork,
+                Arc::clone(wire_telemetry.limit_questions()),
+            )),
         );
         let decisions = crate::decision_host::DecisionHost::new(&vault);
         let run_receipts = Arc::new(crate::models::ServerReceipts::hooked(vault.clone()));
@@ -375,8 +374,15 @@ impl SyncServer {
             config.feedback_inbox.notes_per_hour,
             std::time::Instant::now(),
         );
+        let lens_frames = Arc::new(crate::lens_frames::LensFrameStore::new(
+            &retained,
+            &wire_telemetry,
+        ));
+        // OF-181: a live run that ends closes the lens cards it created.
+        let live_runs: Arc<super::LiveRuns> = Arc::default();
+        live_runs.close_cards_with(Arc::clone(&lens_frames));
         Ok(Self {
-            lens_frames: crate::lens_frames::LensFrameStore::new(&retained, &wire_telemetry),
+            lens_frames,
             retained,
             presence,
             usage_ledger: UsageLedger::new(vault.clone()),
@@ -409,7 +415,7 @@ impl SyncServer {
             mcp_registry,
             mcp_code_host: None,
             reader_runner,
-            live_runs: Arc::default(),
+            live_runs,
             browser_guest: None,
             desktop_guest: None,
             desktop_seats: Arc::default(),
@@ -421,7 +427,6 @@ impl SyncServer {
             llm: None,
             decision_read: None,
             decision_reads,
-            task_work,
             decisions,
             hook_runtime: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
@@ -758,23 +763,15 @@ impl SyncServer {
     }
 
     /// `caller`'s turn to run one piece of task work on this vault (`can`,
-    /// `ask`, `wait`, `tasks.answer`; Rule 5): at once while fewer than
+    /// `ask`, `wait`, `tasks.answer`; Rule 5), in the vault's own line
+    /// ([`oneiron::Vault::admit_task_work`]): at once while fewer than
     /// `limits.task_work` run, else in a fair line, one caller's work after
     /// another's, each caller's oldest first. Crossing the bound asks its
     /// OF-520 question. Work is never refused: past `queue_wait_timeout_ms`
     /// it runs without a turn. Hold the turn until the work ends; take it
     /// before the engine opens a transaction.
     pub async fn admit_task_work(&self, caller: oneiron::EntityId) -> TaskWorkTurn {
-        match self.task_work.admit(caller).await {
-            Ok(permit) => TaskWorkTurn(Some(permit)),
-            Err(crate::admission::WaitTimedOut) => {
-                tracing::info!(
-                    caller = %caller.to_hex(),
-                    "task work waited out its turn; it runs past limits.task_work"
-                );
-                TaskWorkTurn(None)
-            }
-        }
+        self.vault.admit_task_work(caller).await
     }
 
     /// Allocates a new unique nonzero connection ID.
