@@ -1910,6 +1910,27 @@ pub struct AgentHealthCardView {
     pub body: AgentHealthCard,
     /// The run of the card's newest attempt, when it has one.
     pub run_tree: Option<AgentHealthRunTree>,
+    /// The owner's applied prompt continuation of that attempt (FIX 3694),
+    /// once one is applied.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_inject: Option<AgentHealthPromptInject>,
+}
+
+/// The owner's applied prompt continuation of a card's failed attempt
+/// (FIX 3694): the approval it ran under and the successor it enqueued.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentHealthPromptInject {
+    /// The approval's id, as 32 hex.
+    pub approval: String,
+    /// The successor attempt, as 32 hex.
+    pub successor: String,
+    /// The Coach ask approved, as 32 hex.
+    pub ask: String,
+    /// The approving owner.
+    pub by: EntityId,
+    pub at: u64,
+    /// The approved prompt is the owner's edit of the Coach's draft.
+    pub edited: bool,
 }
 
 /// The run a card's attempt is in, with that attempt's node marked.
@@ -1961,8 +1982,10 @@ fn card_view(
     card: AgentHealthCard,
 ) -> Result<AgentHealthCardView> {
     let mut run_tree = None;
+    let mut prompt_inject = None;
     if let Some(attempt) = card.attempt {
         let attempt = AttemptId::from_bytes(attempt.as_bytes())?;
+        prompt_inject = crate::agent_dispatch::prompt_inject_application(vault, attempt)?;
         if let Some(run_id) = AttemptQueue::new(vault)
             .get(attempt)?
             .and_then(|record| record.run_id)
@@ -1978,6 +2001,7 @@ fn card_view(
         card: card_ref(key),
         body: card,
         run_tree,
+        prompt_inject,
     })
 }
 

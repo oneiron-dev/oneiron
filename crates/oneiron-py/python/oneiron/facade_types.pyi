@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 383 facade rows, 1497 declarations.
+Census: 383 facade rows, 1498 declarations.
 Inputs: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
@@ -287,10 +287,18 @@ class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree
     marked: str
+class AgentHealthPromptInject(TypedDict):
+    approval: str
+    successor: str
+    ask: str
+    by: EntityId
+    at: int
+    edited: bool
 class AgentHealthCardView(TypedDict):
     card: str
     body: AgentHealthCard
     run_tree: NotRequired[AgentHealthRunTree | None]
+    prompt_inject: NotRequired[AgentHealthPromptInject | None]
 ConcernOutcome = Literal["confirmed", "dismissed", "unresolved"]
 class ConcernOutcomeRequest(TypedDict):
     card: str
