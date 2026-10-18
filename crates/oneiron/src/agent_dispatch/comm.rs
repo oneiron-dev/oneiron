@@ -72,6 +72,27 @@ impl CommReach {
         }
     }
 
+    /// The prompt's comm block, generated from the slip (ARCH-0028 :611):
+    /// whom the run may message, and how it asks for more (CALLS FIX 1380
+    /// comm block).
+    #[must_use]
+    pub fn prompt_block(self) -> String {
+        let whom = match self {
+            Self::Parent => "your parent and your own children",
+            Self::Subtree => "your parent, your own children and every live run below you",
+            Self::Project => {
+                "your parent, every live run below you, your project's leader and every live run in your project"
+            }
+            Self::Vault => {
+                return "Comm reach: vault. self.message reaches anyone in the vault.".to_owned();
+            }
+        };
+        format!(
+            "Comm reach: {}. self.message reaches {whom}. A message to anyone else is refused, and the refusal asks your parent once to widen your reach: an approval holds for this run, a decline is final for that reach.",
+            self.as_str()
+        )
+    }
+
     pub(super) fn parse(value: &str) -> Option<Self> {
         match value {
             "parent" => Some(Self::Parent),
@@ -144,8 +165,10 @@ pub(crate) fn spawn_role_in_txn(
 impl AgentDispatcher<'_> {
     /// The reach a dispatch freezes, resolved once before it forks or
     /// enqueues: the spawn's request, else its role's default, never wider
-    /// than its real parent's. A wider request is clamped, not refused and
-    /// not proposed (CALLS C3). A dispatch with no agent parent takes its own.
+    /// than its real parent's live reach (its dial, widened by any reach its
+    /// own parent approved, CALLS W4). A wider request is clamped, not
+    /// refused and not proposed (CALLS C3). A dispatch with no agent parent
+    /// takes its own.
     pub(super) fn resolve_comm_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -164,7 +187,9 @@ impl AgentDispatcher<'_> {
         )?;
         let reach = requested.unwrap_or(default_comm_reach(role));
         Ok(match dispatch_parent_in_txn(self, txn, parent)? {
-            Some((_, parent)) => reach.min(parent.comm),
+            Some((id, parent)) => reach.min(super::comm_widen::effective_comm_in_txn(
+                self.vault, txn, id, &parent,
+            )?),
             None => reach,
         })
     }
