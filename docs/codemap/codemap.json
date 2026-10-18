@@ -54526,9 +54526,19 @@
      "purpose": "The vault's one sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922), and the sealed pad object beside it",
      "surface": {
       "const": 3,
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 34,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/authority.rs",
+     "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed settings and key wrap entries…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -54607,7 +54617,7 @@
      "path": "src/world_keys/mod.rs",
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 3,
       "re-export": 16,
       "struct": 2
@@ -57191,7 +57201,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57207,7 +57217,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3485,
+   "source_files": 3486,
    "test_files": 902
   },
   "oneiron-android": {
