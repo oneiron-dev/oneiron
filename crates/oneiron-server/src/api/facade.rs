@@ -31,6 +31,7 @@ mod booking_doors;
 mod call_context;
 mod campaign_split_doors;
 mod channel_doors;
+mod claim_settle_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;

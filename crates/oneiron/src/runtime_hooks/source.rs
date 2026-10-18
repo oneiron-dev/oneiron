@@ -220,6 +220,8 @@ pub enum SettledOutcome {
 pub enum SettlementKind {
     GateConsentBundle,
     CriticalWriteConfirm,
+    /// One proposed claim settled by its id (`vault.claims.settle`).
+    ClaimSettlement,
 }
 
 /// One settlement, as its door records it.

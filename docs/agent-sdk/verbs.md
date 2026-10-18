@@ -177,6 +177,8 @@ both bindings and their export-census tests in one change.
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
+- `vault.claims.review`
+- `vault.claims.settle`
 - `vault.craft_candidates`
 - `vault.craft_candidates.answer`
 - `vault.settings.wake_policy.set`

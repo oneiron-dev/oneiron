@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 383 facade rows, 1498 declarations.
-Inputs: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 385 facade rows, 1508 declarations.
+Inputs: 342 of 385 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 340 of 385 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -4010,6 +4010,43 @@ class WidenProposalsView(TypedDict):
     proposals: list[WidenProposalView]
 class WidenProposalAnswer(TypedDict):
     proposal_id: str
+class ClaimProposalReviewRequest(TypedDict):
+    claim_ref: str
+class ClaimProposalReview(TypedDict):
+    review_id: str
+    proposal_ref: str
+    claim: ClaimView
+    opener_ref: NotRequired[str | None]
+    pending_ref: NotRequired[str | None]
+ClaimSettleDecision = Literal["approve", "reject"]
+class ClaimSettleRequest(TypedDict):
+    claim_ref: str
+    review_id: str
+    decision: ClaimSettleDecision
+ClaimSettlementVerdict = Literal["landed", "rejected"]
+class ClaimChangeVerdict(TypedDict):
+    claim_ref: str
+    verdict: ClaimSettlementVerdict
+class ClaimSettlementAnswer(TypedDict):
+    kind: Literal["word"]
+    person_ref: str
+ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined"]
+class ClaimSettlementRevert(TypedDict):
+    verb: str
+    claim_ref: str
+class ClaimSettlement(TypedDict):
+    receipt_ref: str
+    proposal_ref: str
+    review_id: str
+    changes: list[ClaimChangeVerdict]
+    verdict: ClaimSettlementVerdict
+    answered_by: ClaimSettlementAnswer
+    reason: ClaimSettlementReason
+    summary: str
+    tray_receipt_ref: NotRequired[str | None]
+    revert: NotRequired[ClaimSettlementRevert | None]
+    claim: ClaimView
+    settled_at: int
 class CraftCandidatesRequest(TypedDict):
     resident: NotRequired[str | None]
 class CraftCandidateView(TypedDict):
