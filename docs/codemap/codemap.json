@@ -27866,9 +27866,10 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "EntityMentionRequest",
       "EntityResolutionCandidate",
       "EntityResolutionRoute",
       "EntityResolutionWaterfallDecision",
@@ -27879,8 +27880,8 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 1,
-      "struct": 3
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -50576,7 +50577,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 644
+      "fn": 646
      }
     },
     {
@@ -52812,6 +52813,7 @@
      "purpose": "ARCH-0073 vault auto-cleanup: the Dreamer ARCHIVE cron (ONE-1931)",
      "surface": {
       "crate-vis": 6,
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -52909,7 +52911,21 @@
      "path": "src/vault_cleanup/scan.rs",
      "purpose": "Bounded rotating scans",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CleanupRunRequest",
+      "CleanupRunView"
+     ],
+     "path": "src/vault_cleanup/surface.rs",
+     "purpose": "Typed owner trigger for the existing archive cron",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -57714,7 +57730,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…"
     },
     "vault_cleanup": {
-     "files": 17,
+     "files": 18,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57793,7 +57809,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3522,
+   "source_files": 3523,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66302,7 +66318,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 594
+      "fn": 596
      }
     },
     {
@@ -67351,7 +67367,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 595
+      "fn": 597
      }
     },
     {
@@ -70341,6 +70357,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/cleanup_doors.rs",
+     "purpose": "Archive cleanup and evidence-backed re-mention, under the owner's own proof",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_doors.rs",
      "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
      "surface": {
@@ -70604,7 +70630,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 114
+      "crate-vis": 115
      }
     },
     {
@@ -78261,7 +78287,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 374,
+     "files": 375,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78683,7 +78709,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 709,
+   "source_files": 710,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79167,6 +79193,10 @@
       "ClaimSettlementReason",
       "ClaimSettlementRevert",
       "ClaimSettlementVerdict",
+      "CleanupCandidate",
+      "CleanupKind",
+      "CleanupPosture",
+      "CleanupRunView",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -79484,6 +79514,10 @@
       "EmbeddingSpaceProbes",
       "EmbeddingSpaceRequest",
       "EmbeddingSpacesView",
+      "EntityMentionRequest",
+      "EntityResolutionCandidate",
+      "EntityResolutionRoute",
+      "EntityResolutionWaterfallDecision",
       "EraseAskKind",
       "EraseAskStatus",
       "EraseHeldBytes",
@@ -80527,6 +80561,7 @@
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
+      "ScoredEntityResolutionCandidate",
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
       "ScratchpadRecallReply",
@@ -81072,8 +81107,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 573,
-      "struct": 1618
+      "enum": 576,
+      "struct": 1624
      }
     },
     {
