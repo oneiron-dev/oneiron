@@ -8068,6 +8068,54 @@ async fn vault_code_model_heal_count(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn vault_code_waits_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.waits.resolve")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.waits.resolve", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.waits.resolve", value).await?;
+    let (output, listed) = super::host_doors::vault_code_waits_resolve(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_waits_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.waits.receipt")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.waits.receipt", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.waits.receipt", value).await?;
+    let (output, listed) = super::host_doors::vault_code_waits_receipt(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_results_status(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -15950,6 +15998,8 @@ pub(crate) async fn call_verb(
         "vault.code.proposal_submit" => vault_code_proposal_submit(server, call, input).await,
         "vault.code.oplog" => vault_code_oplog(server, call, input).await,
         "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
+        "vault.code.waits.resolve" => vault_code_waits_resolve(server, call, input).await,
+        "vault.code.waits.receipt" => vault_code_waits_receipt(server, call, input).await,
         "vault.results.status" => vault_results_status(server, call, input).await,
         "vault.results.recover" => vault_results_recover(server, call, input).await,
         "vault.results.read" => vault_results_read(server, call, input).await,

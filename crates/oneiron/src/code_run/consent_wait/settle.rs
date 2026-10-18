@@ -16,6 +16,7 @@ use crate::store::GateDecisionId;
 use crate::task_verb::sdk::ConnectorCallReply;
 
 use super::binding::{put_code_consent_wait_in_txn, read_code_consent_wait_in_txn};
+use super::ledger::{LedgerLinks, ledger_links_in_txn};
 use super::types::{
     CodeConsentAnswerInput, CodeConsentAnswerStamp, CodeConsentBinding, CodeConsentChoice,
     CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentSettlement,
@@ -132,7 +133,8 @@ impl Vault {
         Ok(row.binding.original.credential)
     }
 
-    /// The view of one wait.
+    /// The view of one wait, with its receipts' links as the consent Gate
+    /// ledger holds them, read in the same snapshot.
     pub(crate) fn code_consent_wait_view(
         &self,
         wait_id: EntityId,
@@ -141,7 +143,8 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-        Ok(view_of(&row, already_answered))
+        let ledger = ledger_links_in_txn(self, &txn, &row)?;
+        Ok(view_of(&row, ledger, already_answered))
     }
 }
 
@@ -506,8 +509,13 @@ pub(crate) fn offered_choices(binding: &CodeConsentBinding) -> Vec<CodeConsentCh
         .collect()
 }
 
-fn view_of(row: &CodeConsentWaitRow, already_answered: bool) -> CodeConsentWaitView {
+fn view_of(
+    row: &CodeConsentWaitRow,
+    ledger: LedgerLinks,
+    already_answered: bool,
+) -> CodeConsentWaitView {
     let call = row.binding.pending.connector_call();
+    let consumed = row.consumption.as_ref();
     CodeConsentWaitView {
         wait_id: row.binding.wait_id,
         run_id: row.binding.run_id,
@@ -543,6 +551,14 @@ fn view_of(row: &CodeConsentWaitRow, already_answered: bool) -> CodeConsentWaitV
             .as_ref()
             .map(|settled| settled.reason_codes.clone())
             .unwrap_or_default(),
+        answered_at_ms: row.answer.as_ref().map(|answer| answer.answered_at_ms),
+        settled_at_ms: row.settlement.as_ref().map(|settled| settled.settled_at_ms),
+        settlement_links: ledger.settled,
+        consumed_step: consumed.map(|consumed| consumed.step_seq),
+        resumed_path: consumed.map(|consumed| consumed.resumed_path.clone()),
+        result_handle: consumed.map(|consumed| consumed.result_handle.clone()),
+        consumed_at_ms: consumed.map(|consumed| consumed.consumed_at_ms),
+        consumption_links: ledger.consumed,
         already_answered,
     }
 }

@@ -5374,6 +5374,36 @@
       "openapi": true
     },
     {
+      "name": "vault.code.waits.resolve",
+      "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
+      "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
+      "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.waits.receipt",
+      "description": "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
+      "input": "crate::memory::code_wait_doors::CodeWaitReceiptRequest",
+      "output": "Option<crate::memory::code_wait_doors::CodeWaitReceiptView>",
+      "call": "memory.code_wait_receipt_as(&memory.embedded_owner(\"vault.code.waits.receipt\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.results.status",
       "description": "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.",
       "input": "crate::memory::result_doors::ResultRunRequest",

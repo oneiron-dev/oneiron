@@ -1870,6 +1870,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.waits.resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_wait_doors::CodeWaitResolveRequest,
+                >(),
+            ),
+            (
+                "vault.code.waits.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_wait_doors::CodeWaitReceiptRequest,
+                >(),
+            ),
+            (
                 "vault.results.status",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::result_doors::ResultRunRequest,
@@ -3880,6 +3892,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
     "vault.code.model_heal_count",
+    "vault.code.waits.resolve",
+    "vault.code.waits.receipt",
     "vault.results.status",
     "vault.results.recover",
     "vault.results.read",
@@ -4508,6 +4522,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
+        >(),
+        "vault.code.waits.resolve" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_wait_doors::CodeWaitReceiptView,
+        >(),
+        "vault.code.waits.receipt" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::code_wait_doors::CodeWaitReceiptView>,
         >(),
         "vault.results.status" => crate::code_run::vault_read::request_schema::<
             crate::memory::result_doors::ResultRunStatus,
@@ -7378,6 +7398,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.model_heal_count" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.waits.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.waits.receipt" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10764,6 +10798,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::code_run_doors::CodeRunModelHealCountRequest =
                 decode(value.clone())?;
         }
+        "vault.code.waits.resolve" => {
+            let _input: crate::memory::code_wait_doors::CodeWaitResolveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.waits.receipt" => {
+            let _input: crate::memory::code_wait_doors::CodeWaitReceiptRequest =
+                decode(value.clone())?;
+        }
         "vault.results.status" => {
             let _input: crate::memory::result_doors::ResultRunRequest = decode(value.clone())?;
         }
@@ -12637,6 +12679,8 @@ pub fn invoke(
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
         }
+        "vault.code.waits.resolve" => encode(vault_code_waits_resolve(memory, decode(value)?)?),
+        "vault.code.waits.receipt" => encode(vault_code_waits_receipt(memory, decode(value)?)?),
         "vault.results.status" => encode(vault_results_status(memory, decode(value)?)?),
         "vault.results.recover" => encode(vault_results_recover(memory, decode(value)?)?),
         "vault.results.read" => encode(vault_results_read(memory, decode(value)?)?),
@@ -16243,6 +16287,18 @@ pub fn vault_code_model_heal_count(
         &memory.embedded_owner("vault.code.model_heal_count")?,
         input,
     )
+}
+pub fn vault_code_waits_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::code_wait_doors::CodeWaitResolveRequest,
+) -> MemoryResult<crate::memory::code_wait_doors::CodeWaitReceiptView> {
+    memory.code_wait_resolve_as(&memory.embedded_owner("vault.code.waits.resolve")?, input)
+}
+pub fn vault_code_waits_receipt(
+    memory: &Memory<'_>,
+    input: crate::memory::code_wait_doors::CodeWaitReceiptRequest,
+) -> MemoryResult<Option<crate::memory::code_wait_doors::CodeWaitReceiptView>> {
+    memory.code_wait_receipt_as(&memory.embedded_owner("vault.code.waits.receipt")?, input)
 }
 pub fn vault_results_status(
     memory: &Memory<'_>,

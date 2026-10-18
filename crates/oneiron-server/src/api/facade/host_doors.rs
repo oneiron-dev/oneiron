@@ -166,6 +166,8 @@ pub(crate) use super::standing_doors::*;
 pub(crate) use super::code_doors::*;
 // The owner's per-model code-run heal count door (DOOR-093), likewise.
 pub(crate) use super::code_run_doors::*;
+// The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
+pub(crate) use super::code_wait_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1284,6 +1286,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.results.read"
         | "vault.results.slice"
         | "vault.code.model_heal_count"
+        | "vault.code.waits.resolve"
+        | "vault.code.waits.receipt"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
