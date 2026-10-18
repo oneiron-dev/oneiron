@@ -28,7 +28,7 @@ use super::super::verdict::{
 /// `non_exhaustive` on purpose: the variants name coverage gaps, and naming a
 /// gap that was previously unnamed is the normal way this list grows. A
 /// downstream exhaustive match would turn that into a breaking change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RelayBoundaryDegrade {
@@ -111,7 +111,7 @@ impl RelayBoundaryDegrade {
 /// a substrate owner reading the ledger can tell a pattern-decided block from
 /// a model-decided one, and an allow the model examined from an allow the
 /// patterns waved through.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum RelayResolution {
@@ -231,7 +231,7 @@ pub struct RelayClassifiedPass {
 /// What a hosted pass examined: the policy's version AND hash, the pair an
 /// attestation is matched on, and the request's identity-free verification
 /// content hash, the one a CloudVault carrier is bound to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub struct HostedPassEvidence {
     pub version: String,
     pub policy_hash: String,

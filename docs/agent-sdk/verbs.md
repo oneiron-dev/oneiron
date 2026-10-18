@@ -223,6 +223,11 @@ both bindings and their export-census tests in one change.
 - `vault.embedding_spaces.probes.list`
 - `vault.embedding_spaces.probes.put`
 - `vault.embedding_spaces.probes.delete`
+- `vault.policy.owner.get`
+- `vault.policy.owner.configure`
+- `vault.policy.owner.row.change`
+- `vault.policy.outbound.decide`
+- `vault.policy.relay.decide`
 - `vault.gate.policy.get`
 - `vault.gate.policy.put`
 - `vault.gate.policy.propose`
@@ -274,6 +279,10 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_submit`
 - `vault.code.oplog`
 - `vault.code.model_heal_count`
+- `vault.results.status`
+- `vault.results.recover`
+- `vault.results.read`
+- `vault.results.slice`
 - `vault.code.repo_diff`
 - `vault.code.export`
 - `vault.code.origin.authority.get`
@@ -300,6 +309,8 @@ both bindings and their export-census tests in one change.
 - `vault.workflows.update`
 - `vault.workflows.dispatch`
 - `vault.workflows.status`
+- `vault.task_types.pin`
+- `vault.task_types.get`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`

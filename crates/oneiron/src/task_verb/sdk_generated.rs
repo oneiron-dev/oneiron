@@ -1161,6 +1161,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.policy.owner.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.policy.owner.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::OwnerPolicyConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.policy.owner.row.change",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::doors::PolicyRowChangeRequest,
+                >(),
+            ),
+            (
+                "vault.policy.outbound.decide",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::doors::PolicyOutboundRequest,
+                >(),
+            ),
+            (
+                "vault.policy.relay.decide",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::doors::PolicyOutboundRequest,
+                >(),
+            ),
+            (
                 "vault.gate.policy.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::policy_manifest_doors::PolicyManifestRead,
@@ -1624,6 +1652,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkflowRunRequest,
                 >(),
+            ),
+            (
+                "vault.task_types.pin",
+                crate::code_run::vault_read::request_schema::<crate::team::doors::TaskTypeTreePin>(
+                ),
+            ),
+            (
+                "vault.task_types.get",
+                crate::code_run::vault_read::request_schema::<crate::team::doors::TaskTypeTreeRead>(
+                ),
             ),
             (
                 "vault.workspace.establish",
@@ -3078,6 +3116,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.research.create_child",
     "vault.evals.cohorts.setup",
+    "vault.policy.owner.get",
+    "vault.policy.owner.configure",
+    "vault.policy.owner.row.change",
     "vault.gate.policy.get",
     "vault.gate.policy.put",
     "vault.gate.policy.propose",
@@ -3115,6 +3156,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workflows.update",
     "vault.workflows.dispatch",
     "vault.workflows.status",
+    "vault.task_types.pin",
+    "vault.task_types.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3396,6 +3439,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,
         >(),
+        "vault.policy.owner.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::OwnerPolicyConfigurationView,
+        >(),
+        "vault.policy.owner.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::OwnerPolicyConfigurationReceipt,
+        >(),
+        "vault.policy.owner.row.change" => {
+            crate::code_run::vault_read::request_schema::<crate::policy_model::PolicyRowReceipt>()
+        }
         "vault.gate.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::PolicyManifestsView,
         >(),
@@ -3507,6 +3559,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.workflows.status" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
         }
+        "vault.task_types.pin" => crate::code_run::vault_read::request_schema::<
+            crate::team::doors::TaskTypeTreePinReceipt,
+        >(),
+        "vault.task_types.get" => crate::code_run::vault_read::request_schema::<
+            crate::team::doors::TaskTypeTreeReadReply,
+        >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
         >(),
@@ -5273,6 +5331,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.policy.owner.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.policy.owner.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.policy.owner.row.change" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.policy.outbound.decide" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.policy.relay.decide" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.gate.policy.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5828,6 +5921,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.workflows.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.task_types.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.task_types.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8153,6 +8260,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest =
                 decode(value.clone())?;
         }
+        "vault.policy.owner.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.policy.owner.configure" => {
+            let _input: crate::policy_manifest_doors::OwnerPolicyConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.policy.owner.row.change" => {
+            let _input: crate::policy_model::doors::PolicyRowChangeRequest = decode(value.clone())?;
+        }
+        "vault.policy.outbound.decide" => {
+            let _input: crate::policy_model::doors::PolicyOutboundRequest = decode(value.clone())?;
+        }
+        "vault.policy.relay.decide" => {
+            let _input: crate::policy_model::doors::PolicyOutboundRequest = decode(value.clone())?;
+        }
         "vault.gate.policy.get" => {
             let _input: crate::policy_manifest_doors::PolicyManifestRead = decode(value.clone())?;
         }
@@ -8426,6 +8549,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.workflows.status" => {
             let _input: crate::task_verb::sdk::WorkflowRunRequest = decode(value.clone())?;
+        }
+        "vault.task_types.pin" => {
+            let _input: crate::team::doors::TaskTypeTreePin = decode(value.clone())?;
+        }
+        "vault.task_types.get" => {
+            let _input: crate::team::doors::TaskTypeTreeRead = decode(value.clone())?;
         }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
@@ -9675,6 +9804,17 @@ pub fn invoke(
             memory,
             decode(value)?,
         )?),
+        "vault.policy.owner.get" => encode(vault_policy_owner_get(memory, decode(value)?)?),
+        "vault.policy.owner.configure" => {
+            encode(vault_policy_owner_configure(memory, decode(value)?)?)
+        }
+        "vault.policy.owner.row.change" => {
+            encode(vault_policy_owner_row_change(memory, decode(value)?)?)
+        }
+        "vault.policy.outbound.decide" => {
+            encode(vault_policy_outbound_decide(memory, decode(value)?)?)
+        }
+        "vault.policy.relay.decide" => encode(vault_policy_relay_decide(memory, decode(value)?)?),
         "vault.gate.policy.get" => encode(vault_gate_policy_get(memory, decode(value)?)?),
         "vault.gate.policy.put" => encode(vault_gate_policy_put(memory, decode(value)?)?),
         "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
@@ -9813,6 +9953,8 @@ pub fn invoke(
         "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
         "vault.workflows.dispatch" => encode(vault_workflows_dispatch(memory, decode(value)?)?),
         "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
+        "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
+        "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -12136,6 +12278,50 @@ pub fn vault_embedding_spaces_probes_delete(
         input,
     )
 }
+pub fn vault_policy_owner_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::OwnerPolicyConfigurationView> {
+    crate::policy_manifest_doors::owner_policy_configuration(
+        memory.vault(),
+        &memory.embedded_owner("vault.policy.owner.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_policy_owner_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::OwnerPolicyConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::OwnerPolicyConfigurationReceipt> {
+    crate::policy_manifest_doors::configure_owner_policy(
+        memory.vault(),
+        &memory.embedded_owner("vault.policy.owner.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_policy_owner_row_change(
+    memory: &Memory<'_>,
+    input: crate::policy_model::doors::PolicyRowChangeRequest,
+) -> MemoryResult<crate::policy_model::PolicyRowReceipt> {
+    crate::policy_model::doors::change_owner_policy_row(
+        memory.vault(),
+        &memory.embedded_owner("vault.policy.owner.row.change")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_policy_outbound_decide(
+    memory: &Memory<'_>,
+    input: crate::policy_model::doors::PolicyOutboundRequest,
+) -> MemoryResult<crate::policy_model::PolicyModelEnforcement> {
+    crate::policy_model::doors::enforce_owner_policy_embedded(memory, input)
+}
+pub fn vault_policy_relay_decide(
+    memory: &Memory<'_>,
+    input: crate::policy_model::doors::PolicyOutboundRequest,
+) -> MemoryResult<crate::policy_model::doors::HostedRelayDecision> {
+    crate::task_verb::sdk::host_only(memory, "vault.policy.relay.decide", &input)
+}
 pub fn vault_gate_policy_get(
     memory: &Memory<'_>,
     input: crate::policy_manifest_doors::PolicyManifestRead,
@@ -12819,6 +13005,26 @@ pub fn vault_workflows_status(
     crate::task_verb::sdk::read_workflow_run_as(
         memory.vault(),
         &memory.embedded_owner("vault.workflows.status")?,
+        input,
+    )
+}
+pub fn vault_task_types_pin(
+    memory: &Memory<'_>,
+    input: crate::team::doors::TaskTypeTreePin,
+) -> MemoryResult<crate::team::doors::TaskTypeTreePinReceipt> {
+    crate::team::doors::pin_tree_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.task_types.pin")?,
+        input,
+    )
+}
+pub fn vault_task_types_get(
+    memory: &Memory<'_>,
+    input: crate::team::doors::TaskTypeTreeRead,
+) -> MemoryResult<crate::team::doors::TaskTypeTreeReadReply> {
+    crate::team::doors::read_tree_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.task_types.get")?,
         input,
     )
 }

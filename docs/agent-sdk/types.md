@@ -1006,6 +1006,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def policy(self) -> "Oneiron._VaultPolicyVerbs": ...
+        @property
         def gate(self) -> "Oneiron._VaultGateVerbs": ...
         @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
@@ -1028,9 +1030,13 @@ class Oneiron:
         @property
         def code(self) -> "Oneiron._VaultCodeVerbs": ...
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
+        @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs": ...
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
@@ -1607,6 +1613,29 @@ class Oneiron:
             """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
+    class _VaultPolicyVerbs:
+        @property
+        def owner(self) -> "Oneiron._VaultPolicyOwnerVerbs": ...
+        @property
+        def outbound(self) -> "Oneiron._VaultPolicyOutboundVerbs": ...
+        @property
+        def relay(self) -> "Oneiron._VaultPolicyRelayVerbs": ...
+    class _VaultPolicyOwnerVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.OwnerPolicyConfigurationView:
+            """The owner reads the content-policy configuration, default manifest hash and effective off/on state."""
+        def configure(self, spec: Facade.OwnerPolicyConfigureRequest) -> Facade.OwnerPolicyConfigurationReceipt:
+            """The owner configures or toggles content policy against the current manifest hash without changing other policy tables."""
+        @property
+        def row(self) -> "Oneiron._VaultPolicyOwnerRowVerbs": ...
+    class _VaultPolicyOwnerRowVerbs:
+        def change(self, spec: Facade.PolicyRowChangeRequest) -> Facade.PolicyRowReceipt:
+            """The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt."""
+    class _VaultPolicyOutboundVerbs:
+        def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.PolicyModelEnforcement:
+            """Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."""
+    class _VaultPolicyRelayVerbs:
+        def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.HostedRelayDecision:
+            """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
     class _VaultGateVerbs:
         @property
         def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
@@ -1827,6 +1856,15 @@ class Oneiron:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+    class _VaultResultsVerbs:
+        def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+        def recover(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+        def read(self, spec: Facade.ResultOccurrenceRequest) -> Facade.ResultReadView:
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+        def slice(self, spec: Facade.ResultSliceRequest) -> Facade.ResultSliceView:
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
@@ -1846,6 +1884,11 @@ class Oneiron:
             """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
         def status(self, spec: Facade.WorkflowRunRequest) -> Facade.WorkflowRunView:
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
+    class _VaultTaskTypesVerbs:
+        def pin(self, spec: Facade.TaskTypeTreePin) -> Facade.TaskTypeTreePinReceipt:
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+        def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""

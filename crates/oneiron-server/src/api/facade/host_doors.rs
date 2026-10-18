@@ -113,11 +113,14 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
+// The owner's task-type tree doors (DOOR-111), likewise.
+pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
@@ -1132,6 +1135,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.get"
         | "vault.workflows.dispatch"
         | "vault.workflows.status"
+        | "vault.task_types.pin"
+        | "vault.task_types.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1142,6 +1147,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.channel_identities.route_inbound"
         | "vault.delivery_window.policy.put"
         | "vault.delivery_window.policy.retract"
+        | "vault.policy.owner.get"
+        | "vault.policy.owner.configure"
+        | "vault.policy.owner.row.change"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"
