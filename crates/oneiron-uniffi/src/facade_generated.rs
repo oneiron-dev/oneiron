@@ -666,6 +666,56 @@ export_facade! {
     let output = client.vault_shared_policy_change(&input)?;
     crate::codec::lift_record("vault.shared.policy.change", &output)
 };
+"vault.federation.connect.identity" => fn vault_federation_connect_identity(&self) -> ConnectIdentity = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.federation.connect.identity")?;
+    let output = client.vault_federation_connect_identity(&input)?;
+    crate::codec::lift_record("vault.federation.connect.identity", &output)
+};
+"vault.federation.connect.grants.mint" => fn vault_federation_connect_grants_mint(&self, input: MintConnectGrant) -> ConnectGrant = |client| {
+    let input: oneiron::task_verb::sdk::MintConnectGrant = crate::codec::lower_record("vault.federation.connect.grants.mint", input)?;
+    let output = client.vault_federation_connect_grants_mint(&input)?;
+    crate::codec::lift_record("vault.federation.connect.grants.mint", &output)
+};
+"vault.federation.connect.offer" => fn vault_federation_connect_offer(&self, input: OfferConnect) -> Offer = |client| {
+    let input: oneiron::task_verb::sdk::OfferConnect = crate::codec::lower_record("vault.federation.connect.offer", input)?;
+    let output = client.vault_federation_connect_offer(&input)?;
+    crate::codec::lift_record("vault.federation.connect.offer", &output)
+};
+"vault.federation.connect.accept" => fn vault_federation_connect_accept(&self, input: AcceptConnect) -> ConnectAccepted = |client| {
+    let input: oneiron::task_verb::sdk::AcceptConnect = crate::codec::lower_record("vault.federation.connect.accept", input)?;
+    let output = client.vault_federation_connect_accept(&input)?;
+    crate::codec::lift_record("vault.federation.connect.accept", &output)
+};
+"vault.federation.connect.narrow" => fn vault_federation_connect_narrow(&self, input: NarrowConnect) -> ConnectPactReceipt = |client| {
+    let input: oneiron::task_verb::sdk::NarrowConnect = crate::codec::lower_record("vault.federation.connect.narrow", input)?;
+    let output = client.vault_federation_connect_narrow(&input)?;
+    crate::codec::lift_record("vault.federation.connect.narrow", &output)
+};
+"vault.federation.connect.rescope.offer" => fn vault_federation_connect_rescope_offer(&self, input: RescopeConnect) -> RescopeOffer = |client| {
+    let input: oneiron::task_verb::sdk::RescopeConnect = crate::codec::lower_record("vault.federation.connect.rescope.offer", input)?;
+    let output = client.vault_federation_connect_rescope_offer(&input)?;
+    crate::codec::lift_record("vault.federation.connect.rescope.offer", &output)
+};
+"vault.federation.connect.rescope.accept" => fn vault_federation_connect_rescope_accept(&self, input: AcceptRescopeConnect) -> ConnectRescoped = |client| {
+    let input: oneiron::task_verb::sdk::AcceptRescopeConnect = crate::codec::lower_record("vault.federation.connect.rescope.accept", input)?;
+    let output = client.vault_federation_connect_rescope_accept(&input)?;
+    crate::codec::lift_record("vault.federation.connect.rescope.accept", &output)
+};
+"vault.federation.connect.disconnect" => fn vault_federation_connect_disconnect(&self, input: ConnectPactRequest) -> ConnectDisconnected = |client| {
+    let input: oneiron::task_verb::sdk::ConnectPactRequest = crate::codec::lower_record("vault.federation.connect.disconnect", input)?;
+    let output = client.vault_federation_connect_disconnect(&input)?;
+    crate::codec::lift_record("vault.federation.connect.disconnect", &output)
+};
+"vault.federation.connect.export" => fn vault_federation_connect_export(&self, input: ConnectExportRequest) -> ConnectDelivery = |client| {
+    let input: oneiron::task_verb::sdk::ConnectExportRequest = crate::codec::lower_record("vault.federation.connect.export", input)?;
+    let output = client.vault_federation_connect_export(&input)?;
+    crate::codec::lift_record("vault.federation.connect.export", &output)
+};
+"vault.federation.connect.rejoin" => fn vault_federation_connect_rejoin(&self, input: ConnectDelivery) -> ConnectRejoined = |client| {
+    let input: oneiron::task_verb::sdk::ConnectDelivery = crate::codec::lower_record("vault.federation.connect.rejoin", input)?;
+    let output = client.vault_federation_connect_rejoin(&input)?;
+    crate::codec::lift_record("vault.federation.connect.rejoin", &output)
+};
 "vault.trusted_contacts.name" => fn vault_trusted_contacts_name(&self, input: TrustedContactNameRequest) -> TrustedContact = |client| {
     let input: oneiron::task_verb::sdk::TrustedContactNameRequest = crate::codec::lower_record("vault.trusted_contacts.name", input)?;
     let output = client.vault_trusted_contacts_name(&input)?;

@@ -142,8 +142,14 @@ pub async fn call_as_step_with_fallbacks(
     fallbacks: &super::super::FallbackRegistry,
 ) -> DurableStepResult<StepOutcome> {
     call_as_step_with_fallbacks_and_retries(
-        ctx, backend, guard, request, fallbacks, DREAMER_STEP_RETRY_BACKOFF_MS.len(),
-    ).await
+        ctx,
+        backend,
+        guard,
+        request,
+        fallbacks,
+        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+    )
+    .await
 }
 
 /// The same durable execution path with a declared prefix of the engine's retry schedule.
@@ -156,7 +162,10 @@ pub(super) async fn call_as_step_with_fallbacks_and_retries(
     max_retries: usize,
 ) -> DurableStepResult<StepOutcome> {
     if max_retries > DREAMER_STEP_RETRY_BACKOFF_MS.len() {
-        return Err(Error::InvalidConfig("model-step retry limit exceeds the engine schedule".into()).into());
+        return Err(Error::InvalidConfig(
+            "model-step retry limit exceeds the engine schedule".into(),
+        )
+        .into());
     }
     durable_step(ctx, backend, guard, request, fallbacks, None, max_retries).await
 }

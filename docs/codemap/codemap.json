@@ -3108,7 +3108,7 @@
      "surface": {
       "crate-vis": 23,
       "fn": 24,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 1
      }
     },
@@ -3121,7 +3121,21 @@
      "path": "src/authority/slip_vault/connect.rs",
      "purpose": "Connect, signed by each vault's own host-root key (FIX 323, ARCH-0043 #relationship-lifecycle)",
      "surface": {
+      "crate-vis": 2,
       "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ConnectRescopeOffer"
+     ],
+     "path": "src/authority/slip_vault/connect_lifecycle.rs",
+     "purpose": "Owner-bound doors over the existing federation lifecycle fold",
+     "surface": {
+      "fn": 5,
       "struct": 1
      }
     },
@@ -23314,7 +23328,7 @@
      "path": "src/federation/connect_grant.rs",
      "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 3,
       "struct": 1
      }
@@ -31631,7 +31645,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/recall/items.rs",
@@ -31660,7 +31674,7 @@
       "crate-vis": 4,
       "enum": 1,
       "fn": 11,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 7
      }
     },
@@ -31704,6 +31718,19 @@
      "purpose": "Scope-honesty world names come only from actor-admitted claim rows",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MemoryStaleStamp"
+     ],
+     "path": "src/memory/recall/stale.rs",
+     "purpose": "Typed stale-federation metadata returned only for admitted recall items",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -46199,6 +46226,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/connect.rs",
+     "purpose": "Public Connect delivery/rejoin over the production guest admission path",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/documents.rs",
      "purpose": "Document import and durable local-journal confirmation on the one socket",
      "surface": {
@@ -49280,7 +49317,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 38,
+      "re-export": 39,
       "struct": 36
      }
     },
@@ -49550,6 +49587,40 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AcceptConnect",
+      "AcceptRescopeConnect",
+      "ConnectAccepted",
+      "ConnectDelivery",
+      "ConnectDisconnected",
+      "ConnectExportRequest",
+      "ConnectGrant",
+      "ConnectIdentity",
+      "ConnectPactReceipt",
+      "ConnectPactRequest",
+      "ConnectRejoinStatus",
+      "ConnectRejoined",
+      "ConnectRescoped",
+      "ConnectWindow",
+      "MintConnectGrant",
+      "NarrowConnect",
+      "Offer",
+      "OfferConnect",
+      "RescopeConnect",
+      "RescopeOffer"
+     ],
+     "path": "src/task_verb/sdk_federation.rs",
+     "purpose": "Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "struct": 19
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -49557,7 +49628,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 517
+      "fn": 527
      }
     },
     {
@@ -54955,7 +55026,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 142,
+     "files": 143,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55732,7 +55803,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56215,7 +56286,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 175,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56243,7 +56314,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 150,
+     "files": 151,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56413,7 +56484,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3437,
+   "source_files": 3441,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64827,7 +64898,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 467
+      "fn": 477
      }
     },
     {
@@ -64879,6 +64950,7 @@
       "NapiMemoryItem",
       "NapiMemoryPack",
       "NapiMemoryProvenance",
+      "NapiMemoryStaleStamp",
       "NapiMentionProvenance",
       "NapiNeighborHit",
       "NapiNeighborHits",
@@ -64907,7 +64979,7 @@
      "path": "src/facade/dtos.rs",
      "purpose": "All napi(object) DTO structs for the actor-scoped surface",
      "surface": {
-      "struct": 59
+      "struct": 60
      }
     },
     {
@@ -65875,7 +65947,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 468
+      "fn": 478
      }
     },
     {
@@ -68985,6 +69057,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/federation_connect_doors.rs",
+     "purpose": "The typed owner federation doors share the existing owner HTTP operations",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fold_doors.rs",
      "purpose": "Public run-bound folds, through the caller's existing live-run action door",
      "surface": {
@@ -69028,7 +69110,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 93
+      "crate-vis": 94
      }
     },
     {
@@ -74904,7 +74986,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/federation_connect.rs",
@@ -76423,7 +76505,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 349,
+     "files": 350,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76838,7 +76920,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 674,
+   "source_files": 675,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76946,6 +77028,7 @@
       "MemoryItem",
       "MemoryPack",
       "MemoryProvenance",
+      "MemoryStaleStamp",
       "MentionProvenance",
       "NeighborHit",
       "NeighborHits",
@@ -76984,7 +77067,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 9,
-      "struct": 51
+      "struct": 52
      }
     },
     {
@@ -77031,6 +77114,8 @@
      "bucket": "XL",
      "kind": "src",
      "notable": [
+      "AcceptConnect",
+      "AcceptRescopeConnect",
       "AccessStatus",
       "ActExecution",
       "ActorCeiling",
@@ -77354,6 +77439,18 @@
       "ConfirmationReceipt",
       "Conflict",
       "ConflictKind",
+      "ConnectAccepted",
+      "ConnectDelivery",
+      "ConnectDisconnected",
+      "ConnectExportRequest",
+      "ConnectGrant",
+      "ConnectIdentity",
+      "ConnectPactReceipt",
+      "ConnectPactRequest",
+      "ConnectRejoinStatus",
+      "ConnectRejoined",
+      "ConnectRescoped",
+      "ConnectWindow",
       "ConnectorCallReply",
       "ConnectorCallRequest",
       "ConnectorCallStatus",
@@ -77610,7 +77707,10 @@
       "FanoutResumeRequest",
       "FanoutStatement",
       "FatalLlmError",
+      "FederationDirectionScope",
       "FederationGrantRole",
+      "FederationPactScope",
+      "FederationPactStatus",
       "FeedbackProposal",
       "FieldGeometry",
       "FieldMeta",
@@ -77899,6 +77999,7 @@
       "MetricDirection",
       "MetricRole",
       "MetricSet",
+      "MintConnectGrant",
       "ModelLocality",
       "ModelSlot",
       "ModelStepFailure",
@@ -77909,6 +78010,7 @@
       "ModelStepRetryPolicy",
       "ModelStepSubmit",
       "MutationIntent",
+      "NarrowConnect",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
       "NodeKind",
@@ -77979,9 +78081,11 @@
       "OffRecordSessionView",
       "OffRecordStartRequest",
       "OffRecordWitnessRequest",
+      "Offer",
       "OfferAnswer",
       "OfferAnswerRequest",
       "OfferCard",
+      "OfferConnect",
       "OfferDraft",
       "OfferReopenRequest",
       "OfferSettlement",
@@ -78212,6 +78316,8 @@
       "ReportRoute",
       "ReportStatus",
       "RequiredParty",
+      "RescopeConnect",
+      "RescopeOffer",
       "ResearchArchive",
       "ResearchArchiveWire",
       "ResearchBasisWire",
@@ -78322,6 +78428,7 @@
       "ScopeAxisInputString",
       "ScopeAxisInputU8",
       "ScopeAxisScopeId",
+      "ScopeAxisSelectorRange",
       "ScopeAxisString",
       "ScopeAxisU8",
       "ScopeResource",
@@ -78377,6 +78484,7 @@
       "SelectionReceipt",
       "SelectionRuleScope",
       "SelectionRuleWriterKind",
+      "SelectorRange",
       "SelfBudgetRequest",
       "SelfDurableWait",
       "SelfDurableWaitReason",
@@ -78652,6 +78760,7 @@
       "TurnActionReceipt",
       "TurnActionRequest",
       "TwoClocksAtom",
+      "TypeByteFamily",
       "TypeRef",
       "TypedDecision",
       "UncutFamily",
@@ -78741,8 +78850,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 455,
-      "struct": 1251
+      "enum": 460,
+      "struct": 1272
      }
     },
     {
