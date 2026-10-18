@@ -1479,6 +1479,23 @@ act counts as activity; watching the stream does not. A takeover still
 asked or held when the desktop ends lands its record so far as the run's
 `desktop_takeover` receipt with outcome `abandoned`.
 
+The run's browser takes the same takeover, so the owner can sign in or pay
+inside the page the agent filled. A program asks with
+`self.browser.handover({reason})`, or the owner takes it unasked, at
+`/v1/owner/browsers` (`GET`, then `POST take`, `screen`, `input` and
+`return` with `{"run"}`). `screen` is the viewport as a PNG, unmasked and
+never kept. `input` takes `click`, `type`, `key`, `hotkey`, `scroll` at that
+PNG's pixels, and `navigate {url}` to an http or https page. While asked or
+held, every browser verb refuses `browser_taken_over` (a batch stops
+`NEEDS_YOU`). Handing it back writes the run's `browser_takeover` sandbox
+receipt, the agent's next browser answer carries the record as `takeover`,
+and its next observe is whole.
+
+A browser observation comes in pages: an answer whose outline does not fit
+one page (256 KiB of rows) carries `next`, and `self.browser.observe({cursor:
+next})` reads the next page of the same observation. The pages of the last
+8 observations stay readable.
+
 ## 11. When a provider refuses for a limit
 
 A rung refused for a limit hands the call to the next rung of its ladder, and
