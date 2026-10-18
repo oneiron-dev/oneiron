@@ -256,6 +256,12 @@ pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
 pub use witness::{
+    AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
+    MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
+    MessageCustomCancel, MessageCustomCancelKind, MessageDocumentState, MessageDurability,
+    MessageDurabilityRequest, MessageStreamMode, MessageStreamOptions, MessageStreamRequest,
+};
+pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,

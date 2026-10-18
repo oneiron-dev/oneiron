@@ -74,6 +74,14 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.ack`
 - `tasks.update`
 - `tasks.accept`
+- `vault.commit_message`
+- `vault.begin_message_stream`
+- `vault.append_to_stream`
+- `vault.flush_stream`
+- `vault.finalize_stream`
+- `vault.cancel_stream`
+- `vault.message_stream_partial`
+- `vault.messages.durability`
 - `vault.witness`
 - `vault.claims.upsert`
 - `vault.recall`
