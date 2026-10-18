@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 841 facade rows, 2908 declarations.
-Inputs: 789 of 841 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 757 of 841 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 846 facade rows, 2921 declarations.
+Inputs: 794 of 846 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 762 of 846 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
@@ -11942,6 +11942,61 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
+class IcsFeedPollConfig(TypedDict):
+    secret_ref: str
+    system: str
+    cadence_min_seconds: int
+    cadence_max_seconds: int
+class CalendarIcsFeedConfigureRequest(TypedDict):
+    config: IcsFeedPollConfig
+class CalendarIcsPollResultReenqueued(TypedDict):
+    state: Literal["reenqueued"]
+    next_not_before: int
+class CalendarIcsPollResultPausedNeedsInput(TypedDict):
+    state: Literal["paused_needs_input"]
+    inbox_exception_ref: str
+CalendarIcsPollResult = CalendarIcsPollResultReenqueued | CalendarIcsPollResultPausedNeedsInput
+class IcsFeedCursorSnapshot(TypedDict):
+    etag: NotRequired[str | None]
+    last_complete_at: NotRequired[int | None]
+    paused: bool
+    last_screen_verdict: NotRequired[str | None]
+class CalendarIcsPollCompletion(TypedDict):
+    poll_ref: str
+    completed_at: int
+    result: CalendarIcsPollResult
+    cursor: NotRequired[IcsFeedCursorSnapshot | None]
+class CalendarIcsFeedRegistration(TypedDict):
+    config: IcsFeedPollConfig
+    last_poll: NotRequired[CalendarIcsPollCompletion | None]
+class CalendarIcsFeedRequest(TypedDict):
+    system: str
+class CalendarIcsFeedStatus(TypedDict):
+    config: IcsFeedPollConfig
+    cursor: NotRequired[IcsFeedCursorSnapshot | None]
+    last_poll: NotRequired[CalendarIcsPollCompletion | None]
+class CalendarPassportReadRequest(TypedDict):
+    event_ref: str
+    system: str
+    uid: str
+CalendarPassportDirection = Literal["inbound", "outbound", "two_way"]
+CalendarPassportPresence = Literal["live", "absent"]
+class CalendarPassportValue(TypedDict):
+    system: str
+    uid: str
+    last_sequence: int
+    content_hash: list[int]
+    direction: CalendarPassportDirection
+    last_seen_at: int
+    presence: CalendarPassportPresence
+class CalendarPassportRevision(TypedDict):
+    claim_ref: str
+    event_ref: str
+    recorded_at: int
+    approval: str
+    lifecycle: str
+    stale: bool
+    passport: CalendarPassportValue
 class CalendarConnectorSeatConfig(TypedDict):
     seat_ref: str
     secret_ref: str

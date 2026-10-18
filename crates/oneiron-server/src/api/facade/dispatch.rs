@@ -15338,6 +15338,112 @@ async fn calendar_invite(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn calendar_ics_configure(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "calendar.ics.configure")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("calendar.ics.configure", &value)?;
+    let hooks = facade_hooks_pre(server, call, "calendar.ics.configure", value).await?;
+    let (output, listed) =
+        super::host_doors::calendar_ics_configure(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn calendar_ics_poll(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "calendar.ics.poll")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("calendar.ics.poll", &value)?;
+    let hooks = facade_hooks_pre(server, call, "calendar.ics.poll", value).await?;
+    let (output, listed) =
+        super::host_doors::calendar_ics_poll(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn calendar_ics_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "calendar.ics.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("calendar.ics.status", &value)?;
+    let hooks = facade_hooks_pre(server, call, "calendar.ics.status", value).await?;
+    let (output, listed) =
+        super::host_doors::calendar_ics_status(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_calendar_passports_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.passports.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_calendar_passports_history(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.calendar.passports.history",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn calendar_connector_configure(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -20809,6 +20915,13 @@ pub(crate) async fn call_verb(
         "vault.booking.constraint_turn" => vault_booking_constraint_turn(server, call, input).await,
         "vault.booking.page_token" => vault_booking_page_token(server, call, input).await,
         "calendar.invite" => calendar_invite(server, call, input).await,
+        "calendar.ics.configure" => calendar_ics_configure(server, call, input).await,
+        "calendar.ics.poll" => calendar_ics_poll(server, call, input).await,
+        "calendar.ics.status" => calendar_ics_status(server, call, input).await,
+        "vault.calendar.passports.read" => vault_calendar_passports_read(server, call, input).await,
+        "vault.calendar.passports.history" => {
+            vault_calendar_passports_history(server, call, input).await
+        }
         "calendar.connector.configure" => calendar_connector_configure(server, call, input).await,
         "calendar.connector.get" => calendar_connector_get(server, call, input).await,
         "calendar.connector.pull" => calendar_connector_pull(server, call, input).await,

@@ -688,6 +688,11 @@ vaultBookingCancel(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
 calendarInvite(input: unknown): unknown
+calendarIcsConfigure(input: unknown): unknown
+calendarIcsPoll(input: unknown): unknown
+calendarIcsStatus(input: unknown): unknown
+vaultCalendarPassportsRead(input: unknown): unknown
+vaultCalendarPassportsHistory(input: unknown): unknown
 calendarConnectorConfigure(input: unknown): unknown
 calendarConnectorGet(input: unknown): unknown
 calendarConnectorPull(input: unknown): unknown

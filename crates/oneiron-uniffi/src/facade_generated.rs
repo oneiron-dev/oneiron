@@ -3291,6 +3291,31 @@ export_facade! {
     let output = client.calendar_invite(&input)?;
     Lift::lift(output)
 };
+"calendar.ics.configure" => fn calendar_ics_configure(&self, input: CalendarIcsFeedConfigureRequest) -> CalendarIcsFeedRegistration = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest = crate::codec::lower_record("calendar.ics.configure", input)?;
+    let output = client.calendar_ics_configure(&input)?;
+    crate::codec::lift_record("calendar.ics.configure", &output)
+};
+"calendar.ics.poll" => fn calendar_ics_poll(&self, input: CalendarIcsFeedRequest) -> CalendarIcsPollCompletion = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest = crate::codec::lower_record("calendar.ics.poll", input)?;
+    let output = client.calendar_ics_poll(&input)?;
+    crate::codec::lift_record("calendar.ics.poll", &output)
+};
+"calendar.ics.status" => fn calendar_ics_status(&self, input: CalendarIcsFeedRequest) -> Option<CalendarIcsFeedStatus> = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest = crate::codec::lower_record("calendar.ics.status", input)?;
+    let output = client.calendar_ics_status(&input)?;
+    crate::codec::lift_record("calendar.ics.status", &output)
+};
+"vault.calendar.passports.read" => fn vault_calendar_passports_read(&self, input: CalendarPassportReadRequest) -> ScopedReadResultOptionalCalendarPassportRevision = |client| {
+    let input: oneiron::calendar::query::passport::CalendarPassportReadRequest = crate::codec::lower_record("vault.calendar.passports.read", input)?;
+    let output = client.vault_calendar_passports_read(&input)?;
+    crate::codec::lift_record("vault.calendar.passports.read", &output)
+};
+"vault.calendar.passports.history" => fn vault_calendar_passports_history(&self, input: CalendarPassportReadRequest) -> ScopedReadResultCalendarPassportRevisionList = |client| {
+    let input: oneiron::calendar::query::passport::CalendarPassportReadRequest = crate::codec::lower_record("vault.calendar.passports.history", input)?;
+    let output = client.vault_calendar_passports_history(&input)?;
+    crate::codec::lift_record("vault.calendar.passports.history", &output)
+};
 "calendar.connector.configure" => fn calendar_connector_configure(&self, input: CalendarConnectorConfigureRequest) -> CalendarConnectorRegistration = |client| {
     let input: oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest = crate::codec::lower_record("calendar.connector.configure", input)?;
     let output = client.calendar_connector_configure(&input)?;

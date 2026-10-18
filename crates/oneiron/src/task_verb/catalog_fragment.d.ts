@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 877 code-mode rows (854 host rows, 23 run rows), 2954 declarations.
-// Replies: 786 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 882 code-mode rows (859 host rows, 23 run rows), 2967 declarations.
+// Replies: 791 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2433,6 +2433,19 @@ declare namespace Sdk {
   type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
   type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type IcsFeedPollConfig = { secret_ref: string; system: string; cadence_min_seconds: number; cadence_max_seconds: number };
+  type CalendarIcsFeedConfigureRequest = { config: IcsFeedPollConfig };
+  type CalendarIcsPollResult = { state: "reenqueued"; next_not_before: number } | { state: "paused_needs_input"; inbox_exception_ref: string };
+  type IcsFeedCursorSnapshot = { etag?: string | null; last_complete_at?: number | null; paused: boolean; last_screen_verdict?: string | null };
+  type CalendarIcsPollCompletion = { poll_ref: string; completed_at: number; result: CalendarIcsPollResult; cursor?: IcsFeedCursorSnapshot | null };
+  type CalendarIcsFeedRegistration = { config: IcsFeedPollConfig; last_poll?: CalendarIcsPollCompletion | null };
+  type CalendarIcsFeedRequest = { system: string };
+  type CalendarIcsFeedStatus = { config: IcsFeedPollConfig; cursor?: IcsFeedCursorSnapshot | null; last_poll?: CalendarIcsPollCompletion | null };
+  type CalendarPassportReadRequest = { event_ref: string; system: string; uid: string };
+  type CalendarPassportDirection = "inbound" | "outbound" | "two_way";
+  type CalendarPassportPresence = "live" | "absent";
+  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
+  type CalendarPassportRevision = { claim_ref: string; event_ref: string; recorded_at: number; approval: string; lifecycle: string; stale: boolean; passport: CalendarPassportValue };
   type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
   type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
   type CalendarConnectorKillSwitchState = { killed_at: number; verbs_revoked: boolean; polling_stopped: boolean; reason_ref: string };
@@ -3045,6 +3058,14 @@ declare const calendar: {
     /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
     write(input: Sdk.CalendarConnectorWriteRequest): Promise<Sdk.RemoteWriteReceipt | StoredResult>;
   };
+  ics: {
+    /** Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent. */
+    configure(input: Sdk.CalendarIcsFeedConfigureRequest): Promise<Sdk.CalendarIcsFeedRegistration | StoredResult>;
+    /** Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence. */
+    poll(input: Sdk.CalendarIcsFeedRequest): Promise<Sdk.CalendarIcsPollCompletion | StoredResult>;
+    /** Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL. */
+    status(input: Sdk.CalendarIcsFeedRequest): Promise<Sdk.CalendarIcsFeedStatus | null | StoredResult>;
+  };
   imip: {
     /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
     configure(input: Sdk.CalendarImipTransportConfig): Promise<Sdk.CalendarImipTransportConfig | StoredResult>;
@@ -3605,6 +3626,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
     occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
+    passports: {
+      /** Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate. */
+      history(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision[]> | StoredResult>;
+      /** Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence. */
+      read(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision | null> | StoredResult>;
+    };
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */

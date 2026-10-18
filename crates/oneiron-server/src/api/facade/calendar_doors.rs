@@ -243,3 +243,71 @@ pub(crate) async fn calendar_imip_get(
     )
     .await
 }
+
+
+use oneiron::calendar::ingest::feed_door::{
+    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
+    CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
+};
+use oneiron::calendar::ingest::{CustodyDoorIcsFeedFetcher, run_ics_feed_poll};
+
+pub(crate) async fn calendar_ics_configure(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarIcsFeedConfigureRequest,
+) -> Listed<CalendarIcsFeedRegistration> {
+    as_owner(
+        server,
+        auth,
+        "calendar.ics.configure",
+        move |_, memory, owner| feed::configure(&memory, &owner, &input),
+    )
+    .await
+}
+
+pub(crate) async fn calendar_ics_status(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarIcsFeedRequest,
+) -> Listed<Option<CalendarIcsFeedStatus>> {
+    as_owner(
+        server,
+        auth,
+        "calendar.ics.status",
+        move |_, memory, owner| feed::status(&memory, &owner, &input),
+    )
+    .await
+}
+
+pub(crate) async fn calendar_ics_poll(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: CalendarIcsFeedRequest,
+) -> Listed<CalendarIcsPollCompletion> {
+    as_owner(
+        server,
+        auth,
+        "calendar.ics.poll",
+        move |server, memory, owner| {
+            let row = feed::get(&memory, &owner, &input)?
+                .ok_or_else(|| MemoryError::not_found("ICS feed is not configured"))?;
+            let transport = crate::calendar_host::HttpIcsFeed::new(
+                Arc::clone(server.vault()),
+                owner.clone(),
+                row.config.clone(),
+            )
+            .map_err(MemoryError::bad_request)?;
+            let fetcher = CustodyDoorIcsFeedFetcher::new(
+                server.vault(),
+                "calendar.ics.poll",
+                transport,
+            );
+            let poll_ref = oneiron::EntityId::now().to_hex();
+            let now = server.vault().now_recorded_at();
+            let outcome = run_ics_feed_poll(server.vault(), &fetcher, &row.config, now, now)
+                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            feed::observe_poll(&memory, &owner, &row.config, poll_ref, outcome)
+        },
+    )
+    .await
+}

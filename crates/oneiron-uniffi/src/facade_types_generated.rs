@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 841 facade rows, 2873 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 797.
+// UniFFI census: 846 facade rows, 2888 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 802.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -36761,6 +36761,193 @@ pub struct CalendarInviteSurfaceInput {
     pub recipient: String,
     #[serde(rename = "mention", default, skip_serializing_if = "Option::is_none")]
     pub mention: Option<WireMentionProvenance>,
+}
+
+/// `oneiron::calendar::ingest::poll::IcsFeedPollConfig`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct IcsFeedPollConfig {
+    #[serde(rename = "secret_ref")]
+    pub secret_ref: String,
+    #[serde(rename = "system")]
+    pub system: String,
+    #[serde(rename = "cadence_min_seconds")]
+    pub cadence_min_seconds: u32,
+    #[serde(rename = "cadence_max_seconds")]
+    pub cadence_max_seconds: u32,
+}
+
+/// `oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarIcsFeedConfigureRequest {
+    #[serde(rename = "config")]
+    pub config: IcsFeedPollConfig,
+}
+
+/// `oneiron::calendar::ingest::feed_door::CalendarIcsPollResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum CalendarIcsPollResult {
+    #[serde(rename = "reenqueued")]
+    Reenqueued {
+        #[serde(rename = "next_not_before")]
+        next_not_before: u64,
+    },
+    #[serde(rename = "paused_needs_input")]
+    PausedNeedsInput {
+        #[serde(rename = "inbox_exception_ref")]
+        inbox_exception_ref: String,
+    },
+}
+
+/// `oneiron::calendar::ingest::poll::IcsFeedCursorSnapshot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct IcsFeedCursorSnapshot {
+    #[serde(rename = "etag", default, skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    #[serde(
+        rename = "last_complete_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_complete_at: Option<u64>,
+    #[serde(rename = "paused")]
+    pub paused: bool,
+    #[serde(
+        rename = "last_screen_verdict",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_screen_verdict: Option<String>,
+}
+
+/// `oneiron::calendar::ingest::feed_door::CalendarIcsPollCompletion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarIcsPollCompletion {
+    #[serde(rename = "poll_ref")]
+    pub poll_ref: String,
+    #[serde(rename = "completed_at")]
+    pub completed_at: u64,
+    #[serde(rename = "result")]
+    pub result: CalendarIcsPollResult,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<IcsFeedCursorSnapshot>,
+}
+
+/// `oneiron::calendar::ingest::feed_door::CalendarIcsFeedRegistration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarIcsFeedRegistration {
+    #[serde(rename = "config")]
+    pub config: IcsFeedPollConfig,
+    #[serde(rename = "last_poll", default, skip_serializing_if = "Option::is_none")]
+    pub last_poll: Option<CalendarIcsPollCompletion>,
+}
+
+/// `oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarIcsFeedRequest {
+    #[serde(rename = "system")]
+    pub system: String,
+}
+
+/// `oneiron::calendar::ingest::feed_door::CalendarIcsFeedStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarIcsFeedStatus {
+    #[serde(rename = "config")]
+    pub config: IcsFeedPollConfig,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<IcsFeedCursorSnapshot>,
+    #[serde(rename = "last_poll", default, skip_serializing_if = "Option::is_none")]
+    pub last_poll: Option<CalendarIcsPollCompletion>,
+}
+
+/// `oneiron::calendar::query::passport::CalendarPassportReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarPassportReadRequest {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "system")]
+    pub system: String,
+    #[serde(rename = "uid")]
+    pub uid: String,
+}
+
+/// `oneiron::calendar::claims::values::CalendarPassportDirection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CalendarPassportDirection {
+    #[serde(rename = "inbound")]
+    Inbound,
+    #[serde(rename = "outbound")]
+    Outbound,
+    #[serde(rename = "two_way")]
+    TwoWay,
+}
+
+/// `oneiron::calendar::claims::values::CalendarPassportPresence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CalendarPassportPresence {
+    #[serde(rename = "live")]
+    Live,
+    #[serde(rename = "absent")]
+    Absent,
+}
+
+/// `oneiron::calendar::claims::values::CalendarPassportValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarPassportValue {
+    #[serde(rename = "system")]
+    pub system: String,
+    #[serde(rename = "uid")]
+    pub uid: String,
+    #[serde(rename = "last_sequence")]
+    pub last_sequence: u32,
+    #[serde(rename = "content_hash")]
+    pub content_hash: Vec<u8>,
+    #[serde(rename = "direction")]
+    pub direction: CalendarPassportDirection,
+    #[serde(rename = "last_seen_at")]
+    pub last_seen_at: u64,
+    #[serde(rename = "presence")]
+    pub presence: CalendarPassportPresence,
+}
+
+/// `oneiron::calendar::query::passport::CalendarPassportRevision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarPassportRevision {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "recorded_at")]
+    pub recorded_at: u64,
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "lifecycle")]
+    pub lifecycle: String,
+    #[serde(rename = "stale")]
+    pub stale: bool,
+    #[serde(rename = "passport")]
+    pub passport: CalendarPassportValue,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalCalendarPassportRevision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalCalendarPassportRevision {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<CalendarPassportRevision>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `CalendarPassportRevisionList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarPassportRevisionList {
+    #[serde(rename = "value")]
+    pub value: Vec<CalendarPassportRevision>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::calendar::connectors::seat::CalendarConnectorSeatConfig`.

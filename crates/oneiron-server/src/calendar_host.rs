@@ -9,8 +9,10 @@ use oneiron::outbound::{
 use reqwest::header::HeaderValue;
 
 mod caldav;
+mod ics;
 mod xml;
 pub(crate) use caldav::HttpCalDav;
+pub(crate) use ics::HttpIcsFeed;
 
 pub(super) fn client() -> Result<reqwest::blocking::Client, reqwest::Error> {
     reqwest::blocking::Client::builder()

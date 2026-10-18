@@ -2193,6 +2193,8 @@ class Oneiron:
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
     class _VaultCalendarVerbs:
+        @property
+        def passports(self) -> "Oneiron._VaultCalendarPassportsVerbs": ...
         def create(self, spec: Facade.CalendarEventCreateRequest) -> Facade.CalendarEventCreated:
             """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
         @property
@@ -2209,6 +2211,11 @@ class Oneiron:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
+    class _VaultCalendarPassportsVerbs:
+        def read(self, spec: Facade.CalendarPassportReadRequest) -> Facade.ScopedReadResult[Facade.CalendarPassportRevision | None]:
+            """Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence."""
+        def history(self, spec: Facade.CalendarPassportReadRequest) -> Facade.ScopedReadResult[list[Facade.CalendarPassportRevision]]:
+            """Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate."""
     class _VaultCalendarIcsVerbs:
         def import_(self, spec: Facade.CalendarIcsImportRequest) -> Facade.CalendarIcsImportReceipt:
             """The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."""
@@ -2750,9 +2757,18 @@ class Oneiron:
         def invite(self, spec: Facade.CalendarInviteSurfaceInput) -> Facade.OutboundIntentReceipt:
             """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
         @property
+        def ics(self) -> "Oneiron._CalendarIcsVerbs": ...
+        @property
         def connector(self) -> "Oneiron._CalendarConnectorVerbs": ...
         @property
         def imip(self) -> "Oneiron._CalendarImipVerbs": ...
+    class _CalendarIcsVerbs:
+        def configure(self, spec: Facade.CalendarIcsFeedConfigureRequest) -> Facade.CalendarIcsFeedRegistration:
+            """Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent."""
+        def poll(self, spec: Facade.CalendarIcsFeedRequest) -> Facade.CalendarIcsPollCompletion:
+            """Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence."""
+        def status(self, spec: Facade.CalendarIcsFeedRequest) -> Facade.CalendarIcsFeedStatus | None:
+            """Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL."""
     class _CalendarConnectorVerbs:
         def configure(self, spec: Facade.CalendarConnectorConfigureRequest) -> Facade.CalendarConnectorRegistration:
             """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
