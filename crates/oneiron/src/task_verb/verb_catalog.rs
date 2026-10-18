@@ -2,6 +2,11 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentVerb {
     Report,
+    FeedbackPreview,
+    FeedbackSend,
+    VaultReportsDisclosure,
+    VaultReportsRoute,
+    VaultReportsOutbound,
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
@@ -348,6 +353,8 @@ pub enum AgentVerb {
     VaultCodeProposalSubmit,
     VaultCodeOplog,
     VaultCodeModelHealCount,
+    VaultCodeWaitsResolve,
+    VaultCodeWaitsReceipt,
     VaultResultsStatus,
     VaultResultsRecover,
     VaultResultsRead,
@@ -692,6 +699,11 @@ pub enum AgentVerb {
 impl AgentVerb {
     pub const ALL: &[Self] = &[
         Self::Report,
+        Self::FeedbackPreview,
+        Self::FeedbackSend,
+        Self::VaultReportsDisclosure,
+        Self::VaultReportsRoute,
+        Self::VaultReportsOutbound,
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
@@ -1038,6 +1050,8 @@ impl AgentVerb {
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeWaitsResolve,
+        Self::VaultCodeWaitsReceipt,
         Self::VaultResultsStatus,
         Self::VaultResultsRecover,
         Self::VaultResultsRead,
@@ -1385,6 +1399,11 @@ impl AgentVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Report => "report",
+            Self::FeedbackPreview => "feedback.preview",
+            Self::FeedbackSend => "feedback.send",
+            Self::VaultReportsDisclosure => "vault.reports.disclosure",
+            Self::VaultReportsRoute => "vault.reports.route",
+            Self::VaultReportsOutbound => "vault.reports.outbound",
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
@@ -1743,6 +1762,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
+            Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
             Self::VaultResultsStatus => "vault.results.status",
             Self::VaultResultsRecover => "vault.results.recover",
             Self::VaultResultsRead => "vault.results.read",
@@ -2093,6 +2114,11 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -2436,6 +2462,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -2802,6 +2830,11 @@ impl AgentVerb {
         matches!(
             self,
             Self::Report
+                | Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
@@ -3148,6 +3181,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3588,7 +3623,12 @@ impl AgentVerb {
     pub const fn requires_unscoped(self) -> bool {
         matches!(
             self,
-            Self::SelfFocusScratchpadRecall
+            Self::FeedbackPreview
+                | Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::VaultReportsOutbound
+                | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
@@ -3918,6 +3958,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -4240,7 +4282,10 @@ impl AgentVerb {
     pub const fn writes(self) -> bool {
         matches!(
             self,
-            Self::SelfFocusScratchpadAppend
+            Self::FeedbackSend
+                | Self::VaultReportsDisclosure
+                | Self::VaultReportsRoute
+                | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
@@ -4458,6 +4503,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -4675,6 +4721,11 @@ impl AgentVerb {
     pub const fn argument_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
+            Self::FeedbackPreview => &["spec"],
+            Self::FeedbackSend => &["spec"],
+            Self::VaultReportsDisclosure => &["spec"],
+            Self::VaultReportsRoute => &["spec"],
+            Self::VaultReportsOutbound => &["spec"],
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
@@ -5038,6 +5089,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -5383,6 +5436,11 @@ impl AgentVerb {
     pub const fn required_fields(self) -> &'static [&'static str] {
         match self {
             Self::Report => &["spec"],
+            Self::FeedbackPreview => &["spec"],
+            Self::FeedbackSend => &["spec"],
+            Self::VaultReportsDisclosure => &["spec"],
+            Self::VaultReportsRoute => &["spec"],
+            Self::VaultReportsOutbound => &["spec"],
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
@@ -5729,6 +5787,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -6076,6 +6136,21 @@ impl AgentVerb {
         match self {
             Self::Report => {
                 "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."
+            }
+            Self::FeedbackPreview => {
+                "The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval."
+            }
+            Self::FeedbackSend => {
+                "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate."
+            }
+            Self::VaultReportsDisclosure => {
+                "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."
+            }
+            Self::VaultReportsRoute => {
+                "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to."
+            }
+            Self::VaultReportsOutbound => {
+                "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."
             }
             Self::SelfFocusRefresh => {
                 "Re-renders the run's context board as one frame, at the frame epoch the caller last saw."
@@ -7076,6 +7151,12 @@ impl AgentVerb {
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
+            }
+            Self::VaultCodeWaitsResolve => {
+                "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
+            }
+            Self::VaultCodeWaitsReceipt => {
+                "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
             }
             Self::VaultResultsStatus => {
                 "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."

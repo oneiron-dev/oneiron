@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 659 facade rows, 2371 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 618.
+// UniFFI census: 666 facade rows, 2397 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 625.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -144,6 +144,228 @@ pub struct ReportReceipt {
     pub route: ReportRoute,
     #[serde(rename = "disclosure")]
     pub disclosure: ReportDisclosure,
+}
+
+/// `oneiron::feedback::bundle::FeedbackCategory`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FeedbackCategory {
+    #[serde(rename = "bug")]
+    Bug,
+    #[serde(rename = "papercut")]
+    Papercut,
+    #[serde(rename = "confusion")]
+    Confusion,
+    #[serde(rename = "feature-wish")]
+    FeatureWish,
+}
+
+/// `oneiron::task_verb::sdk_feedback::FeedbackPreviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackPreviewRequest {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "category")]
+    pub category: FeedbackCategory,
+    #[serde(
+        rename = "include_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_text: Option<bool>,
+}
+
+/// `oneiron::task_verb::sdk_feedback::FeedbackSubjectPreview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FeedbackSubjectPreview {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "publisher_ref")]
+    pub publisher_ref: String,
+    #[serde(rename = "disclosure")]
+    pub disclosure: ReportDisclosure,
+    #[serde(rename = "includes_text")]
+    pub includes_text: bool,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "encoding")]
+    pub encoding: String,
+    #[serde(rename = "bundle")]
+    pub bundle: crate::WireJson,
+    #[serde(rename = "destination")]
+    pub destination: String,
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "previewed_at")]
+    pub previewed_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_feedback::FeedbackSendSubjectRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct FeedbackSendSubjectRequest {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "category")]
+    pub category: FeedbackCategory,
+    #[serde(
+        rename = "include_text",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_text: Option<bool>,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "previewed_at")]
+    pub previewed_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_feedback::FeedbackSubjectSent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FeedbackSubjectSent {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "publisher_ref")]
+    pub publisher_ref: String,
+    #[serde(rename = "digest")]
+    pub digest: String,
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "gate_reasons")]
+    pub gate_reasons: Vec<String>,
+    #[serde(rename = "approval_receipt_ref")]
+    pub approval_receipt_ref: String,
+    #[serde(rename = "logical_send_ref")]
+    pub logical_send_ref: String,
+}
+
+/// `oneiron::feedback::report::routing::ReportDisclosureChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ReportDisclosureChoice {
+    #[serde(rename = "approve_once")]
+    ApproveOnce,
+    #[serde(rename = "stop_asking_for_publisher")]
+    StopAskingForPublisher,
+    #[serde(rename = "deny")]
+    Deny,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportDisclosureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReportDisclosureRequest {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "choice")]
+    pub choice: ReportDisclosureChoice,
+}
+
+/// `oneiron::feedback::report::ReportReview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReportReview {
+    #[serde(rename = "status")]
+    pub status: ReportStatus,
+    #[serde(
+        rename = "quality_score",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub quality_score: Option<f64>,
+    #[serde(
+        rename = "duplicate_of",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub duplicate_of: Option<String>,
+}
+
+/// `oneiron::feedback::report::ReportIssue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReportIssue {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "request")]
+    pub request: ReportRequest,
+    #[serde(rename = "received_at")]
+    pub received_at: u64,
+    #[serde(rename = "route")]
+    pub route: ReportRoute,
+    #[serde(rename = "review")]
+    pub review: ReportReview,
+    #[serde(rename = "disclosure")]
+    pub disclosure: ReportDisclosure,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportRouteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReportRouteRequest {
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "route")]
+    pub route: ReportRoute,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportRouteReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReportRouteReceipt {
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "route")]
+    pub route: ReportRoute,
+    #[serde(rename = "updated")]
+    pub updated: bool,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportOutboundRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReportOutboundRequest {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportSignatureView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReportSignatureView {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "subject_hash")]
+    pub subject_hash: String,
+    #[serde(rename = "category")]
+    pub category: IssueCategory,
+    #[serde(rename = "kind")]
+    pub kind: ReportKind,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportPayloadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReportPayloadView {
+    #[serde(rename = "route")]
+    pub route: ReportRoute,
+    #[serde(rename = "signature")]
+    pub signature: ReportSignatureView,
+    #[serde(rename = "disclosed", default, skip_serializing_if = "Option::is_none")]
+    pub disclosed: Option<ReportRequest>,
+}
+
+/// `oneiron::task_verb::sdk_feedback::ReportOutboundView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ReportOutboundView {
+    #[serde(rename = "issue_ref")]
+    pub issue_ref: String,
+    #[serde(rename = "payload", default, skip_serializing_if = "Option::is_none")]
+    pub payload: Option<ReportPayloadView>,
 }
 
 /// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallRequest`.
@@ -20809,6 +21031,172 @@ pub struct CodeRunModelHealCountView {
     pub model_id: String,
     #[serde(rename = "healed_turns")]
     pub healed_turns: u64,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitTarget {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "wait_id")]
+    pub wait_id: String,
+    #[serde(rename = "generation")]
+    pub generation: u64,
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeWaitChoice {
+    #[serde(rename = "approve_once")]
+    ApproveOnce,
+    #[serde(rename = "approve_and_stop_asking")]
+    ApproveAndStopAsking,
+    #[serde(rename = "deny")]
+    Deny,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitResolveRequest {
+    #[serde(rename = "target")]
+    pub target: CodeWaitTarget,
+    #[serde(rename = "answer")]
+    pub answer: CodeWaitChoice,
+    #[serde(rename = "word_ref")]
+    pub word_ref: String,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeWaitState {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "settling")]
+    Settling,
+    #[serde(rename = "settled")]
+    Settled,
+    #[serde(rename = "consumed")]
+    Consumed,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitAnswerView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitAnswerView {
+    #[serde(rename = "answer")]
+    pub answer: CodeWaitChoice,
+    #[serde(rename = "word_ref")]
+    pub word_ref: String,
+    #[serde(rename = "decision_ref")]
+    pub decision_ref: String,
+    #[serde(rename = "answered_at_ms")]
+    pub answered_at_ms: u64,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitSettleOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CodeWaitSettleOutcome {
+    #[serde(rename = "delivered")]
+    Delivered,
+    #[serde(rename = "refused")]
+    Refused,
+    #[serde(rename = "delivery_unknown")]
+    DeliveryUnknown,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitLedgerLinks`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitLedgerLinks {
+    #[serde(rename = "prior_ref", default, skip_serializing_if = "Option::is_none")]
+    pub prior_ref: Option<String>,
+    #[serde(rename = "word_ref", default, skip_serializing_if = "Option::is_none")]
+    pub word_ref: Option<String>,
+    #[serde(rename = "facts_digest")]
+    pub facts_digest: String,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitSettlementView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitSettlementView {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "outcome")]
+    pub outcome: CodeWaitSettleOutcome,
+    #[serde(rename = "reason_codes")]
+    pub reason_codes: Vec<String>,
+    #[serde(rename = "settled_at_ms")]
+    pub settled_at_ms: u64,
+    #[serde(rename = "ledger", default, skip_serializing_if = "Option::is_none")]
+    pub ledger: Option<CodeWaitLedgerLinks>,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitConsumptionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitConsumptionView {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "resumed_path")]
+    pub resumed_path: String,
+    #[serde(rename = "result_handle")]
+    pub result_handle: String,
+    #[serde(rename = "consumed_at_ms")]
+    pub consumed_at_ms: u64,
+    #[serde(rename = "ledger", default, skip_serializing_if = "Option::is_none")]
+    pub ledger: Option<CodeWaitLedgerLinks>,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CodeWaitReceiptView {
+    #[serde(rename = "target")]
+    pub target: CodeWaitTarget,
+    #[serde(rename = "state")]
+    pub state: CodeWaitState,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "tool")]
+    pub tool: String,
+    #[serde(rename = "hold_reasons")]
+    pub hold_reasons: Vec<String>,
+    #[serde(rename = "ask_ref", default, skip_serializing_if = "Option::is_none")]
+    pub ask_ref: Option<String>,
+    #[serde(rename = "allowed_answers")]
+    pub allowed_answers: Vec<CodeWaitChoice>,
+    #[serde(rename = "answer", default, skip_serializing_if = "Option::is_none")]
+    pub answer: Option<CodeWaitAnswerView>,
+    #[serde(
+        rename = "settlement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement: Option<CodeWaitSettlementView>,
+    #[serde(
+        rename = "consumption",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub consumption: Option<CodeWaitConsumptionView>,
+    #[serde(rename = "already_answered")]
+    pub already_answered: bool,
+}
+
+/// `oneiron::memory::code_wait_doors::types::CodeWaitReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CodeWaitReceiptRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "wait_id")]
+    pub wait_id: String,
 }
 
 /// `oneiron::memory::result_doors::types::ResultRunRequest`.

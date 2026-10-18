@@ -7,6 +7,11 @@ Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
 - `report`
+- `feedback.preview`
+- `feedback.send`
+- `vault.reports.disclosure`
+- `vault.reports.route`
+- `vault.reports.outbound`
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
@@ -350,6 +355,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_submit`
 - `vault.code.oplog`
 - `vault.code.model_heal_count`
+- `vault.code.waits.resolve`
+- `vault.code.waits.receipt`
 - `vault.results.status`
 - `vault.results.recover`
 - `vault.results.read`

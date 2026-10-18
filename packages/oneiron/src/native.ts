@@ -31,6 +31,11 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+feedbackPreview(input: unknown): unknown
+feedbackSend(input: unknown): unknown
+vaultReportsDisclosure(input: unknown): unknown
+vaultReportsRoute(input: unknown): unknown
+vaultReportsOutbound(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -374,6 +379,8 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeWaitsResolve(input: unknown): unknown
+vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
 vaultResultsRecover(input: unknown): unknown
 vaultResultsRead(input: unknown): unknown

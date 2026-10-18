@@ -307,6 +307,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn feedback_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "feedback.preview")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("feedback.preview", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn feedback_send(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "feedback.send")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("feedback.send", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_reports_disclosure(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.reports.disclosure")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.reports.disclosure", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_reports_route(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.reports.route")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.reports.route", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_reports_outbound(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.reports.outbound")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.reports.outbound", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_focus_scratchpad_recall(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.focus.scratchpad.recall")?;
         let output = py
@@ -3279,6 +3314,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.code.model_heal_count")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.model_heal_count", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_waits_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.waits.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.waits.resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_waits_receipt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.waits.receipt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.waits.receipt", input))
             .map_err(raise)?;
         encode(&output)
     }

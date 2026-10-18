@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 659 facade rows, 2415 declarations.
-Inputs: 607 of 659 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 589 of 659 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 93; unread shapes: 0.
+Census: 666 facade rows, 2441 declarations.
+Inputs: 614 of 666 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 595 of 666 fully typed, 71 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 94; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -43,6 +43,76 @@ class ReportReceipt(TypedDict):
     duplicate_of: NotRequired[str | None]
     route: ReportRoute
     disclosure: ReportDisclosure
+FeedbackCategory = Literal["bug", "papercut", "confusion", "feature-wish"]
+class FeedbackPreviewRequest(TypedDict):
+    issue_ref: str
+    category: FeedbackCategory
+    include_text: NotRequired[bool]
+class FeedbackSubjectPreview(TypedDict):
+    issue_ref: str
+    subject_ref: str
+    publisher_ref: str
+    disclosure: ReportDisclosure
+    includes_text: bool
+    digest: str
+    encoding: str
+    bundle: Any
+    destination: str
+    approval: str
+    previewed_at: int
+class FeedbackSendSubjectRequest(TypedDict):
+    issue_ref: str
+    category: FeedbackCategory
+    include_text: NotRequired[bool]
+    digest: str
+    approval: str
+    previewed_at: int
+class FeedbackSubjectSent(TypedDict):
+    issue_ref: str
+    subject_ref: str
+    publisher_ref: str
+    digest: str
+    outcome: str
+    gate_reasons: list[str]
+    approval_receipt_ref: str
+    logical_send_ref: str
+ReportDisclosureChoice = Literal["approve_once", "stop_asking_for_publisher", "deny"]
+class ReportDisclosureRequest(TypedDict):
+    issue_ref: str
+    choice: ReportDisclosureChoice
+class ReportReview(TypedDict):
+    status: ReportStatus
+    quality_score: NotRequired[float | None]
+    duplicate_of: NotRequired[str | None]
+class ReportIssue(TypedDict):
+    issue_ref: str
+    actor_ref: str
+    request: ReportRequest
+    received_at: int
+    route: ReportRoute
+    review: ReportReview
+    disclosure: ReportDisclosure
+class ReportRouteRequest(TypedDict):
+    subject_ref: str
+    route: ReportRoute
+class ReportRouteReceipt(TypedDict):
+    subject_ref: str
+    route: ReportRoute
+    updated: bool
+class ReportOutboundRequest(TypedDict):
+    issue_ref: str
+class ReportSignatureView(TypedDict):
+    issue_ref: str
+    subject_hash: str
+    category: IssueCategory
+    kind: ReportKind
+class ReportPayloadView(TypedDict):
+    route: ReportRoute
+    signature: ReportSignatureView
+    disclosed: NotRequired[ReportRequest | None]
+class ReportOutboundView(TypedDict):
+    issue_ref: str
+    payload: NotRequired[ReportPayloadView | None]
 class ScratchpadRecallRequest(TypedDict):
     session_id: str
     query: str
@@ -6742,6 +6812,57 @@ class CodeRunModelHealCountRequest(TypedDict):
 class CodeRunModelHealCountView(TypedDict):
     model_id: str
     healed_turns: int
+class CodeWaitTarget(TypedDict):
+    run_id: EntityId
+    wait_id: EntityId
+    generation: int
+    step_hash: str
+    effect_digest: str
+CodeWaitChoice = Literal["approve_once", "approve_and_stop_asking", "deny"]
+class CodeWaitResolveRequest(TypedDict):
+    target: CodeWaitTarget
+    answer: CodeWaitChoice
+    word_ref: EntityId
+CodeWaitState = Literal["waiting", "settling", "settled", "consumed"]
+class CodeWaitAnswerView(TypedDict):
+    answer: CodeWaitChoice
+    word_ref: EntityId
+    decision_ref: str
+    answered_at_ms: int
+CodeWaitSettleOutcome = Literal["delivered", "refused", "delivery_unknown"]
+class CodeWaitLedgerLinks(TypedDict):
+    prior_ref: NotRequired[str | None]
+    word_ref: NotRequired[EntityId | None]
+    facts_digest: str
+class CodeWaitSettlementView(TypedDict):
+    receipt_ref: str
+    outcome: CodeWaitSettleOutcome
+    reason_codes: list[str]
+    settled_at_ms: int
+    ledger: NotRequired[CodeWaitLedgerLinks | None]
+class CodeWaitConsumptionView(TypedDict):
+    receipt_ref: str
+    step: int
+    resumed_path: str
+    result_handle: str
+    consumed_at_ms: int
+    ledger: NotRequired[CodeWaitLedgerLinks | None]
+class CodeWaitReceiptView(TypedDict):
+    target: CodeWaitTarget
+    state: CodeWaitState
+    verb: str
+    connector: str
+    tool: str
+    hold_reasons: list[str]
+    ask_ref: NotRequired[EntityId | None]
+    allowed_answers: list[CodeWaitChoice]
+    answer: NotRequired[CodeWaitAnswerView | None]
+    settlement: NotRequired[CodeWaitSettlementView | None]
+    consumption: NotRequired[CodeWaitConsumptionView | None]
+    already_answered: bool
+class CodeWaitReceiptRequest(TypedDict):
+    run_id: EntityId
+    wait_id: EntityId
 class ResultRunRequest(TypedDict):
     run_id: EntityId
 class ResultEffectRecord(TypedDict):
