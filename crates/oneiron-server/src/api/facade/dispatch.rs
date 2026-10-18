@@ -2411,6 +2411,30 @@ async fn vault_research_measure_held_out(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_research_evaluate_split(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.research.evaluate_split")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.research.evaluate_split", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.research.evaluate_split", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_research_evaluate_split(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_research_mark_invalid(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7315,6 +7339,7 @@ pub(crate) async fn call_verb(
         "vault.research.measure_held_out" => {
             vault_research_measure_held_out(server, call, input).await
         }
+        "vault.research.evaluate_split" => vault_research_evaluate_split(server, call, input).await,
         "vault.research.mark_invalid" => vault_research_mark_invalid(server, call, input).await,
         "vault.research.prune" => vault_research_prune(server, call, input).await,
         "vault.research.select" => vault_research_select(server, call, input).await,

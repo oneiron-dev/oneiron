@@ -233,7 +233,6 @@ impl Memory<'_> {
             self.rooms_speak(&WitnessTurn {
                 conversation_ref: room.to_hex(),
                 turn_ref: Some(reserved.turn.to_hex()),
-                quote: None,
                 thread_audience: None,
                 messages: vec![WitnessMessage {
                     id: Some(reserved.message.to_hex()),
@@ -250,6 +249,7 @@ impl Memory<'_> {
                     })),
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
                 occurred_at: reserved.occurred_at,
                 assertions: Default::default(),

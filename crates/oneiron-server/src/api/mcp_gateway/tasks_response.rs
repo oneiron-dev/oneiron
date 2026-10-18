@@ -934,6 +934,7 @@ fn mcp_agent_verb_input(
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
         "vault.research.measure_search" => a.spec.clone().ok_or_else(invalid),
         "vault.research.measure_held_out" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.evaluate_split" => a.spec.clone().ok_or_else(invalid),
         "vault.research.mark_invalid" => a.spec.clone().ok_or_else(invalid),
         "vault.research.prune" => a.spec.clone().ok_or_else(invalid),
         "vault.research.select" => a.spec.clone().ok_or_else(invalid),
@@ -1647,6 +1648,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.measure_held_out" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.evaluate_split" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.mark_invalid" => {
@@ -3829,6 +3833,19 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_research_measure_held_out(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.evaluate_split" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.research.evaluate_split", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CampaignSplitWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_research_evaluate_split(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
