@@ -9303,7 +9303,7 @@
      "path": "src/channel_identity/facts.rs",
      "purpose": "Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -9343,7 +9343,7 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 14
      }
     },
@@ -24662,7 +24662,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 64,
+      "crate-vis": 65,
       "mod": 1,
       "re-export": 8
      }
@@ -24977,7 +24977,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -25018,7 +25018,7 @@
      "path": "src/gate/resolution/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -32120,7 +32120,7 @@
      "path": "src/memory/shape_doors.rs",
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -52243,7 +52243,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -52324,7 +52324,7 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 16
      }
     },
     {
@@ -52389,6 +52389,7 @@
      "path": "src/vault_shape/plan.rs",
      "purpose": "Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 6,
       "struct": 3
