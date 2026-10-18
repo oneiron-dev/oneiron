@@ -15,9 +15,16 @@
 //! proposed as a revision of that skill's in-force head, through the same
 //! optimizer birth and gate as an instruction edit; it goes in force only
 //! when the gate admits it.
+//!
+//! Each settled team fills the reserve of the in-force team-shape revision
+//! its leader loaded, and the reshape never fits on a run that reserve holds.
+//! When the host lends a judge, the pass puts the open revision to the gate
+//! with a judge that reads both versions' trees, and an admitting verdict
+//! puts it in force.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::coach::COACH_TYPE_TREE_UPKEEP_FACET;
+use super::type_tree_gate::{ReserveWrite, drive, record_team_shape_outcomes};
 use crate::agent_dispatch::{
     TASK_TYPE_TREE_FILE, load_team_type_tree, team_shape_skill, team_shape_skill_in_force,
 };
@@ -25,8 +32,8 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::entity_id::EntityId;
 use crate::skill_hub::HubFile;
 use crate::skill_optimize::{
-    SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillRepairStamp, propose_skill_package_revision,
-    proven_cycle, receipt_is_held_out,
+    HeldOutReplayNotes, SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SkillEditDisposition, SkillRepairStamp,
+    propose_skill_package_revision, proven_cycle, receipt_is_held_out,
 };
 use crate::task_type::{
     DecisionAxis, DecisionObservation, TaskTypeNode, TaskTypeRef, TaskTypeTree,
@@ -41,6 +48,15 @@ use crate::{Error, Result, Vault};
 pub const TYPE_NAMES_PER_PASS: usize = 8;
 /// Longest readable type name kept, in characters.
 pub const MAX_TYPE_NAME_CHARS: usize = 80;
+/// A team that settles failed charges a loss to the team-shape revision its
+/// leader's pack loaded, with no attribution verdict; a team that settles
+/// succeeded credits a win through the ordinary contributing-win door.
+/// `false`: wins only.
+pub const TEAM_SHAPE_CHARGES_FAILED_TEAMS: bool = true;
+/// An admitting gate verdict on a team-shape revision puts it in force at
+/// once (admission and supersession in one transaction), with no owner step.
+/// `false` leaves the admitting verdict standing for an owner door.
+pub const TEAM_SHAPE_GATE_ADMITS: bool = true;
 
 /// One team receipt as the vault tree counts it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +78,33 @@ pub trait TypeNamer {
     ///
     /// Host-defined.
     fn name(&self, parent: &TaskTypeNode, node: &TaskTypeNode) -> Result<Option<String>>;
+}
+
+/// Settled teams one pass offered to the in-force team-shape revision's
+/// ledger. Every pass offers every settled team again; the ledger keeps one
+/// row per leader receipt.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TeamShapeReserve {
+    pub wins: u32,
+    pub losses: u32,
+    /// Teams the outcome door refused: an unfinished leader for a win, or a
+    /// leader receipt with no task type or executor.
+    pub skipped: u32,
+}
+
+/// What the gate did with the open team-shape revision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeGateOutcome {
+    /// Nothing to rule on yet (the head reserves no run) or the snapshot
+    /// moved; a later pass asks again.
+    Retry,
+    /// The gate's ruling, which put nothing in force.
+    Ruled(SkillEditDisposition),
+    /// The revision is in force and supersedes the head it revised.
+    Admitted(EntityId),
+    /// The gate admitted it and the admission door then refused it; the
+    /// proposal is closed.
+    Refused(SkillEditDisposition),
 }
 
 /// What one pass did.
@@ -86,6 +129,11 @@ pub struct TypeTreeUpkeepReport {
     pub proposed: Option<EntityId>,
     /// The tree changed, but an earlier proposed revision is still open.
     pub pending: bool,
+    /// Settled teams charged to the in-force team-shape revision.
+    pub reserve: TeamShapeReserve,
+    /// The gate's answer on the open revision, when the host lent a judge
+    /// and a revision was open.
+    pub gate: Option<TreeGateOutcome>,
 }
 
 /// The value a run chose on one decision axis, when its receipt names one.
@@ -359,27 +407,60 @@ fn rationale(report: &TypeTreeUpkeepReport, version: u64) -> String {
 
 impl Vault {
     /// Type-tree upkeep as the Coach, under a leased `coach.type_tree_upkeep`
-    /// attempt: recount the vault tree from its receipts, split and merge on
-    /// the fit tasks' decisions, keep the new shape only when it reads the
-    /// held-out tasks' decisions no worse, name new split types through
-    /// `namer` (outside any vault transaction), and propose a changed tree as
-    /// a revision of the in-force team-shape skill.
+    /// attempt: charge each settled team to the in-force team-shape revision
+    /// its leader loaded, recount the vault tree from its receipts, split and
+    /// merge on the fit tasks' decisions, keep the new shape only when it
+    /// reads the held-out tasks' decisions no worse, name new split types
+    /// through `namer` (outside any vault transaction), and propose a changed
+    /// tree as a revision of the in-force team-shape skill. With a `scorer`,
+    /// the open revision then goes to the held-out gate, and an admitting
+    /// verdict puts it in force.
     ///
     /// # Errors
     ///
     /// A lease that is not this facet's Coach attempt; storage errors; the
-    /// namer's errors; the proposal door's refusals.
+    /// namer's and the scorer's errors; the outcome, proposal and gate
+    /// doors' refusals.
     pub fn run_coach_type_tree_upkeep(
         &self,
         attempt: &DreamerAdmittedAttempt,
         namer: &dyn TypeNamer,
+        scorer: Option<&dyn HeldOutReplayNotes>,
         now: u64,
     ) -> Result<TypeTreeUpkeepReport> {
         self.require_coach_attempt(attempt, COACH_TYPE_TREE_UPKEEP_FACET)?;
+        let receipts = team_receipts(self, None)?;
+        let reserve = match team_shape_skill_in_force(self, None)? {
+            Some(head) => {
+                let record = self.get_skill_record(&head)?.ok_or(Error::EntityNotFound)?;
+                record_team_shape_outcomes(self, &head, &record, &receipts)?
+            }
+            None => ReserveWrite::default(),
+        };
+        let mut report =
+            self.reshape_and_propose(attempt, namer, &receipts, &reserve.held_out_teams, now)?;
+        report.reserve = reserve.report;
+        if let Some(scorer) = scorer {
+            report.gate = drive(self, attempt, scorer, &receipts, now)?;
+        }
+        Ok(report)
+    }
+
+    /// The recount, reshape and proposal of [`Self::run_coach_type_tree_upkeep`]
+    /// over `teams`. A run whose team `reserved` names (the gate's reserve)
+    /// is never fit on.
+    fn reshape_and_propose(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+        namer: &dyn TypeNamer,
+        teams: &[TeamReceipt],
+        reserved: &BTreeSet<String>,
+        now: u64,
+    ) -> Result<TypeTreeUpkeepReport> {
         let base = load_team_type_tree(self, None)?;
-        let evidence = self.vault_type_evidence()?;
+        let evidence = self.vault_type_evidence(teams)?;
         let skill = team_shape_skill()?;
-        let (held_out, fit): (Vec<&TypeEvidence>, Vec<&TypeEvidence>) =
+        let (held_out, mut fit): (Vec<&TypeEvidence>, Vec<&TypeEvidence>) =
             evidence.iter().partition(|row| {
                 !row.decisions.is_empty()
                     && row
@@ -387,6 +468,7 @@ impl Vault {
                         .as_deref()
                         .is_some_and(|task| receipt_is_held_out(&skill, task))
             });
+        fit.retain(|row| !reserved.contains(&row.team_ref));
         let mut report = TypeTreeUpkeepReport {
             receipts: u32::try_from(evidence.len()).unwrap_or(u32::MAX),
             decisions: u32::try_from(
@@ -467,13 +549,14 @@ impl Vault {
         Ok(report)
     }
 
-    /// Every team receipt placed in the vault tree (no project, or a project
-    /// with no team-shape fork of its own in force), with its decisions.
-    fn vault_type_evidence(&self) -> Result<Vec<TypeEvidence>> {
+    /// Every team receipt in `teams` placed in the vault tree (no project, or
+    /// a project with no team-shape fork of its own in force), with its
+    /// decisions.
+    fn vault_type_evidence(&self, teams: &[TeamReceipt]) -> Result<Vec<TypeEvidence>> {
         let vault_head = team_shape_skill_in_force(self, None)?;
         let mut shares: BTreeMap<EntityId, bool> = BTreeMap::new();
         let mut receipts = Vec::new();
-        for receipt in team_receipts(self, None)? {
+        for receipt in teams {
             let shared = match receipt.project {
                 None => true,
                 Some(project) => match shares.get(&project) {
@@ -486,7 +569,7 @@ impl Vault {
                 },
             };
             if shared {
-                receipts.push(receipt);
+                receipts.push(receipt.clone());
             }
         }
         Ok(type_evidence(receipts, &team_run_tasks(self)?))
