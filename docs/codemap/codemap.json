@@ -4109,7 +4109,7 @@
      "path": "src/batch/builder/commit.rs",
      "purpose": "Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2
      }
     },
@@ -22586,7 +22586,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FailureLadder"
@@ -22878,6 +22878,20 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectGrantMinted"
+     ],
+     "path": "src/federation/connect_grant.rs",
+     "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22958,9 +22972,9 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 3,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -22971,7 +22985,7 @@
      "path": "src/federation/grant_policy.rs",
      "purpose": "Vault-resident default capability rows for member-grant minting",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -23038,9 +23052,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -30931,8 +30945,8 @@
      "path": "src/memory/support.rs",
      "purpose": "Shared facade plumbing: [`Memory`] itself, actor/scope verification, JSON<->MessagePack wire encoding, and…",
      "surface": {
-      "crate-vis": 45,
-      "fn": 31,
+      "crate-vis": 47,
+      "fn": 32,
       "struct": 2,
       "type": 1
      }
@@ -43544,7 +43558,7 @@
      "path": "src/skill_reliability/projector.rs",
      "purpose": "Project attributed skill outcomes into the shared learning.reliability cells",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 3,
       "fn": 3
      }
@@ -47052,7 +47066,7 @@
      "purpose": "Per-revision, per-person bearer ingress for generic ask options (no page UI)",
      "surface": {
       "crate-vis": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 2
      }
     },
@@ -47643,7 +47657,7 @@
      "path": "src/task_verb/highway_runner.rs",
      "purpose": "Engine runners on the task highway (OF-220)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -49720,7 +49734,7 @@
      "purpose": "Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /…",
      "surface": {
       "crate-vis": 13,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 1
      }
     },
@@ -49763,6 +49777,19 @@
      "purpose": "Geographic entity doors consume PlaceStore, never concrete database handles",
      "surface": {
       "fn": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RawEntityPut"
+     ],
+     "path": "src/vault/raw_writes.rs",
+     "purpose": "The raw storage writes a bound caller makes (OF-063, FIX 3387)",
+     "surface": {
+      "fn": 5,
+      "struct": 1
      }
     },
     {
@@ -53896,7 +53923,7 @@
     "failure_ladder": {
      "files": 16,
      "impl_vault": true,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "ONE-1887 failure ladder: classify → bounded retry → healer slot → surface"
     },
@@ -53915,7 +53942,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54734,7 +54761,7 @@
      "purpose": "Typed bodies on the entity-document plane: one Loro document per entity whose shape its owning module…"
     },
     "vault": {
-     "files": 29,
+     "files": 30,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54820,7 +54847,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3335,
+   "source_files": 3337,
    "test_files": 902
   },
   "oneiron-android": {
@@ -54842,7 +54869,7 @@
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 4,
+      "fn": 5,
       "mod": 1
      }
     }
@@ -57753,7 +57780,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 51,
+      "const": 52,
       "crate-vis": 1
      }
     },
@@ -60735,7 +60762,7 @@
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
      "surface": {
-      "fn": 12
+      "fn": 13
      }
     },
     {
@@ -60765,7 +60792,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -60805,7 +60832,7 @@
      "path": "src/lib/types.rs",
      "purpose": "repr(C) status/types/handles and ABI limit constants",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 12,
       "enum": 1,
       "struct": 10
      }
@@ -63256,7 +63283,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 27,
+      "fn": 28,
       "struct": 1
      }
     },
@@ -72727,7 +72754,7 @@
      "path": "src/owner/federation_connect.rs",
      "purpose": "Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {

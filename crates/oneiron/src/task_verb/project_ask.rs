@@ -41,6 +41,11 @@ impl Memory<'_> {
         input: &TaskAskSpec,
         tradeoff: Option<super::project_tradeoff::ProjectTradeoffRoute>,
     ) -> MemoryResult<TaskAskReceipt> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .tasks_ask_project_with(task, input, tradeoff);
+        }
         if input.who.is_some() {
             return Err(MemoryError::bad_request(
                 "a project ask goes to the project's leader and board",
@@ -106,6 +111,9 @@ impl Memory<'_> {
         &self,
         project: EntityId,
     ) -> MemoryResult<Vec<(TaskAskHandle, TaskAskStatus)>> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().project_asks(project);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let actor = self.actor().to_hex();
         self.with_verified_actor_write_txn(|txn| {
