@@ -223,6 +223,7 @@ both bindings and their export-census tests in one change.
 - `vault.residence.open`
 - `vault.residence.index`
 - `vault.residence.prune`
+- `vault.residence.directives`
 - `vault.off_record.start`
 - `vault.off_record.status`
 - `vault.off_record.witness`

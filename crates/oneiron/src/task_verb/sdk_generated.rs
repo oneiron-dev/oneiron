@@ -1129,6 +1129,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.residence.directives",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceDirectivesRequest,
+                >(),
+            ),
+            (
                 "vault.off_record.start",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::OffRecordStartRequest,
@@ -4029,6 +4035,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.support_grants.mint",
     "vault.support_grants.list",
     "vault.support_grants.revoke",
+    "vault.residence.directives",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -4613,6 +4620,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.support_grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SupportGrantRevokeAnswer,
+        >(),
+        "vault.residence.directives" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::ResidenceDirectiveView>,
         >(),
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
@@ -6895,6 +6905,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.residence.prune" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.residence.directives" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10931,6 +10948,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.residence.prune" => {
             let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
         }
+        "vault.residence.directives" => {
+            let input: crate::task_verb::sdk::ResidenceDirectivesRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.off_record.start" => {
             let _input: crate::task_verb::sdk::OffRecordStartRequest = decode(value.clone())?;
         }
@@ -13101,6 +13122,7 @@ pub fn invoke(
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
         "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
+        "vault.residence.directives" => encode(vault_residence_directives(memory, decode(value)?)?),
         "vault.off_record.start" => encode(vault_off_record_start(memory, decode(value)?)?),
         "vault.off_record.status" => encode(vault_off_record_status(memory, decode(value)?)?),
         "vault.off_record.witness" => encode(vault_off_record_witness(memory, decode(value)?)?),
@@ -16014,6 +16036,13 @@ pub fn vault_residence_prune(
     input: crate::task_verb::sdk::ResidencePruneRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ResidencePruneAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
+}
+pub fn vault_residence_directives(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceDirectivesRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::ResidenceDirectiveView>> {
+    input.validate()?;
+    crate::task_verb::sdk::residence_directives(memory, &input)
 }
 pub fn vault_off_record_start(
     memory: &Memory<'_>,

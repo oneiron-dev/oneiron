@@ -221,6 +221,7 @@ pub enum AgentVerb {
     VaultResidenceOpen,
     VaultResidenceIndex,
     VaultResidencePrune,
+    VaultResidenceDirectives,
     VaultOffRecordStart,
     VaultOffRecordStatus,
     VaultOffRecordWitness,
@@ -944,6 +945,7 @@ impl AgentVerb {
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
         Self::VaultResidencePrune,
+        Self::VaultResidenceDirectives,
         Self::VaultOffRecordStart,
         Self::VaultOffRecordStatus,
         Self::VaultOffRecordWitness,
@@ -1674,6 +1676,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
             Self::VaultResidencePrune => "vault.residence.prune",
+            Self::VaultResidenceDirectives => "vault.residence.directives",
             Self::VaultOffRecordStart => "vault.off_record.start",
             Self::VaultOffRecordStatus => "vault.off_record.status",
             Self::VaultOffRecordWitness => "vault.off_record.witness",
@@ -2408,6 +2411,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -3153,6 +3157,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -3670,6 +3675,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultResidenceDirectives
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -3958,6 +3964,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -5128,6 +5135,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultResidenceDirectives => &["spec"],
             Self::VaultOffRecordStart => &["spec"],
             Self::VaultOffRecordStatus => &["spec"],
             Self::VaultOffRecordWitness => &["spec"],
@@ -5852,6 +5860,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultResidenceDirectives => &["spec"],
             Self::VaultOffRecordStart => &["spec"],
             Self::VaultOffRecordStatus => &["spec"],
             Self::VaultOffRecordWitness => &["spec"],
@@ -6992,6 +7001,9 @@ impl AgentVerb {
             }
             Self::VaultResidencePrune => {
                 "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."
+            }
+            Self::VaultResidenceDirectives => {
+                "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."
             }
             Self::VaultOffRecordStart => {
                 "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."

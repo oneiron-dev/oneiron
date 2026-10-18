@@ -247,6 +247,7 @@ vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
 vaultResidencePrune(input: unknown): unknown
+vaultResidenceDirectives(input: unknown): unknown
 vaultOffRecordStart(input: unknown): unknown
 vaultOffRecordStatus(input: unknown): unknown
 vaultOffRecordWitness(input: unknown): unknown

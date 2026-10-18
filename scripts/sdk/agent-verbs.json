@@ -2234,6 +2234,7 @@
       "output": "crate::task_verb::sdk::HubHookQualificationReceipt",
       "call": "crate::task_verb::sdk::hub_hooks_qualify_embedded(memory, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3494,6 +3495,22 @@
       "section": false
     },
     {
+      "name": "vault.residence.directives",
+      "description": "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle.",
+      "input": "crate::task_verb::sdk::ResidenceDirectivesRequest",
+      "output": "Vec<crate::task_verb::sdk::ResidenceDirectiveView>",
+      "call": "crate::task_verb::sdk::residence_directives(memory, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.off_record.start",
       "description": "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.",
       "input": "crate::task_verb::sdk::OffRecordStartRequest",
@@ -3656,6 +3673,7 @@
       "output": "crate::task_verb::sdk::ResearchChildReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.research.create_child\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3776,6 +3794,7 @@
       "output": "crate::skill_optimize::EvalAuthoringReport",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.evals.cohorts.setup\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -5599,6 +5618,7 @@
       },
       "section": false,
       "host_door": true,
+      "host_door_lists": true,
       "openapi": true
     },
     {
@@ -9107,6 +9127,7 @@
       "output": "crate::task_verb::sdk::BookingPageTokenResponse",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.page_token\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -12061,6 +12082,7 @@
       "call": "crate::code_run::fold_api::host_required(memory, &input)?",
       "host_door": true,
       "host_door_caller": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

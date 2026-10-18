@@ -809,6 +809,8 @@ export class Oneiron {
       index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndexAnswer => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndexAnswer),
       /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
       prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruneAnswer => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruneAnswer),
+      /** The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle. */
+      directives: (input: Facade.ResidenceDirectivesRequest): Facade.ResidenceDirectiveView[] => this.#call(() => this.#client.vaultResidenceDirectives(input) as Facade.ResidenceDirectiveView[]),
     },
     off_record: {
       /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */

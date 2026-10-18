@@ -1132,6 +1132,8 @@ class Oneiron:
             """The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."""
         def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruneAnswer:
             """Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."""
+        def directives(self, spec: Facade.ResidenceDirectivesRequest) -> list[Facade.ResidenceDirectiveView]:
+            """The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."""
     class _VaultOffRecordVerbs:
         def start(self, spec: Facade.OffRecordStartRequest) -> Facade.OffRecordSessionView:
             """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."""
