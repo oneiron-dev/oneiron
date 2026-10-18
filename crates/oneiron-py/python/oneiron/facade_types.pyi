@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 791 facade rows, 2755 declarations.
-Inputs: 739 of 791 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 711 of 791 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 799 facade rows, 2785 declarations.
+Inputs: 747 of 799 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 719 of 799 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -14,6 +14,34 @@ from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
 
 T = TypeVar("T")
 
+class WebFetchRequest(TypedDict):
+    url: str
+RendererKind = Literal["readability", "headless", "firecrawl"]
+class FetchResult(TypedDict):
+    markdown: str
+    title: str
+    canonical_url: str
+    fetched_at: int
+    content_hash: str
+    renderer: RendererKind
+CrawlScope = Literal["same_site", "cross_site"]
+class WebCrawlRequest(TypedDict):
+    seed_url: str
+    page_budget: int
+    scope: NotRequired[CrawlScope]
+class CrawlPageFailure(TypedDict):
+    url: str
+    reason: str
+class CrawlCompletionComplete(TypedDict):
+    status: Literal["complete"]
+class CrawlCompletionBudgetExhausted(TypedDict):
+    status: Literal["budget_exhausted"]
+    unvisited_urls: list[str]
+CrawlCompletion = CrawlCompletionComplete | CrawlCompletionBudgetExhausted
+class CrawlResult(TypedDict):
+    pages: list[FetchResult]
+    failed: list[CrawlPageFailure]
+    completion: CrawlCompletion
 IssueCategory = Literal["skill_defect", "execution_lapse", "discovery", "environment", "preference_shift", "unclear"]
 ReportKind = Literal["problem", "proposal"]
 class FeedbackProposal(TypedDict):
@@ -2506,6 +2534,34 @@ class CallReceipt(TypedDict):
     action_digest: NotRequired[str | None]
     served: list[str]
     served_records: NotRequired[list[RecordRef]]
+class AdmissionStatusRequest(TypedDict):
+    intent_key: str
+class AdmissionStatusQueued(TypedDict):
+    status: Literal["queued"]
+class AdmissionStatusHeld(TypedDict):
+    status: Literal["held"]
+    reason: NotRequired[str | None]
+class AdmissionStatusCompleted(TypedDict):
+    status: Literal["completed"]
+    result_digest: str
+class AdmissionStatusRefused(TypedDict):
+    status: Literal["refused"]
+    code: str
+    reason: str
+class AdmissionStatusInterrupted(TypedDict):
+    status: Literal["interrupted"]
+    reason: str
+AdmissionStatus = AdmissionStatusQueued | AdmissionStatusHeld | AdmissionStatusCompleted | AdmissionStatusRefused | AdmissionStatusInterrupted
+class AdmissionReceipt(TypedDict):
+    receipt_ref: str
+    intent_key: str
+    verb: str
+    request_digest: str
+    accepted_at: int
+    updated_at: int
+    state: AdmissionStatus
+class AdmissionReceiptsRequest(TypedDict):
+    intent_keys: list[str]
 class ExplainMemoryRequest(TypedDict):
     entity: str
     session_id: NotRequired[str | None]
@@ -13727,6 +13783,85 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
+class RunReviewChangeClaim(TypedDict):
+    kind: Literal["claim"]
+    claim_ref: str
+class RunReviewChangeEdge(TypedDict):
+    kind: Literal["edge"]
+    provenance_ref: str
+class RunReviewChangeNote(TypedDict):
+    kind: Literal["note"]
+    note_ref: str
+    fork_ref: str
+class RunReviewChangeTopology(TypedDict):
+    kind: Literal["topology"]
+    event_ref: str
+class RunReviewChangeExternalEffect(TypedDict):
+    kind: Literal["external_effect"]
+    receipt_ref: str
+class RunReviewChangeDelete(TypedDict):
+    kind: Literal["delete"]
+    entity_ref: str
+class RunReviewChangeErase(TypedDict):
+    kind: Literal["erase"]
+    entity_ref: str
+RunReviewChange = RunReviewChangeClaim | RunReviewChangeEdge | RunReviewChangeNote | RunReviewChangeTopology | RunReviewChangeExternalEffect | RunReviewChangeDelete | RunReviewChangeErase
+class RunReviewRequest(TypedDict):
+    run_id: str
+    changes: list[RunReviewChange]
+RunChangeVerdict = Literal["landed", "rejected", "waiting", "let_go"]
+class RunChangeOutcome(TypedDict):
+    change: str
+    verdict: RunChangeVerdict
+    receipt: NotRequired[str | None]
+class RunReviewExplainer(TypedDict):
+    text: str
+    read_refs: list[str]
+class RunReview(TypedDict):
+    run_id: str
+    review_id: str
+    changes: list[RunChangeOutcome]
+    explainer: RunReviewExplainer
+RunSettleDecision = Literal["approve", "reject"]
+class RunSettleRequest(TypedDict):
+    review: RunReviewRequest
+    review_id: str
+    decision: RunSettleDecision
+RunSettlementKind = Literal["ProposalOutcome"]
+class RunAnsweredByWord(TypedDict):
+    word_ref: str
+class RunAnsweredByRow(TypedDict):
+    row: str
+class RunAnsweredByGrant(TypedDict):
+    grant: str
+RunAnsweredBy = RunAnsweredByWord | RunAnsweredByRow | RunAnsweredByGrant
+RunSettlementReason = Literal["owner_approved", "owner_rejected"]
+class RunSettlement(TypedDict):
+    kind: RunSettlementKind
+    run_id: str
+    receipt: str
+    changes: list[RunChangeOutcome]
+    verdict: RunChangeVerdict
+    answered_by: RunAnsweredBy
+    reason: RunSettlementReason
+    summary: str
+    revert_handle: str
+class RunSettlementRequest(TypedDict):
+    run_id: str
+class RevertRunRequest(TypedDict):
+    run_id: str
+    changes: NotRequired[list[str] | None]
+class RunCompensation(TypedDict):
+    change: str
+    receipt: str
+RunNotUndoneReason = Literal["one_way", "backup_only", "dependent", "not_selected", "not_landed"]
+class RunNotUndone(TypedDict):
+    change: str
+    reason: RunNotUndoneReason
+class RevertRunOutcome(TypedDict):
+    run_id: str
+    compensated: list[RunCompensation]
+    not_undone: list[RunNotUndone]
 class OpenInput(TypedDict):
     url: str
 class Row(TypedDict):

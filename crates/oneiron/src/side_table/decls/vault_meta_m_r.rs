@@ -613,4 +613,6 @@ side_tables! {
     ROOMS_TURN: VaultMeta b"rooms.turn.v1/" LegacyJson;
     /// Durable wait binding for a run-branch ask. Key: attempt id16 + handle hash32 + step hash32.
     RUN_TREE_ASK_WAIT: VaultMeta b"run.ask.wait.v1/" Named;
+    /// One explicitly reviewed run's settlement and compensating-operation handles. Key: job id.
+    RUN_REVIEW_SETTLEMENT: VaultMeta b"run_review:settlement:v1:" Named;
 }

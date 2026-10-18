@@ -81,6 +81,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
+pub(crate) use super::run_review_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -103,6 +104,7 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
 // The share doors past create (OF-491), likewise.
@@ -1097,6 +1099,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "ai.steps.receipt"
         | "vault.runs.step"
         | "vault.runs.checkpoint"
+        | "vault.runs.review"
+        | "vault.runs.settle"
+        | "vault.runs.settlement"
+        | "vault.revert_run"
         | "ai.reply"
         | "calendar.connector.configure"
         | "calendar.connector.get"
@@ -1506,6 +1512,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"
         | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
+        "fetch" | "crawl" => super::facade_actor(server, auth)
+            .map(drop)
+            .map_err(super::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

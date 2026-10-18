@@ -139,6 +139,8 @@ pub struct SyncServer {
     pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// The run browsers bound now, for the owner's takeover (CUA-001).
     pub(crate) browser_seats: Arc<super::BrowserSeats>,
+    /// Host-injected acquisition ladder, initialized to native readability on first use.
+    pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -268,6 +270,7 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        vault.recover_admission_intents()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.
         // An empty configured secret mints nothing either: it carries no key
@@ -460,6 +463,7 @@ impl SyncServer {
             desktop_guest: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
+            web_fetcher: std::sync::OnceLock::new(),
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,
@@ -818,7 +822,9 @@ impl SyncServer {
     /// it runs without a turn. Hold the turn until the work ends; take it
     /// before the engine opens a transaction.
     pub async fn admit_task_work(&self, caller: oneiron::EntityId) -> TaskWorkTurn {
-        self.vault.admit_task_work(caller).await
+        self.vault
+            .admit_task_work_observed(caller, crate::api::admission_observer())
+            .await
     }
 
     /// Allocates a new unique nonzero connection ID.

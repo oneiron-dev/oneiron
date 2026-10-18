@@ -40,6 +40,7 @@ pub mod coping_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
+pub mod run_review;
 mod people_verbs;
 mod skill_authoring;
 pub mod wellness_doors;
@@ -97,6 +98,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+mod web_fetch;
 mod witness;
 
 #[cfg(test)]
