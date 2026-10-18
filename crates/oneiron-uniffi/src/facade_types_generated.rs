@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 320 facade rows, 1190 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 288.
+// UniFFI census: 324 facade rows, 1204 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 292.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -6897,6 +6897,16 @@ pub struct ResidenceModeChanged {
     pub pruned_items: u64,
 }
 
+/// `oneiron::note::reads::NoteReadSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteReadSpan {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
 /// `oneiron::task_verb::sdk_residence::ResidenceOpenRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -6907,6 +6917,65 @@ pub struct ResidenceOpenRequest {
     pub window: String,
     #[serde(rename = "item")]
     pub item: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "spans", default, skip_serializing_if = "Option::is_none")]
+    pub spans: Option<Vec<NoteReadSpan>>,
+}
+
+/// `oneiron::note::reads::NoteReadSource`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NoteReadSource {
+    #[serde(rename = "local")]
+    Local,
+    #[serde(rename = "home")]
+    Home,
+}
+
+/// `oneiron::note::documents::NoteVersion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteVersion {
+    #[serde(rename = "note")]
+    pub note: String,
+    #[serde(rename = "head")]
+    pub head: String,
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+}
+
+/// `oneiron::note::documents::NoteAnchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteAnchor {
+    #[serde(rename = "note")]
+    pub note: String,
+    #[serde(rename = "head")]
+    pub head: String,
+    #[serde(rename = "cursor")]
+    pub cursor: Vec<u8>,
+}
+
+/// `oneiron::note::reads::NoteAnchoredSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteAnchoredSpan {
+    #[serde(rename = "start")]
+    pub start: NoteAnchor,
+    #[serde(rename = "end")]
+    pub end: NoteAnchor,
+}
+
+/// `oneiron::note::reads::NoteReadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteReadView {
+    #[serde(rename = "version")]
+    pub version: NoteVersion,
+    #[serde(rename = "markdown")]
+    pub markdown: String,
+    #[serde(rename = "title", default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(rename = "spans")]
+    pub spans: Vec<NoteAnchoredSpan>,
+    #[serde(rename = "source")]
+    pub source: NoteReadSource,
 }
 
 /// `oneiron::task_verb::sdk_residence::ResidenceOpened`.
@@ -6920,6 +6989,10 @@ pub struct ResidenceOpened {
     pub residence: String,
     #[serde(rename = "bytes")]
     pub bytes: u64,
+    #[serde(rename = "source")]
+    pub source: NoteReadSource,
+    #[serde(rename = "note", default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<NoteReadView>,
 }
 
 /// `oneiron::task_verb::sdk_residence::ResidenceMachineRequest`.
@@ -19294,26 +19367,108 @@ pub struct CreateNoteFromEntityRequest {
     pub kind: String,
 }
 
-/// `oneiron::note::documents::NoteAnchor`.
+/// `oneiron::note::reads::NoteReadRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct NoteAnchor {
-    #[serde(rename = "note")]
-    pub note: String,
-    #[serde(rename = "head")]
-    pub head: String,
-    #[serde(rename = "cursor")]
-    pub cursor: Vec<u8>,
+#[serde(deny_unknown_fields)]
+pub struct NoteReadRequest {
+    #[serde(rename = "note_ref")]
+    pub note_ref: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<NoteVersion>,
+    #[serde(rename = "spans", default, skip_serializing_if = "Option::is_none")]
+    pub spans: Option<Vec<NoteReadSpan>>,
 }
 
-/// `oneiron::note::documents::NoteVersion`.
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalNoteReadView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct NoteVersion {
+pub struct ScopedReadResultOptionalNoteReadView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<NoteReadView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::note::reads::NoteAccessRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteAccessRequest {
+    #[serde(rename = "note_ref")]
+    pub note_ref: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::note::operations::NoteAuthorship`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteAuthorship {
+    #[serde(rename = "operation")]
+    pub operation: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "actor_class")]
+    pub actor_class: String,
+    #[serde(rename = "grant", default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<String>,
+    #[serde(rename = "command_hash")]
+    pub command_hash: Vec<u8>,
+}
+
+/// `oneiron::note::reads::NoteHistoryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteHistoryView {
+    #[serde(rename = "version")]
+    pub version: NoteVersion,
+    #[serde(rename = "operations")]
+    pub operations: Vec<NoteAuthorship>,
+    #[serde(rename = "shallow_since")]
+    pub shallow_since: Vec<u8>,
+    #[serde(rename = "complete")]
+    pub complete: bool,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalNoteHistoryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalNoteHistoryView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<NoteHistoryView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::note::reads::NoteEditorBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteEditorBinding {
+    #[serde(rename = "binding")]
+    pub binding: String,
     #[serde(rename = "note")]
-    pub note: String,
-    #[serde(rename = "head")]
-    pub head: String,
-    #[serde(rename = "frontier")]
-    pub frontier: Vec<u8>,
+    pub note: NoteReadView,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalNoteEditorBinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalNoteEditorBinding {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<NoteEditorBinding>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::note::reads::NoteEditorCloseRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteEditorCloseRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+}
+
+/// `oneiron::note::reads::NoteEditorClosed`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteEditorClosed {
+    #[serde(rename = "closed")]
+    pub closed: bool,
 }
 
 /// `oneiron::note::documents::NoteEdit`.

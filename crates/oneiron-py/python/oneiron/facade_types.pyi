@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 320 facade rows, 1287 declarations.
-Inputs: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 324 facade rows, 1298 declarations.
+Inputs: 281 of 324 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 281 of 324 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -2540,15 +2540,40 @@ class ResidenceModeChanged(TypedDict):
     retained: list[str]
     unsynced: list[str]
     pruned_items: int
+class NoteReadSpan(TypedDict):
+    start: int
+    end: int
 class ResidenceOpenRequest(TypedDict):
     machine: EntityId
     window: str
     item: EntityId
+    reason: NotRequired[str | None]
+    spans: NotRequired[list[NoteReadSpan]]
+NoteReadSource = Literal["local", "home"]
+class NoteVersion(TypedDict):
+    note: str
+    head: str
+    frontier: list[int]
+class NoteAnchor(TypedDict):
+    note: str
+    head: str
+    cursor: list[int]
+class NoteAnchoredSpan(TypedDict):
+    start: NoteAnchor
+    end: NoteAnchor
+class NoteReadView(TypedDict):
+    version: NoteVersion
+    markdown: str
+    title: NotRequired[str | None]
+    spans: list[NoteAnchoredSpan]
+    source: NoteReadSource
 class ResidenceOpened(TypedDict):
     item: EntityId
     window: str
     residence: str
     bytes: int
+    source: NoteReadSource
+    note: NotRequired[NoteReadView | None]
 class ResidenceMachineRequest(TypedDict):
     machine: EntityId
 class ResidenceIndexEntry(TypedDict):
@@ -6758,14 +6783,32 @@ class CreateNoteRequest(TypedDict):
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str
-class NoteAnchor(TypedDict):
-    note: str
-    head: str
-    cursor: list[int]
-class NoteVersion(TypedDict):
-    note: str
-    head: str
-    frontier: list[int]
+class NoteReadRequest(TypedDict):
+    note_ref: str
+    reason: NotRequired[str | None]
+    version: NotRequired[NoteVersion | None]
+    spans: NotRequired[list[NoteReadSpan]]
+class NoteAccessRequest(TypedDict):
+    note_ref: str
+    reason: NotRequired[str | None]
+class NoteAuthorship(TypedDict):
+    operation: str
+    actor: str
+    actor_class: str
+    grant: NotRequired[str | None]
+    command_hash: list[int]
+class NoteHistoryView(TypedDict):
+    version: NoteVersion
+    operations: list[NoteAuthorship]
+    shallow_since: list[int]
+    complete: bool
+class NoteEditorBinding(TypedDict):
+    binding: str
+    note: NoteReadView
+class NoteEditorCloseRequest(TypedDict):
+    binding: str
+class NoteEditorClosed(TypedDict):
+    closed: bool
 class NoteEditReplaceSpan(TypedDict):
     kind: Literal["replace_span"]
     start: NoteAnchor

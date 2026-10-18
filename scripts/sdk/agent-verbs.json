@@ -1548,7 +1548,7 @@
     },
     {
       "name": "vault.residence.open",
-      "description": "Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home.",
+      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors.",
       "input": "crate::task_verb::sdk::ResidenceOpenRequest",
       "output": "crate::task_verb::sdk::ResidenceOpened",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
@@ -5771,6 +5771,72 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.notes.read",
+      "description": "Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot.",
+      "input": "crate::note::NoteReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>",
+      "call": "memory.read_note(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
+    },
+    {
+      "name": "vault.notes.history",
+      "description": "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented.",
+      "input": "crate::note::NoteAccessRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>",
+      "call": "memory.note_history(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      }
+    },
+    {
+      "name": "vault.notes.editor.bind",
+      "description": "Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves.",
+      "input": "crate::note::NoteAccessRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>",
+      "call": "memory.bind_note_editor(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "section": false
+    },
+    {
+      "name": "vault.notes.editor.close",
+      "description": "Closes one live NOTE editor held by this caller; a binding id alone grants no authority.",
+      "input": "crate::note::NoteEditorCloseRequest",
+      "output": "crate::note::NoteEditorClosed",
+      "call": "memory.close_note_editor(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "section": false
     },
     {
       "name": "vault.notes.edit",

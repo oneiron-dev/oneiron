@@ -71,6 +71,15 @@ impl NoteKind {
     }
 }
 
+mod reads;
+pub use reads::{
+    NoteAccessRequest, NoteAnchoredSpan, NoteEditorBinding, NoteEditorCloseRequest, NoteEditorClosed,
+    NoteHistoryView, NoteReadRequest, NoteReadSource, NoteReadSpan, NoteReadView,
+};
+#[cfg(feature = "sync")]
+mod residence_read;
+#[cfg(feature = "sync")]
+pub(crate) use residence_read::opened_note_view;
 mod archive_read;
 pub(crate) mod documents;
 pub(crate) mod erase;
