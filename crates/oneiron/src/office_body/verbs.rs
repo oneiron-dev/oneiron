@@ -584,6 +584,9 @@ impl Memory<'_> {
         &self,
         input: &OfficeBodyForkMergeRequest,
     ) -> MemoryResult<OfficeBodyDiff> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().artifacts_body_fork_merge(input);
+        }
         let artifact = self.body_ref(&input.artifact_ref)?;
         let fork = self.body_ref(&input.fork_ref)?;
         let diff = match self.vault().merge_office_body_fork_or_wait(
@@ -622,6 +625,11 @@ impl Memory<'_> {
         &self,
         input: &OfficeBodyProposalSettleRequest,
     ) -> MemoryResult<OfficeBodyProposal> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .artifacts_body_proposal_settle(input);
+        }
         let artifact = self.body_ref(&input.artifact_ref)?;
         let proposal = self.body_ref(&input.proposal_ref)?;
         let reviewed = input

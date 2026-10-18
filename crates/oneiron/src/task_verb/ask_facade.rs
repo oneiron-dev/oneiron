@@ -68,6 +68,11 @@ impl Memory<'_> {
         input: &TaskAskSpec,
         effect: impl FnOnce(&mut heed::RwTxn<'_>, EntityId) -> MemoryResult<()>,
     ) -> MemoryResult<TaskAskReceipt> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .tasks_ask_with_txn_effect(input, effect);
+        }
         let digest = ask_admission_digest(input)?;
         self.with_verified_actor_write_txn(|txn| {
             self.admit_ask_in_txn(txn, input, &digest, AskThen::Now(effect))
@@ -82,6 +87,9 @@ impl Memory<'_> {
         input: &TaskAskSpec,
         effect: Option<AskEffect>,
     ) -> MemoryResult<TaskAskReceipt> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_ask_composed(input, effect);
+        }
         let digest = ask_admission_digest(input)?;
         self.with_verified_actor_write_txn(|txn| {
             self.admit_ask_in_txn(txn, input, &digest, AskThen::<NoClosure>::Typed(effect))
@@ -747,6 +755,9 @@ impl Memory<'_> {
     /// An ask held for launch approval reads, to its asker, as pending on
     /// that approval.
     pub fn tasks_ask_status(&self, handle: TaskAskHandle) -> MemoryResult<TaskAskStatus> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_ask_status(handle);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self
             .vault()
@@ -813,6 +824,9 @@ impl Memory<'_> {
         &self,
         task_ref: EntityId,
     ) -> MemoryResult<Option<TaskAskStatus>> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_ask_status_for_task(task_ref);
+        }
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let txn = self
             .vault()
@@ -881,6 +895,13 @@ impl Memory<'_> {
         step_key: Option<&str>,
         observed_generation: u64,
     ) -> MemoryResult<TaskAskWait> {
+        if !self.has_task_work_turn() {
+            return self.task_work_memory().tasks_wait_observing(
+                handle,
+                step_key,
+                observed_generation,
+            );
+        }
         if step_key.is_some_and(str::is_empty) {
             return Err(MemoryError::bad_request("invalid wait step key"));
         }
