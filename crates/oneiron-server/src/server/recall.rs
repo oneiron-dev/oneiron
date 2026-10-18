@@ -76,8 +76,8 @@ impl SyncServer {
 
     /// A recall's `media` (OF-370), decoded before any work, as the context
     /// pack decodes its own: the space, the tower its MIME picks and the
-    /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]), as does
-    /// a `kinds` filter, which recall's per-space list does not read.
+    /// bytes. Light effort refuses it ([`LIGHT_RECALL_EMBEDS_MEDIA`]). The
+    /// request's kind filter stays on its media-space seed.
     fn recall_media(&self, input: &RecallRequest) -> MemoryResult<Option<DecodedMediaQuery>> {
         let Some(media) = input.media.as_ref() else {
             return Ok(None);
@@ -88,12 +88,6 @@ impl SyncServer {
             return Err(MemoryError::bad_request_with(
                 "vault.recall: media needs an ai.embed call, which light effort and call mode never make",
                 &["Recall media at medium effort or above."],
-            ));
-        }
-        if !media.kinds.is_empty() {
-            return Err(MemoryError::bad_request_with(
-                "vault.recall: media.kinds is not read here; a recall's media list keeps every kind its space holds",
-                &["Leave out media.kinds, or narrow with scope.kinds."],
             ));
         }
         crate::api::ContextPackMediaQuery::from(media.clone())
@@ -137,7 +131,7 @@ impl SyncServer {
         &self,
         media: DecodedMediaQuery,
         payer: Option<&PayerPerson>,
-    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>)>> {
+    ) -> MemoryResult<Vec<(String, InputKind, Vec<f32>, Vec<InputKind>)>> {
         let Ok(runtime) = self.recall_embed_runtime() else {
             return Err(MemoryError::new(
                 MEMORY_CODE_MODEL_UNAVAILABLE,
@@ -155,7 +149,7 @@ impl SyncServer {
             .map_err(media_refusal)?;
         Ok(seeds
             .into_iter()
-            .map(|seed| (seed.space, seed.kind, seed.vector))
+            .map(|seed| (seed.space, seed.kind, seed.vector, seed.kinds))
             .collect())
     }
 
@@ -183,7 +177,7 @@ impl SyncServer {
                         return RecallQueryVectors {
                             text_index: None,
                             media: vector
-                                .map(|vector| (space, InputKind::Text, vector))
+                                .map(|vector| (space, InputKind::Text, vector, Vec::new()))
                                 .into_iter()
                                 .collect(),
                         };

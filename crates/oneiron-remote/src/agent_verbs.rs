@@ -310,6 +310,15 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.assets.ingest" => remote_agent_verb_output::<
+                    oneiron::memory::AssetIngestReceipt,
+                >(client, verb, &input),
+                "vault.assets.resolve" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::AssetResolved>,
+                >(client, verb, &input),
+                "vault.search.vector" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::VectorSearchHit>>,
+                >(client, verb, &input),
                 "vault.images.view" => {
                     remote_agent_verb_output::<oneiron::memory::PulledImage>(client, verb, &input)
                 }
@@ -3601,6 +3610,44 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts", value)
+    }
+    pub fn vault_assets_ingest(
+        &self,
+        input: &oneiron::memory::AssetIngestRequest,
+    ) -> Result<oneiron::memory::AssetIngestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.assets.ingest", value)
+    }
+    pub fn vault_assets_resolve(
+        &self,
+        input: &oneiron::memory::AssetResolveRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<oneiron::memory::AssetResolved>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.assets.resolve", value)
+    }
+    pub fn vault_search_vector(
+        &self,
+        input: &oneiron::memory::VectorSearchRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::VectorSearchHit>>, MemoryError>
+    {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.vector", value)
     }
     /// The full pixels behind an image's view handle: the whole image, a crop or a zoom, recorded as a pull.
     pub fn vault_images_view(

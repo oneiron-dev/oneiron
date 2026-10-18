@@ -117,6 +117,9 @@ vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
+vaultAssetsIngest(input: unknown): unknown
+vaultAssetsResolve(input: unknown): unknown
+vaultSearchVector(input: unknown): unknown
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
 vaultExplainMemory(input: unknown): unknown

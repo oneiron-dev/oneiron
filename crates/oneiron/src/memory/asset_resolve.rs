@@ -71,11 +71,13 @@ pub const IMAGE_FULL: QuestionFamily = QuestionFamily {
 };
 
 /// The rung of the lazy-image ladder an asset read serves.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ServedAssetForm {
     /// The image bytes, with the newest ASSET_TEXT beside them as a caption.
     Image,
+    /// The audio clip, for a reader that declared audio input.
+    Audio,
     /// A thumbnail of the image, beside its newest ASSET_TEXT and its view
     /// handle.
     Thumbnail,
@@ -241,6 +243,8 @@ pub struct ResolvedAsset {
     pub form: ServedAssetForm,
     /// The pixels served: the full image's bytes, or its thumbnail's.
     pub image: Option<ImageBytes>,
+    /// Audio media type and bytes, when served.
+    pub audio: Option<(String, Vec<u8>)>,
     /// The ASSET_TEXT served: the whole text form, or the image's caption.
     pub text: Option<String>,
     /// 32-hex id of the ASSET_TEXT in `text`.
@@ -414,32 +418,44 @@ impl Memory<'_> {
             ));
         }
         let body = generated_asset_body(&response.image, &response.model)?;
-        let occurred = TimeRange {
-            start: occurred_at,
-            end: occurred_at,
-        };
+        let (asset, text) = self.land_asset_body(None, &body, Some(description), occurred_at)?;
+        Ok(LandedImage {
+            asset_ref: asset.to_hex(),
+            asset_text_ref: text.expect("a generated image lands with text").to_hex(),
+        })
+    }
+
+    /// The shared actor-bound landing for generated and uploaded ASSETs.
+    /// Create and erasure checks run in the same transaction as both rows.
+    pub(super) fn land_asset_body(
+        &self,
+        asset: Option<EntityId>,
+        body: &[u8],
+        description: Option<&str>,
+        occurred_at: u64,
+    ) -> MemoryResult<(EntityId, Option<EntityId>)> {
+        let occurred = TimeRange { start: occurred_at, end: occurred_at };
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
         self.with_actor_content_write_txn(|content| {
-            let asset = self.vault.store.clock.entity_id()?;
-            let text = self.vault.store.clock.entity_id()?;
-            content.apply_batch(
-                self.vault
-                    .batch_in()
-                    .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, &body)
-                    .asset_text_birth(
-                        &text,
-                        occurred,
-                        occurred_at,
-                        description.as_bytes(),
-                        &[(asset, weight)],
-                    )
-                    .text(&text, &[("text", description)]),
-            )?;
-            Ok(LandedImage {
-                asset_ref: asset.to_hex(),
-                asset_text_ref: text.to_hex(),
-            })
+            let asset = match asset {
+                Some(asset) => asset,
+                None => self.vault.store.clock.entity_id()?,
+            };
+            if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &asset)? {
+                return Err(super::support::hard_deleted_refusal(&asset));
+            }
+            super::structural::ensure_structural_create_in_txn(self.vault, content.read(), &asset)?;
+            let text = description.map(|_| self.vault.store.clock.entity_id()).transpose()?;
+            let mut batch = self.vault.batch_in()
+                .put(&asset, ENTITY_TYPE_ASSET, occurred, occurred_at, body);
+            if let (Some(text), Some(description)) = (text, description) {
+                batch = batch.asset_text_birth(
+                    &text, occurred, occurred_at, description.as_bytes(), &[(asset, weight)],
+                ).text(&text, &[("text", description)]);
+            }
+            content.apply_batch(batch)?;
+            Ok((asset, text))
         })
     }
 
@@ -478,6 +494,17 @@ impl Memory<'_> {
         pick: Option<&ImagePick<'_>>,
         room: Option<u64>,
     ) -> MemoryResult<ScopedReadResult<Vec<ResolvedAsset>>> {
+        self.serve_assets_with_receipts(asset_refs, consumer, pick, room).map(|(served, _)| served)
+    }
+
+    /// The same serving, beside the refs its committed served-form records carry.
+    pub(super) fn serve_assets_with_receipts(
+        &self,
+        asset_refs: &[String],
+        consumer: &AssetConsumer,
+        pick: Option<&ImagePick<'_>>,
+        room: Option<u64>,
+    ) -> MemoryResult<(ScopedReadResult<Vec<ResolvedAsset>>, Vec<String>)> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let watch = self.vault.limit_watch();
         let bound = room.unwrap_or_else(|| watch.bound(EngineLimit::ImageRoomBytes));
@@ -524,11 +551,8 @@ impl Memory<'_> {
         let Some(receipt) = receipt else {
             return Err(MemoryError::bad_request("a serve names at least one asset"));
         };
-        lane.commit_served_forms(&forms)?;
-        Ok(ScopedReadResult {
-            value: served,
-            receipt,
-        })
+        let refs = lane.commit_served_forms_listing(&forms)?;
+        Ok((ScopedReadResult { value: served, receipt }, refs))
     }
 
     /// `vault.images.view`: the full pixels behind an image's handle (the
@@ -671,7 +695,10 @@ pub fn resolve_audio_ref(
         .flatten()
         .find(|row| row.entity_type == ENTITY_TYPE_ASSET)
         .and_then(|row| row.body)
-        .and_then(|body| audio_of(&body))
+        .as_deref()
+        .map(audio_of)
+        .transpose()?
+        .flatten()
         .filter(|(bytes, media_type)| {
             *blake3::hash(bytes).as_bytes() == reference.evidence.body_hash
                 && media_type.eq_ignore_ascii_case(&reference.media_type)
@@ -690,27 +717,27 @@ pub fn resolve_audio_ref(
 }
 
 /// The audio bytes and type an ASSET body holds.
-fn audio_of(body: &[u8]) -> Option<(Vec<u8>, String)> {
+fn audio_of(body: &[u8]) -> MemoryResult<Option<(Vec<u8>, String)>> {
     let Some(Value::Map(entries)) = decode_whole(body) else {
-        return None;
+        return Ok(None);
     };
     let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
+        entries.iter().find(|(key, _)| key.as_str() == Some(name)).map(|(_, value)| value)
     };
-    match (
-        field(BODY_BYTES),
-        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) {
-        (Some(Value::Binary(bytes)), Some(media_type))
-            if !bytes.is_empty() && media_type.starts_with("audio/") =>
-        {
-            Some((bytes.clone(), media_type.to_owned()))
-        }
-        _ => None,
+    let (Some(Value::Binary(bytes)), Some(media_type)) = (
+        field(BODY_BYTES), field(BODY_MEDIA_TYPE).and_then(Value::as_str),
+    ) else {
+        return Ok(None);
+    };
+    if bytes.is_empty() || !media_type.starts_with("audio/") {
+        return Ok(None);
     }
+    if let Some(recorded) = field(BODY_BLAKE3)
+        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
+    {
+        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
+    }
+    Ok(Some((bytes.clone(), media_type.to_owned())))
 }
 
 fn no_form(asset_ref: &str) -> MemoryError {
@@ -827,6 +854,7 @@ fn base64_of(bytes: &[u8]) -> String {
 pub(crate) struct AssetForms {
     asset: EntityId,
     image: Option<ImageBytes>,
+    audio: Option<(Vec<u8>, String)>,
     /// The newest admitted ASSET_TEXT derived from the asset.
     text: Option<(EntityId, String)>,
     /// The stored size of a text refused before it decoded.
@@ -1000,6 +1028,20 @@ impl AssetForms {
         admits: &mut dyn FnMut(usize) -> bool,
     ) -> MemoryResult<Option<(ResolvedAsset, ServedForm, Option<u64>)>> {
         let asset_ref = self.asset.to_hex();
+        if consumer.capabilities.contains(&LlmCapability::AudioInput)
+            && let Some((bytes, mime)) = &self.audio
+            && admits(bytes.len())
+        {
+            return Ok(Some((ResolvedAsset {
+                asset_ref,
+                form: ServedAssetForm::Audio,
+                image: None,
+                audio: Some((mime.clone(), bytes.clone())),
+                text: None,
+                asset_text_ref: None,
+                handle: Some(format!("{}@{}", self.asset.to_hex(), &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX])),
+            }, ServedForm::audio(self.asset), None)));
+        }
         let Some(image) = self.image.clone() else {
             return Ok(self.text.map(|(asset_text, text)| {
                 (
@@ -1007,9 +1049,12 @@ impl AssetForms {
                         asset_ref,
                         form: ServedAssetForm::AssetText,
                         image: None,
+                        audio: None,
                         text: Some(text),
                         asset_text_ref: Some(asset_text.to_hex()),
-                        handle: None,
+                        handle: self.audio.as_ref().map(|(bytes, _)| format!(
+                            "{}@{}", self.asset.to_hex(), &blake3::hash(bytes).to_hex()[..HANDLE_HASH_HEX],
+                        )),
                     },
                     ServedForm::text(self.asset, asset_text),
                     None,
@@ -1040,6 +1085,7 @@ impl AssetForms {
                 asset_ref,
                 form,
                 image: pixels,
+                audio: None,
                 text,
                 asset_text_ref,
                 handle,
@@ -1081,30 +1127,8 @@ pub(crate) fn asset_audio_in_lane(
     else {
         return Ok(None);
     };
-    let Some(Value::Map(entries)) = row.body.as_deref().and_then(decode_whole) else {
-        return Ok(None);
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(BODY_BYTES),
-        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return Ok(None);
-    };
-    if bytes.is_empty() || !media_type.starts_with("audio/") {
-        return Ok(None);
-    }
-    if let Some(recorded) = field(BODY_BLAKE3)
-        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
-    {
-        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
-    }
-    Ok(Some((media_type.to_owned(), bytes.clone())))
+    let Some(body) = row.body else { return Ok(None); };
+    Ok(audio_of(&body)?.map(|(bytes, mime)| (mime, bytes)))
 }
 
 /// Reads the forms of `asset` through `lane`. The lane admits the ASSET and
@@ -1154,6 +1178,7 @@ pub(crate) fn asset_forms_in_lane(
     let mut forms = AssetForms {
         asset,
         image: image_of(&body)?,
+        audio: audio_of(&body)?,
         text: None,
         omitted: None,
     };
@@ -1283,23 +1308,35 @@ fn region_pixels(
 /// The ASSET body for generated bytes: the canon asset fields beside the
 /// bytes themselves. A plain memory read serves the fields and nulls the bytes.
 pub(crate) fn generated_asset_body(image: &ImageBytes, model: &ModelId) -> MemoryResult<Vec<u8>> {
-    let byte_size = u64::try_from(image.bytes.len())
-        .map_err(|_| MemoryError::bad_request("generated image is too large"))?;
-    encode_rmpv(&Value::Map(vec![
-        (Value::from("kind"), Value::from("image")),
-        (
-            Value::from(BODY_MEDIA_TYPE),
-            Value::from(image.media_type.as_str()),
-        ),
-        (
-            Value::from(BODY_BLAKE3),
-            Value::from(blake3::hash(&image.bytes).to_hex().as_str()),
-        ),
-        (Value::from("byte_size"), Value::from(byte_size)),
-        (Value::from("model"), Value::from(model.as_str())),
-        (Value::from("source"), Value::from("generated")),
-        (Value::from(BODY_BYTES), Value::Binary(image.bytes.clone())),
-    ]))
+    asset_body(crate::embed::InputKind::Image, &image.media_type, &image.bytes, "generated", Some(model.as_str()))
+}
+
+/// The one inline ASSET encoding read by the resolver and embedding backfill.
+pub(super) fn asset_body(
+    kind: crate::embed::InputKind,
+    mime_type: &str,
+    bytes: &[u8],
+    source: &str,
+    model: Option<&str>,
+) -> MemoryResult<Vec<u8>> {
+    let kind = match kind {
+        crate::embed::InputKind::Text => "text",
+        crate::embed::InputKind::Image => "image",
+        crate::embed::InputKind::Audio => "audio",
+    };
+    let mut fields = vec![
+        (Value::from("kind"), Value::from(kind)),
+        (Value::from(BODY_MEDIA_TYPE), Value::from(mime_type)),
+        (Value::from(BODY_BLAKE3), Value::from(blake3::hash(bytes).to_hex().as_str())),
+        (Value::from("byte_size"), Value::from(bytes.len() as u64)),
+
+    ];
+    if let Some(model) = model {
+        fields.push((Value::from("model"), Value::from(model)));
+    }
+    fields.push((Value::from("source"), Value::from(source)));
+    fields.push((Value::from(BODY_BYTES), Value::Binary(bytes.to_vec())));
+    encode_rmpv(&Value::Map(fields))
 }
 
 /// The image an ASSET body holds, checked against its recorded content hash.

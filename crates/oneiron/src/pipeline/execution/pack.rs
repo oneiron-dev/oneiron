@@ -39,6 +39,7 @@ impl PipelineBuilder<'_> {
             .is_some_and(|filter| filter.deny_all)
         {
             return Ok(PipelineOutput {
+                embedding_matches: HashMap::new(),
                 vector_completed: false,
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
@@ -253,6 +254,7 @@ impl PipelineBuilder<'_> {
         // Preserve the pre-HyDE no-channel fast path: it returns no run row.
         if self.hyde.is_none() && attempt.early_empty_no_telemetry {
             return Ok(PipelineOutput {
+                embedding_matches: HashMap::new(),
                 vector_completed: dense_completed(&attempt.diagnostics),
                 revisions: HashMap::new(),
                 words_bound: Default::default(),
@@ -569,7 +571,10 @@ impl PipelineBuilder<'_> {
             }
         };
 
+        let mut embedding_matches = media_evidence.matches;
+        embedding_matches.retain(|id, _| scores.iter().any(|hit| hit.id == *id));
         Ok(PipelineOutput {
+            embedding_matches,
             vector_completed: dense_completed(&diagnostics),
             revisions,
             words_bound,

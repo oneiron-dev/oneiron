@@ -163,6 +163,8 @@ impl Memory<'_> {
                 super::served_value_json(&body.value)
             };
             Ok(Some(MemoryItem {
+                asset_ref: (entity_type == crate::registry::ENTITY_TYPE_ASSET).then(|| id.to_hex()),
+                embedding_matches: Vec::new(),
                 short_id,
                 source_revision_ref,
                 kind,
@@ -292,6 +294,8 @@ impl Memory<'_> {
                 }
             }
             Ok(Some(MemoryItem {
+                asset_ref: (entity_type == crate::registry::ENTITY_TYPE_ASSET).then(|| id.to_hex()),
+                embedding_matches: Vec::new(),
                 short_id,
                 source_revision_ref,
                 kind,

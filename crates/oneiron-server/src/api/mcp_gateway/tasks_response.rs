@@ -941,6 +941,9 @@ fn mcp_agent_verb_input(
         "vault.scope.ceiling" => a.spec.clone().ok_or_else(invalid),
         "vault.export.scoped" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts" => a.spec.clone().ok_or_else(invalid),
+        "vault.assets.ingest" => a.spec.clone().ok_or_else(invalid),
+        "vault.assets.resolve" => a.spec.clone().ok_or_else(invalid),
+        "vault.search.vector" => a.spec.clone().ok_or_else(invalid),
         "vault.images.view" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.get" => a.spec.clone().ok_or_else(invalid),
         "vault.explain.memory" => a.spec.clone().ok_or_else(invalid),
@@ -2086,6 +2089,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.receipts" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.assets.ingest" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.assets.resolve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.search.vector" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.images.view" => {
@@ -5666,6 +5678,30 @@ async fn execute_agent_verb_row(
                     .filter_map(|id| oneiron::EntityId::from_hex(id).ok()),
             );
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.assets.ingest" => {
+            let input: oneiron::memory::AssetIngestRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_assets_ingest(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.assets.resolve" => {
+            let input: oneiron::memory::AssetResolveRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_assets_resolve(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.search.vector" => {
+            let input: oneiron::memory::VectorSearchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_search_vector(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.images.view" => {

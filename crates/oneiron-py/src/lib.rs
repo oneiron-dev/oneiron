@@ -989,6 +989,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_assets_ingest(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.assets.ingest")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.assets.ingest", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_assets_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.assets.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.assets.resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_search_vector(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.search.vector")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.search.vector", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_images_view(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.images.view")?;
         let output = py
