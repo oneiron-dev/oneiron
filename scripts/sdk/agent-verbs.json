@@ -530,7 +530,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease",
@@ -544,7 +545,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease.top_up",
@@ -558,7 +560,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.hold",
@@ -600,7 +603,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.settlements",
@@ -614,7 +618,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.fanout.resume",
@@ -878,7 +883,8 @@
         "credential_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.export.scoped",
@@ -891,7 +897,8 @@
         "scoped_export": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.receipts",
@@ -1303,7 +1310,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.get",
@@ -1317,7 +1325,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.publishers.admit",
@@ -1331,7 +1340,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.publishers.revoke",
@@ -1345,7 +1355,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.refs.get",
@@ -1359,7 +1370,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.refs.set",
@@ -1373,7 +1385,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.install",
@@ -1387,7 +1400,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.sync",
@@ -1401,7 +1415,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.get",
@@ -1415,7 +1430,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.import",
@@ -1429,7 +1445,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.sync",
@@ -1443,7 +1460,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.receipts",
@@ -1457,7 +1475,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.permissions.approve",
@@ -1471,7 +1490,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.hooks.bind",
@@ -1485,7 +1505,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.hooks.list",
@@ -1499,7 +1520,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.hooks.qualify",
@@ -1512,7 +1534,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.put",
@@ -1540,7 +1563,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.get",
@@ -1554,7 +1578,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.qualify",
@@ -1568,7 +1593,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.accept",
@@ -1582,7 +1608,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.update",
@@ -1596,7 +1623,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.grants.get",
@@ -1610,7 +1638,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.grants.put",
@@ -1624,7 +1653,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.remove",
@@ -1765,7 +1795,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.authority.history.import",
@@ -1779,7 +1810,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.mesh.path_receipts",
@@ -2191,6 +2223,277 @@
       "openapi": true
     },
     {
+      "name": "vault.federation.connect.identity",
+      "description": "The owner reads this vault identity and the host key used for reciprocal Connect consent.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::ConnectIdentity",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.identity\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "mcp_fields": {}
+    },
+    {
+      "name": "vault.federation.connect.grants.mint",
+      "description": "The owner mints an inert Connect guest grant inside the named local-world ceiling.",
+      "input": "crate::task_verb::sdk::MintConnectGrant",
+      "output": "crate::task_verb::sdk::ConnectGrant",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.grants.mint\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.offer",
+      "description": "The owner asks the host to sign one disclosed Connect half without activating it.",
+      "input": "crate::task_verb::sdk::OfferConnect",
+      "output": "crate::task_verb::sdk::Offer",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.offer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.accept",
+      "description": "The owner accepts the peer host signed Connect half and receives the matching host counter-half.",
+      "input": "crate::task_verb::sdk::AcceptConnect",
+      "output": "crate::task_verb::sdk::ConnectAccepted",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.accept\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.narrow",
+      "description": "The owner narrows the current outbound scope without breaking the reciprocal relationship.",
+      "input": "crate::task_verb::sdk::NarrowConnect",
+      "output": "crate::task_verb::sdk::ConnectPactReceipt",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.narrow\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.rescope.offer",
+      "description": "The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal.",
+      "input": "crate::task_verb::sdk::RescopeConnect",
+      "output": "crate::task_verb::sdk::RescopeOffer",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.rescope.offer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.rescope.accept",
+      "description": "The owner accepts the peer host signed re-scope and receives the matching signed counter-half.",
+      "input": "crate::task_verb::sdk::AcceptRescopeConnect",
+      "output": "crate::task_verb::sdk::ConnectRescoped",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.rescope.accept\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.disconnect",
+      "description": "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy.",
+      "input": "crate::task_verb::sdk::ConnectPactRequest",
+      "output": "crate::task_verb::sdk::ConnectDisconnected",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.disconnect\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.export",
+      "description": "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch.",
+      "input": "crate::task_verb::sdk::ConnectExportRequest",
+      "output": "crate::task_verb::sdk::ConnectDelivery",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.export\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.rejoin",
+      "description": "The owner admits a peer host signed update through guest admission into the retained foreign-world vault.",
+      "input": "crate::task_verb::sdk::ConnectDelivery",
+      "output": "crate::task_verb::sdk::ConnectRejoined",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.rejoin\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.name",
+      "description": "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
+      "input": "crate::task_verb::sdk::TrustedContactNameRequest",
+      "output": "crate::counterparty_contact::TrustedContact",
+      "call": "crate::task_verb::sdk::name_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.name\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.list",
+      "description": "A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential.",
+      "input": "crate::task_verb::sdk::TrustedContactsRequest",
+      "output": "Vec<crate::counterparty_contact::TrustedContact>",
+      "call": "crate::task_verb::sdk::read_trusted_contacts(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.list\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.consent",
+      "description": "The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this.",
+      "input": "crate::task_verb::sdk::TrustedContactConsentRequest",
+      "output": "crate::counterparty_contact::TrustedContact",
+      "call": "crate::task_verb::sdk::consent_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.consent\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.revoke",
+      "description": "Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close.",
+      "input": "crate::task_verb::sdk::TrustedContactRevokeRequest",
+      "output": "crate::counterparty_contact::TrustedContact",
+      "call": "crate::task_verb::sdk::revoke_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.revoke\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.dial.set",
+      "description": "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands.",
+      "input": "crate::task_verb::sdk::TrustedContactDialRequest",
+      "output": "crate::counterparty_contact::TrustedContact",
+      "call": "crate::task_verb::sdk::set_trusted_contact_dial(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.dial.set\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.tier.set",
+      "description": "The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern.",
+      "input": "crate::task_verb::sdk::TrustedContactTierRequest",
+      "output": "crate::task_verb::sdk::TrustedContactTierSet",
+      "call": "crate::task_verb::sdk::set_trusted_contact_tier(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.tier.set\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.concern.asks",
+      "description": "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled.",
+      "input": "crate::task_verb::sdk::TrustedContactAsksRequest",
+      "output": "Vec<crate::counterparty_contact::TrustedContactAsk>",
+      "call": "crate::task_verb::sdk::read_trusted_contact_asks(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.asks\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.trusted_contacts.concern.authorize",
+      "description": "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing.",
+      "input": "crate::task_verb::sdk::TrustedContactAuthorizeRequest",
+      "output": "crate::task_verb::sdk::TrustedContactAuthorization",
+      "call": "crate::task_verb::sdk::authorize_trusted_contact_ask(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.concern.authorize\")?, input, &crate::policy_model::PolicyModelConfig::default())?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",
@@ -2219,9 +2522,9 @@
     },
     {
       "name": "vault.residence.mode",
-      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it.",
+      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceModeRequest",
-      "output": "crate::task_verb::sdk::ResidenceModeChanged",
+      "output": "crate::task_verb::sdk::ResidenceModeAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.mode\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2233,9 +2536,9 @@
     },
     {
       "name": "vault.residence.open",
-      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors.",
+      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceOpenRequest",
-      "output": "crate::task_verb::sdk::ResidenceOpened",
+      "output": "crate::task_verb::sdk::ResidenceOpenAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2247,9 +2550,9 @@
     },
     {
       "name": "vault.residence.index",
-      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body.",
+      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceMachineRequest",
-      "output": "crate::task_verb::sdk::ResidenceIndex",
+      "output": "crate::task_verb::sdk::ResidenceIndexAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.index\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2261,9 +2564,9 @@
     },
     {
       "name": "vault.residence.prune",
-      "description": "Drops the opened-item caches one of the owner's machines last touched before a time.",
+      "description": "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidencePruneRequest",
-      "output": "crate::task_verb::sdk::ResidencePruned",
+      "output": "crate::task_verb::sdk::ResidencePruneAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.prune\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2439,7 +2742,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.archive",
@@ -2478,7 +2782,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.bind",
@@ -3029,7 +3334,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.policy.put",
@@ -3043,7 +3349,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.policy.propose",
@@ -3056,7 +3363,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "proposes": true
+      "proposes": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.checker.get",
@@ -3070,7 +3378,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.checker.set",
@@ -3084,7 +3393,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.settings.learning",
@@ -3511,7 +3821,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.anchors.pin",
@@ -3529,7 +3840,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.open",
@@ -3550,7 +3862,8 @@
       "section": false,
       "prose_links": [
         "/text"
-      ]
+      ],
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.comment",
@@ -3571,7 +3884,8 @@
       "section": false,
       "prose_links": [
         "/text"
-      ]
+      ],
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.read",
@@ -3589,7 +3903,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.list",
@@ -3607,7 +3922,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.assign",
@@ -3627,7 +3943,8 @@
           "assignee_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.state",
@@ -3645,7 +3962,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.code.diff",
@@ -3726,6 +4044,76 @@
       }
     },
     {
+      "name": "vault.code.symbols.declare",
+      "description": "Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing.",
+      "input": "crate::memory::code_doors::CodeSymbolsDeclareRequest",
+      "output": "crate::memory::code_doors::CodeSymbolsDeclared",
+      "call": "memory.code_symbols_declare_as(&memory.embedded_owner(\"vault.code.symbols.declare\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.symbols.renew",
+      "description": "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only.",
+      "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
+      "output": "crate::memory::code_doors::CodeSymbolLeaseView",
+      "call": "memory.code_symbols_renew_as(&memory.embedded_owner(\"vault.code.symbols.renew\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.symbols.release",
+      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing.",
+      "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
+      "output": "crate::memory::code_doors::CodeSymbolsReleased",
+      "call": "memory.code_symbols_release_as(&memory.embedded_owner(\"vault.code.symbols.release\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.proposal_submit",
+      "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed.",
+      "input": "crate::memory::code_doors::CodeProposalSubmitRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_submit_as(&memory.embedded_owner(\"vault.code.proposal_submit\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.oplog",
+      "description": "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.",
+      "input": "crate::memory::code_doors::CodeRepoRequest",
+      "output": "crate::memory::code_doors::CodeMutationLog",
+      "call": "memory.code_mutation_log_as(&memory.embedded_owner(\"vault.code.oplog\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.code.repo_diff",
       "description": "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.",
       "input": "crate::code_document::CodeRepoDiffRequest",
@@ -3763,7 +4151,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.origin.authority.get",
@@ -3777,7 +4166,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.origin.authority.set",
@@ -3791,7 +4181,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.origin.publications",
@@ -3805,7 +4196,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.checkout.bind",
@@ -3819,7 +4211,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.snapshots.ingest",
@@ -3833,7 +4226,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.snapshots.get",
@@ -3847,7 +4241,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.snapshots.read",
@@ -3861,7 +4256,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.symbols.definitions",
@@ -3870,6 +4266,105 @@
       "output": "crate::memory::codebase_doors::CodeSnapshotDefinitionsView",
       "call": "memory.code_snapshot_definitions_as(&memory.embedded_owner(\"vault.code.symbols.definitions\")?, input)?",
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.merge_queue.enqueue",
+      "description": "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueEnqueueRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
+      "call": "memory.merge_queue_enqueue_as(&memory.embedded_owner(\"vault.code.merge_queue.enqueue\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.stage",
+      "description": "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
+      "call": "memory.merge_queue_stage_as(&memory.embedded_owner(\"vault.code.merge_queue.stage\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.observe",
+      "description": "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueObserveRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueObservation",
+      "call": "memory.merge_queue_observe_as(&memory.embedded_owner(\"vault.code.merge_queue.observe\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.requeue_survivors",
+      "description": "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueRequeueView",
+      "call": "memory.merge_queue_requeue_survivors_as(&memory.embedded_owner(\"vault.code.merge_queue.requeue_survivors\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.land_reviewed",
+      "description": "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueBatchRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueueBatchView",
+      "call": "memory.merge_queue_land_reviewed_as(&memory.embedded_owner(\"vault.code.merge_queue.land_reviewed\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.settle_slow",
+      "description": "Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueRepoRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueuePointersView",
+      "call": "memory.merge_queue_settle_slow_as(&memory.embedded_owner(\"vault.code.merge_queue.settle_slow\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.merge_queue.recover",
+      "description": "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased.",
+      "input": "crate::memory::merge_queue_doors::MergeQueueRepoRequest",
+      "output": "crate::memory::merge_queue_doors::MergeQueuePointersView",
+      "call": "memory.merge_queue_recover_as(&memory.embedded_owner(\"vault.code.merge_queue.recover\")?, input)?",
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -3915,7 +4410,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.agents.get",
@@ -3929,7 +4425,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.agents.update",
@@ -3943,7 +4440,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.workspace.establish",
@@ -3957,7 +4455,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.workspace.members.onboard",
@@ -3971,7 +4470,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.workspace.roster",
@@ -3985,7 +4485,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.agents.export_pack",
@@ -6173,7 +6674,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.create",
@@ -6185,7 +6687,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.ics.import",
@@ -6199,7 +6702,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.occurrences",
@@ -6212,7 +6716,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.instances.move",
@@ -6226,7 +6731,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.read",
@@ -6239,7 +6745,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.search",
@@ -6252,7 +6759,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.freebusy",
@@ -6265,7 +6773,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.transcript.ingest",
@@ -6451,6 +6960,25 @@
       },
       "section": false,
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.search.hybrid",
+      "description": "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence.",
+      "input": "crate::memory::HybridSearchRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>",
+      "call": "memory.query_hybrid(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
     },
     {
       "name": "vault.search.bm25",
@@ -7616,6 +8144,40 @@
       "openapi": true
     },
     {
+      "name": "vault.memory.signal_extraction",
+      "description": "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates.",
+      "input": "crate::memory::SignalExtractionRequest",
+      "output": "crate::memory::SignalExtractionTicket",
+      "call": "memory.signal_extraction_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.memory.signal_extraction.result",
+      "description": "Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them.",
+      "input": "crate::memory::SignalExtractionResultRequest",
+      "output": "Option<crate::memory::SignalExtractionResult>",
+      "call": "memory.signal_extraction_result_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction.result\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.claims.seed",
       "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
       "refs": [
@@ -7653,7 +8215,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.bind",
@@ -7667,7 +8230,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.fulfill",
@@ -7681,7 +8245,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.rotate",
@@ -7695,7 +8260,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.release",
@@ -7709,7 +8275,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.route_inbound",
@@ -7723,7 +8290,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.get",
@@ -7735,7 +8303,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.selection.rules",
@@ -7747,7 +8316,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.selection.update",
@@ -7761,7 +8331,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.select",
@@ -7773,7 +8344,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.passports.get",
@@ -7785,7 +8357,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.passports.list",
@@ -7797,7 +8370,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.policy.put",
@@ -7811,7 +8385,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.policy.list",
@@ -7823,7 +8398,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.policy.retract",
@@ -7837,7 +8413,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.evaluate",
@@ -7849,7 +8426,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "connector.outbound.schedule",
@@ -7894,7 +8472,11 @@
       "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "MemorySupersedeClaim"
+      "effect": "MemorySupersedeClaim",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
+        "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
+      }
     },
     {
       "name": "vault.edges.put",
@@ -7960,7 +8542,8 @@
       "binding": {
         "native": "agent_verb",
         "request": true
-      }
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.history",
@@ -7977,7 +8560,8 @@
       "binding": {
         "native": "agent_verb",
         "request": true
-      }
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.editor.bind",
@@ -7993,7 +8577,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.notes.editor.close",
@@ -8009,7 +8594,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.notes.edit",
@@ -8178,7 +8764,8 @@
           "task_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.tasks.linear.mapping.edit",
@@ -8191,7 +8778,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.tasks.linear.provenance",
@@ -8211,7 +8799,8 @@
         "rows": "events",
         "cursor": "next_cursor"
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.fold",
@@ -8384,7 +8973,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.folds.describe",
@@ -8399,7 +8989,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "self.history",
@@ -8414,7 +9005,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     }
   ]
 }

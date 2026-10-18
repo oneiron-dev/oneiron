@@ -33,10 +33,10 @@ mod budget_doors;
 mod calendar_doors;
 mod call_context;
 mod campaign_split_doors;
-mod research_doors;
 mod channel_doors;
 mod claim_settle_doors;
 mod consolidation_doors;
+mod code_doors;
 mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
@@ -49,7 +49,9 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
+mod extraction_doors;
 mod fanout_doors;
+mod federation_connect_doors;
 mod fold_doors;
 mod gate_policy_doors;
 mod graph_ask_doors;
@@ -59,6 +61,7 @@ mod hub_doors;
 mod legal_hold_doors;
 mod linear_doors;
 mod live_run_doors;
+mod merge_queue_doors;
 mod model_step_doors;
 mod note_doors;
 mod off_record_doors;
@@ -67,6 +70,7 @@ mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;
 mod reply_doors;
+mod research_doors;
 mod residence_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
@@ -78,6 +82,7 @@ mod shared_member_doors;
 mod shared_policy_doors;
 #[cfg(test)]
 pub(super) mod tests;
+mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
 mod vault_shape_doors;
 mod wave_doors;
@@ -503,7 +508,20 @@ fn unknown_verb(verb: &str) -> FacadeApiError {
 ///
 /// Nothing here is authority. The engine re-checks, per write, that the named
 /// principal exists and that its stored entity type admits the asserted class.
-fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApiError> {
+///
+/// A host credential binds no principal of its own (FIX 2222): a self-hosted
+/// root, or the explicit local dev mode, writes as the owner the one
+/// resolver names ([`crate::api::host_action::facade_host_action`]), and a
+/// hosted operator's root gets the typed refusal. No other owner-grade
+/// credential chooses whom it writes as.
+fn facade_actor(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<(EntityId, EdgeActorClass), FacadeApiError> {
+    if let Some(action) = super::host_action::facade_host_action(server, auth)? {
+        let actor = action.actor();
+        return Ok((actor.entity_ref(), actor.actor_class()));
+    }
     let principal_ref = auth.principal_ref().ok_or_else(|| {
         FacadeApiError::forbidden(
             "facade routes bind writes to an authenticated principal",
@@ -676,7 +694,10 @@ async fn facade_hooks_pre(
     } else {
         host_doors::door_admits(server, auth, verb)?;
     }
-    let bound = facade_actor(auth).ok();
+    // A hosted operator's root acts as nobody, so no hook runs for it as the
+    // host either (FIX 2222).
+    super::host_action::facade_host_action(server, auth)?;
+    let bound = facade_actor(server, auth).ok();
     let (actor, class) = match bound {
         Some(actor) => actor,
         None => (
@@ -762,7 +783,7 @@ fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiEr
     if proof.claims().holder_ref == "host" {
         server.vault.admit_host_owner_export(proof)?;
     } else {
-        let (actor, class) = facade_actor(auth)?;
+        let (actor, class) = facade_actor(server, auth)?;
         server
             .vault
             .memory(actor, class)
@@ -796,6 +817,17 @@ pub(super) fn owner_authorship(
     // only while the person is the vault's live recorded owner.
     if let Some(holder) = auth.managed_owner() {
         return super::owner_routes::managed_owner_proof(server, holder);
+    }
+    // A self-hosted root, or the dev mode, acting as the owner (FIX 2222):
+    // the owner's proof carries the host action, which every acting
+    // transaction proves again. A hosted operator's root gets the refusal.
+    if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
+        let action = action.map_err(super::host_action::host_action_refusal)?;
+        return server
+            .vault()
+            .authenticate_host_action_owner(&action, oneiron::store::GateDecisionId::now())
+            .map(Some)
+            .map_err(|_| ApiError::forbidden_scope("owner"));
     }
     let Some((principal, actor)) = auth
         .principal_ref()
@@ -1385,9 +1417,11 @@ impl From<MemoryError> for FacadeApiError {
             // `FORBIDDEN` is: the authority log refuses this actor the verb.
             // It carries its own code so a client can tell the authority door
             // from the gate door, but the status is the same honest 403.
+            // FIX 2222: a host credential where no host acts as a person.
             MEMORY_CODE_FORBIDDEN
             | MEMORY_CODE_LEASE_REQUIRED
-            | MEMORY_CODE_OWNER_BINDING_REQUIRED => StatusCode::FORBIDDEN,
+            | MEMORY_CODE_OWNER_BINDING_REQUIRED
+            | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => StatusCode::FORBIDDEN,
             // Both are "the store is not in a state that admits this", which
             // is the conflict family the rest of this plane already maps to
             // 409. `VAULT_LOCKED_SINGLE_WRITER` cannot arise server-side — it

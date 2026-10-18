@@ -12,10 +12,10 @@ use super::boundary::{
 use super::dtos::{
     NapiCalendarEventView, NapiCalendarRange, NapiCalendarSel, NapiCitedMessage, NapiClaimView,
     NapiCommitOutcome, NapiCommitReceipt, NapiEntityRefReceipt, NapiEntityView, NapiGateReceipt,
-    NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiQuoteSpan, NapiReadReceipt,
-    NapiReadScope, NapiRecallScope, NapiRecordRef, NapiRecordRefusal, NapiRetrievalMeta,
-    NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint, NapiWitnessReceipt,
-    NapiWitnessTurn,
+    NapiMemoryItem, NapiMemoryPack, NapiMemoryProvenance, NapiMemoryStaleStamp, NapiQuoteSpan,
+    NapiReadReceipt, NapiReadScope, NapiRecallScope, NapiRecordRef, NapiRecordRefusal,
+    NapiRetrievalMeta, NapiScopeHonesty, NapiStructuralPutInput, NapiTemporalHint,
+    NapiWitnessReceipt, NapiWitnessTurn,
 };
 
 // ── conversions ─────────────────────────────────────────────────────────
@@ -385,6 +385,12 @@ pub(super) fn memory_item_from_engine(item: oneiron::memory::MemoryItem) -> Napi
             source_revision_ids: item.provenance.source_revision_ids,
             evidence_turn_ids: item.provenance.evidence_turn_ids,
         },
+        stale: item.stale.map(|stamp| NapiMemoryStaleStamp {
+            stale_since: stamp.stale_since.map(|value| value as f64),
+            age_secs: stamp.age_secs.map(|value| value as f64),
+            reason: stamp.reason,
+            pact_epoch: stamp.pact_epoch as f64,
+        }),
         world: item.world,
         facet: item.facet,
         salience: item.salience.map(f64::from),

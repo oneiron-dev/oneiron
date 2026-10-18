@@ -359,6 +359,7 @@ pub(in crate::dreamer_consolidation) struct ParsedCandidate<'s> {
     locators: Vec<super::super::evidence::EvidenceLocator>,
     evidence_turn_refs: Vec<EntityId>,
     project: EntityId,
+    prospective_queries: Vec<String>,
 }
 
 /// One candidate's reading of the reply and of the branch's pinned
@@ -428,6 +429,7 @@ fn parse_candidate<'s>(
         locators,
         evidence_turn_refs,
         project,
+        prospective_queries: prospective_queries(item)?,
     })
 }
 
@@ -544,7 +546,8 @@ fn build_candidate(
         ClaimSubject::Entity(subject),
         value,
         parsed.confidence,
-    );
+    )
+    .with_lexical_hints(parsed.prospective_queries);
     if let Some(rel) = rel {
         candidate = candidate.with_relationship(rel);
     }
@@ -779,9 +782,31 @@ fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
                 !refs.is_empty() && refs.iter().all(|cited| decode_model_locator(cited).is_ok())
             }),
         ),
+        (
+            "prospective_queries",
+            prospective_queries(candidate).is_ok(),
+        ),
     ]
     .into_iter()
     .find_map(|(field, met)| (!met).then_some(field))
+}
+
+fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
+    let Some(queries) = candidate.get("prospective_queries") else {
+        return Ok(Vec::new());
+    };
+    let queries = queries
+        .as_array()
+        .ok_or_else(|| invalid_consolidation("prospective_queries must be strings"))?;
+    let hints = queries
+        .iter()
+        .map(|query| {
+            query
+                .as_str()
+                .ok_or_else(|| invalid_consolidation("prospective_queries must be strings"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    crate::claim::normalize_lexical_query_hints(&hints)
 }
 
 /// The question key a stored head was filed under, as its scope map holds it.

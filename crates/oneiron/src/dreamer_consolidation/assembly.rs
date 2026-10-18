@@ -74,6 +74,15 @@ pub(super) fn assemble_extracted(
                 let (incoming, refs) = extracted.into_parts();
                 let (mut kept, mut old_refs) = slot.get().clone().into_parts();
                 old_refs.extend(refs);
+                let hints: Vec<&str> = kept
+                    .candidate
+                    .lexical_hints()
+                    .iter()
+                    .chain(incoming.candidate.lexical_hints())
+                    .map(String::as_str)
+                    .collect();
+                let hints = crate::claim::normalize_lexical_query_hints(&hints)?;
+                kept.candidate = kept.candidate.with_lexical_hints(hints);
                 kept.evidence_turn_refs.extend(incoming.evidence_turn_refs);
                 kept.evidence_turn_refs.sort_unstable();
                 kept.evidence_turn_refs.dedup();

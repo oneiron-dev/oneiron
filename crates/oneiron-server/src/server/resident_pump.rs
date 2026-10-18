@@ -868,7 +868,8 @@ fn task_cause(task: &str) -> String {
     format!("This run realizes TASK {task}, assigned to you; tasks.refuse declines it.")
 }
 
-/// The definition's instructions, else its description, then each part.
+/// The definition's instructions, else its description, then each part,
+/// then the comm block its frozen slip generates (ARCH-0028 :611).
 fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) -> String {
     let definition = &status.input.definition;
     let brief = definition
@@ -881,6 +882,7 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .then(|| brief.to_owned())
         .into_iter()
         .chain(parts)
+        .chain(std::iter::once(status.input.comm.prompt_block()))
         .collect::<Vec<_>>()
         .join("\n\n")
 }

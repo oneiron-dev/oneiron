@@ -21,7 +21,7 @@ pub struct LinearMappingRequest {
 }
 
 /// One TASK's mirror mapping.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinearMappingView {
     pub task_ref: String,
     /// The TASK revision the mirror tracks: a `tasks.update` `edit` names it
@@ -41,7 +41,7 @@ pub struct LinearMappingView {
 }
 
 /// One TASK's durable link to its issue.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinearLinkView {
     pub issue: LinearIssueRef,
     /// The link row's compare-and-set revision.
@@ -97,7 +97,7 @@ impl LinearMappingOp {
 }
 
 /// What one mapping edit did.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinearMappingEditReceipt {
     pub task_ref: String,
     /// `link`, `unlink` or `mirror`.
@@ -130,7 +130,7 @@ pub struct LinearProvenanceRequest {
 }
 
 /// One page of a TASK's mirror events, newest first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinearProvenancePage {
     pub task_ref: String,
     pub events: Vec<LinearProvenanceEntry>,
@@ -139,7 +139,7 @@ pub struct LinearProvenancePage {
 }
 
 /// One stored mirror event and its ref.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LinearProvenanceEntry {
     pub event_ref: String,
     pub event: LinearMirrorEvent,

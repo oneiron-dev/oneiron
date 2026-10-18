@@ -11,7 +11,7 @@ pub struct RunAttachRequest {
     pub rebind: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunAttached {
     pub live_run: String,
 }

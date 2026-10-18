@@ -511,9 +511,10 @@ pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;
-pub use super::sdk_explain::*;
 pub use super::sdk_eval_cohort::*;
+pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
+pub use super::sdk_federation::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_hub::*;
@@ -533,6 +534,7 @@ pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
+pub use super::sdk_trusted_contact::*;
 pub use super::sdk_workspace::*;
 
 /// `vault.writes.pending`'s one input.

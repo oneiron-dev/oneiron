@@ -67,7 +67,7 @@ const CONTROLS: SideTable<EntityId, LinearMirrorControl, Named> =
 /// One stored mirror event, as the provenance read returns it. Refs and
 /// digests are lowercase hex; the external actor is the provider's own
 /// evidence, never a vault actor, writer or owner (C3).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LinearMirrorEvent {
     /// `issue_to_task`, `task_to_issue`, `mapping_edit` or `task_edit`.

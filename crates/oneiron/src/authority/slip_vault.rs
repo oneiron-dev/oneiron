@@ -11,6 +11,8 @@ use std::collections::BTreeSet;
 use zeroize::Zeroizing;
 
 mod connect;
+mod connect_lifecycle;
+pub use connect_lifecycle::ConnectRescopeOffer;
 mod courtesy;
 pub use connect::ConnectOffer;
 

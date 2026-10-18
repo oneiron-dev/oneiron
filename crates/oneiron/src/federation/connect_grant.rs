@@ -509,3 +509,40 @@ impl Vault {
         Ok(field(GUEST_ACTOR_KEYS[3]).and_then(canonical_vault_id))
     }
 }
+
+impl Vault {
+    /// A reciprocal re-scope can disclose less than the minted grant, never more.
+    pub(crate) fn require_connect_rescope_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        state: &crate::authority::FederationPactState,
+        local: &AuthorityVaultId,
+        scope: &super::FederationPactScope,
+    ) -> Result<()> {
+        scope.validate()?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_FEDERATION_GRANT,
+            body,
+        } = live_entity_row_in_txn(&self.store, txn, &state.grant_ref)?
+        else {
+            return Err(Error::EntityNotFound);
+        };
+        let grant = super::decode_federation_grant_body(&body)?;
+        let ceiling =
+            connect_direction_projection(&grant.authority_scope).ok_or_else(invalid_grant)?;
+        require_connect_grant_in_txn(self, txn, &state.grant_ref, &state.peer_vault_id, &ceiling)?;
+        let (outbound, inbound) = if *local <= state.peer_vault_id {
+            (&scope.lo_to_hi, &scope.hi_to_lo)
+        } else {
+            (&scope.hi_to_lo, &scope.lo_to_hi)
+        };
+        if !super::Ceiling::new(outbound.clone()).is_within(&super::Ceiling::new(ceiling))
+            || !is_guest_slice(inbound)
+        {
+            return Err(refused(
+                "a Connect re-scope stays inside the guest grant and names peer worlds",
+            ));
+        }
+        Ok(())
+    }
+}

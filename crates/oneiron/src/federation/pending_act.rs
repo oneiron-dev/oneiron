@@ -125,7 +125,9 @@ pub(super) fn decode<T: serde::de::DeserializeOwned>(row: &[u8]) -> Result<T> {
 }
 
 /// A data row, not a compiled-in act list. A zero wait means immediate completion.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct SharedActPolicy {
     pub wait_secs: u64,

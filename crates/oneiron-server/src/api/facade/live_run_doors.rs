@@ -48,6 +48,23 @@ pub(crate) async fn self_leader_split(
     .await
 }
 
+pub(crate) async fn vault_claims_supersede(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::code_run::MemorySupersedeInput>,
+) -> MemoryResult<oneiron::code_run::MemoryWriteOutput> {
+    on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "vault.claims.supersede",
+        move |dispatcher| dispatcher.supersede_claim_from_host(input.spec),
+    )
+    .await
+}
+
 /// Resolves exactly the attachment the caller presents, never a caller-named
 /// attempt or a replacement credential. The existing live-run guard serializes
 /// this call with executor entries and rechecks the lease and attachment.
@@ -70,7 +87,7 @@ where
             &[],
         ));
     }
-    let (actor, class) = facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
+    let (actor, class) = facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
     let refused = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
