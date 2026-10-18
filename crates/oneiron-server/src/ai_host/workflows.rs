@@ -44,7 +44,7 @@ use oneiron::self_heal::audit::AttemptConfession;
 use tokio::sync::{broadcast, watch};
 
 use super::status::{IdleReason, StatusCell, WorkState, WorkStatus};
-use super::step::{StepRunner, deliver_hold_notice};
+use super::step::{StepFault, StepRunner, deliver_hold_notice};
 use super::step_failure::{FailedStep, held_leases, settle};
 use crate::decision_host::DecisionHost;
 
@@ -213,6 +213,8 @@ fn pump_once(
     if !*stopped.borrow() {
         super::waves::run_once(runtime, vault, runner, status, decisions)?;
     }
+    // A step parked on its payer goes on once the owners said yes (FIX 805).
+    super::payer_funding::resume_payer_parks(vault, LEASE_OWNER, now_secs());
     let dispatcher = AgentDispatcher::new(vault);
     let roots = dispatcher.open_workflow_roots()?;
     for root in &roots {
@@ -225,6 +227,7 @@ fn pump_once(
             let mut claimed: Option<(AttemptId, u32)> = None;
             let mut retryable = false;
             let mut held = None;
+            let mut parked = false;
             let mut confession = None;
             let progress = dispatcher.run_workflow_step_output(
                 *root,
@@ -315,6 +318,24 @@ fn pump_once(
                             )?);
                             Err(fault.error)
                         }
+                        // Its payer waits on the owners' payer-needed ask
+                        // (FIX 805): the step parks as this try, its lease
+                        // and spend scope held, neither failed nor retried.
+                        Err(StepFault {
+                            payer: Some(fault),
+                            error,
+                            ..
+                        }) => {
+                            super::payer_funding::park_for_payer(
+                                vault,
+                                step.attempt.id,
+                                LEASE_OWNER,
+                                &fault,
+                                now_secs(),
+                            )?;
+                            parked = true;
+                            Err(error)
+                        }
                         Err(fault) => {
                             retryable = fault.retryable;
                             Err(fault.error)
@@ -327,7 +348,7 @@ fn pump_once(
                 match &progress {
                     Ok(_) if claimed.is_some() => status.workflows.completed += 1,
                     Ok(_) => {}
-                    Err(_) if held.is_some() => {}
+                    Err(_) if held.is_some() || parked => {}
                     Err(error) => {
                         status.workflows.failed += u64::from(claimed.is_some());
                         status.workflows.last_error = Some(error.to_string());
@@ -345,6 +366,12 @@ fn pump_once(
             if held.is_some() {
                 tracing::info!(?root, "a workflow is held at its spend cap");
                 deliver_hold_notice(&dispatcher, *root, now_secs());
+                break;
+            }
+            // The parked step's workflow waits with it; the owners' ask is
+            // its notice.
+            if parked {
+                tracing::info!(?root, "a workflow waits on its payer");
                 break;
             }
             match progress {

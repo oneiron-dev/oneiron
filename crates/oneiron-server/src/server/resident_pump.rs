@@ -58,7 +58,9 @@ use tokio::sync::broadcast;
 
 use super::run_host_door::RunHostDoor;
 use super::{ReaderSeats, SyncServer};
-use crate::ai_host::payer_funding::{PayerFault, scope_funding};
+use crate::ai_host::payer_funding::{
+    PayerFault, park_for_payer, resume_payer_parks, scope_funding,
+};
 use crate::config::models::PlannerSettings;
 use crate::decision_host::DecisionHost;
 use crate::mcp::{
@@ -195,6 +197,8 @@ impl SyncServer {
     fn resident_pass(&self, now: u64) -> Pass {
         let mut pass = Pass::default();
         let vault = self.vault();
+        // A run parked on its payer goes on once the owners said yes (FIX 805).
+        resume_payer_parks(vault, LEASE_OWNER, now);
         // OF-533: the waits a pumped run parks on are swept on this recheck,
         // so a parked ask's deadline lands with no Dreamer enabled.
         if let Err(error) = vault.settle_code_run_waits() {
@@ -789,14 +793,17 @@ fn settle(
             })?;
             return Ok(());
         }
+        // A run whose payer waits on the owners' payer-needed ask (OF-531,
+        // FIX 805) parks as this try, its lease and spend scope held: it
+        // neither fails nor spends a try, and goes on once they say yes.
+        Err(EngineRunError::Payer(fault @ PayerFault::Needed { .. })) => {
+            tracing::info!(%fault, attempt = ?attempt.id, "an agent run parks on its payer");
+            park_for_payer(vault, attempt.id, LEASE_OWNER, &fault, now)?;
+            return Ok(());
+        }
         Err(error) => {
             tracing::warn!(%error, attempt = ?attempt.id, "an agent run failed");
-            // A run held on its payer-needed ask (OF-531) passes as one that
-            // waits out a limit: it is tried again, and a try after the
-            // owners' yes bills the vault.
-            let payer = matches!(error, EngineRunError::Payer(PayerFault::Needed { .. }))
-                .then_some(("agent_run_payer_needed", None));
-            match error.llm().and_then(|error| passing(error, now)).or(payer) {
+            match error.llm().and_then(|error| passing(error, now)) {
                 // A model call that failed for a reason that passes is a
                 // tripwire's typed verdict, its evidence the attempt: the
                 // run is tried again, fresh, once the reason has passed.

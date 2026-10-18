@@ -7,14 +7,20 @@
 //! `billing_account`, maps a PERSON to an account: a live Owner of the vault
 //! bills the vault's own account, with no ask. When it maps none, the
 //! call holds on a typed payer-needed ask to the vault's owners, who may
-//! approve billing the vault for that launch. Nothing here falls back to the
-//! vault owner silently: a scope that cannot be read, or a room-bound call
-//! whose root names no payer, is a typed error. A call no room pays for keeps
-//! the owner default.
+//! approve billing the vault for that launch. A workflow step or an agent run
+//! held so parks as it is ([`park_for_payer`]) and is taken up as the same
+//! try once its payer can be billed ([`resume_payer_parks`]). Nothing here
+//! falls back to the vault owner silently: a scope that cannot be read, or a
+//! room-bound call whose root names no payer, is a typed error. A call no
+//! room pays for keeps the owner default.
 
 use std::fmt;
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId, decode_agent_dispatch_input};
+use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
+use oneiron::dreamer_runner::{
+    DreamerParkCause, ParkDreamerAttempt, decode_dreamer_attempt_payload,
+};
 use oneiron::llm::decision::catalogue::PAYER_NEEDED;
 use oneiron::llm::decision::{
     AnswerContract, AskTo, DecisionAnswer, DecisionRung, HumanAskReason, HumanDecisionRequest,
@@ -22,11 +28,14 @@ use oneiron::llm::decision::{
 };
 use oneiron::llm::run_admission::{PayerAccount, PayerPerson};
 use oneiron::workspace_roster::RoomSpend;
-use oneiron::{EntityId, Vault};
+use oneiron::{DreamerRunnerStore, EntityId, Vault};
 
 /// The host-issued queue identity of a payer-needed ask.
 const PAYER_NEEDED_QUEUE: &str = "spend.payer_needed";
 const PAYER_NEEDED_QUEUE_VERSION: &str = "v1";
+/// The reason a payer park carries, ahead of its fault: it marks the park as
+/// a payer hold among its owner's signal parks.
+const PAYER_PARK_REASON: &str = "payer-needed hold: ";
 
 /// Why a scope-funded call has no account to bill yet. Neither refuses the
 /// call for good.
@@ -37,9 +46,9 @@ pub(crate) enum PayerFault {
     /// when a room-bound call spends under no scope).
     Missing { scope: Option<SpendScopeId> },
     /// The payer PERSON's own billing account is not one this host can
-    /// resolve: the call holds on the owners' payer-needed ask `ask`, and a
-    /// try after their yes bills the vault. `None` when the ask could not be
-    /// queued; the next try queues it.
+    /// resolve: the call holds on the owners' payer-needed ask `ask`, and
+    /// once they say yes it bills the vault. `None` when the ask could not be
+    /// queued; the next read queues it.
     Needed { person: EntityId, ask: Option<u64> },
 }
 
@@ -261,4 +270,88 @@ fn payer_needed_ask(
         to: AskTo::owner(),
         correlation: None,
     })
+}
+
+/// Parks `attempt`, leased by `owner`, on its payer (FIX 805): a workflow
+/// step or an agent run whose payer waits on the owners' payer-needed ask
+/// neither fails nor spends a try on its failure ladder. It keeps its lease
+/// and its spend scope, and [`resume_payer_parks`] takes it up once the
+/// payer can be billed. The owners' ask is the hold's notice; the park's
+/// reason names the payer and the ask, never a spend cap.
+pub(crate) fn park_for_payer(
+    vault: &Vault,
+    attempt: AttemptId,
+    owner: &str,
+    fault: &PayerFault,
+    now: u64,
+) -> oneiron::Result<()> {
+    DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
+        attempt_id: attempt,
+        reason: format!("{PAYER_PARK_REASON}{fault}"),
+        cause: DreamerParkCause::Signal,
+        park_owner: owner.to_owned(),
+        now,
+    })?;
+    Ok(())
+}
+
+/// Takes up every attempt `owner` parked on its payer whose funding no
+/// longer waits on the owners: they said yes to its payer-needed ask, or its
+/// funding now reads otherwise. Each is released to the queue as the same
+/// try and admitted again from the start; a funding that now fails another
+/// way fails it there. One whose payer still waits stays parked, unwritten.
+/// Returns how many were taken up. It runs on each pump pass: an answer's
+/// write wakes the pumps, and their timed recheck catches the rest.
+pub(crate) fn resume_payer_parks(vault: &Vault, owner: &str, now: u64) -> usize {
+    let rows = match AttemptQueue::new(vault).list() {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "payer parks could not be listed");
+            return 0;
+        }
+    };
+    let runner = DreamerRunnerStore::new(vault);
+    let dispatcher = AgentDispatcher::new(vault);
+    let mut resumed = 0;
+    for row in rows
+        .iter()
+        .filter(|row| matches!(row.state, AttemptState::Leased))
+    {
+        let Ok(Some(park)) = runner.parked_attempt(row.id) else {
+            continue;
+        };
+        if park.park_owner != owner
+            || park.cause != DreamerParkCause::Signal
+            || !park.reason.starts_with(PAYER_PARK_REASON)
+        {
+            continue;
+        }
+        let room = decode_dreamer_attempt_payload(&row.payload)
+            .and_then(|payload| decode_agent_dispatch_input(&payload.input))
+            .map(|input| input.room.is_some());
+        let waits = match (dispatcher.spend_scope_for_attempt(row.id), room) {
+            (Ok(scope), Ok(room)) => matches!(
+                scope_funding(vault, scope.as_ref(), room),
+                Err(PayerFault::Needed { .. })
+            ),
+            (Err(error), _) | (_, Err(error)) => {
+                tracing::warn!(%error, attempt = ?row.id, "a payer park's funding could not be read; it stays parked");
+                true
+            }
+        };
+        if waits {
+            continue;
+        }
+        match runner.resume_parked(row.id, owner, now) {
+            Ok(Some(_)) => resumed += 1,
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(%error, attempt = ?row.id, "a payer park was not resumed");
+            }
+        }
+    }
+    if resumed > 0 {
+        tracing::info!(resumed, owner, "attempts parked on their payer resume");
+    }
+    resumed
 }
