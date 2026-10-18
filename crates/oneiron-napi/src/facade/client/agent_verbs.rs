@@ -2699,6 +2699,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_task_types_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.task_types.pin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_task_types_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.task_types.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_workspace_establish(
         &self,
         input: serde_json::Value,

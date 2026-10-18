@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 523 facade rows, 1876 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 486.
+// UniFFI census: 525 facade rows, 1884 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 488.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -18278,6 +18278,111 @@ pub struct WorkflowRunView {
 pub struct WorkflowRunRequest {
     #[serde(rename = "root_attempt_ref")]
     pub root_attempt_ref: String,
+}
+
+/// `oneiron::team::doors::TaskTypeNodeSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTypeNodeSpec {
+    #[serde(rename = "node_id")]
+    pub node_id: String,
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(rename = "name")]
+    pub name: String,
+}
+
+/// `oneiron::team::doors::TaskTypeTreePin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTypeTreePin {
+    #[serde(rename = "fork_ref")]
+    pub fork_ref: String,
+    #[serde(rename = "tree_version")]
+    pub tree_version: u64,
+    #[serde(rename = "nodes")]
+    pub nodes: Vec<TaskTypeNodeSpec>,
+}
+
+/// `oneiron::team::doors::TypeStamp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TypeStamp {
+    #[serde(rename = "node_id")]
+    pub node_id: String,
+    #[serde(rename = "tree_version")]
+    pub tree_version: u64,
+}
+
+/// `oneiron::team::doors::TaskTypeNodeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskTypeNodeView {
+    #[serde(rename = "node_id")]
+    pub node_id: String,
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "live")]
+    pub live: bool,
+}
+
+/// `oneiron::team::doors::TaskTypeTreeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskTypeTreeView {
+    #[serde(rename = "tree_version")]
+    pub tree_version: u64,
+    #[serde(rename = "root")]
+    pub root: TypeStamp,
+    #[serde(rename = "nodes")]
+    pub nodes: Vec<TaskTypeNodeView>,
+}
+
+/// `oneiron::team::doors::TaskTypeTreePinReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskTypeTreePinReceipt {
+    #[serde(rename = "fork_ref")]
+    pub fork_ref: String,
+    #[serde(rename = "stored")]
+    pub stored: TaskTypeTreeView,
+    #[serde(rename = "in_force")]
+    pub in_force: bool,
+}
+
+/// `oneiron::team::doors::TaskTypeTreeRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTypeTreeRead {
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
+    #[serde(
+        rename = "tree_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tree_version: Option<u64>,
+}
+
+/// `oneiron::team::doors::TaskTypeTreeReadReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TaskTypeTreeReadReply {
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
+    #[serde(
+        rename = "in_force_skill_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub in_force_skill_ref: Option<String>,
+    #[serde(rename = "tree", default, skip_serializing_if = "Option::is_none")]
+    pub tree: Option<TaskTypeTreeView>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.
