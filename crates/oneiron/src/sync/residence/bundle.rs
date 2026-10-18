@@ -39,7 +39,7 @@ pub const SEALED_BUNDLE_PUT_PART_MAX: usize = 4 * 1024 * 1024;
 /// 32 MiB reply bound.
 pub const SEALED_BUNDLE_READ_PART_MAX: usize = 16 * 1024 * 1024;
 /// How long a staged upload waits for its next part before the home drops it.
-const STAGE_IDLE_SECS: u64 = 60 * 60;
+pub(super) const STAGE_IDLE_SECS: u64 = 60 * 60;
 /// The length of each stored part of a kept object but its last.
 const STORED_PART: usize = SEALED_BUNDLE_PUT_PART_MAX;
 /// The machine classes that hold or fetch the vault's sealed bundle (CALLS:
@@ -53,7 +53,7 @@ const GENERATIONS: SideTable<String, Vec<u8>, Raw> =
 const PARTS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_PART);
 /// Each staged upload's header.
-const STAGES: SideTable<String, Vec<u8>, Raw> =
+pub(super) const STAGES: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_BUNDLE_STAGE);
 /// Each staged upload's parts.
 const STAGE_PARTS: SideTable<String, Vec<u8>, Raw> =
@@ -68,7 +68,7 @@ const KIT_ROOT_LEN: usize = 32 + 32;
 const STAGE_LEN: usize = 8 + 24 + 8 + 32 + 8;
 
 /// One of a generation's two objects.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SealedBundleObject {
     /// The sealed vault bundle.
     Bundle,
@@ -301,7 +301,10 @@ fn encode_stage(at: u64, stage: &SealedBundleStage, staged: u64) -> Vec<u8> {
 
 /// A stage header's second, binding and bytes staged; `object` comes from its
 /// key.
-fn decode_stage(raw: &[u8], object: SealedBundleObject) -> Result<(u64, SealedBundleStage, u64)> {
+pub(super) fn decode_stage(
+    raw: &[u8],
+    object: SealedBundleObject,
+) -> Result<(u64, SealedBundleStage, u64)> {
     if raw.len() != STAGE_LEN {
         return Err(Error::InvalidKey);
     }

@@ -18,14 +18,18 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes};
 use futures_util::StreamExt;
+use oneiron::EntityId;
 use oneiron::origin::smart_http::ScanBounds;
+use oneiron::sync::residence::{
+    SEALED_BUNDLE_PUT_PART_MAX, SealedBundleObject, sealed_bundle_stages,
+};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
 use crate::admission::{Admission, Permit, WaitTimedOut};
 use crate::byte_line::{ByteLine, HeldBytes};
 use crate::config::LimitsConfig;
-use crate::machine::DiskFloor;
+use crate::machine::{DiskClaim, DiskFloor};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
 /// The largest page LMDB writes in (`MAX_PAGESIZE`).
@@ -84,6 +88,11 @@ pub(crate) const GIT_DESCRIPTORS: u64 = 16;
 /// Descriptors one LFS transfer holds: an upload's spool.
 const LFS_DESCRIPTORS: u64 = 1;
 
+/// Copies of a sealed bundle upload's object the home's disk holds at once
+/// (CALLS: SEALED_BUNDLE_DISK_COPY_COUNT): its stage, and the stored copy its
+/// commit or replace writes before the stage goes (FIX 3354).
+const SEALED_BUNDLE_DISK_COPY_COUNT: u64 = 2;
+
 /// The permits remotely started transfers take, and how long either side of
 /// one may wait for the other.
 pub(crate) struct Transfers {
@@ -113,6 +122,10 @@ pub(crate) struct Transfers {
     /// The vault disk's floor, and the room uploads in flight claim on it.
     /// What a git exchange holds past memory keeps it too.
     pub(crate) disk: DiskFloor,
+    /// The room each sealed bundle upload the home stages claims on `disk`,
+    /// by its machine and object: held across its parts, through the commit
+    /// or replace that writes its stored copy (FIX 3354).
+    sealed_stages: Mutex<HashMap<(EntityId, SealedBundleObject), Arc<DiskClaim>>>,
     /// The page size the vault's object plane is stored in, which each
     /// stored chunk rounds up to; the largest LMDB writes in when it cannot
     /// be read.
@@ -170,7 +183,7 @@ impl Transfers {
         }
         let lfs_reads = Arc::new(ByteLine::new(LimitRow::LfsMemoryBytes, half));
         OriginReads::lend(vault, &lfs_reads, &questions, wait);
-        Ok(Self {
+        let transfers = Self {
             git: Admission::new(LimitRow::GitExchanges, Arc::clone(&questions), git, wait),
             pushes: Mutex::default(),
             lfs: Admission::new(LimitRow::LfsTransfers, Arc::clone(&questions), lfs, wait),
@@ -182,6 +195,7 @@ impl Transfers {
                 vault.lfs_storage_dir().to_owned(),
                 limits.disk_reserve_bytes,
             ),
+            sealed_stages: Mutex::default(),
             lfs_page: vault.lfs_storage_page_size().unwrap_or(LARGEST_PAGE),
             #[cfg(test)]
             shown_page: Mutex::default(),
@@ -190,7 +204,10 @@ impl Transfers {
             git_status_memory: git_status_memory(),
             scan: limits.scan_bounds()?,
             wait,
-        })
+        };
+        // An upload staged before this start claims the rest it takes.
+        transfers.reconcile_sealed_stages(vault);
+        Ok(transfers)
     }
 
     /// A git exchange's permit, at its principal's turn. Callers without a
@@ -250,6 +267,76 @@ impl Transfers {
             .shown_page
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(page);
+    }
+
+    /// The room a sealed bundle upload of a `total`-byte object, `staged`
+    /// bytes in, still takes on the disk: [`SEALED_BUNDLE_DISK_COPY_COUNT`]
+    /// copies of the object, each in parts of at most
+    /// [`SEALED_BUNDLE_PUT_PART_MAX`] that take at most a page more than their
+    /// bytes once rounded up to whole pages, less the stage written so far.
+    fn sealed_stage_room(&self, total: u64, staged: u64) -> u64 {
+        let page = self.lfs_page();
+        let on_disk = |bytes: u64| {
+            bytes.saturating_add(
+                bytes
+                    .div_ceil(SEALED_BUNDLE_PUT_PART_MAX as u64)
+                    .saturating_mul(page),
+            )
+        };
+        on_disk(total)
+            .saturating_mul(SEALED_BUNDLE_DISK_COPY_COUNT)
+            .saturating_sub(on_disk(staged))
+    }
+
+    /// Claims the room `machine`'s upload of `object` still takes before its
+    /// next part, `staged` bytes of `total` in (FIX 3354). The claim stays
+    /// with the stage across its parts; hold the one returned until the part
+    /// is staged. `None` when that room would cross the disk's floor.
+    pub(crate) fn hold_sealed_stage(
+        &self,
+        machine: EntityId,
+        object: SealedBundleObject,
+        total: u64,
+        staged: u64,
+    ) -> Option<Arc<DiskClaim>> {
+        let claim = Arc::clone(
+            self.sealed_stages
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry((machine, object))
+                .or_insert_with(|| self.disk.claim()),
+        );
+        self.disk
+            .hold(&claim, self.sealed_stage_room(total, staged))
+            .then_some(claim)
+    }
+
+    /// Sets each sealed bundle upload's claim to the rest its stage header in
+    /// `vault` says it takes: a stage committed, replaced or idled out gives
+    /// its room back, and one staged before a restart claims its rest again.
+    /// A claim a part still holds stays until that part is staged.
+    pub(crate) fn reconcile_sealed_stages(&self, vault: &oneiron::Vault) {
+        let Ok(stages) = sealed_bundle_stages(vault) else {
+            return;
+        };
+        let mut claims = self
+            .sealed_stages
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        claims.retain(|key, claim| {
+            Arc::strong_count(claim) > 1
+                || stages
+                    .iter()
+                    .any(|stage| (stage.machine, stage.object) == *key)
+        });
+        for stage in stages {
+            let claim = claims
+                .entry((stage.machine, stage.object))
+                .or_insert_with(|| self.disk.claim());
+            // A rest that no longer fits keeps the claim it had.
+            self.disk
+                .hold(claim, self.sealed_stage_room(stage.total, stage.staged));
+        }
     }
 
     /// An LFS transfer's permit, keyed as [`Self::admit_git`] is.

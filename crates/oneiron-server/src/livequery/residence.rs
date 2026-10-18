@@ -902,7 +902,9 @@ fn bundle_turn(
 /// Stages one part of an upload of the vault's sealed bundle or its pad object
 /// (FIX 922), from a machine of the owner's whose proof stands here. A stage
 /// whose rest would cross the disk's free-space floor is refused before its
-/// bytes are kept. A refused machine or part looks missing.
+/// bytes are kept; the room it claims stays claimed across its parts, through
+/// the commit or replace that writes its stored copy (FIX 3354). A refused
+/// machine or part looks missing.
 fn bundle_put(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -918,22 +920,29 @@ fn bundle_put(
         total: input.total,
         digest: sealed_digest_from_hex(&input.digest).ok_or_else(AppError::invalid_params)?,
     };
-    if !server
-        .transfers
-        .disk
-        .has_room_for(input.total.saturating_sub(input.offset))
-    {
-        return Err(AppError::new(
-            "DISK_FLOOR",
-            "the home's disk keeps its free-space floor",
-            ["Retry once the home has room."],
-        ));
-    }
     let part = base64::engine::general_purpose::STANDARD
         .decode(input.part)
         .map_err(|_| AppError::invalid_params())?;
-    let staged = stage_sealed_bundle_part(&server.vault, peer, &stage, input.offset, &part)
-        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    // A peer that proved no machine is refused by the stage itself.
+    let claim = match peer {
+        PeerMachine::Proven { machine, .. } => Some(
+            server
+                .transfers
+                .hold_sealed_stage(machine, stage.object, input.total, input.offset)
+                .ok_or_else(|| {
+                    AppError::new(
+                        "DISK_FLOOR",
+                        "the home's disk keeps its free-space floor",
+                        ["Retry once the home has room."],
+                    )
+                })?,
+        ),
+        PeerMachine::Unknown => None,
+    };
+    let staged = stage_sealed_bundle_part(&server.vault, peer, &stage, input.offset, &part);
+    drop(claim);
+    server.transfers.reconcile_sealed_stages(&server.vault);
+    let staged = staged.map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((json!({"staged": staged}), Some(Vec::new())))
 }
 
@@ -958,16 +967,20 @@ fn bundle_commit(
         )),
         None => None,
     };
-    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent, root)
-        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent, root);
+    // The stages the commit dropped give their room back.
+    server.transfers.reconcile_sealed_stages(&server.vault);
+    let entry = entry.map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((bundle_entry(&entry), Some(Vec::new())))
 }
 
 /// The generations the home keeps, newest first, for a machine of the
-/// owner's (FIX 922). It names no world.
+/// owner's (FIX 922). It names no world. A stage idled out since gives its
+/// room on the disk back (FIX 3354).
 fn bundle_list(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
     let BundleListRequest {} =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    server.transfers.reconcile_sealed_stages(&server.vault);
     let generations: Vec<Value> = sealed_bundle_generations(&server.vault, peer)
         .map_err(|_| AppError::not_found("sealed bundle", None))?
         .iter()
@@ -1021,8 +1034,9 @@ fn bundle_pads_replace(
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let generation = bundle_generation(&input.generation)?;
     let replaces = sealed_digest_from_hex(&input.replaces).ok_or_else(AppError::invalid_params)?;
-    let entry = replace_sealed_bundle_pads(&server.vault, peer, generation, &replaces)
-        .map_err(|_| AppError::not_found("sealed bundle", None))?;
+    let entry = replace_sealed_bundle_pads(&server.vault, peer, generation, &replaces);
+    server.transfers.reconcile_sealed_stages(&server.vault);
+    let entry = entry.map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((bundle_entry(&entry), Some(Vec::new())))
 }
 
