@@ -1306,6 +1306,16 @@ fn federation_grant_default_rows() -> Value {
                 role: Role::Delegate,
                 scope: scope(&["read"]),
             },
+            // FIX 3016: a Connect peer reads and proposes, at most private
+            // content. The mint names its worlds; this row names none.
+            Row::ConnectGuestCeiling {
+                scope: Scope {
+                    sensitivity: crate::federation::SensitivityCeiling::AtMost(
+                        crate::federation::Sensitivity::Private,
+                    ),
+                    ..scope(&["read", "propose"])
+                },
+            },
         ]
         .iter()
         .map(|row| encode_row(row).expect("default grant policy row"))

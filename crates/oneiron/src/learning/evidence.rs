@@ -16,7 +16,7 @@ use super::cell::{LearningCell, LearningPredicate};
 use super::estimate::{Estimate, EstimateForm};
 use super::project::project_cell_in_txn;
 
-/// Longest receipt reference or judge revision an evidence row keeps.
+/// Longest receipt reference, judge revision or goal revision an evidence row keeps.
 const MAX_REF_BYTES: usize = 256;
 
 /// Longest outcome category name.
@@ -191,6 +191,10 @@ pub struct LearningEvidence {
     /// Frozen pack execution/use context; judge and team metadata are evidence,
     /// not reliability key qualifiers.
     pub pack_attribution: Option<crate::receipt::PackLearningContext>,
+    /// The effective skill-edit goal revision the outcome was measured under,
+    /// frozen at measurement. Metadata, not a cell key qualifier: a goal-axis
+    /// settlement accepts the row only when it equals the question's revision.
+    pub goal_revision: Option<String>,
 }
 
 impl LearningEvidence {
@@ -212,6 +216,7 @@ impl LearningEvidence {
             on_judge_model: false,
             outcome_label: None,
             pack_attribution: None,
+            goal_revision: None,
         }
     }
 }
@@ -231,6 +236,8 @@ pub struct EvidenceRow {
     pub outcome_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack_attribution: Option<crate::receipt::PackLearningContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_revision: Option<String>,
 }
 
 fn bounded_ref(text: &str, what: &'static str) -> Result<()> {
@@ -286,6 +293,9 @@ pub(crate) fn record_evidence_in_txn(
     if let Some(judge) = &evidence.judge {
         bounded_ref(judge, "a judge revision is 1..=256 bytes without NUL")?;
     }
+    if let Some(revision) = &evidence.goal_revision {
+        bounded_ref(revision, "a goal revision is 1..=256 bytes without NUL")?;
+    }
     evidence.observation.validate()?;
     if let Some(label) = &evidence.outcome_label {
         Observation::Category(label.clone()).validate()?;
@@ -305,6 +315,7 @@ pub(crate) fn record_evidence_in_txn(
         on_judge_model: evidence.on_judge_model,
         outcome_label: evidence.outcome_label.clone(),
         pack_attribution: evidence.pack_attribution.clone(),
+        goal_revision: evidence.goal_revision.clone(),
     };
     EVIDENCE.put(
         &vault.store,
