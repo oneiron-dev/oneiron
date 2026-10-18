@@ -908,7 +908,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/claim/scoped_read/served_forms.rs` | src | s | 2 fn | — | The served-form receipts a read writes (OF-329): what it served of each asset, recorded under the holder it… |
 | `src/claim/scoped_read/slip_tests.rs` | test | m | — | — | Root provisioning and fail-closed read admission land together |
 | `src/claim/scoped_read/tests.rs` | test | m | — | — | The one point-read entry and the read-grant holes it keeps closed |
-| `src/claim/scoped_read/versions.rs` | src | m | 10 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
+| `src/claim/scoped_read/versions.rs` | src | m | 11 crate-vis | — | Explicit read frontiers keep the scoped lane's current and historic gates |
 | `src/claim/scoped_read/visibility.rs` | src | m | 3 fn · 11 crate-vis | — | — |
 | `src/claim/scoped_read/weave_correction.rs` | src | L | 2 struct · 1 enum · 5 fn · 3 crate-vis | WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection | Authenticated wrong labels emitted by the live weave report: one on a link, and one on a claim, project or… |
 | `src/claim/scoped_read/weave_digest.rs` | src | L | 3 struct · 2 enum · 10 fn · 1 const · 9 crate-vis | StoredWeaveDigest, WeaveDigestCadence, WeaveDigestReader, WeaveDigestSchedule, WeaveScheduleHold | Per-reader report schedules (OF-499) |
@@ -2557,7 +2557,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | s | 23 mod · 50 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | m | 23 mod · 50 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -2597,7 +2597,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/scoped_export.rs` | src | m | 7 struct · 5 enum · 3 fn | ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordPositionRequest, RecordSelector, ScopeAxisInput, ScopeSensitivityBand +4 | Scoped exports carry the caller's verified ceiling, never a caller-authored grant |
 | `src/memory/search_hybrid.rs` | src | s | 5 struct · 2 fn | HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery | Five-channel search through the caller's ordinary scoped retrieval lane |
 | `src/memory/search_temporal.rs` | src | s | 4 struct · 2 fn | TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult | Explicit bitemporal search over the caller's ordinary scoped retrieval lane |
-| `src/memory/search_vector.rs` | src | s | 2 struct · 2 fn | VectorSearchHit, VectorSearchRequest | Typed vector search in the caller's ordinary credential-bound lane |
+| `src/memory/search_vector.rs` | src | s | 6 struct · 1 enum · 4 fn | VectorPutReceipt, VectorPutRequest, VectorSearchConfig, VectorSearchHit, VectorSearchLane, VectorSearchRequest, VectorSearchResult | Typed vector search, MRL refinement evidence and full-row uploads in scoped lanes |
 | `src/memory/session_writes.rs` | src | s | 2 fn | — | NOTE and claim writes through an off-record session's handle (DOOR-127; Engine ruling 10-18 on ARCH-0052… |
 | `src/memory/shape_doors.rs` | src | s | 7 fn | — | The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and… |
 | `src/memory/signal_extraction.rs` | src | s | 8 struct · 2 fn | ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest, SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource, SignalExtractionTicket | Typed signal extraction over the production Dreamer partition queue |
@@ -2961,7 +2961,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/filters.rs` | src | L | 8 crate-vis | — | — |
 | `src/pipeline/l2_evidence.rs` | src | s | 1 crate-vis | — | Unranked, explicitly addressed L2 subject evidence through the retrieval gates |
 | `src/pipeline/media_channel.rs` | src | s | 2 crate-vis | — | Typed media retrieval over declared embedding spaces (OF-370; ARCH-0004 `#embedding-spaces`) |
-| `src/pipeline/mod.rs` | src | s | 2 mod · 4 re-export · 6 crate-vis | — | — |
+| `src/pipeline/mod.rs` | src | s | 2 mod · 5 re-export · 6 crate-vis | — | — |
 | `src/pipeline/retrieval_loop.rs` | src | m | 1 struct · 5 fn · 1 re-export · 2 crate-vis | ReadOnlyRetrievalLoop | OF-183: the engine's read-only, receipt-aware loop over entity handles |
 | `src/pipeline/retrieval_loop/types.rs` | src | s | 3 struct · 2 enum · 1 crate-vis | RetrievalEvidence, RetrievalHandle, RetrievalLoopAction, RetrievalLoopObservation, RetrievalLoopStatus | Read-only retrieval verbs and their model-facing observations |
 | `src/pipeline/retrieval_policy.rs` | src | s | 6 struct · 3 enum · 5 fn · 1 re-export · 1 crate-vis | RetrievalIntent, RetrievalPolicyAction, RetrievalPolicyChoices, RetrievalPolicyDecision, RetrievalPolicyEnvelope, RetrievalPolicyIdentity, RetrievalPolicyOptions, RetrievalPolicyTier +1 | OF-092: a bounded retrieval FSM and contextual Thompson selection |
@@ -2988,6 +2988,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/trace/trace_fork_hash.rs` | src | m | 2 crate-vis | — | Deterministic replay fork-hashing: evidence dispatcher, all fork_hash segments, and primitives |
 | `src/pipeline/trace/trace_records.rs` | src | s | 10 crate-vis | — | Pure trace-data shaping: channel, fused, top and stage records, score breakdowns, and candidate-set assembly |
 | `src/pipeline/types.rs` | src | L | 9 struct · 5 enum · 15 fn · 5 const · 1 re-export · 36 crate-vis | ActiveWorldSelection, DreamerWorkingSet, DreamerWorkingSetBudget, DreamerWorkingSetCursor, DreamerWorkingSetStopReason, FacetMode, PendingVectorEmbedding, RelMode +6 | — |
+| `src/pipeline/vector_refinement.rs` | src | s | 1 struct · 1 crate-vis | VectorRefinement | The dimensional space the existing HNSW funnel actually scores in |
 | `src/pipeline/world_authority.rs` | src | m | 1 fn · 6 crate-vis | — | Per-turn world authority, bound to the host's executing principal |
 | `src/pipeline/world_authority_tests.rs` | test | m | — | — | ONE-1420 principal binding, durable default authorship, and authority reuse |
 | `src/policy_model/binding.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | PolicyContentBinding | Hashes that tie a verdict to the exact content and policy state it was decided against, so a stale verdict… |
@@ -4119,7 +4120,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 967 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 969 fn · 4 const | — | — |
 | `src/task_verb/sdk_goal_optimize.rs` | src | m | 15 struct · 12 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
 | `src/task_verb/sdk_guest_document.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest | Typed guest document sharing over live Connect grants (ARCH-0043) |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |

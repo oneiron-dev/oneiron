@@ -11342,7 +11342,7 @@
      "path": "src/claim/scoped_read/versions.rs",
      "purpose": "Explicit read frontiers keep the scoped lane's current and historic gates",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -33339,7 +33339,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/mod.rs",
@@ -33921,14 +33921,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "VectorPutReceipt",
+      "VectorPutRequest",
+      "VectorSearchConfig",
       "VectorSearchHit",
-      "VectorSearchRequest"
+      "VectorSearchLane",
+      "VectorSearchRequest",
+      "VectorSearchResult"
      ],
      "path": "src/memory/search_vector.rs",
-     "purpose": "Typed vector search in the caller's ordinary credential-bound lane",
+     "purpose": "Typed vector search, MRL refinement evidence and full-row uploads in scoped lanes",
      "surface": {
-      "fn": 2,
-      "struct": 2
+      "enum": 1,
+      "fn": 4,
+      "struct": 6
      }
     },
     {
@@ -38240,7 +38246,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -38533,6 +38539,19 @@
       "fn": 15,
       "re-export": 1,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VectorRefinement"
+     ],
+     "path": "src/pipeline/vector_refinement.rs",
+     "purpose": "The dimensional space the existing HNSW funnel actually scores in",
+     "surface": {
+      "crate-vis": 1,
+      "struct": 1
      }
     },
     {
@@ -52850,7 +52869,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 967
+      "fn": 969
      }
     },
     {
@@ -59942,7 +59961,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 63,
+     "files": 64,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60511,7 +60530,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3691,
+   "source_files": 3692,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69102,7 +69121,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 936
+      "fn": 938
      }
     },
     {
@@ -70165,7 +70184,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 937
+      "fn": 939
      }
     },
     {
@@ -73668,7 +73687,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 151
+      "crate-vis": 152
      }
     },
     {
@@ -74185,6 +74204,16 @@
      "notable": [],
      "path": "src/api/facade/vault_shape_doors.rs",
      "purpose": "`vault.shape.apply` (ARCH-0070) as a host door: the gated landing of a shape plan",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/vector_doors.rs",
+     "purpose": "Full-row vector uploads under the caller's own owner proof and write gate",
      "surface": {
       "crate-vis": 1
      }
@@ -81661,7 +81690,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 416,
+     "files": 417,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -82090,7 +82119,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 767,
+   "source_files": 768,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -84752,7 +84781,8 @@
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
       "ScopedReadResultTemporalSearchResult",
-      "ScopedReadResultVectorSearchHitList",
+      "ScopedReadResultVectorSearchConfig",
+      "ScopedReadResultVectorSearchResult",
       "ScoreObservation",
       "ScoreSnapshot",
       "ScoredEntityResolutionCandidate",
@@ -85307,8 +85337,14 @@
       "UsedProvenanceEdge",
       "VadAnnotationSource",
       "VadBadge",
+      "VectorPutReceipt",
+      "VectorPutRequest",
+      "VectorRefinement",
+      "VectorSearchConfig",
       "VectorSearchHit",
+      "VectorSearchLane",
       "VectorSearchRequest",
+      "VectorSearchResult",
       "VerdictBinding",
       "VerdictMode",
       "ViewInput",
@@ -85456,8 +85492,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 776,
-      "struct": 2392
+      "enum": 777,
+      "struct": 2398
      }
     },
     {
