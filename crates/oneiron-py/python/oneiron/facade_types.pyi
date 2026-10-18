@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 614 facade rows, 2294 declarations.
-Inputs: 562 of 614 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 545 of 614 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 615 facade rows, 2306 declarations.
+Inputs: 563 of 615 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 546 of 615 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -9502,6 +9502,55 @@ class ForgetPredicateRequest(TypedDict):
     subject_ref: str
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
+EventTypeKey = str
+class BookingConstraintTurnWindow(TypedDict):
+    start: int
+    end: int
+class BookingConstraintTurnInput(TypedDict):
+    event_type: EventTypeKey
+    window: BookingConstraintTurnWindow
+    visitor_tz: str
+    free_text: str
+    session_ref: str
+class BookingConstraintTurnRequest(TypedDict):
+    page_token: str
+    turn: BookingConstraintTurnInput
+GeneratedUiCard = TypedDict("GeneratedUiCard", {"protocolVersion": int, "catalog": GeneratedUiCatalog, "cardId": str, "tree": GeneratedLens, "actions": list[GeneratedUiActionDeclaration], "$state": GeneratedUiStateSnapshot})
+ConstraintWeekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+class LocalMinuteWindow(TypedDict):
+    start_minute: int
+    end_minute: int
+class TimeRangeWire(TypedDict):
+    start: int
+    end: int
+class ConstraintObject(TypedDict):
+    schema_version: int
+    weekdays: NotRequired[list[ConstraintWeekday]]
+    local_time_windows: NotRequired[list[LocalMinuteWindow]]
+    utc_window: NotRequired[TimeRangeWire | None]
+    allow_flex_pool: bool
+class BookingConstraintHoldContext(TypedDict):
+    event_type: EventTypeKey
+    visitor_tz: str
+    constraint: ConstraintObject
+    session_ref: str
+class ConstraintContinuation(TypedDict):
+    event_type: EventTypeKey
+    visitor_tz: str
+    constraint: ConstraintObject
+    session_ref: str
+class BookingConstraintTurnResponseSlots(TypedDict):
+    outcome: Literal["slots"]
+    card: GeneratedUiCard
+    flex_used: bool
+    hold: BookingConstraintHoldContext
+class BookingConstraintTurnResponseContinueByEmail(TypedDict):
+    outcome: Literal["continue_by_email"]
+    continuation: ConstraintContinuation
+class BookingConstraintTurnResponseDeflect(TypedDict):
+    outcome: Literal["deflect"]
+    card: GeneratedUiCard
+BookingConstraintTurnResponse = BookingConstraintTurnResponseSlots | BookingConstraintTurnResponseContinueByEmail | BookingConstraintTurnResponseDeflect
 class BookingPageTokenRequest(TypedDict):
     page_ref: str
 class BookingPageTokenResponse(TypedDict):

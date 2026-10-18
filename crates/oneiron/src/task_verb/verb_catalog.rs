@@ -525,6 +525,7 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingConstraintTurn,
     VaultBookingPageToken,
     VaultCalendarCreate,
     VaultCalendarIcsImport,
@@ -1185,6 +1186,7 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::VaultCalendarCreate,
         Self::VaultCalendarIcsImport,
@@ -1860,6 +1862,7 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::VaultCalendarCreate => "vault.calendar.create",
             Self::VaultCalendarIcsImport => "vault.calendar.ics.import",
@@ -2483,6 +2486,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
@@ -3150,6 +3154,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
@@ -3911,6 +3916,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::VaultCalendarCreate
                 | Self::VaultCalendarIcsImport
@@ -4990,6 +4996,7 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::VaultCalendarCreate => &["spec"],
             Self::VaultCalendarIcsImport => &["spec"],
@@ -5651,6 +5658,7 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::VaultCalendarCreate => &["spec"],
             Self::VaultCalendarIcsImport => &["spec"],
@@ -7264,6 +7272,9 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingConstraintTurn => {
+                "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."
             }
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."

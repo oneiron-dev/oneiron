@@ -1514,6 +1514,9 @@ impl OneironClient {
                 "vault.forget" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
                     client, verb, &input,
                 ),
+                "vault.booking.constraint_turn" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BookingConstraintTurnResponse,
+                >(client, verb, &input),
                 "vault.booking.page_token" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BookingPageTokenResponse,
                 >(client, verb, &input),
@@ -7851,6 +7854,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.forget", value)
+    }
+    pub fn vault_booking_constraint_turn(
+        &self,
+        input: &oneiron::task_verb::sdk::BookingConstraintTurnRequest,
+    ) -> Result<oneiron::task_verb::sdk::BookingConstraintTurnResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.booking.constraint_turn", value)
     }
     pub fn vault_booking_page_token(
         &self,

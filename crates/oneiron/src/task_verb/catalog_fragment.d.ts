@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 669 code-mode rows (648 host rows, 21 run rows), 2380 declarations.
-// Replies: 590 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 670 code-mode rows (649 host rows, 21 run rows), 2392 declarations.
+// Replies: 591 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1947,6 +1947,18 @@ declare namespace Sdk {
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
+  type EventTypeKey = string;
+  type BookingConstraintTurnWindow = { start: number; end: number };
+  type BookingConstraintTurnInput = { event_type: EventTypeKey; window: BookingConstraintTurnWindow; visitor_tz: string; free_text: string; session_ref: string };
+  type BookingConstraintTurnRequest = { page_token: string; turn: BookingConstraintTurnInput };
+  type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot };
+  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+  type LocalMinuteWindow = { start_minute: number; end_minute: number };
+  type TimeRangeWire = { start: number; end: number };
+  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: TimeRangeWire | null; allow_flex_pool: boolean };
+  type BookingConstraintHoldContext = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
+  type ConstraintContinuation = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
+  type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
   type CalendarRangeDto = { start: number; end: number };
@@ -2881,6 +2893,8 @@ declare const vault: Sdk.VaultHost & {
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
   booking: {
+    /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
+    constraint_turn(input: Sdk.BookingConstraintTurnRequest): Promise<Sdk.BookingConstraintTurnResponse | StoredResult>;
     /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
     page_token(input: Sdk.BookingPageTokenRequest): Promise<Sdk.BookingPageTokenResponse | StoredResult>;
   };

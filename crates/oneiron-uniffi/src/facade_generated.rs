@@ -2406,6 +2406,11 @@ export_facade! {
     let output = client.vault_forget(&input)?;
     Lift::lift(output)
 };
+"vault.booking.constraint_turn" => fn vault_booking_constraint_turn(&self, input: BookingConstraintTurnRequest) -> BookingConstraintTurnResponse = |client| {
+    let input: oneiron::task_verb::sdk::BookingConstraintTurnRequest = crate::codec::lower_record("vault.booking.constraint_turn", input)?;
+    let output = client.vault_booking_constraint_turn(&input)?;
+    crate::codec::lift_record("vault.booking.constraint_turn", &output)
+};
 "vault.booking.page_token" => fn vault_booking_page_token(&self, input: BookingPageTokenRequest) -> BookingPageTokenResponse = |client| {
     let input: oneiron::task_verb::sdk::BookingPageTokenRequest = crate::codec::lower_record("vault.booking.page_token", input)?;
     let output = client.vault_booking_page_token(&input)?;

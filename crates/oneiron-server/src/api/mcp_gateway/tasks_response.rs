@@ -1444,6 +1444,7 @@ fn mcp_agent_verb_input(
         "vault.remember" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.retract" => a.spec.clone().ok_or_else(invalid),
         "vault.forget" => a.spec.clone().ok_or_else(invalid),
+        "vault.booking.constraint_turn" => a.spec.clone().ok_or_else(invalid),
         "vault.booking.page_token" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.create" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.ics.import" => a.spec.clone().ok_or_else(invalid),
@@ -3123,6 +3124,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.forget" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.booking.constraint_turn" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.booking.page_token" => {
@@ -11387,6 +11391,19 @@ async fn execute_agent_verb_row(
             let output =
                 oneiron::task_verb::sdk::vault_forget(&memory, input).map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.booking.constraint_turn" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.booking.constraint_turn", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::BookingConstraintTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_booking_constraint_turn(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.booking.page_token" => {
