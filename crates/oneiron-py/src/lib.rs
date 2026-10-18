@@ -5224,6 +5224,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn tasks_refuse(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "tasks.refuse")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("tasks.refuse", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_agents_spawn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.agents.spawn")?;
         let output = py

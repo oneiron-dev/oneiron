@@ -2338,13 +2338,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+            """The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
             return json.loads(_translate(lambda: self._client.vault_agents_create(json.dumps(spec))))
         def get(self, spec):
-            """The owner reads one saved agent composition and its version and approval state."""
+            """The owner reads one saved agent composition, including its declared refusal dial, version and approval state."""
             return json.loads(_translate(lambda: self._client.vault_agents_get(json.dumps(spec))))
         def update(self, spec):
-            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+            """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
             return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
         @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
@@ -3096,6 +3096,9 @@ class Oneiron:
         def outcomes(self, handle):
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
             return json.loads(_translate(lambda: self._client.tasks_outcomes(json.dumps(handle))))
+        def refuse(self, spec):
+            """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
+            return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
     class _RevealVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

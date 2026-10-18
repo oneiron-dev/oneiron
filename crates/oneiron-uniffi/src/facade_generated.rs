@@ -2911,6 +2911,11 @@ export_facade! {
     let output = client.self_folds(&input)?;
     crate::codec::lift_record("self.folds", &output)
 };
+"tasks.refuse" => fn tasks_refuse(&self, input: LiveRunRequestTaskRefuseInput) -> TaskRefuseOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> = crate::codec::lower_record("tasks.refuse", input)?;
+    let output = client.tasks_refuse(&input)?;
+    crate::codec::lift_record("tasks.refuse", &output)
+};
 "self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;
     let output = client.self_agents_spawn(&input)?;

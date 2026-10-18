@@ -11856,7 +11856,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -12266,7 +12266,7 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 7,
       "fn": 1,
       "struct": 22
@@ -50428,7 +50428,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 635
+      "fn": 636
      }
     },
     {
@@ -66098,7 +66098,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 585
+      "fn": 586
      }
     },
     {
@@ -67147,7 +67147,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 586
+      "fn": 587
      }
     },
     {
@@ -70420,7 +70420,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -79543,6 +79543,7 @@
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
       "LiveRunRequestSkillCallInput",
+      "LiveRunRequestTaskRefuseInput",
       "LiveVoiceAckKind",
       "LiveVoiceAckRequest",
       "LiveVoiceAudioRequest",
@@ -79991,6 +79992,9 @@
       "RecordRefPreview",
       "RecordSelector",
       "RefreshPolicy",
+      "RefusalDial",
+      "RefusalLevel",
+      "RefusalOutcome",
       "RelationshipChange",
       "RelationshipContext",
       "RelayBoundaryDegrade",
@@ -80563,6 +80567,9 @@
       "TaskLifecycleRecord",
       "TaskOutcome",
       "TaskPhase",
+      "TaskRefuseDomain",
+      "TaskRefuseInput",
+      "TaskRefuseOutput",
       "TaskReportBody",
       "TaskRouteOutcome",
       "TaskRow",
@@ -80764,8 +80771,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 564,
-      "struct": 1590
+      "enum": 567,
+      "struct": 1594
      }
     },
     {
