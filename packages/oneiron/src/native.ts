@@ -93,6 +93,11 @@ vaultBudgetsHold(input: unknown): unknown
 vaultBudgetsHoldResume(input: unknown): unknown
 vaultBudgetsLocal(input: unknown): unknown
 vaultBudgetsSettlements(input: unknown): unknown
+vaultBudgetsRsiConfigure(input: unknown): unknown
+vaultBudgetsRsi(input: unknown): unknown
+vaultBudgetsRsiTopUp(input: unknown): unknown
+vaultBudgetsRsiHold(input: unknown): unknown
+vaultBudgetsRsiHoldResume(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -248,6 +253,9 @@ vaultPacksConnectorUpdate(input: unknown): unknown
 vaultPacksConnectorGrantsGet(input: unknown): unknown
 vaultPacksConnectorGrantsPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
+aiChatCompletions(input: unknown): unknown
+vaultConnectorsProxyAdmit(input: unknown): unknown
+vaultConnectorsProxyRevokeWrite(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown
 vaultConnectorsSubscriptionsRevoke(input: unknown): unknown
@@ -388,6 +396,8 @@ vaultResearchPromote(input: unknown): unknown
 vaultResearchReserveWork(input: unknown): unknown
 vaultResearchSettleWork(input: unknown): unknown
 vaultResearchRefundWork(input: unknown): unknown
+vaultResearchReserveExploration(input: unknown): unknown
+vaultResearchBudget(input: unknown): unknown
 vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
@@ -772,6 +782,11 @@ vaultEsignLinksIssue(input: unknown): unknown
 vaultEsignSendForSignature(input: unknown): unknown
 vaultEsignRemind(input: unknown): unknown
 vaultEsignVoid(input: unknown): unknown
+vaultEsignSigningAct(input: unknown): unknown
+vaultEsignSigningPdf(input: unknown): unknown
+vaultEsignSigningImage(input: unknown): unknown
+vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown

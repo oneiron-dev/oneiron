@@ -70,7 +70,9 @@ const PREP_SECTION_ORDER: [PrepSectionKind; 3] = [
 /// Declaration order IS the precedence rule, and `Ord` is derived from it: prior
 /// commitments first, recent threads with those people second, dossier or
 /// company delta third.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PrepSectionKind {
     /// Commitments involving the meeting or its attendees.
@@ -211,7 +213,12 @@ fn pack_from_candidates(
     candidates: &[ContextEntity],
 ) -> Result<Option<PrepPack>> {
     let items = prep_items_from_candidates(vault, &request.event, candidates)?;
-    Ok(assemble_prep_pack(&request.event, request.fired_at, request.policy, items))
+    Ok(assemble_prep_pack(
+        &request.event,
+        request.fired_at,
+        request.policy,
+        items,
+    ))
 }
 
 /// Runs the scoped live assembly around one EVENT.

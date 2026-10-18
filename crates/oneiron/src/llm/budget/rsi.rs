@@ -16,22 +16,36 @@ pub enum RsiSpendPurpose {
 }
 
 /// A share is advisory unless the owner pins its cap.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RsiBudgetShare {
     pub units: u64,
     pub pinned: bool,
 }
 
 /// Independent vault lines: loop spend is token-denominated, exploration is exposure-denominated.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct RsiBudgetConfig {
     pub limit: u64,
     pub exploration_exposure_limit: u64,
     pub shares: BTreeMap<String, RsiBudgetShare>,
 }
 
+/// One exact limiting line, raised by `units`. A top-up never lowers a line,
+/// never touches receipts or spend, and never resumes held work by itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case", tag = "line")]
+pub enum RsiTopUp {
+    /// The token-denominated loop line's limit.
+    Tokens { units: u64 },
+    /// The exposure-denominated exploration line's limit.
+    Exploration { units: u64 },
+    /// One named share's allocation, soft or pinned.
+    Share { share: String, units: u64 },
+}
+
 /// Token-denominated loop accounting, including reservations that survive reopen.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RsiBudgetRead {
     pub limit: u64,
     pub spent: u64,
@@ -40,7 +54,7 @@ pub struct RsiBudgetRead {
 }
 
 /// Exposure-denominated exploration accounting, independent of token spend.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RsiExplorationRead {
     pub exposure_limit: u64,
     pub spent_exposure: u64,
@@ -50,14 +64,14 @@ pub struct RsiExplorationRead {
 
 /// The stamped token-share overflow admitted from the unallocated token pool.
 /// Units record reservation-time overdraft, even if it settles for less.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RsiOverdraftReceipt {
     pub share: String,
     pub units: u64,
 }
 
 /// The durable receipt of one reservation's terminal outcome.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RsiSettlement {
     Spent(u64),
     Exposure(u64),
@@ -242,6 +256,67 @@ impl Vault {
         )?;
         txn.commit().map_err(crate::Error::from)?;
         Ok(())
+    }
+
+    /// The configured lines and shares, exactly as the owner set them.
+    pub fn rsi_budget_config(&self) -> RsiResult<RsiBudgetConfig> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        Ok(load(self, &txn)?.config)
+    }
+
+    /// Raises one exact limiting line inside the write that stores it.
+    /// Receipts, spend and the suspension hold are untouched: resuming held
+    /// work is a separate owner act.
+    pub fn top_up_rsi_budget(&self, top_up: RsiTopUp) -> RsiResult<RsiBudgetConfig> {
+        let units = match &top_up {
+            RsiTopUp::Tokens { units }
+            | RsiTopUp::Exploration { units }
+            | RsiTopUp::Share { units, .. } => *units,
+        };
+        if units == 0 {
+            return Err(RsiBudgetError::InvalidConfig);
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let mut line = load(self, &txn)?;
+        match &top_up {
+            RsiTopUp::Tokens { units } => {
+                line.config.limit = line
+                    .config
+                    .limit
+                    .checked_add(*units)
+                    .ok_or(RsiBudgetError::InvalidConfig)?;
+            }
+            RsiTopUp::Exploration { units } => {
+                line.config.exploration_exposure_limit = line
+                    .config
+                    .exploration_exposure_limit
+                    .checked_add(*units)
+                    .ok_or(RsiBudgetError::InvalidConfig)?;
+            }
+            RsiTopUp::Share { share, units } => {
+                let row = line
+                    .config
+                    .shares
+                    .get_mut(share)
+                    .ok_or(RsiBudgetError::InvalidConfig)?;
+                row.units = row
+                    .units
+                    .checked_add(*units)
+                    .ok_or(RsiBudgetError::InvalidConfig)?;
+                let allocated = line
+                    .config
+                    .shares
+                    .values()
+                    .try_fold(0u64, |total, share| total.checked_add(share.units));
+                if allocated.is_none_or(|allocated| allocated > line.config.limit) {
+                    return Err(RsiBudgetError::InvalidConfig);
+                }
+            }
+        }
+        let config = line.config.clone();
+        save(self, &mut txn, &line)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(config)
     }
 
     /// Reserve token-denominated loop spend; this cannot debit exploration exposure.

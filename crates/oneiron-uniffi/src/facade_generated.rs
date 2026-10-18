@@ -313,6 +313,31 @@ export_facade! {
     let output = client.vault_budgets_settlements(&input)?;
     crate::codec::lift_record("vault.budgets.settlements", &output)
 };
+"vault.budgets.rsi.configure" => fn vault_budgets_rsi_configure(&self, input: RsiBudgetConfig) -> RsiLineView = |client| {
+    let input: oneiron::llm::RsiBudgetConfig = crate::codec::lower_record("vault.budgets.rsi.configure", input)?;
+    let output = client.vault_budgets_rsi_configure(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.configure", &output)
+};
+"vault.budgets.rsi" => fn vault_budgets_rsi(&self) -> RsiLineView = |client| {
+    let input: oneiron::llm::rsi_doors::RsiLineRequest = crate::codec::lower_empty("vault.budgets.rsi")?;
+    let output = client.vault_budgets_rsi(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi", &output)
+};
+"vault.budgets.rsi.top_up" => fn vault_budgets_rsi_top_up(&self, input: RsiTopUp) -> RsiLineView = |client| {
+    let input: oneiron::llm::RsiTopUp = crate::codec::lower_record("vault.budgets.rsi.top_up", input)?;
+    let output = client.vault_budgets_rsi_top_up(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.top_up", &output)
+};
+"vault.budgets.rsi.hold" => fn vault_budgets_rsi_hold(&self) -> RsiLineView = |client| {
+    let input: oneiron::llm::rsi_doors::RsiLineRequest = crate::codec::lower_empty("vault.budgets.rsi.hold")?;
+    let output = client.vault_budgets_rsi_hold(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.hold", &output)
+};
+"vault.budgets.rsi.hold.resume" => fn vault_budgets_rsi_hold_resume(&self) -> RsiLineView = |client| {
+    let input: oneiron::llm::rsi_doors::RsiLineRequest = crate::codec::lower_empty("vault.budgets.rsi.hold.resume")?;
+    let output = client.vault_budgets_rsi_hold_resume(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
@@ -1091,6 +1116,21 @@ export_facade! {
     let output = client.vault_packs_remove(&input)?;
     crate::codec::lift_record("vault.packs.remove", &output)
 };
+"ai.chat.completions" => fn ai_chat_completions(&self, input: ChatCompletionRequest) -> ChatCompletionResponse = |client| {
+    let input: oneiron::task_verb::sdk::ChatCompletionRequest = crate::codec::lower_record("ai.chat.completions", input)?;
+    let output = client.ai_chat_completions(&input)?;
+    crate::codec::lift_record("ai.chat.completions", &output)
+};
+"vault.connectors.proxy.admit" => fn vault_connectors_proxy_admit(&self, input: ProxyConnectorAdmitRequest) -> ProxyConnectorRegistration = |client| {
+    let input: oneiron::task_verb::sdk::ProxyConnectorAdmitRequest = crate::codec::lower_record("vault.connectors.proxy.admit", input)?;
+    let output = client.vault_connectors_proxy_admit(&input)?;
+    crate::codec::lift_record("vault.connectors.proxy.admit", &output)
+};
+"vault.connectors.proxy.revoke_write" => fn vault_connectors_proxy_revoke_write(&self, input: ProxyConnectorRevokeWriteRequest) -> ProxyConnectorRegistration = |client| {
+    let input: oneiron::task_verb::sdk::ProxyConnectorRevokeWriteRequest = crate::codec::lower_record("vault.connectors.proxy.revoke_write", input)?;
+    let output = client.vault_connectors_proxy_revoke_write(&input)?;
+    crate::codec::lift_record("vault.connectors.proxy.revoke_write", &output)
+};
 "vault.connectors.subscriptions.put" => fn vault_connectors_subscriptions_put(&self, input: ChannelSubscriptionRequest) -> ChannelMessageSubscription = |client| {
     let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest = crate::codec::lower_record("vault.connectors.subscriptions.put", input)?;
     let output = client.vault_connectors_subscriptions_put(&input)?;
@@ -1790,6 +1830,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ResearchRefundWire = crate::codec::lower_record("vault.research.refund_work", input)?;
     let output = client.vault_research_refund_work(&input)?;
     crate::codec::lift_record("vault.research.refund_work", &output)
+};
+"vault.research.reserve_exploration" => fn vault_research_reserve_exploration(&self, input: ResearchExplorationWire) -> String = |client| {
+    let input: oneiron::task_verb::sdk::ResearchExplorationWire = crate::codec::lower_record("vault.research.reserve_exploration", input)?;
+    let output = client.vault_research_reserve_exploration(&input)?;
+    crate::codec::lift_record("vault.research.reserve_exploration", &output)
+};
+"vault.research.budget" => fn vault_research_budget(&self, input: ResearchArchiveWire) -> ResearchBudgetView = |client| {
+    let input: oneiron::task_verb::sdk::ResearchArchiveWire = crate::codec::lower_record("vault.research.budget", input)?;
+    let output = client.vault_research_budget(&input)?;
+    crate::codec::lift_record("vault.research.budget", &output)
 };
 "vault.research.record_benchmark" => fn vault_research_record_benchmark(&self, input: ResearchBenchmarkWire) -> SelectionBenchmark = |client| {
     let input: oneiron::task_verb::sdk::ResearchBenchmarkWire = crate::codec::lower_record("vault.research.record_benchmark", input)?;
@@ -3710,6 +3760,31 @@ export_facade! {
     let input: oneiron::blob_artifact::esign::EsignVoidRequest = crate::codec::lower_record("vault.esign.void", input)?;
     let output = client.vault_esign_void(&input)?;
     crate::codec::lift_record("vault.esign.void", &output)
+};
+"vault.esign.signing.act" => fn vault_esign_signing_act(&self, input: EsignSigningRequest) -> SigningOutcome = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningRequest = crate::codec::lower_record("vault.esign.signing.act", input)?;
+    let output = client.vault_esign_signing_act(&input)?;
+    crate::codec::lift_record("vault.esign.signing.act", &output)
+};
+"vault.esign.signing.pdf" => fn vault_esign_signing_pdf(&self, input: EsignSigningPdfRequest) -> EsignSigningPdfView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningPdfRequest = crate::codec::lower_record("vault.esign.signing.pdf", input)?;
+    let output = client.vault_esign_signing_pdf(&input)?;
+    crate::codec::lift_record("vault.esign.signing.pdf", &output)
+};
+"vault.esign.signing.image" => fn vault_esign_signing_image(&self, input: EsignSigningImageRequest) -> EsignSigningImageView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningImageRequest = crate::codec::lower_record("vault.esign.signing.image", input)?;
+    let output = client.vault_esign_signing_image(&input)?;
+    crate::codec::lift_record("vault.esign.signing.image", &output)
+};
+"vault.esign.signing.signature" => fn vault_esign_signing_signature(&self, input: EsignSigningSignatureRequest) -> EsignSigningSignatureView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningSignatureRequest = crate::codec::lower_record("vault.esign.signing.signature", input)?;
+    let output = client.vault_esign_signing_signature(&input)?;
+    crate::codec::lift_record("vault.esign.signing.signature", &output)
+};
+"vault.esign.seal.get" => fn vault_esign_seal_get(&self, input: EsignSealGetRequest) -> EsignSealView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSealGetRequest = crate::codec::lower_record("vault.esign.seal.get", input)?;
+    let output = client.vault_esign_seal_get(&input)?;
+    crate::codec::lift_record("vault.esign.seal.get", &output)
 };
 "vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
