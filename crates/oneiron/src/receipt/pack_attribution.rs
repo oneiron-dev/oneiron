@@ -13,14 +13,14 @@ const ATTEMPT_ATTRIBUTION: SideTable<[u8; 16], PackAttributionFields, Named> =
     SideTable::new(&side_table::ATTEMPT_PACK_ATTRIBUTION);
 
 /// A contribution check is distinct from loading or citing an input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContributionCheck {
     pub receipt: String,
     pub contributed: bool,
 }
 
 /// A derived-from edge the run actually used, directed from output to input.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UsedProvenanceEdge {
     pub derived: EntityId,
     pub source: EntityId,
@@ -28,7 +28,7 @@ pub struct UsedProvenanceEdge {
 }
 
 /// An attributed contribution by a loaded skill, including a team pattern.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillContribution {
     pub skill: EntityId,
     pub check: ContributionCheck,
@@ -36,7 +36,7 @@ pub struct SkillContribution {
 
 /// The lineage-credit controls in effect for this run. No depth cap means the
 /// full used chain; a zero decay or disabled credit passes no late credit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CreditOptions {
     pub enabled: bool,
     pub depth_cap: Option<u32>,
@@ -45,7 +45,7 @@ pub struct CreditOptions {
 
 /// Execution context is stamped once; actual-use lists may only grow while
 /// the lease is live. Every model string is an id pinned as `id@revision`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackAttributionFields {
     #[serde(rename = "typeRef")]
     pub type_ref: TypeRef,
@@ -63,7 +63,7 @@ pub struct PackAttributionFields {
 
 /// Provenance retained beside each learning evidence row, not in its cell key.
 /// In particular, changing judges never forks a reliability cell.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PackLearningContext {
     pub attempt_receipt: String,
     pub outcome_receipt: String,

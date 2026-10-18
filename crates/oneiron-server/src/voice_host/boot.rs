@@ -272,16 +272,73 @@ async fn call(
         }
         _ => return Err(refused("credential")),
     };
+    let PreparedCall { host, brain, media, live: _live_call, .. } = prepare_call(
+        server,
+        settings,
+        &auth,
+        oneiron::task_verb::sdk::LiveVoiceStartRequest {
+            sample_rate, channels, room_ref: room, roster_ref: roster,
+        },
+        shutdown,
+    )?;
+    // The reply is written before the stream is handed over: nothing else
+    // is written to it until then.
+    stream.write_all(b"{\"op\":\"accepted\"}\n").await?;
+    let bindings = VoiceServeBindings::with_wire(
+        stream,
+        brain,
+        media,
+    )
+    .map_err(failed)?;
+    let connection = bindings
+        .take()
+        .map_err(failed)?
+        .ok_or_else(|| failed("connection already claimed"))?;
+    // The credential passed the door once, at hello; it is checked again
+    // through the call, and a revoked one ends it as the server's stop would.
+    let stopping = shutdown.triggered();
+    let server = Arc::clone(server);
+    let stop: ShutdownSignal = Box::pin(async move {
+        tokio::select! {
+            () = stopping => {}
+            () = revoked(&auth, &server) => {
+                tracing::info!("voice: the call's credential was revoked; ending the call");
+            }
+        }
+    });
+    connection.serve_until(host, stop).await
+}
+
+/// Call dependencies built only after the existing owner and credential gates.
+pub(super) struct PreparedCall {
+    pub(super) session_ref: String,
+    pub(super) host: VoiceHost,
+    pub(super) brain: ChatBrain,
+    pub(super) media: VoiceWireBindings,
+    pub(super) live: Option<oneiron::conversation::LiveSpeakerCall>,
+}
+
+pub(super) fn prepare_call(
+    server: &Arc<SyncServer>,
+    settings: &VoiceSettings,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::LiveVoiceStartRequest,
+    shutdown: &ManagedShutdown,
+) -> io::Result<PreparedCall> {
+    let oneiron::task_verb::sdk::LiveVoiceStartRequest {
+        sample_rate, channels, room_ref: room, roster_ref: roster,
+    } = input;
+    let vault = server.vault();
     for scope in [CoreScope::Read, CoreScope::Write] {
         auth.require(scope).map_err(|_| refused("scope"))?;
     }
-    let owner = crate::api::owner(&auth, server).map_err(|_| refused("owner"))?;
+    let owner = crate::api::owner(auth, server).map_err(|_| refused("owner"))?;
     let actor = auth
         .principal_ref()
         .and_then(|principal| EntityId::from_hex(principal).ok())
         .ok_or_else(|| refused("principal"))?;
     let payer = WriteActor::new(actor, EdgeActorClass::Human);
-    let (agent, instructions) = instructions(&auth, vault)?;
+    let (agent, instructions) = instructions(auth, vault)?;
     if roster.as_deref().is_some_and(|roster| {
         roster.is_empty() || roster.trim() != roster || roster.len() > MAX_ROSTER_REF_BYTES
     }) {
@@ -289,7 +346,7 @@ async fn call(
     }
     let container = room
         .as_deref()
-        .map(|room| bind_room(vault, &auth, actor, room))
+        .map(|room| bind_room(vault, auth, actor, room))
         .transpose()?;
     // A call heard in a room bills the payer whose consent on its answering
     // agent's join funds that room (FIX 805), resolved once, before any
@@ -304,7 +361,7 @@ async fn call(
     };
     // The call is live in its room from here, whichever way it then ends:
     // the registration drops with this frame, after the call is served.
-    let _live_call = container
+    let live = container
         .as_ref()
         .map(|bound| vault.register_live_speaker_call(bound.container, roster.clone()));
 
@@ -376,13 +433,11 @@ async fn call(
         .render
         .clone()
         .ok_or_else(|| failed("no voice to speak in"))?;
-    // The reply is written before the stream is handed over: nothing else
-    // is written to it until then.
-    stream.write_all(b"{\"op\":\"accepted\"}\n").await?;
-    let bindings = VoiceServeBindings::with_wire(
-        stream,
+    Ok(PreparedCall {
+        session_ref: call_ref,
+        host,
         brain,
-        VoiceWireBindings {
+        media: VoiceWireBindings {
             door: server.media_door(funding),
             vault: Arc::clone(vault),
             render,
@@ -392,25 +447,8 @@ async fn call(
             chunking: VoiceChunkPolicy::default(),
             queue_capacity: settings.queue_capacity,
         },
-    )
-    .map_err(failed)?;
-    let connection = bindings
-        .take()
-        .map_err(failed)?
-        .ok_or_else(|| failed("connection already claimed"))?;
-    // The credential passed the door once, at hello; it is checked again
-    // through the call, and a revoked one ends it as the server's stop would.
-    let stopping = shutdown.triggered();
-    let server = Arc::clone(server);
-    let stop: ShutdownSignal = Box::pin(async move {
-        tokio::select! {
-            () = stopping => {}
-            () = revoked(&auth, &server) => {
-                tracing::info!("voice: the call's credential was revoked; ending the call");
-            }
-        }
-    });
-    connection.serve_until(host, stop).await
+        live,
+    })
 }
 
 /// The room `room` names, bound as the call's container: one the caller
@@ -449,7 +487,7 @@ fn bind_room(
 
 /// Resolves once the call's credential is no longer live: its slip, or for
 /// a managed owner, the person's standing as the vault's live owner.
-async fn revoked(auth: &CoreAuth, server: &SyncServer) {
+pub(super) async fn revoked(auth: &CoreAuth, server: &SyncServer) {
     let mut every = tokio::time::interval(LIVENESS_EVERY);
     loop {
         every.tick().await;

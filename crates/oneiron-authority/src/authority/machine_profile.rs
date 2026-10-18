@@ -167,9 +167,10 @@ pub struct MachineProfile {
     /// `machine_key`'s signature over [`machine_profile_proof_transcript`].
     #[serde(with = "machine_proof_bytes")]
     pub machine_proof: [u8; 64],
-    /// The world edits this machine signed that the revision's author had
-    /// seen. When the revision takes the machine's "yours" away, those edits
-    /// keep their effect; one it never saw raced it and counts only stricter.
+    /// The world edits and grant travel choices this machine signed that the
+    /// revision's author had seen. When the revision takes the machine's
+    /// "yours" away, those keep their effect; one it never saw raced it and
+    /// counts only stricter.
     pub seen_world_edits: BTreeSet<AuthorityEntryHash>,
 }
 

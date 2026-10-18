@@ -70,6 +70,7 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -101,6 +102,7 @@ pub(crate) use super::embedding_space_doors::*;
 pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
+pub(crate) use super::learning_doors::*;
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
@@ -1110,6 +1112,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.learning.read"
+        | "vault.learning.projection"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1247,7 +1251,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.voices.render_consent"
         | "vault.voices.targets.provision"
         | "vault.voices.targets.evict"
-        | "vault.voices.inspect" => owner_proof(auth, server, verb).map(drop),
+        | "vault.voices.inspect"
+        | "ai.voice.start"
+        | "ai.voice.audio"
+        | "ai.voice.events"
+        | "ai.voice.ack"
+        | "ai.voice.usage"
+        | "ai.voice.tool"
+        | "ai.voice.end"
+        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

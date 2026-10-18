@@ -37,7 +37,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::{EntityId, HostingPrivacyPosture, Vault};
 
 /// The fold-state schema an image encodes. A decoder refuses any other.
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 1;
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 2;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.
@@ -64,7 +64,8 @@ pub struct AuthorityCheckpointRow {
     /// The canonical signed body of a row a fold or a store door past the
     /// image reads whole (an approval, a binding, a confirm, a revocation, a
     /// handoff, an enrollment, the genesis, a root record, a machine profile,
-    /// a world edit or a world-key record); None for every other row.
+    /// a world edit, a grant travel choice or a world-key record); None for
+    /// every other row.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
 }
@@ -76,7 +77,8 @@ pub struct AuthorityCheckpointRow {
 /// and each row a store door past it reads whole to judge a new row: the
 /// genesis and each device enrollment the consent structure rests on, the
 /// root records that name owner anchors, the actor revocations a signer's
-/// revocations count, and the world edits that may be a stranger's.
+/// revocations count, and the world edits and grant travel choices that may
+/// be a stranger's.
 pub(super) fn carries_body(op: &AuthorityOp) -> bool {
     super::fold_resume::is_projected(op)
         || matches!(
@@ -86,6 +88,7 @@ pub(super) fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::OwnerRoot(_)
                 | AuthorityOp::RevokeActor { .. }
                 | AuthorityOp::WorldPrivacy(_)
+                | AuthorityOp::GrantTravelSet(_)
         )
 }
 
