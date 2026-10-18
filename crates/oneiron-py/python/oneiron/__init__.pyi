@@ -904,6 +904,10 @@ class Oneiron:
         def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs": ...
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs": ...
         def pack_receipt(self, spec: Facade.SkillPackReceiptRequest) -> Facade.SkillPackReceipt:
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
         @property
@@ -917,6 +921,16 @@ class Oneiron:
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
+    class _VaultSkillsOptimizeVerbs:
+        def start(self, spec: Facade.SkillOptimizeStartRequest) -> Facade.SkillOptimizeStartReceipt:
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+        def result(self, spec: Facade.SkillOptimizeResultRequest) -> Facade.SkillOptimizeResultView:
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+    class _VaultSkillsGovernanceVerbs:
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+        def set(self, spec: Facade.SkillGovernanceSetRequest) -> Facade.SkillGovernanceView:
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
     class _VaultSkillsOutcomesVerbs:
         def project(self, spec: Facade.SkillPackOutcomeRequest) -> Facade.SkillPackOutcomeProjection:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""

@@ -153,6 +153,10 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
+vaultSkillsOptimizeStart(input: unknown): unknown
+vaultSkillsOptimizeResult(input: unknown): unknown
+vaultSkillsGovernanceGet(input: unknown): unknown
+vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown

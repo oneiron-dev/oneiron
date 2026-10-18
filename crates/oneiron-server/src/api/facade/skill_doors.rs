@@ -79,6 +79,77 @@ pub(crate) async fn vault_skills_fork(
     .await
 }
 
+pub(crate) async fn vault_skills_optimize_start(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillOptimizeStartRequest,
+) -> Listed<SkillOptimizeStartReceipt> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.optimize.start",
+        move |server, owner| {
+            let answer = sdk::skill_optimize_start_as_owner(server.vault(), owner, &input)?;
+            let rows = answer.rows();
+            Ok((answer, rows))
+        },
+    )
+    .await
+}
+
+pub(crate) async fn vault_skills_optimize_result(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillOptimizeResultRequest,
+) -> Listed<SkillOptimizeResultView> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.optimize.result",
+        move |server, owner| {
+            let answer = sdk::skill_optimize_result_as_owner(server.vault(), owner, &input)?;
+            let rows = answer.rows();
+            Ok((answer, rows))
+        },
+    )
+    .await
+}
+
+pub(crate) async fn vault_skills_governance_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HubSkillRequest,
+) -> Listed<SkillGovernanceView> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.governance.get",
+        move |server, owner| {
+            let answer = sdk::skill_governance_get_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.entity]))
+        },
+    )
+    .await
+}
+
+pub(crate) async fn vault_skills_governance_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillGovernanceSetRequest,
+) -> Listed<SkillGovernanceView> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.governance.set",
+        move |server, owner| {
+            let entity = input.entity;
+            let answer = sdk::skill_governance_set_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![entity]))
+        },
+    )
+    .await
+}
+
 pub(crate) async fn vault_skills_restore(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
