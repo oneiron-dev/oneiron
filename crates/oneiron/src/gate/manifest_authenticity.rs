@@ -133,6 +133,26 @@ pub(crate) fn manifest_is_quarantined(
         .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
 }
 
+/// Quarantines the bytes manifest `id` holds now, as the owner's quarantine
+/// door does, inside `txn`. False when `id` names no stored manifest.
+fn quarantine_current_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+        return Ok(false);
+    };
+    if EntityMetadataHeader::parse(&raw)
+        .is_none_or(|h| h.entity_type != ENTITY_TYPE_POLICY_MANIFEST)
+    {
+        return Ok(false);
+    }
+    let hash = blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]);
+    QUARANTINED.put(store, txn, &HexId(*id), hash.as_bytes())?;
+    Ok(true)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ManifestContribution {
     pub id: String,
@@ -300,33 +320,44 @@ impl Vault {
 
     /// Whether each manifest in `installs`, written in order on the vault as
     /// it stands, narrows the resolved policy the one before it left, on
-    /// every axis (ARCH-0070). The writes go through the install door's own
-    /// write, in a transaction that never commits. A manifest the door
-    /// refuses, and every one after it, reads as no narrowing.
+    /// every axis (ARCH-0070), and what `read` finds once every install is in
+    /// place and each of `retires` is quarantined at its current bytes. The
+    /// writes go through the install and quarantine doors' own writes, in a
+    /// transaction that never commits. A manifest the door refuses, and every
+    /// one after it, reads as no narrowing; then, or when a retire names no
+    /// stored manifest, `read` does not run.
     ///
     /// # Errors
-    /// A store failure, or an unreadable manifest row.
-    pub(crate) fn manifest_installs_narrow(
+    /// A store failure, an unreadable manifest row, or `read`'s own.
+    pub(crate) fn project_manifest_changes<T>(
         &self,
         installs: &[(EntityId, Vec<u8>)],
+        retires: &[EntityId],
         now: u64,
-    ) -> Result<Vec<bool>> {
+        read: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
+    ) -> Result<(Vec<bool>, Option<T>)> {
         let mut steps = vec![false; installs.len()];
         let mut txn = self.store.env.write_txn()?;
         let mut before = super::resolve_policy_manifest(&self.store, &txn)?;
+        let mut placed = true;
         for ((id, data), step) in installs.iter().zip(&mut steps) {
             if self
                 .write_policy_manifest_in_txn(&mut txn, *id, data.clone(), now)
                 .is_err()
             {
+                placed = false;
                 break;
             }
             let after = super::resolve_policy_manifest(&self.store, &txn)?;
             *step = super::resolution::manifest_resolution_narrows(&before, &after);
             before = after;
         }
+        for id in retires {
+            placed = placed && quarantine_current_in_txn(&self.store, &mut txn, id)?;
+        }
+        let seen = if placed { Some(read(&txn)?) } else { None };
         txn.abort();
-        Ok(steps)
+        Ok((steps, seen))
     }
 
     /// Installs `data` as [`Self::install_owner_policy_manifest`] does, only
