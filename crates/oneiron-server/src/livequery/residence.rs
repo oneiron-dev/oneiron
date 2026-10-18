@@ -4,6 +4,7 @@
 #[cfg(test)]
 pub(super) mod tests;
 
+mod bundle_access;
 mod machine_history;
 
 use base64::Engine;
@@ -302,6 +303,9 @@ pub(super) fn run(
             "residence.bundle.get" => bundle_get(server, peer, request.params),
             "residence.bundle.pads.replace" => {
                 bundle_pads_replace(server, auth, peer, request.params)
+            }
+            "residence.bundle.access" => {
+                bundle_access::bundle_access(server, auth, peer, request.params)
             }
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
