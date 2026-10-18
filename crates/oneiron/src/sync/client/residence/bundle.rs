@@ -15,8 +15,8 @@
 //! the owner's recovery kit sweeps it from here on request
 //! ([`SyncClient::sweep_sealed_bundle_erases_with_kit`]).
 //!
-//! A commit names the recovery root this machine pins, so a kit-only restore
-//! can read the generation through the home's kit door (`kit_fetch`).
+//! A commit names the recovery root the upload was sealed to, so a kit-only
+//! restore can read the generation through the home's kit door (`kit_fetch`).
 //!
 //! A phone takes no generation in and uploads none, and no machine relays to a
 //! home it knows is a phone (FIX 3349, `holds_sealed_bundle`). A phone still
@@ -104,16 +104,6 @@ fn home_holds_sealed_bundle(vault: &Vault, home: PeerMachine) -> crate::error::R
             .map(|roster| roster.profile.device_class),
     };
     Ok(class.is_none_or(holds_sealed_bundle))
-}
-
-/// The recovery root this machine pins, when it pins one: a commit names it
-/// for the kit door.
-fn pinned_root(vault: &Vault) -> crate::error::Result<Option<RecoveryRootId>> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(vault
-        .authority_view_readonly_in_txn(&txn)?
-        .pinned_root
-        .map(|pin| pin.id))
 }
 
 /// What one bundle relay moved.
@@ -335,7 +325,7 @@ pub(crate) async fn relay_sealed_bundle(
         let slot = SlotRelay {
             manager,
             slot: now_slot,
-            opened: config.residence_mode == SyncResidenceMode::Opened,
+            mode: config.residence_mode,
             publisher: may_publish(config),
         };
         slot.run(&mut rpc, cursor, &mut relay).await?;
@@ -347,8 +337,10 @@ pub(crate) async fn relay_sealed_bundle(
 struct SlotRelay<'a> {
     manager: &'a Arc<WindowManager>,
     slot: u64,
-    /// An opened-item machine: its take keeps windows in their mirror.
-    opened: bool,
+    /// The host's configured mode. An opened-item machine's take keeps
+    /// windows in their mirror; its assembly judges a machine the owner never
+    /// chose for by it (FIX 3364).
+    mode: SyncResidenceMode,
     publisher: bool,
 }
 
@@ -385,7 +377,7 @@ impl SlotRelay<'_> {
                     .await?
                     .ok_or_else(refused)?;
                 let manager = Arc::clone(self.manager);
-                let opened = self.opened;
+                let opened = self.mode == SyncResidenceMode::Opened;
                 let (took, bundle, pads) = tokio::task::spawn_blocking(move || {
                     let took = manager.take_sealed_bundle(&bundle, &pads, opened);
                     (took, bundle, pads)
@@ -436,12 +428,14 @@ impl SlotRelay<'_> {
             }
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
+            let mode = self.mode;
             let holder = holder_destination(vault, rpc.home);
             let (upload, back) = turn::renewing_turn(rpc, move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
                     holder,
                     held.as_ref().map(|(bundle, pads)| (bundle, pads)),
+                    mode,
                 );
                 (upload, held)
             })
@@ -456,12 +450,6 @@ impl SlotRelay<'_> {
                     let _ = turn::ask_turn(rpc, true).await;
                     return Err(storage(error));
                 }
-            };
-            // The root whose kit holds a capsule in the upload.
-            let root = if upload.kit {
-                pinned_root(vault).map_err(storage)?
-            } else {
-                None
             };
             let generation = upload.bundle.generation();
             if put_object(
@@ -478,7 +466,7 @@ impl SlotRelay<'_> {
                     upload.pads.as_bytes(),
                 )
                 .await?
-                && commit_generation(rpc, &generation, latest, root).await?
+                && commit_generation(rpc, &generation, latest, upload.kit_root).await?
             {
                 cursor.taken = Some(generation);
                 relay.published = Some(generation);

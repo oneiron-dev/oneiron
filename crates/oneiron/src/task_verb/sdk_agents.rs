@@ -221,7 +221,7 @@ pub struct AgentDefinitionRequest {
 }
 
 /// The persisted currentness axis, using its canonical wire spellings.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentDefinitionLifecycle {
     Active,
@@ -240,7 +240,7 @@ impl From<ClaimLifecycleStatus> for AgentDefinitionLifecycle {
 }
 
 /// The saved revision; its ceiling is a self-limit, never a dispatch grant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AgentDefinitionView {
     pub agent_def_ref: EntityId,
     pub definition: AgentDefinitionSpec,

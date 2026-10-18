@@ -61,7 +61,7 @@ pub struct CodeSnapshotDefinitionsRequest {
 
 /// One manifest entry: the stored blob identity of a file, not a document
 /// version.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeSnapshotFile {
     pub path: String,
     /// The BLAKE3 hash of the stored bytes, 64 lower-hex characters.
@@ -72,7 +72,7 @@ pub struct CodeSnapshotFile {
 /// One imported snapshot manifest. `repo` is the artifact of this one
 /// snapshot, not a registered repository; `scope_key` is an index key, not a
 /// grant.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeSnapshotView {
     /// The imported CODE_ARTIFACT id.
     pub repo: EntityId,
@@ -90,7 +90,7 @@ pub struct CodeSnapshotView {
 
 /// One frozen file of a pinned snapshot, read from its stored blob and never
 /// from the folder on disk.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeSnapshotPinnedFile {
     pub repo: EntityId,
     pub snapshot: String,
@@ -102,7 +102,7 @@ pub struct CodeSnapshotPinnedFile {
 }
 
 /// One Rust symbol definition the snapshot symbol manifest records.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeSnapshotDefinition {
     /// The CODE_SYMBOL id.
     pub symbol: EntityId,
@@ -117,7 +117,7 @@ pub struct CodeSnapshotDefinition {
 
 /// The exact-name Rust definitions of one pinned snapshot, in manifest order.
 /// They are definitions only: no calls, imports or refs relation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeSnapshotDefinitionsView {
     pub repo: EntityId,
     pub snapshot: String,
