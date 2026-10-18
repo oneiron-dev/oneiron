@@ -9,6 +9,11 @@
 //! grant-bound slip's grant when it reads the slip, so a slip minted on another
 //! replica and merged after the withdrawal stands no longer than its grant. A host answers with
 //! [`crate::receipt::project_guest_revoke`] over the outcome.
+//!
+//! The outcome names each ended pact the grant governed (FIX 1634), the
+//! courtesy-delete courier's typed input; asking the guest's host to drop its
+//! copy stays the owner's separate send, since no grant or pact records that
+//! host's origin.
 
 use std::collections::BTreeSet;
 
@@ -22,7 +27,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{FederationGrantScope, decode_federation_grant_body};
-use crate::receipt::{GuestDeletionRequestStatus, GuestRevokeOutcome};
+use crate::receipt::{GuestDeletionRequestStatus, GuestRevokeCourtesyTarget, GuestRevokeOutcome};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::side_table::{self, Named, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -187,9 +192,10 @@ impl Vault {
     /// grant still governs, tombstones every slip minted under the grant, and
     /// keeps the withdrawal, so a repeat returns the first revoke with
     /// `changed: false` and no slips. `owner` authorizes the act; `issuer` is
-    /// the host's own signing key, which signs the disconnects and the slip
-    /// revokes. A disconnect the fold refuses (a multi-key roster wants a
-    /// second signer) fails the whole revoke; it never reports a partial one.
+    /// the host's own signing key, which alone signs the disconnects and the
+    /// slip revokes, on any roster (FIX 1634). A disconnect the fold refuses
+    /// fails the whole revoke; it never reports a partial one. Both answers
+    /// name the grant's ended pacts as courtesy-delete targets.
     pub fn revoke_guest_access(
         &self,
         owner: &AuthenticatedOwner,
@@ -200,17 +206,16 @@ impl Vault {
             owner.revalidate_in_txn(self, txn)?;
             require_host(&*self.authority_view_readonly_in_txn(txn)?, issuer)?;
             if let Some(done) = WITHDRAWN.get(&self.store, txn, &grant_ref)? {
+                let fold = self.authority_view_readonly_in_txn(txn)?;
                 return Ok(GuestRevokeOutcome {
                     grant_ref,
                     guest_ref: done.guest_ref,
                     changed: false,
                     revoked_at: done.revoked_at,
                     revoked_slips: Vec::new(),
-                    pact: federation_grant_activation(
-                        &*self.authority_view_readonly_in_txn(txn)?,
-                        &grant_ref,
-                    ),
+                    pact: federation_grant_activation(&fold, &grant_ref),
                     deletion_request: GuestDeletionRequestStatus::NotRequested,
+                    courtesy_targets: ended_pact_targets(&fold, grant_ref),
                 });
             }
             let LiveEntityRow::Live {
@@ -247,17 +252,16 @@ impl Vault {
                 revoked_at,
             };
             WITHDRAWN.put(&self.store, txn, &grant_ref, &withdrawal)?;
+            let fold = self.authority_view_readonly_in_txn(txn)?;
             Ok(GuestRevokeOutcome {
                 grant_ref,
                 guest_ref: withdrawal.guest_ref,
                 changed: true,
                 revoked_at,
                 revoked_slips,
-                pact: federation_grant_activation(
-                    &*self.authority_view_readonly_in_txn(txn)?,
-                    &grant_ref,
-                ),
+                pact: federation_grant_activation(&fold, &grant_ref),
                 deletion_request: GuestDeletionRequestStatus::NotRequested,
+                courtesy_targets: ended_pact_targets(&fold, grant_ref),
             })
         })
     }
@@ -297,6 +301,31 @@ fn live_pact_disconnects(
         });
     }
     Ok(disconnects)
+}
+
+/// Each pact the grant was the operative binding of that now stands
+/// Disconnected or Dissolved, with the epoch it ended at: what a courtesy
+/// delete may ask its peer to drop. A Promoted pact carried on into a shared
+/// vault and a pact another grant took over are not the guest's to drop.
+fn ended_pact_targets(fold: &AuthorityFold, grant_ref: EntityId) -> Vec<GuestRevokeCourtesyTarget> {
+    let Some(pact_ids) = fold.federation_grant_bindings.get(&grant_ref) else {
+        return Vec::new();
+    };
+    pact_ids
+        .iter()
+        .filter_map(|pact_id| {
+            let pact = fold.federation_pacts.get(pact_id)?;
+            let ended = matches!(
+                pact.status,
+                FederationPactStatus::Disconnected | FederationPactStatus::Dissolved
+            );
+            (pact.grant_ref == grant_ref && ended).then_some(GuestRevokeCourtesyTarget {
+                pact_id: *pact_id,
+                peer_vault_id: pact.peer_vault_id,
+                epoch_cutoff: pact.terminal_epoch?,
+            })
+        })
+        .collect()
 }
 
 fn pact_nonce() -> [u8; 16] {
