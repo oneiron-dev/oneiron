@@ -61,6 +61,17 @@ const NO_CARRIER: &str = "this install has no live machine profile in the vault'
 /// An agent's act never answers an owner's ask: only his own say-so does.
 const AGENT_ANSWER: &str = "an agent's topology decision cannot answer the owner's ask";
 
+/// Policy hook (CALLS "mesh PR2a unprofiled carrier fallback", open): the
+/// seal an owner's decision takes when this install has no live machine
+/// profile in the vault's roster to carry it. Today's capability stays: an
+/// engine seal under this cause, admitted as today (this install's own seal
+/// locally, a trusted machine's on replicas), claiming no owner will and
+/// relabelling nothing Yours. `None` refuses with [`NO_CARRIER`] instead, once
+/// the serving install is profiled at start (C4 bootstrap arm). An agent's
+/// decision with no carrier always refuses: that is a new capability.
+const OWNER_DECISION_WITHOUT_CARRIER: Option<EngineCause> =
+    Some(EngineCause::OwnerAnswerUnprofiledCarrier);
+
 /// Why the engine sealed a topology fact when no owner or agent decided it.
 /// It never claims the owner's will.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -78,6 +89,10 @@ pub enum EngineCause {
     DreamerInference,
     /// An owner's answer with no owner proof in reach (a room turn).
     OwnerAnswerUnproven,
+    /// An owner's decision on an install with no live machine profile in
+    /// the vault's roster to carry it ([`OWNER_DECISION_WITHOUT_CARRIER`]):
+    /// today's capability, claiming no owner will.
+    OwnerAnswerUnprofiledCarrier,
 }
 
 impl EngineCause {
@@ -91,6 +106,7 @@ impl EngineCause {
             Self::IntegrityRefusal => "integrity_refusal",
             Self::DreamerInference => "dreamer_inference",
             Self::OwnerAnswerUnproven => "owner_answer_unproven",
+            Self::OwnerAnswerUnprofiledCarrier => "owner_answer_unprofiled_carrier",
         }
     }
 
@@ -102,6 +118,7 @@ impl EngineCause {
             "integrity_refusal" => Self::IntegrityRefusal,
             "dreamer_inference" => Self::DreamerInference,
             "owner_answer_unproven" => Self::OwnerAnswerUnproven,
+            "owner_answer_unprofiled_carrier" => Self::OwnerAnswerUnprofiledCarrier,
             _ => return None,
         })
     }
@@ -316,8 +333,9 @@ fn seal_refused(reason: &'static str) -> Error {
 /// `seen` revision of `ruled` (an undo's target, a ruling's proposal; `None`
 /// for an op this write mints, whose revision is zero) is current, else a
 /// typed conflict naming the current revision; a decision's carrier is this
-/// install under the one carrier rule; the owner revalidates as a live owner
-/// of this vault, or the agent's Grant still names `topology_seal`.
+/// install under the one carrier rule (an owner's decision with no carrier
+/// takes [`OWNER_DECISION_WITHOUT_CARRIER`]); the owner revalidates as a live
+/// owner of this vault, or the agent's Grant still names `topology_seal`.
 pub(super) fn resolve_seal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -351,8 +369,19 @@ pub(super) fn resolve_seal_in_txn(
                 txn,
             )?;
             let public = key.verifying_key().to_bytes();
-            if !owner_act_signer_admits(fold.machine(carrier), &fold.roster, &public) {
-                return Err(seal_refused(NO_CARRIER));
+            let carries = owner_act_signer_admits(fold.machine(carrier), &fold.roster, &public);
+            match (carries, authority, OWNER_DECISION_WITHOUT_CARRIER) {
+                (true, ..) => {}
+                // No carrier for the owner's decision: today's engine seal,
+                // under its own cause, by the policy hook.
+                (false, ActAuthority::Owner(..), Some(cause)) => {
+                    return Ok(ResolvedSeal {
+                        carrier,
+                        key,
+                        basis: SealBasis::Engine(cause),
+                    });
+                }
+                (false, ..) => return Err(seal_refused(NO_CARRIER)),
             }
             match authority {
                 // Authority: the owner's proof, revalidated here.
