@@ -530,6 +530,9 @@ impl Vault {
             (ShapeChange::Create | ShapeChange::Update, Some((row, _))) if already(row) => {
                 return Ok("already so".to_owned());
             }
+            (ShapeChange::Retire, Some((row, _))) if row.retired() => {
+                return Ok("already so".to_owned());
+            }
             (ShapeChange::Update | ShapeChange::Retire, Some((row, entity)))
                 if item.before.as_ref() == Some(row) =>
             {

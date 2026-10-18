@@ -303,6 +303,13 @@ impl ShapeRow {
         }
     }
 
+    /// Whether a retire of this live row has landed. Retiring an actor
+    /// takes it off duty and keeps its row, so an actor off duty is retired;
+    /// every other retire removes the row.
+    fn retired(&self) -> bool {
+        matches!(self, Self::Actor { enabled: false, .. })
+    }
+
     /// Whether `live` already is what this declaration says. An unpinned
     /// version accepts any installed one.
     fn satisfied_by(&self, live: &Self) -> bool {

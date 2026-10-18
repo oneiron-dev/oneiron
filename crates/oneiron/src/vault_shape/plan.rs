@@ -343,6 +343,7 @@ impl Vault {
             let before = by_target.get(&target).copied();
             let (change, after) = match (row, before) {
                 (ShapeRow::Retire { .. }, None) => continue,
+                (ShapeRow::Retire { .. }, Some(live)) if live.retired() => continue,
                 (ShapeRow::Retire { .. }, Some(_)) => (ShapeChange::Retire, None),
                 // No sync declaration is stored yet, so every one is open.
                 (ShapeRow::Sync { .. }, _) => (ShapeChange::Create, Some(row)),
