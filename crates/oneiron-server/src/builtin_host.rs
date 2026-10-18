@@ -16,7 +16,7 @@ pub(crate) use handles::BuiltinHandles;
 pub(crate) use slack_app::{
     ProviderSetup, SlackInstallLink, public_origin, slack_app_manifest, start_slack_install,
 };
-pub(crate) use webhooks::routes;
+pub(crate) use webhooks::{hmac_matches, routes};
 
 use crate::server::{HousekeepingAdmission, SyncServer};
 

@@ -3237,7 +3237,9 @@ async fn execute_agent_verb_listing(
                 | "vault.projects.route_tradeoff"
                 | "vault.artifacts.body.fork.merge"
                 | "vault.artifacts.body.proposal.settle"
-        ) {
+        )
+        || (tool == "describe" && oneiron::task_verb::sdk::describe_takes_task_work_turn(&input))
+    {
         Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
     } else {
         None

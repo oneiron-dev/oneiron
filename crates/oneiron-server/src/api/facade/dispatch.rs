@@ -553,17 +553,26 @@ async fn describe(
     }
     let (actor, class) = facade_actor(server, auth)?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let turn = if oneiron::task_verb::sdk::describe_takes_task_work_turn(&value) {
+        Some(Arc::new(server.admit_task_work(actor).await))
+    } else {
+        None
+    };
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_readable_task_rows(
-        &server.vault,
-        auth,
-        oneiron::task_verb::sdk::describe(
-            &credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .listing_producers(&producers),
-            facade_input(value)?,
-        )?,
-    )?;
+    let output = {
+        let memory = credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .listing_producers(&producers);
+        let memory = match turn {
+            Some(turn) => memory.with_task_work_turn(turn),
+            None => memory,
+        };
+        facade_readable_task_rows(
+            &server.vault,
+            auth,
+            oneiron::task_verb::sdk::describe(&memory, facade_input(value)?)?,
+        )?
+    };
     let rows = Some(producers.take());
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
