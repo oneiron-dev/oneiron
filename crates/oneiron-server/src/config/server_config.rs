@@ -658,18 +658,13 @@ impl ServeConfig {
     /// The resolver clears only lower-precedence references when self-host/local
     /// wins. A reference still present here must survive conversion so
     /// `VaultPrivacyConfig::validate` refuses contradictory custody before any
-    /// store opens. Hosted without a reference retains an invalid empty one.
+    /// store opens. No reference is an owner-held key on any posture.
     fn vault_privacy_config(&self) -> VaultPrivacyConfig {
-        let data_key_custody = match (self.privacy_posture, &self.hosted_kms_key_ref) {
-            (_, Some(key_ref)) => VaultDataKeyCustody::HostManagedKms {
+        let data_key_custody = match &self.hosted_kms_key_ref {
+            Some(key_ref) => VaultDataKeyCustody::HostManagedKms {
                 key_ref: key_ref.clone(),
             },
-            (HostingPrivacyPosture::Hosted, None) => VaultDataKeyCustody::HostManagedKms {
-                key_ref: String::new(),
-            },
-            (HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay, None) => {
-                VaultDataKeyCustody::OwnerHeldLocal
-            }
+            None => VaultDataKeyCustody::OwnerHeldLocal,
         };
         VaultPrivacyConfig {
             posture: self.privacy_posture,

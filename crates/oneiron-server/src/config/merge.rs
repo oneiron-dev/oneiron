@@ -337,25 +337,19 @@ fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> {
     }
     // Mirrors `oneiron::VaultPrivacyConfig::validate`, so a bad pairing is
     // refused while it is still a config error with an operator-facing
-    // remedy, not only at open time.
-    match config.privacy_posture {
-        HostingPrivacyPosture::Hosted => {
-            let key_ref = config.hosted_kms_key_ref.as_deref().unwrap_or_default();
-            if key_ref.trim().is_empty() {
-                anyhow::bail!(
-                    "hosted privacy posture requires a non-empty host-managed KMS key reference (--hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF)"
-                );
-            }
+    // remedy, not only at open time. Placement never vetoes a custody: a
+    // hosted vault may run on the owner's key, a self-hosted one on the
+    // owner's own KMS.
+    if let Some(key_ref) = config.hosted_kms_key_ref.as_deref() {
+        if key_ref.trim().is_empty() {
+            anyhow::bail!(
+                "KMS key custody requires a non-empty key reference (--hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF)"
+            );
         }
-        HostingPrivacyPosture::SelfHostLocal | HostingPrivacyPosture::Relay => {
-            // ANY reference, including a whitespace-only one, is refused: a
-            // self-hosted owner holds their own key and stores no host
-            // reference.
-            if config.hosted_kms_key_ref.is_some() {
-                anyhow::bail!(
-                    "self_host_local privacy posture rejects host-managed KMS key custody; drop --hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF or select --privacy-posture hosted"
-                );
-            }
+        if config.privacy_posture == HostingPrivacyPosture::Relay {
+            anyhow::bail!(
+                "a blind relay holds no data key; drop --hosted-kms-key-ref / ONEIRON_HOSTED_KMS_KEY_REF or select --privacy-posture hosted or self-host"
+            );
         }
     }
     Ok(())
