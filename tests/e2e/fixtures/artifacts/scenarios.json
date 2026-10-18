@@ -1,0 +1,800 @@
+{
+  "version": 1,
+  "area": "artifacts",
+  "authority": {
+    "ruling": "G01: a designed verb waits for its typed HTTP and SDK call; no generic escape hatch",
+    "engineExpectedValues": false,
+    "officeFidelityClaim": false,
+    "execution": "source-only writer; no builds, servers, typechecks or tests run on the coordinator Mac"
+  },
+  "bindingSnapshot": {
+    "head": "6315e0e42bfe530f6a4be73d3e77cc16e0a6ffe4",
+    "originMainAtRead": "6315e0e42bfe530f6a4be73d3e77cc16e0a6ffe4",
+    "sharedHarnessBindingHead": "c716fa9921692224fe46114b283993d5d81f6c8c",
+    "files": [
+      {
+        "path": "crates/oneiron-server/src/api/openapi_registry.rs",
+        "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/mod.rs",
+        "sha256": "c8ac1a8955d8ff7a6a5669ada79b88b6c896670835bef4314191f83f1ca4b587"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/artifacts.rs",
+        "sha256": "3ff70ac4e223f79a3e824687c57b428bd2db980f7edcb09ba84fbf04e713bb1f"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/esign.rs",
+        "sha256": "76c1c90ea342534c79a9d4f869219d97e1df41c7f2699f1db3b98a300285b4e6"
+      },
+      {
+        "path": "crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "packages/oneiron/README.md",
+        "sha256": "6459fe7b752d2b9ae516ef58475252aa047f04c5f1e432a393e6a4d960348097"
+      },
+      {
+        "path": "packages/oneiron/src/index.ts",
+        "sha256": "e840da73676149b46e60308ba229a7b856c263ae5081cb110fe402523359f9b8"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/blob_artifacts.rs",
+        "sha256": "808def62d2c759e429d0febd03c112cfe1153fa6e7efdb2c83362f762e72a6fa"
+      }
+    ]
+  },
+  "canonPins": [
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1.md",
+      "page": "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/",
+      "sha256": "b3bb0a5ee003e3baf6cd3b43bccc30bd26571b6af3c5ab40a403378db29d4538"
+    },
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0075-document-engine-v1.md",
+      "page": "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/",
+      "sha256": "41111b02bb9ce469e613bf38011084e8fb47645b4aedd16a36d54bca767c3c81"
+    },
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/surfaces/oneiron-arch-0077-slides-lane-v1.md",
+      "page": "/oneiron/surfaces/oneiron-arch-0077-slides-lane-v1/",
+      "sha256": "9882c6afb0ea4c3cbd4f5f0eefe5f97ad8f6379d7863d45c604c4b4e37f637f4"
+    },
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0064-esign-native-organ-v1.md",
+      "page": "/oneiron/agents/oneiron-arch-0064-esign-native-organ-v1/",
+      "sha256": "052dd897c22858eca59af73ec029f59a680cbd7abf08d92a0e6e4bf81038e0db"
+    },
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "page": "/oneiron/agents/oneiron-arch-0026-dreamer-v2/",
+      "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+    },
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+      "page": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    {
+      "mirror": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world.md",
+      "page": "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/",
+      "sha256": "fd5c36e3c88430eaef2592ae8ce7fef734561295d95af57967866263fbfad888"
+    }
+  ],
+  "registryPin": {
+    "path": "/Users/olety/Desktop/code/oneiron-docs/registry/oneiron.json",
+    "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+    "rows": [
+      "OF-356",
+      "OF-368",
+      "OF-415",
+      "OF-503",
+      "OF-505",
+      "OF-507",
+      "OF-508",
+      "OF-509",
+      "OF-510",
+      "OF-511",
+      "OF-555",
+      "OF-575"
+    ]
+  },
+  "ownerRulingsPin": {
+    "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+    "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+  },
+  "assumptionsAndConstants": {
+    "slots": 2,
+    "flowDeadline": "shared default 30 seconds when activated; no engine timing changes",
+    "bodyEditors": "two human actors for live edits plus a separate machine proposer; machine work is not a live human edit",
+    "symbols": "fixture labels are not fabricated entity ids, document cursors, hashes, intents or grants",
+    "officeOracle": "synthetic retained.* packages are not independent Office oracle captures; no such captures are fabricated here",
+    "binaryPins": "fleet asset lane supplies actual files/digests; no placeholder executable hashes",
+    "noProductConstantsChanged": true
+  },
+  "scenarios": [
+    {
+      "id": "ARTIFACTS-01",
+      "name": "Artifact version proposal and anchored comment should work",
+      "rows": [
+        "OF-368",
+        "OF-511"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/#body",
+        "/registry/oneiron/#OF-368",
+        "/registry/oneiron/#OF-511"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed artifact anchored-thread create/comment/read/assign calls and supported-kind unit inspection",
+      "authoredInputs": {
+        "name": "Observatory plan",
+        "before": "The opening is Tuesday.",
+        "proposed": "The opening is Wednesday.",
+        "comment": "Change only the opening date. Keep the access note.",
+        "unrelated": "Access note: use the north door."
+      },
+      "units": [
+        "document paragraph span",
+        "sheet Inputs!A1:B2",
+        "deck slide/shape inspected in its part",
+        "code file-document cursor span",
+        "other kinds only when their public adapter and locator exist"
+      ],
+      "typedDesign": {
+        "anchor": [
+          "artifact",
+          "version",
+          "locator"
+        ],
+        "assignment": "thread -> task brief retaining artifact@version and locator",
+        "proposal": "retained output or fork + diff, independent authorized Keep/Discard",
+        "version": [
+          "parent_version",
+          "fork_of_version",
+          "made_by.inputs (including prompt)",
+          "made_by.trigger",
+          "born_from"
+        ]
+      },
+      "expected": [
+        "comment names its pinned unit and keeps its words",
+        "proposal leaves live head and original export untouched",
+        "proposer lineage cannot accept itself or mint its answering grant",
+        "authorized Keep consumes once, rejected proposal does not land",
+        "kept export retains version parent and birth provenance",
+        "anchor remains exact or explicitly reports drift"
+      ],
+      "missing": [
+        "typed anchored-thread create/comment/read/assign HTTP and SDK calls",
+        "unit inspection for each publicly supported kind"
+      ],
+      "fixtureNeeds": [
+        "licensed kind-specific original and edited oracle packages with stable unit facts",
+        "independent package part hashes and accepted content",
+        "real document/image organs where the kind requires them"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-02",
+      "name": "Shared Office bodies preserve concurrent edits should work",
+      "rows": [
+        "OF-505",
+        "OF-510"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/#body",
+        "/registry/oneiron/#OF-505",
+        "/registry/oneiron/#OF-510"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed creation of distinct human editors and a machine principal for shared Office-body setup",
+      "authoredInputs": {
+        "editors": [
+          "human editor one",
+          "human editor two"
+        ],
+        "proposer": "distinct machine actor",
+        "docx": {
+          "paragraphOne": "Opening: Tuesday.",
+          "paragraphTwo": "Access: north door.",
+          "firstEdit": "Opening: Wednesday.",
+          "secondEdit": "Access: east door.",
+          "machineAdds": "Bring the printed checklist."
+        },
+        "xlsx": {
+          "sheet": "Inputs",
+          "firstCell": "A1",
+          "secondCell": "B1",
+          "firstValue": 8,
+          "secondValue": 5,
+          "machineCell": "C1",
+          "machineValue": 13
+        },
+        "pptx": {
+          "firstShapeName": "Opening",
+          "secondShapeName": "Access",
+          "firstText": "Wednesday",
+          "secondText": "East door",
+          "machineText": "Bring the checklist."
+        }
+      },
+      "typedDesign": {
+        "live": "OfficeBodyEditRequest {artifact_ref, base, ops: OfficeBodyOps}; both human writes retain the same public base",
+        "ws": "real WS facade RPC for vault.artifacts.body.edit; the same typed input as HTTP",
+        "receipt": "TextCommitReceipt {document, peer, start, end, made_by}",
+        "machine": "OfficeBodyForkOpenRequest -> fork.edit -> fork.diff -> independent proposal.settle; deck.review/deck.merge for pptx",
+        "export": "body.export or body.deck.export; retrieve record.version via artifacts.export"
+      },
+      "expected": [
+        "all three body reads contain both disjoint human edits",
+        "each human op has its actual authenticated actor, not a supplied byline",
+        "machine fork does not change head until independent authorization",
+        "merge preserves both human edits plus accepted machine work",
+        "exports are numbered blobs; import source and body frontier remain authoritative",
+        "closed deck gate is not opened with a fabricated oracle receipt"
+      ],
+      "missing": [
+        "named typed principal-authoring setup for distinct human editors and a machine; harness pairing only pairs existing principals"
+      ],
+      "fixtureNeeds": [
+        "licensed independently qualified DOCX/XLSX/PPTX body fixtures and supported export profile receipts",
+        "independent output values and retained part hashes"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-03",
+      "name": "DOCX focused edit preserves unrelated content should work",
+      "rows": [
+        "OF-503",
+        "OF-368"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/#body",
+        "/registry/oneiron/#OF-503",
+        "/registry/oneiron/#OF-368"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed DOCX paragraph/comment anchor pin and resolution with explicit drift",
+      "authoredInputs": {
+        "paragraphs": [
+          "Observatory opening is Tuesday.",
+          "The north door remains locked.",
+          "Keep the telescope checklist."
+        ],
+        "edit": {
+          "from": "Tuesday",
+          "to": "Wednesday"
+        },
+        "comment": "Verify the opening date, not the access instructions.",
+        "opaquePayload": "artifact-fixture-opaque-data-v1"
+      },
+      "typedDesign": {
+        "currentEdit": "OfficeBodyOps {format: docx, ops: [{op: set_text, block, text}]}",
+        "currentMove": "{op: move, block, after}",
+        "requiredAnchorRead": [
+          "artifact version",
+          "stable paragraph locator",
+          "stored quote",
+          "mapped or explicit drift"
+        ]
+      },
+      "expected": [
+        "accepted paragraph text changes only Tuesday -> Wednesday",
+        "unrelated paragraph text and comments survive",
+        "all pinned unrelated package parts including opaque bytes retain SHA-256",
+        "tracked revisions may change document.xml; whole-file hashes are not the edited-content oracle",
+        "move resolves original anchor exactly or preserves its quote with explicit drift"
+      ],
+      "missing": [
+        "typed paragraph/comment anchor pin, attached read and drift-aware resolution"
+      ],
+      "fixtureNeeds": [
+        "licensed independent Word-authored DOCX with comments, multiple paragraphs and an opaque part",
+        "independent accepted-text golden and per-part SHA-256 manifest"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-04",
+      "name": "Spreadsheet recalculation and refused formula should work",
+      "rows": [
+        "OF-503"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/#body",
+        "/registry/oneiron/#OF-503"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed spreadsheet recalculation and unsupported/unresolved-formula result fields",
+      "authoredInputs": {
+        "supportedWorkbook": {
+          "sheets": {
+            "Inputs": {
+              "A1": 4,
+              "A2": 3,
+              "B1": {
+                "formula": "A1+A2",
+                "value": 7
+              },
+              "B2": {
+                "formula": "B1*2",
+                "value": 14
+              },
+              "C1": {
+                "formula": "SUM(B1:B2)",
+                "value": 21
+              },
+              "C2": {
+                "formula": "C1/4",
+                "value": 5.25
+              },
+              "D1": {
+                "formula": "Rates!A1*C2",
+                "value": 10.5
+              }
+            },
+            "Rates": {
+              "A1": 2
+            }
+          },
+          "edit": {
+            "sheet": "Inputs",
+            "cell": "A1",
+            "value": 8
+          }
+        },
+        "unresolvedWorkbook": {
+          "externalFormula": "[1]!Rate",
+          "externalWorkbook": "unavailable-source.xlsx",
+          "falseCachedNumber": 314159
+        },
+        "zone": {
+          "utc_offset_minutes": 0,
+          "iana_timezone": "UTC"
+        }
+      },
+      "typedDesign": {
+        "currentPreview": "OfficeBodyPreviewRequest -> XlsxPreview {frontier, book, recalc?: string | null}",
+        "currentExport": "OfficeBodyExportVerbRequest -> OfficeBodyExportView {frontier, record?}; record.version selects the exported blob",
+        "requiredRecalcResult": [
+          "native engine identity and immutable version",
+          "computed versus refused versus unresolved status",
+          "affected units and named reason",
+          "no stale cached number presented as computed"
+        ]
+      },
+      "expected": {
+        "editedStoredValues": {
+          "Inputs!B1": 11,
+          "Inputs!B2": 22,
+          "Inputs!C1": 33,
+          "Inputs!C2": 8.25,
+          "Inputs!D1": 16.5
+        },
+        "proof": "independent arithmetic: 8+3=11; 11*2=22; 11+22=33; 33/4=8.25; 2*8.25=16.5",
+        "unsupported": [
+          "explicit refusal/unresolved reason for external named reference",
+          "false cache 314159 is not a computed answer",
+          "original input remains retrievable",
+          "fullCalcOnLoad by itself does not prove successful or explicitly refused native recalculation"
+        ]
+      },
+      "missing": [
+        "typed native recalculation/refusal/unresolved result with affected cells and reason; nullable recalc label loses this distinction"
+      ],
+      "fixtureNeeds": [
+        "licensed independently saved supported workbook, edited external oracle output and exact cache golden",
+        "valid external-link workbook with deliberately stale cache and independently pinned refusal fixture"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-05",
+      "name": "PowerPoint safe editing and judgment comments should work",
+      "rows": [
+        "OF-507",
+        "OF-508"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0077-slides-lane-v1/#routes",
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/registry/oneiron/#OF-507",
+        "/registry/oneiron/#OF-508",
+        "/oneiron/surfaces/oneiron-arch-0077-slides-lane-v1/#edit-target-choice",
+        "/oneiron/surfaces/oneiron-arch-0077-slides-lane-v1/#review-route-built"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed deck target inspection/transactions and slide-review policy, paired readings and comment result schemas",
+      "authoredInputs": {
+        "target": {
+          "slidePart": "ppt/slides/slide1.xml",
+          "nativeShapeId": 7,
+          "name": "Opening",
+          "beforeText": "Tuesday",
+          "afterText": "Wednesday",
+          "expectedFingerprint": "acquired by typed public inspection, never fabricated"
+        },
+        "sameIdOtherPart": {
+          "slidePart": "ppt/slides/slide2.xml",
+          "nativeShapeId": 7,
+          "text": "Keep this unchanged."
+        },
+        "ambiguousFixture": "two native shape ids 7 in one slide part",
+        "route": {
+          "first": "system_one",
+          "providers": [
+            "system_one",
+            "escalation",
+            "big"
+          ],
+          "ceiling": "big",
+          "eligibleFirstAnswer": "in-band under enforced fixture policy"
+        },
+        "review": {
+          "question": "Does the slide claim overstate its pinned evidence?",
+          "evidence": "The observatory opening is a trial, not a guaranteed public launch.",
+          "byline": "Fixture reviewer",
+          "judgmentText": "overstates the evidence",
+          "severityText": "high"
+        }
+      },
+      "typedDesign": {
+        "currentPropose": "DeckProposeRequest {artifact_ref, transaction: unknown, run_ref, context?, made_by?}",
+        "targetLaw": [
+          "slide package part",
+          "native p:cNvPr id",
+          "expected content fingerprint"
+        ],
+        "currentReview": "SlideReviewSubmit has target/question/author/labels as unknown; SlideReviewOutcome has opaque abstentions",
+        "requiredReviewReceipt": [
+          "judged version",
+          "question",
+          "calibrated probability and basis/band",
+          "measuring pin per paired reading",
+          "asker and answerer",
+          "selected exported author identity"
+        ]
+      },
+      "expected": [
+        "only the named part/native id is edited; repeated ids in other parts are unchanged",
+        "stale fingerprint -> TargetChanged, in-part duplicate -> AmbiguousAnchor, neither guesses",
+        "eligible system_one answer advances to escalation, maximum two measurements per unit, never a third at big",
+        "receipt binds each calibrated pair to measuring pin and source version",
+        "independent Keep consumes a single modern-comment proposal once",
+        "2018 comment carries judgment/severity text and actor/byline selection",
+        "all independently pinned unrelated parts retain byte hashes"
+      ],
+      "missing": [
+        "typed deck inspection and target fingerprints",
+        "typed transaction and rejection schema instead of opaque transaction/rejected JSON",
+        "typed review route/band setup and paired-reading/comment receipt inspection"
+      ],
+      "fixtureNeeds": [
+        "licensed independently retained deck with repeated native ids across parts",
+        "separate ambiguous-id and stale-target cases",
+        "independently saved modern-comment reference XML and unrelated part hashes",
+        "pinned review images and first/escalation external protocol responses"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-06",
+      "name": "Deck creation requires kept brief should work",
+      "rows": [
+        "OF-509"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0077-slides-lane-v1/#routes",
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/registry/oneiron/#OF-509"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed outline keep/decline, validated deck DesignPlan and creation HTTP/SDK/MCP calls",
+      "authoredInputs": {
+        "declinedOutline": {
+          "audience": "volunteers",
+          "outcome": "announce a public launch",
+          "message": "The observatory opens without qualification."
+        },
+        "keptOutline": {
+          "audience": "volunteers",
+          "outcome": "plan a supervised trial",
+          "message": "Wednesday is a supervised trial opening.",
+          "pages": [
+            {
+              "job": "state the trial and its qualification",
+              "required": true,
+              "splitAllowed": false
+            },
+            {
+              "job": "show the attendance plan",
+              "required": true,
+              "splitAllowed": true
+            }
+          ],
+          "data": {
+            "units": "people",
+            "values": [
+              4,
+              null,
+              0
+            ],
+            "missingMeaning": "not yet measured",
+            "source": "independent fixture attendance note"
+          },
+          "designAlternatives": [
+            "plain editorial",
+            "diagram-led",
+            "table-led"
+          ]
+        },
+        "unsupportedSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\" width=\"100\" height=\"100\"><defs><filter id=\"blur\"><feGaussianBlur stdDeviation=\"2\"/></filter></defs><rect width=\"80\" height=\"80\" filter=\"url(#blur)\"/></svg>"
+      },
+      "typedDesign": {
+        "outline": [
+          "communication",
+          "page jobs/argument order",
+          "evidence pins/qualifications",
+          "units/missing/source",
+          "priority/split permission",
+          "language/accessibility",
+          "intended factual assets"
+        ],
+        "keptBrief": [
+          "NOTE Plugin(brief)",
+          "frozen kept version and content hash"
+        ],
+        "designPlan": [
+          "approved input",
+          "template/layout by capability",
+          "theme/tokens",
+          "source-block assignments",
+          "assets/data",
+          "fit/overflow alternatives",
+          "parts/relationships",
+          "trace for each output unit"
+        ]
+      },
+      "expected": [
+        "declined/unkept brief cannot yield a final deck",
+        "kept exact brief version/hash is born_from",
+        "later brief edits stale the run",
+        "three alternatives are separate design specs, not three live deck proposals",
+        "unsupported SVG is refused or takes an explicit declared fallback, never silent rasterization",
+        "every claim/dataset/image is source- and rights-traceable",
+        "missing data is not zero; qualifications and required content survive"
+      ],
+      "missing": [
+        "typed outline proposal/keep/decline lifecycle",
+        "typed DesignPlan validation and deck emission with HTTP/SDK/MCP bindings"
+      ],
+      "fixtureNeeds": [
+        "licensed independent template plus actual asset/font subset and immutable rights evidence",
+        "source/evidence note pins and supported fallback design golden",
+        "a real deck creation organ binary, not a model-emitted final file"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-07",
+      "name": "Organ crash is contained and recoverable should work",
+      "rows": [
+        "OF-575"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/#body",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/oneiron/surfaces/oneiron-arch-0075-document-engine-v1/#organ-host",
+        "/registry/oneiron/#OF-575"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed hosted document-organ edit/retry and public in-flight intent/process/result observation",
+      "authoredInputs": {
+        "before": "The trial opens Tuesday.",
+        "proposed": "The trial opens Wednesday.",
+        "crashBoundary": "public in-flight operation acknowledgement under a retained durable intent",
+        "retry": "same existing intent and grant, explicit caller retry"
+      },
+      "typedDesign": {
+        "currentWaitRead": "OrganWaitView {artifact_id, run_ref, organ, verb, held_by, held_at, reason, tries, last_try_at, failed?}",
+        "requiredHostedEdit": [
+          "durable intent ref",
+          "grant ref",
+          "public run/checkpoint/result status",
+          "owned organ identity/process observation",
+          "typed retry binding"
+        ]
+      },
+      "expected": [
+        "organ crash does not kill engine or its health/read routes",
+        "failed edit is explicit and original version/content survive",
+        "no partial live edit escapes",
+        "restart/resume stays under original durable intent/grant",
+        "one final proposal/version and one consume-once settlement, not duplicate effects"
+      ],
+      "missing": [
+        "public typed hosted document-organ edit/retry",
+        "in-flight intent/checkpoint/result and ownership-bound process observation"
+      ],
+      "fixtureNeeds": [
+        "real prebuilt out-of-process document organ with immutable build pin",
+        "licensed original DOCX and independently expected single edit",
+        "publicly observable operation barrier, not a fake organ or internal queue hook"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-08",
+      "name": "E-sign request through public signing should work",
+      "rows": [
+        "OF-415"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings",
+        "/oneiron/agents/oneiron-arch-0064-esign-native-organ-v1/#seal",
+        "/registry/oneiron/#OF-415"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed public signing-ceremony HTTP/SDK calls and seal-task receipt observation",
+      "authoredInputs": {
+        "pdfText": "Observatory supervised trial agreement.",
+        "recipient": {
+          "id": "trial-recipient",
+          "name": "Mira Fixture",
+          "email": "mira@example.invalid",
+          "role": "signer",
+          "order": 0,
+          "automated": false
+        },
+        "field": {
+          "id": "agreement-name",
+          "recipient": "trial-recipient",
+          "required": true,
+          "geometry": {
+            "page": 1,
+            "x_percent": 10,
+            "y_percent": 70,
+            "width_percent": 40,
+            "height_percent": 8
+          },
+          "meta": {
+            "kind": "name"
+          }
+        },
+        "agreementVersion": "frozen original blob version from public upload",
+        "certificatePolicy": "local public test-only key/certificate/trust, no external CA or TSA",
+        "tamper": "change a covered content byte, not an append after the signed EOF"
+      },
+      "typedDesign": {
+        "existingCalls": [
+          "vault.esign.create",
+          "vault.esign.get",
+          "vault.esign.links.issue",
+          "vault.esign.send_for_signature"
+        ],
+        "ceremonyHttp": {
+          "load": "POST /sign/action {token, action: {action: load}}",
+          "save": "POST /sign/action {token, action: {action: save_field, field, value: FieldValue}}",
+          "complete": "POST /sign/action {token, action: {action: complete, consent: true, next: null}}",
+          "download": "POST /sign/pdf {token, item: 0}"
+        },
+        "outcomes": [
+          "page",
+          "not_your_turn",
+          "terminal",
+          "awaiting_seal",
+          "held_for_owner",
+          "consent_required"
+        ],
+        "requiredSealObservation": [
+          "public asynchronous task/receipt",
+          "exact frozen item versions",
+          "SealJob provenance",
+          "atomic version/status/audit transition"
+        ]
+      },
+      "expected": [
+        "recipient posts capability without owner/agent credentials and acts under its own authority",
+        "invalid recipient capability has no mutation effect",
+        "Complete acknowledges awaiting_seal, not a sealed terminal written inline",
+        "audit/certificate pages precede seal and are covered",
+        "sealed bytes/status/audit publish atomically beside pristine original",
+        "seal consumes already-authorized signing state, no second Keep",
+        "independent PDF verifier validates signature/trust/covered audit pages",
+        "covered-byte tamper fails verification"
+      ],
+      "missing": [
+        "generated typed signing ceremony HTTP/SDK inputs/results and OpenAPI schemas",
+        "public seal-task receipt observation"
+      ],
+      "fixtureNeeds": [
+        "licensed small independently authored PDF and fixed local test-only certificate/key/trust fixture",
+        "prebuilt oneiron-seal-organ with same-build provenance",
+        "independent PDF verifier and all trust/runtime files pinned in fleet build inventory",
+        "explicit public host seal configuration; EngineFixture removes inherited ONEIRON_* overrides"
+      ]
+    },
+    {
+      "id": "ARTIFACTS-09",
+      "name": "Published pin and private live preview should work",
+      "rows": [
+        "OF-356",
+        "OF-555"
+      ],
+      "source": [
+        "/oneiron/surfaces/oneiron-arch-0078-artifact-family-v1/#contract",
+        "/oneiron/code-in-oneiron/oneiron-arch-0050-repo-as-world/#tested-pointer",
+        "/registry/oneiron/#OF-356",
+        "/registry/oneiron/#OF-555"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed artifact publish/repoint/unpublish and lease-bound private live-port preview calls",
+      "authoredInputs": {
+        "code": {
+          "path": "index.html",
+          "published": "<!doctype html><title>Trial v1</title><p>Wednesday supervised trial.</p>",
+          "draft": "<!doctype html><title>Trial v2 draft</title><p>Unpublished draft.</p>"
+        },
+        "blob": {
+          "published": "Observatory plan v1: Wednesday supervised trial.\n",
+          "draft": "Observatory plan v2: unpublished revision.\n"
+        },
+        "backend": {
+          "process": "owned local fixture HTTP service",
+          "port": "ephemeral and explicitly declared in session manifest",
+          "response": "private draft backend",
+          "audience": "owner only until explicit share/invite",
+          "lease": "owned session lease, terminated explicitly"
+        }
+      },
+      "typedDesign": {
+        "publication": [
+          "artifact",
+          "immutable tested code snapshot or numbered blob version",
+          "pointer channel",
+          "specific audience/grant"
+        ],
+        "livePreview": [
+          "declared session process and port",
+          "lease",
+          "private owner audience",
+          "draft label",
+          "explicit share/invite widening",
+          "close on lease end"
+        ],
+        "currentGetSelectors": [
+          "/_s/c/published/",
+          "/_s/c/preview/",
+          "/_s/f/{forkHash}/",
+          "/_s/b/{blobVersion}/"
+        ],
+        "currentOptionalServingAuthority": "/_t/{token}/"
+      },
+      "expected": [
+        "anonymous/public serving needs explicit per-artifact owner grant",
+        "published code/blob bytes remain the authored v1 after draft v2 edits",
+        "publication pointer/receipt identifies allowed immutable export",
+        "owner can access draft backend; uninvited guest cannot",
+        "live preview is not static published/preview pointer",
+        "lease termination closes the endpoint without changing published pin"
+      ],
+      "missing": [
+        "typed public publish/repoint/unpublish calls",
+        "typed session live-port preview register/read/share/close calls"
+      ],
+      "fixtureNeeds": [
+        "licensed source HTML and blob v1/v2 bytes with independent hashes",
+        "public code snapshot registration/tested pointer setup",
+        "owned local backend and public lease/session declaration"
+      ]
+    }
+  ]
+}
