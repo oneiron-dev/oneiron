@@ -207,9 +207,11 @@ pub(super) fn mark_ready<R: Read + Seek>(archive: &mut IndexedArchive<'_, R>) ->
             row = Some(key);
         }
         if !waiting {
-            archive
-                .index
-                .put(Tag::Ready, &ready_key(QUEUE_PROVENANCE, &id_at(&first, 0)?), &[])?;
+            archive.index.put(
+                Tag::Ready,
+                &ready_key(QUEUE_PROVENANCE, &id_at(&first, 0)?),
+                &[],
+            )?;
             any = true;
         }
         at = Some(first);
@@ -232,11 +234,14 @@ pub(super) fn restore<R: Read + Seek>(
         ))?;
     let mut rows = Vec::new();
     let mut after: Option<Vec<u8>> = None;
-    while let Some((row_key, _)) = archive.index.next(Tag::Cohort, &subject, after.as_deref())? {
+    while let Some((row_key, _)) = archive
+        .index
+        .next(Tag::Cohort, &subject, after.as_deref())?
+    {
         let id = id_at(&row_key, EDGE_KEY_LEN + 8)?;
-        let (_, row) = archive
-            .entity(&id)?
-            .ok_or(Error::InvariantViolation("provenance import queue lost a row"))?;
+        let (_, row) = archive.entity(&id)?.ok_or(Error::InvariantViolation(
+            "provenance import queue lost a row",
+        ))?;
         let (body, _) = provenance_body(&archive.index, &row)?;
         rows.push((row, id, body));
         after = Some(row_key);
