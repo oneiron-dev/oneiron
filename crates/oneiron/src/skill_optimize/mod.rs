@@ -167,6 +167,7 @@ pub use self::dials::{
     DEFAULT_SKILL_OPTIMIZE_MIN_OUTCOMES, SKILL_OPTIMIZE_MIN_OUTCOMES_KEY,
     set_skill_optimize_min_outcomes, skill_optimize_min_outcomes,
 };
+pub use self::eval_set::doors as eval_doors;
 pub use self::eval_set::{
     AuditCase, AuditCoverage, AuditMethodPin, CandidateLabel, CaseDecision, CohortRetirement,
     CohortSummary, CoverageGap, CutDecision, DerivationKind, EvalAuthoringInventory,
