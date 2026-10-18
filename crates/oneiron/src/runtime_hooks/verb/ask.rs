@@ -216,12 +216,12 @@ impl AskToken {
 /// when the author is not the caller. Only the turn rides along: the surface
 /// is the author's own, with none of the caller's authority, read or
 /// session. With no turn, the author's task door takes its own.
-fn author_memory(
-    vault: &Vault,
+fn author_memory<'v>(
+    vault: &'v Vault,
     author: EntityId,
     class: HookActorClass,
     turn: Option<&Arc<TaskWorkTurn>>,
-) -> crate::Memory<'_> {
+) -> crate::Memory<'v> {
     let memory = vault.memory(author, super::super::filter::edge_class(class));
     match turn {
         Some(turn) => memory.with_task_work_turn(Arc::clone(turn)),
