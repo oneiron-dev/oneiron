@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 456 code-mode rows (435 host rows, 21 run rows), 1650 declarations.
-// Replies: 400 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 491 code-mode rows (470 host rows, 21 run rows), 1749 declarations.
+// Replies: 430 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -285,7 +285,7 @@ declare namespace Sdk {
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type FanoutCheckChoice = "ack" | "ack_and_remember";
   type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
-  type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief };
+  type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } };
   type TaskUpdateRequest = { task_ref: string; resultRef?: string | null; report?: TaskReportBody | null; report_key?: string | null; attempt?: AttemptHandle | null };
   type TaskUpdateReceipt = { task_ref: EntityId; acked: boolean; report?: TaskCallReceipt | null };
   type ReaderReportReceipt = { task: EntityId; ref: string; replay: boolean };
@@ -528,6 +528,39 @@ declare namespace Sdk {
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
   type PackFileInput = { path: string; text: string };
   type PackPutRequest = { files: PackFileInput[] };
+  type SlatePackSource = { source_ref: string; content_hash: string };
+  type SlateDataClass = "public" | "personal" | "secret" | "header";
+  type SlateToolManifest = { name: string; data_class: SlateDataClass; header_parameters: string[]; resolved_input_schema?: unknown | null; trigger?: string | null; destroys: boolean; spends: boolean; sends_outward: boolean; legacy_ask: boolean; read_only?: boolean; idempotent?: boolean };
+  type SlateElicitationManifest = { legacy_ask_tools: string[] };
+  type SlateManifest = { pack_source?: SlatePackSource | null; tools: SlateToolManifest[]; elicitation?: SlateElicitationManifest | null };
+  type ConnectorPackPrepareRequest = { connector: string; source: SlatePackSource; summary: string; secret_ref?: string | null; protocol_revision: string; manifest: SlateManifest };
+  type ConnectorPackBasis = { connector: string; source: SlatePackSource; key_ref: string; slate_ref: string; slate_revision: number; manifest_hash: string; grant_hash: string; advisory_hash: string; protocol_revision: string };
+  type SlateDisposition = "always_allow" | "auto" | "always_ask" | "never_allow";
+  type SlateDraftRow = { tool: string; disposition: SlateDisposition; data_class: SlateDataClass; rationale: string };
+  type SlateOwnerOverride = { disposition: SlateDisposition };
+  type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
+  type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
+  type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
+  type ConnectorPackGetRequest = { connector: string };
+  type ProbeRequest = { id: string; name: string; arguments: unknown };
+  type QualificationCase = { call: ProbeRequest; in_scope: boolean; allowed_predicates: string[] };
+  type QualificationInjectionSurface = "FetchedContent" | "ToolResult" | "ForeignAsk";
+  type QualificationInjection = { surface: QualificationInjectionSurface; baseline: QualificationCase; injected: QualificationCase };
+  type QualificationLimits = { tokens: number; latency_ms: number; budget_units: number };
+  type QualificationPlan = { reads: QualificationCase[]; unanswerable: QualificationCase; injections: QualificationInjection[]; scope_escape: QualificationCase[]; write?: QualificationCase | null; timeout_retry?: QualificationCase | null; handled_result_types: string[]; limits: QualificationLimits };
+  type ConnectorQualificationKit = { plan: QualificationPlan; sources?: Record<string, string>; claims?: Record<string, string[]>; effect_state_uri: string };
+  type ConnectorPackQualifyRequest = { basis: ConnectorPackBasis; kit: ConnectorQualificationKit; runtime?: PackRuntimeRecipe | null };
+  type ConnectorPackAcceptRequest = { basis: ConnectorPackBasis; rows?: Record<string, SlateDisposition>; facets?: string[] | null; all_manual?: boolean };
+  type ConnectorPackUpdateRequest = { prior: ConnectorPackBasis; source: SlatePackSource; protocol_revision: string; manifest: SlateManifest };
+  type ConnectorPackDelta = { prior: ConnectorPackBasis; current: ConnectorPackView; changed: boolean; reask: string[]; carried: string[]; dropped: string[] };
+  type ConnectorPackGrantsGetRequest = { basis: ConnectorPackBasis; actor?: string | null };
+  type DataClass = "public" | "personal" | "secret" | "unclassified";
+  type ConnectorConsentRowView = { tool: string; data_class: SlateDataClass; setting: SlateDisposition; header_parameters: string[]; destroys: boolean; grant_id?: string | null; grant_ceiling?: DataClass | null };
+  type ConnectorConsentView = { connector: string; actor: string; status: string; protocol_revision?: string | null; ready: boolean; rows: ConnectorConsentRowView[]; elicitation?: SlateDisposition | null };
+  type ConnectorPackGrants = { basis: ConnectorPackBasis; endpoint?: string | null; authority: ConnectorConsentView };
+  type ConnectorPackGrantRow = { tool: string; ceiling: DataClass; headers?: boolean };
+  type ConnectorPackGrantsPutRequest = { basis: ConnectorPackBasis; endpoint: string; actor?: string | null; rows: ConnectorPackGrantRow[] };
   type PackRemoveRequest = { pack: string };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
@@ -634,6 +667,22 @@ declare namespace Sdk {
   type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
   type ResidencePruneRequest = { machine: EntityId; before: number };
   type ResidencePruned = { dropped: number };
+  type OffRecordEnterMode = "off_record" | "anonymous";
+  type OffRecordBackendClass = "local" | "remote_provider";
+  type OffRecordStartRequest = { session_ref: string; mode: OffRecordEnterMode; backend: OffRecordBackendClass };
+  type OffRecordMode = "off_record" | "on_record" | "anonymous";
+  type OffRecordSessionView = { session_ref: string; mode: OffRecordMode; backend: OffRecordBackendClass; entered_at: string; promoted_turns: string[]; closing: boolean };
+  type OffRecordSessionRequest = { session_ref: string };
+  type OffRecordWitnessRequest = { session_ref: string; turn: WitnessTurn; summary?: string | null };
+  type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number };
+  type OffRecordRecallRequest = { session_ref: string; query: string; limit: number };
+  type CreateNoteRequest = { kind: string; markdown: string };
+  type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest };
+  type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
+  type OffRecordClaimRequest = { session_ref: string; claim: ScopedClaimInput };
+  type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
+  type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
+  type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -923,6 +972,23 @@ declare namespace Sdk {
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[] };
   type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null };
+  type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string };
+  type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
+  type ArtifactUnitsView = { status: "supported"; artifact_id: EntityId; version: number; content_hash: string; kind: ArtifactKind; units: ArtifactUnitView[] } | { status: "unsupported"; artifact_id: EntityId; kind: ArtifactKind; reason: string };
+  type AnnotationPinRequest = { artifact_ref: string; version?: number | null; locator: AnnotationLocator };
+  type AnnotationAnchorView = { artifact_id: EntityId; version: number; locator: AnnotationLocator; quote?: string | null };
+  type AnnotationThreadOpenRequest = { artifact_ref: string; version: number; locator: AnnotationLocator; text: string };
+  type AnnotationResolution = "pinned" | "mapped" | "drifted";
+  type AnnotationDriftView = { drifted_at_version: number; pinned_version: number };
+  type AnnotationThreadState = "open" | "resolved";
+  type AnnotationCommentView = { thread_id: EntityId; author: EntityId; text: string; at: number; claim_id: EntityId };
+  type AnnotationBriefView = { brief_ref: string; task_id: EntityId; thread_id: EntityId; anchor: AnnotationAnchorView; artifact_version: number; thread_text: string; assignee?: EntityId | null };
+  type AnnotationThreadView = { thread_id: EntityId; origin: AnnotationAnchorView; anchor: AnnotationAnchorView; resolution: AnnotationResolution; drift?: AnnotationDriftView | null; state: AnnotationThreadState; head_claim_id: EntityId; comments: AnnotationCommentView[]; brief?: AnnotationBriefView | null };
+  type AnnotationCommentRequest = { artifact_ref: string; thread_ref: string; text: string };
+  type AnnotationThreadRequest = { artifact_ref: string; thread_ref: string };
+  type AnnotationAssignRequest = { artifact_ref: string; thread_ref: string; assignee_ref?: string | null };
+  type AnnotationStateRequest = { artifact_ref: string; thread_ref: string; state: AnnotationThreadState };
   type CodeStateRequest = { repo: string; path: string; revision_ref?: string | null };
   type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
   type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
@@ -942,6 +1008,19 @@ declare namespace Sdk {
   type CodeFileChange = "added" | "removed" | "modified" | "renamed";
   type CodeFileDiffView = { path: string; change: CodeFileChange; renamed_from?: string | null; before?: CodeStateView | null; after?: CodeStateView | null; changes: CodeChangeView[] };
   type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string };
+  type CodeExportRequest = { repo: string; checkout: string; epoch: number; revision: EntityId; ref_name: string; expected_old_oid?: string | null; endpoint: string };
+  type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
+  type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
+  type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type OriginRepoRequest = { repo: string };
+  type OriginResidence = "local-vault" | "cloud-vault";
+  type OriginAuthority = { epoch: number; residence: OriginResidence; writer: string; mirror: boolean };
+  type OriginAuthorityView = { repo: string; host?: string | null; authority?: OriginAuthority | null };
+  type OriginAuthoritySetRequest = { repo: string; expected_epoch?: number | null; residence: OriginResidence; writer?: string | null; mirror?: boolean };
+  type OriginPublicationsRequest = { repo: string; ref_name: string; git_commit: string };
+  type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
+  type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
+  type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -1314,10 +1393,19 @@ declare namespace Sdk {
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarRangeDto = { start: number; end: number };
+  type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
+  type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
+  type CalendarIcsImportRequest = { system: string; source_blob_ref: string; source_version: number };
+  type CalendarImportClaimReceipt = { claim_ref: string; predicate: string; approval: string; lifecycle: string };
+  type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
+  type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
+  type CalendarOccurrencesRequest = { master_ref: string; range: CalendarRangeDto };
+  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarRangeDto = { start: number; end: number };
   type CalendarSearchRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number };
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
@@ -1345,7 +1433,6 @@ declare namespace Sdk {
   type TextIndexField = { field: string; value: string };
   type StructuralEdgeSpec = { edge_kind: string; target_ref: string; weight?: number | null };
   type StructuralPutInput = { id?: string | null; kind: string; body: unknown; text_fields?: TextIndexField[] | null; edges?: StructuralEdgeSpec[] | null; occurred_at: number; learned_at?: number | null };
-  type EntityRefReceipt = { entity_ref: string; id_hex: string; receipt_ref: string; record?: RecordRef | null };
   type HabitCheckinInput = { habit_ref: string; id?: string | null; data?: unknown | null; occurred_at: number; learned_at?: number | null };
   type AdmitImportedClaimInput = { source_id: string; source_record_id: string; id?: string | null; subject_ref: string; predicate: string; value: unknown; occurred_at: number; learned_at?: number | null };
   type ArtifactCreateRequest = { name: string; media_type: string; content_base64: string; run_ref?: string | null; made_by?: unknown | null };
@@ -1570,7 +1657,6 @@ declare namespace Sdk {
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
-  type CreateNoteRequest = { kind: string; markdown: string };
   type CreateNoteFromEntityRequest = { source_ref: string; kind: string };
   type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] };
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
@@ -1594,6 +1680,19 @@ declare namespace Sdk {
   type SetNoteOverridesRequest = { note_ref: string; overrides?: NoteOverrides };
   type NoteKindDescriptor = { pack: string; kind: string; extraction: ExtractionDefault; context: ContextDefault; retention: RetentionDefault; archive_after_days?: number | null };
   type NoteDefaultsView = { overrides: NoteOverrides; defaults: NoteKindDescriptor };
+  type LinearMappingRequest = { task_ref: string };
+  type LinearIssueRef = { issue_id: string; team_id: string; identifier: string };
+  type LinearFieldConflict = { field: string; task_value?: string | null; issue_value?: string | null };
+  type LinearLinkView = { issue: LinearIssueRef; link_revision: number; task_revision: number; issue_updated_at_ms: number; unresolved_conflicts: LinearFieldConflict[] };
+  type LinearMappingView = { task_ref: string; task_revision: number; link?: LinearLinkView | null; opted_out: boolean; mapping_revision: number; dirty_revision?: number | null; newest_event_refs: string[] };
+  type LinearMappingOp = { kind: "link"; issue_id: string; identifier: string } | { kind: "unlink" } | { kind: "mirror" };
+  type LinearMappingEdit = { task_ref: string; expected_mapping_revision: number; intent_key: string; op: LinearMappingOp };
+  type LinearMappingEditReceipt = { task_ref: string; op: string; mapping_revision: number; opted_out: boolean; issue?: LinearIssueRef | null; event_ref: string; replayed: boolean; at: number };
+  type LinearProvenanceRequest = { task_ref: string; cursor?: string | null; limit?: number | null };
+  type LinearExternalActor = { id: string; kind: string; name?: string | null };
+  type LinearMirrorEvent = { direction: string; task_ref?: string | null; issue?: LinearIssueRef | null; delivery_id?: string | null; operation_id?: string | null; body_digest?: string | null; payload_ref?: string | null; external_actor?: LinearExternalActor | null; webhook_id?: string | null; organization_id?: string | null; webhook_timestamp_ms?: number | null; changed_fields: string[]; status: string; conflicts: LinearFieldConflict[]; writer_actor?: string | null; writer_class?: string | null; gate_ref?: string | null; receipt?: string | null; at: number };
+  type LinearProvenanceEntry = { event_ref: string; event: LinearMirrorEvent };
+  type LinearProvenancePage = { task_ref: string; events: LinearProvenanceEntry[]; next_cursor?: string | null };
   type RunAttachRequest = { run: string; rebind?: boolean };
   type RunAttached = { live_run: string };
   type FoldUnfoldRequest = { live_run: string; fold: string };
@@ -1887,6 +1986,10 @@ declare namespace self {
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
+  const off_record: {
+    /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+    execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
+  };
   const run: {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
@@ -1942,6 +2045,10 @@ declare const vault: Sdk.VaultHost & {
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
+    anchors: {
+      /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
+      pin(input: Sdk.AnnotationPinRequest): Promise<Sdk.AnnotationAnchorView | StoredResult>;
+    };
     /** Appends one version of bytes to a blob artifact's append-only chain. */
     append(input: Sdk.AppendBlobVersionRequest): Promise<Sdk.BlobVersionView | StoredResult>;
     /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
@@ -2018,8 +2125,24 @@ declare const vault: Sdk.VaultHost & {
     release_wait(input: Sdk.ProposalSettleRequest): Promise<Sdk.ReleasedWait | StoredResult>;
     /** Reviews an artifact's head slides through the host's decision ladder and holds the result as a proposal for Keep or Discard. */
     review_slides(input: Sdk.SlideReviewSubmit): Promise<Sdk.SlideReviewOutcome | StoredResult>;
+    threads: {
+      /** Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine. */
+      assign(input: Sdk.AnnotationAssignRequest): Promise<Sdk.AnnotationBriefView | StoredResult>;
+      /** Appends a comment as the caller; returns its first stored part, with every part available through threads.read. */
+      comment(input: Sdk.AnnotationCommentRequest): Promise<Sdk.AnnotationCommentView | StoredResult>;
+      /** Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments. */
+      list(input: Sdk.ArtifactRefRequest): Promise<Sdk.AnnotationThreadView[] | StoredResult>;
+      /** Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote. */
+      open(input: Sdk.AnnotationThreadOpenRequest): Promise<Sdk.AnnotationThreadView | StoredResult>;
+      /** Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment. */
+      read(input: Sdk.AnnotationThreadRequest): Promise<Sdk.AnnotationThreadView | null | StoredResult>;
+      /** Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift. */
+      state(input: Sdk.AnnotationStateRequest): Promise<Sdk.AnnotationThreadView | StoredResult>;
+    };
     /** Undoes one Keep by appending a new version. */
     undo(input: Sdk.ProposalSettleRequest): Promise<Sdk.UndoneKeep | StoredResult>;
+    /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */
+    units(input: Sdk.ArtifactUnitsRequest): Promise<Sdk.ArtifactUnitsView | StoredResult>;
     /** One artifact: its kind, name, type, head and every version with its made_by and born-from. */
     view(input: Sdk.ArtifactRefRequest): Promise<Sdk.ArtifactView | null | StoredResult>;
     /** The organ calls held beside one artifact until one of the owner's nodes can run them, each with why it waits. */
@@ -2065,8 +2188,20 @@ declare const vault: Sdk.VaultHost & {
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
   calendar: {
+    /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+    create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
     /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
     freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
+    ics: {
+      /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+      import(input: Sdk.CalendarIcsImportRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    instances: {
+      /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+      move(input: Sdk.CalendarInstanceMoveRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+    occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -2141,8 +2276,24 @@ declare const vault: Sdk.VaultHost & {
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
     blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
+    checkout: {
+      /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+      bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
+    };
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
+    /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+    export(input: Sdk.CodeExportRequest): Promise<Sdk.CodeExportResult | StoredResult>;
+    origin: {
+      authority: {
+        /** Read one served origin authority and this host identity under the owner credential. */
+        get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginAuthorityView | StoredResult>;
+        /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+        set(input: Sdk.OriginAuthoritySetRequest): Promise<Sdk.OriginAuthorityView | StoredResult>;
+      };
+      /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+      publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
+    };
     /** One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied. */
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
@@ -2443,7 +2594,45 @@ declare const vault: Sdk.VaultHost & {
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
   };
+  off_record: {
+    claims: {
+      /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+      upsert(input: Sdk.OffRecordClaimRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+    };
+    /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+    discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
+    notes: {
+      /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+      create(input: Sdk.OffRecordNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
+    };
+    /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+    recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
+    /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+    start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
+    /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+    status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
+    /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+    witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
+  };
   packs: {
+    connector: {
+      /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+      accept(input: Sdk.ConnectorPackAcceptRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+      get(input: Sdk.ConnectorPackGetRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      grants: {
+        /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+        get(input: Sdk.ConnectorPackGrantsGetRequest): Promise<Sdk.ConnectorPackGrants | StoredResult>;
+        /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+        put(input: Sdk.ConnectorPackGrantsPutRequest): Promise<Sdk.ConnectorPackGrants | StoredResult>;
+      };
+      /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+      prepare(input: Sdk.ConnectorPackPrepareRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+      qualify(input: Sdk.ConnectorPackQualifyRequest): Promise<Sdk.ConnectorPackView | StoredResult>;
+      /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+      update(input: Sdk.ConnectorPackUpdateRequest): Promise<Sdk.ConnectorPackDelta | StoredResult>;
+    };
     /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
     get(input: Sdk.HubPackRequest): Promise<Sdk.PackInstallReceipt | null | StoredResult>;
     hooks: {
@@ -2735,6 +2924,17 @@ declare const vault: Sdk.VaultHost & {
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
+  };
+  tasks: {
+    linear: {
+      /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+      mapping: ((input: Sdk.LinearMappingRequest) => Promise<Sdk.LinearMappingView | StoredResult>) & {
+        /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+        edit(input: Sdk.LinearMappingEdit): Promise<Sdk.LinearMappingEditReceipt | StoredResult>;
+      };
+      /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+      provenance(input: Sdk.LinearProvenanceRequest): Promise<Sdk.LinearProvenancePage | StoredResult>;
+    };
   };
   weave: {
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */

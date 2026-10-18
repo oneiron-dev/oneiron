@@ -292,6 +292,10 @@ export class Oneiron {
       /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
       land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
     }),
+    off_record: {
+      /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+      execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+    },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
     skills: {
@@ -526,6 +530,24 @@ export class Oneiron {
       },
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
+      connector: {
+        /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */
+        prepare: (input: Facade.ConnectorPackPrepareRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorPrepare(input) as Facade.ConnectorPackView),
+        /** Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows. */
+        get: (input: Facade.ConnectorPackGetRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorGet(input) as Facade.ConnectorPackView),
+        /** Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant. */
+        qualify: (input: Facade.ConnectorPackQualifyRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorQualify(input) as Facade.ConnectorPackView),
+        /** Stamps the exact connector pack manifest and grant rows once, or revokes a row; qualification stays independent. */
+        accept: (input: Facade.ConnectorPackAcceptRequest): Facade.ConnectorPackView => this.#call(() => this.#client.vaultPacksConnectorAccept(input) as Facade.ConnectorPackView),
+        /** Holds a connector pack at its new immutable source and protocol, carrying narrow rows and re-asking only for expanded capabilities. */
+        update: (input: Facade.ConnectorPackUpdateRequest): Facade.ConnectorPackDelta => this.#call(() => this.#client.vaultPacksConnectorUpdate(input) as Facade.ConnectorPackDelta),
+        grants: {
+          /** Reads current per-capability authority for one actor on the reviewed connector pack source. */
+          get: (input: Facade.ConnectorPackGrantsGetRequest): Facade.ConnectorPackGrants => this.#call(() => this.#client.vaultPacksConnectorGrantsGet(input) as Facade.ConnectorPackGrants),
+          /** Grants declared connector pack rows to one actor through the existing owner consent gate and installed endpoint. */
+          put: (input: Facade.ConnectorPackGrantsPutRequest): Facade.ConnectorPackGrants => this.#call(() => this.#client.vaultPacksConnectorGrantsPut(input) as Facade.ConnectorPackGrants),
+        },
+      },
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
       remove: (input: Facade.PackRemoveRequest): Facade.PackInstallReceipt => this.#call(() => this.#client.vaultPacksRemove(input) as Facade.PackInstallReceipt),
       setup: {
@@ -648,6 +670,26 @@ export class Oneiron {
       index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
       /** Drops the opened-item caches one of the owner's machines last touched before a time. */
       prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
+    },
+    off_record: {
+      /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+      start: (input: Facade.OffRecordStartRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStart(input) as Facade.OffRecordSessionView),
+      /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+      status: (input: Facade.OffRecordSessionRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStatus(input) as Facade.OffRecordSessionView),
+      /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+      witness: (input: Facade.OffRecordWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordWitness(input) as Facade.WitnessReceipt),
+      /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+      discard: (input: Facade.OffRecordSessionRequest): Facade.OffRecordClosed => this.#call(() => this.#client.vaultOffRecordDiscard(input) as Facade.OffRecordClosed),
+      /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+      recall: (input: Facade.OffRecordRecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultOffRecordRecall(input) as Facade.MemoryPack),
+      notes: {
+        /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+        create: (input: Facade.OffRecordNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultOffRecordNotesCreate(input) as Facade.EntityRefReceipt),
+      },
+      claims: {
+        /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+        upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
+      },
     },
     records: {
       /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
@@ -820,6 +862,26 @@ export class Oneiron {
     artifacts: {
       /** One artifact's kind, head and versions, each with its made_by and born-from. */
       view: (request: Facade.ArtifactRefRequest): Facade.ArtifactView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsView(keyedJson(request))) as Facade.ArtifactView | null; return result === null ? null : result }),
+      /** Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter. */
+      units: (input: Facade.ArtifactUnitsRequest): Facade.ArtifactUnitsView => this.#call(() => this.#client.vaultArtifactsUnits(input) as Facade.ArtifactUnitsView),
+      anchors: {
+        /** Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable. */
+        pin: (input: Facade.AnnotationPinRequest): Facade.AnnotationAnchorView => this.#call(() => this.#client.vaultArtifactsAnchorsPin(input) as Facade.AnnotationAnchorView),
+      },
+      threads: {
+        /** Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote. */
+        open: (input: Facade.AnnotationThreadOpenRequest): Facade.AnnotationThreadView => this.#call(() => this.#client.vaultArtifactsThreadsOpen(input) as Facade.AnnotationThreadView),
+        /** Appends a comment as the caller; returns its first stored part, with every part available through threads.read. */
+        comment: (input: Facade.AnnotationCommentRequest): Facade.AnnotationCommentView => this.#call(() => this.#client.vaultArtifactsThreadsComment(input) as Facade.AnnotationCommentView),
+        /** Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment. */
+        read: (input: Facade.AnnotationThreadRequest): Facade.AnnotationThreadView | null => this.#call(() => this.#client.vaultArtifactsThreadsRead(input) as Facade.AnnotationThreadView | null),
+        /** Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments. */
+        list: (input: Facade.ArtifactRefRequest): Facade.AnnotationThreadView[] => this.#call(() => this.#client.vaultArtifactsThreadsList(input) as Facade.AnnotationThreadView[]),
+        /** Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine. */
+        assign: (input: Facade.AnnotationAssignRequest): Facade.AnnotationBriefView => this.#call(() => this.#client.vaultArtifactsThreadsAssign(input) as Facade.AnnotationBriefView),
+        /** Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift. */
+        state: (input: Facade.AnnotationStateRequest): Facade.AnnotationThreadView => this.#call(() => this.#client.vaultArtifactsThreadsState(input) as Facade.AnnotationThreadView),
+      },
       /** One version's export file (base64), with its pinned name and media type. */
       export: (request: Facade.ArtifactExportRequest): Facade.ArtifactExportFile | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsExport(keyedJson(request))) as Facade.ArtifactExportFile | null; return result === null ? null : result }),
       /** The artifacts and versions a task, ask, run, skill or agent run produced. */
@@ -910,6 +972,22 @@ export class Oneiron {
       proposal_view: (request: Facade.CodeProposalViewRequest): Facade.CodeProposalView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeProposalView(keyedJson(request))) as Facade.CodeProposalView | null; return result === null ? null : result }),
       /** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
+      /** Export one already-finalized and reviewed document revision through the existing origin publication protocol. */
+      export: (input: Facade.CodeExportRequest): Facade.CodeExportResult => this.#call(() => this.#client.vaultCodeExport(input) as Facade.CodeExportResult),
+      origin: {
+        authority: {
+          /** Read one served origin authority and this host identity under the owner credential. */
+          get: (input: Facade.OriginRepoRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthorityGet(input) as Facade.OriginAuthorityView),
+          /** Cut over one existing served origin under the owner proof and expected authority epoch. */
+          set: (input: Facade.OriginAuthoritySetRequest): Facade.OriginAuthorityView => this.#call(() => this.#client.vaultCodeOriginAuthoritySet(input) as Facade.OriginAuthorityView),
+        },
+        /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
+        publications: (input: Facade.OriginPublicationsRequest): Facade.OriginPublicationsView => this.#call(() => this.#client.vaultCodeOriginPublications(input) as Facade.OriginPublicationsView),
+      },
+      checkout: {
+        /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
+        bind: (input: Facade.CheckoutDoorBindRequest): Facade.CheckoutDoorBinding => this.#call(() => this.#client.vaultCodeCheckoutBind(input) as Facade.CheckoutDoorBinding),
+      },
     },
     agents: {
       /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
@@ -1073,6 +1151,18 @@ export class Oneiron {
       page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
     },
     calendar: {
+      /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+      create: (input: Facade.CalendarEventCreateRequest): Facade.CalendarEventCreated => this.#call(() => this.#client.vaultCalendarCreate(input) as Facade.CalendarEventCreated),
+      ics: {
+        /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+        import: (input: Facade.CalendarIcsImportRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarIcsImport(input) as Facade.CalendarIcsImportReceipt),
+      },
+      /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+      occurrences: (input: Facade.CalendarOccurrencesRequest): Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]> => this.#call(() => this.#client.vaultCalendarOccurrences(input) as Facade.ScopedReadResult<Facade.CalendarOccurrenceView[]>),
+      instances: {
+        /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+        move: (input: Facade.CalendarInstanceMoveRequest): Facade.CalendarIcsImportReceipt => this.#call(() => this.#client.vaultCalendarInstancesMove(input) as Facade.CalendarIcsImportReceipt),
+      },
       /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
       read: (input: Facade.CalendarReadRequest): Facade.ScopedReadResult<Facade.CalendarEventView | null> => this.#call(() => this.#client.vaultCalendarRead(input) as Facade.ScopedReadResult<Facade.CalendarEventView | null>),
       /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -1205,6 +1295,17 @@ export class Oneiron {
       set_overrides: (request: Facade.SetNoteOverridesRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSetOverrides(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
+    },
+    tasks: {
+      linear: {
+        /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+        mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
+          /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+          edit: (input: Facade.LinearMappingEdit): Facade.LinearMappingEditReceipt => this.#call(() => this.#client.vaultTasksLinearMappingEdit(input) as Facade.LinearMappingEditReceipt),
+        }),
+        /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+        provenance: (input: Facade.LinearProvenanceRequest): Facade.LinearProvenancePage => this.#call(() => this.#client.vaultTasksLinearProvenance(input) as Facade.LinearProvenancePage),
+      },
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */
