@@ -50358,6 +50358,7 @@
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "enum": 6,
       "fn": 25,
       "struct": 27
