@@ -20,7 +20,7 @@ use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
 
-use super::base::SyncClient;
+use super::base::{ITEM11_UNREADABLE_HOME_PROMOTION, SyncClient, home_reads_window};
 use super::types::{SyncClientConfig, SyncResidenceMode};
 use crate::EntityId;
 use crate::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -540,6 +540,13 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
+        // A home that may not read the window's world is not told its name
+        // (FIX 922 item 11): the thin cache stays read-only, as with no home.
+        if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
+            return Err(TransportError::Storage(
+                "home may not read this world".into(),
+            ));
+        }
         let reply: PromotionReply = serde_json::from_value(
             rpc.request(
                 "residence.promote",
