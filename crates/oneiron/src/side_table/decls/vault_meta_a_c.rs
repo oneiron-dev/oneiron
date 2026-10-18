@@ -404,6 +404,11 @@ side_tables! {
     /// Node-local executor coverage bound to a minted epoch SUMMARY (fixed 73-byte frame). Key:
     /// id16(run) + id16(summary).
     CODE_RUN_COMPACTION: VaultMeta b"code_run:compaction:v1:" Raw;
+    /// A successor attempt's approved continuation of a failed run (FIX 3694): the Failed
+    /// predecessor, its run, the step the child starts at, the owner's approval, the approved
+    /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:
+    /// id16(successor attempt).
+    CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored;
     /// One contribution check's matched-fork rows (FIX 3028): each fork's receipt (the capsule it
     /// regenerated, its request hash, model, seed, response body ref, anchor hash and score), or
     /// why the pair is unavailable for good. Key: hash32(attempt receipt, skill, axis) +

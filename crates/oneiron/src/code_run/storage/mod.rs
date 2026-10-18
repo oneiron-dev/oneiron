@@ -1,6 +1,7 @@
 //! Canonical code-run persistence rows and the executor's storage routing.
 
 mod compaction;
+mod continuation;
 mod folds;
 mod lift;
 mod reader_folds;
@@ -12,6 +13,10 @@ mod speech_identity;
 mod wait_delivery;
 
 pub(crate) use self::compaction::{CodeRunCompactionCoverage, ExecutorOutputSpan};
+pub(crate) use self::continuation::{
+    StoredRunContinuation, put_run_continuation_row_in_txn, run_continuation_in_txn,
+    seed_continuation_run,
+};
 pub(crate) use self::reader_folds::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
@@ -24,8 +29,9 @@ pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{FinishedOutput, code_run_body_file_of_row};
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{
-    ForkRows, capsule_request, finalize_capsule, fork_response, fork_rows, put_capsule, put_fork,
-    put_unavailable, store_capsule_request, store_fork_response,
+    ForkRows, capsule_request, capsule_start_body, finalize_capsule, fork_response, fork_rows,
+    put_capsule, put_fork, put_unavailable, step_replay_capsules_in_txn, store_capsule_request,
+    store_capsule_start, store_fork_response,
 };
 pub(crate) use self::routing::{ExecutorStorage, require_facet_placement_in, unplaceable};
 #[cfg(test)]
