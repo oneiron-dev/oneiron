@@ -35,6 +35,12 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
+                "fetch" => remote_agent_verb_output::<oneiron::web_fetch::FetchResult>(
+                    client, verb, &input,
+                ),
+                "crawl" => remote_agent_verb_output::<oneiron::web_fetch::CrawlResult>(
+                    client, verb, &input,
+                ),
                 "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
                     client, verb, &input,
                 ),
@@ -336,6 +342,12 @@ impl OneironClient {
                 }
                 "vault.receipts.get" => remote_agent_verb_output::<
                     Option<oneiron::receipt::CallReceipt>,
+                >(client, verb, &input),
+                "self.admission.status" => remote_agent_verb_output::<
+                    Option<oneiron::receipt::admission::AdmissionReceipt>,
+                >(client, verb, &input),
+                "self.admission.receipts" => remote_agent_verb_output::<
+                    Vec<oneiron::receipt::admission::AdmissionReceipt>,
                 >(client, verb, &input),
                 "vault.explain.memory" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::ExplainMemoryReply>,
@@ -2496,6 +2508,32 @@ impl OneironClient {
             }
         }
     }
+    pub fn fetch(
+        &self,
+        input: &oneiron::web_fetch::WebFetchRequest,
+    ) -> Result<oneiron::web_fetch::FetchResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("fetch", value)
+    }
+    pub fn crawl(
+        &self,
+        input: &oneiron::web_fetch::WebCrawlRequest,
+    ) -> Result<oneiron::web_fetch::CrawlResult, MemoryError> {
+        oneiron::web_fetch::CrawlPageBudget::new(input.page_budget)
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("crawl", value)
+    }
     pub fn report(
         &self,
         input: &oneiron::feedback::ReportRequest,
@@ -3752,6 +3790,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts.get", value)
+    }
+    pub fn self_admission_status(
+        &self,
+        input: &oneiron::receipt::admission::AdmissionStatusRequest,
+    ) -> Result<Option<oneiron::receipt::admission::AdmissionReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.admission.status", value)
+    }
+    pub fn self_admission_receipts(
+        &self,
+        input: &oneiron::receipt::admission::AdmissionReceiptsRequest,
+    ) -> Result<Vec<oneiron::receipt::admission::AdmissionReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.admission.receipts", value)
     }
     pub fn vault_explain_memory(
         &self,

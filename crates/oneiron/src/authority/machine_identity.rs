@@ -22,6 +22,33 @@ pub const MACHINE_PROOF_HEADER: &str = "x-oneiron-machine";
 const EMPTY_MACHINE_BODY: &[u8] = &[0x80];
 const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 
+/// The role the install that serves a vault takes when no profile of its own
+/// stands yet (FIX 4648; CALLS "selfprofile serving-install role"): a linked
+/// install whose owner has not answered whose it is. It carries his acts and
+/// reaches no further than an unprofiled install until he answers. Never
+/// mine, and never a hosted node, which only the managed host's own node is.
+pub(crate) const SERVING_INSTALL_ROLE: MachineRole = MachineRole::Unanswered;
+
+/// Why this install's own profile does not stand after an ensure (FIX 4648):
+/// each refusal's typed reason. The owner's acts then refuse "no carrier" on
+/// this install, as they did before it had one.
+const SERVING_PROFILE_REMOVED: &str =
+    "this install's machine profile was removed; a removed machine is never enrolled again";
+const SERVING_PROFILE_CONFLICTED: &str =
+    "this install's machine profile is conflicted; nothing is enrolled over it";
+const SERVING_PROFILE_KEY_MISMATCH: &str =
+    "this install's machine profile names other keys; its keys are never replaced";
+const SERVING_PROFILE_NOT_LIVE: &str = "this install's machine profile does not stand here \
+     (stale, held or unsettled); nothing is enrolled over it";
+const SERVING_ROOT_ABSENT: &str =
+    "the vault has no root yet; its first rooted serving start profiles this install";
+const SERVING_ROOT_CONFLICTED: &str =
+    "the vault's root is conflicted; this install is profiled once it settles";
+const SERVING_ROOT_NOT_ISSUER: &str =
+    "this start's host root issuer is not the vault's live root; no root is minted for it";
+const SERVING_NO_OWNER: &str = "the vault names no owner to profile this install for";
+const SERVING_NO_ISSUER: &str = "no host root issuer on this start; this install stays unprofiled";
+
 /// What a machine sends to join a vault: its row, its class, its keys, and
 /// its own signature over them for that vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +159,43 @@ pub(super) fn resident_genesis_vault_id_in_txn(
         return Err(invalid_authority());
     }
     Ok(roots.pop_first())
+}
+
+/// Whether this install's own profile already stands as a carrier: the one
+/// carrier rule admits its install key, and a live chain names both its keys.
+/// The full predicate the owner-act writers ask, not the roster head alone.
+fn serving_profile_stands(
+    fold: &AuthorityFold,
+    folded: &FoldedMachine,
+    request: &MachineEnrolmentRequest,
+) -> bool {
+    owner_act_signer_admits(Some(folded), &fold.roster, &request.machine_key)
+        && folded.chains().any(|(_, chain)| {
+            chain.is_live()
+                && chain.profile.machine_key == request.machine_key
+                && chain.profile.encryption_key == request.encryption_key
+        })
+}
+
+/// Why a profile under this install's id that does not stand is never
+/// enrolled over: the first of removed, conflicted, other keys and not live.
+fn serving_profile_refusal(
+    folded: &FoldedMachine,
+    request: &MachineEnrolmentRequest,
+) -> &'static str {
+    let chains = move || folded.chains().map(|(_, chain)| chain);
+    if chains().any(|chain| chain.removed) {
+        SERVING_PROFILE_REMOVED
+    } else if chains().any(|chain| chain.conflicted) {
+        SERVING_PROFILE_CONFLICTED
+    } else if chains().any(|chain| {
+        chain.profile.machine_key != request.machine_key
+            || chain.profile.encryption_key != request.encryption_key
+    }) {
+        SERVING_PROFILE_KEY_MISMATCH
+    } else {
+        SERVING_PROFILE_NOT_LIVE
+    }
 }
 
 /// The bytes a machine signs to name itself on one authenticated request. They
@@ -259,51 +323,106 @@ impl Vault {
         })
     }
 
-    /// The host's own node: this install's machine in the roster as a
-    /// `HostedNode`, signed by the host root, which may register its own node
-    /// but never vouch for a machine as the owner's: an explicit bootstrap
-    /// arm with no owner act (C4), after which the node carries the owner's
-    /// answers like any linked machine. The node is never mine
-    /// and never a wrap recipient; its profile names the machine and its keys
-    /// so a connection can prove it. No owner answered here, so the profile
-    /// names the vault's owner PERSON. A restart reuses the profile only when
-    /// it names this install's id, both keys and the `HostedNode` role; a node
-    /// the owner removed or answered for otherwise is never enrolled again.
+    /// The host's own node: [`Self::ensure_serving_install_profile`] as a
+    /// `HostedNode`, the managed host's truth. The node is never mine and
+    /// never a wrap recipient.
     pub fn provision_host_node(&self, issuer: &HostSlipIssuer) -> Result<FoldedMachine> {
+        self.ensure_serving_install_profile(issuer, MachineRole::HostedNode)
+    }
+
+    /// This install's own machine in the roster, so it carries the owner's
+    /// acts from its first start (FIX 4648): signed by the host root, which
+    /// may register an install but never vouch for one as the owner's, on
+    /// the explicit bootstrap arm with no owner act (C4), after which the
+    /// install carries the owner's answers like any linked machine. Its
+    /// profile names the machine and its keys so the carrier rule
+    /// ([`owner_act_signer_admits`]) admits its install key, and the vault's
+    /// owner PERSON, since no owner answered here. There is no new record
+    /// kind and no root-key exception: the root signs the enrolment, never
+    /// an act.
+    ///
+    /// A no-op when a live profile of this install already names both its
+    /// keys and the carrier rule admits its install key, in any role: no
+    /// revision moves and the owner's answers stand. Otherwise a profile
+    /// under this install's id refuses, naming why (removed, conflicted,
+    /// other keys, not live here): its keys are never replaced and a removed
+    /// machine never comes back. With none, the bootstrap arm enrols it in
+    /// `role`. The vault must already be rooted under `issuer`; no root is
+    /// minted here.
+    pub fn ensure_serving_install_profile(
+        &self,
+        issuer: &HostSlipIssuer,
+        role: MachineRole,
+    ) -> Result<FoldedMachine> {
         let vault_id = self
             .authority_fold()?
             .vault_id
-            .ok_or_else(invalid_authority)?;
+            .ok_or_else(|| authority_refused(SERVING_ROOT_ABSENT))?;
+        // The install's identity, minted and signed outside the writer.
         let encryption_key = self.machine_encryption_key(vault_id)?;
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if let Some(folded) = fold.machine(request.machine)
-            && let Some(roster) = &folded.roster
-        {
-            let same = roster.is_live()
-                && roster.profile.role == MachineRole::HostedNode
-                && roster.profile.machine_key == request.machine_key
-                && roster.profile.encryption_key == request.encryption_key;
-            return if same {
+        if let Some(folded) = fold.machine(request.machine) {
+            return if serving_profile_stands(&fold, folded, &request) {
                 Ok(folded.clone())
             } else {
-                Err(invalid_authority())
+                Err(authority_refused(serving_profile_refusal(folded, &request)))
             };
         }
+        if fold.vault_root_is_conflicted() {
+            return Err(authority_refused(SERVING_ROOT_CONFLICTED));
+        }
+        super::slip_vault::require_host(&fold, issuer)
+            .map_err(|_| authority_refused(SERVING_ROOT_NOT_ISSUER))?;
         let owner = crate::policy_model::owners_in_txn(self, &txn)?
             .first()
             .copied()
-            .ok_or_else(invalid_authority)?;
-        let folded = self.enroll_bootstrap_in_txn(
-            &mut txn,
-            issuer,
-            owner,
-            &request,
-            MachineRole::HostedNode,
-        )?;
+            .ok_or_else(|| authority_refused(SERVING_NO_OWNER))?;
+        let folded = self.enroll_bootstrap_in_txn(&mut txn, issuer, owner, &request, role)?;
         txn.commit()?;
         Ok(folded)
+    }
+
+    /// [`Self::ensure_serving_install_profile`] in [`SERVING_INSTALL_ROLE`]
+    /// at a start that goes on whatever it says: every start that works
+    /// without a profile still starts (FIX 4648). A skip or a refusal is
+    /// logged with its reason, and the owner's acts then refuse "no carrier"
+    /// here, as before. No issuer, or a vault no root roots yet, is a skip:
+    /// the first rooted serving start profiles the install, and nothing here
+    /// mints a root. `start` names the start in the log.
+    pub fn ensure_serving_install_profile_at_start(
+        &self,
+        issuer: Option<&HostSlipIssuer>,
+        start: &'static str,
+    ) {
+        let Some(issuer) = issuer else {
+            tracing::debug!(
+                start,
+                reason = SERVING_NO_ISSUER,
+                "no machine profile ensured"
+            );
+            return;
+        };
+        match self.ensure_serving_install_profile(issuer, SERVING_INSTALL_ROLE) {
+            Ok(_) => {}
+            Err(crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(
+                SERVING_ROOT_ABSENT,
+            ))) => {
+                tracing::debug!(
+                    start,
+                    reason = SERVING_ROOT_ABSENT,
+                    "no machine profile ensured"
+                );
+            }
+            Err(error) => tracing::warn!(
+                start,
+                kind = ?error.kind(),
+                reason = %error,
+                "this install has no live machine profile, so the owner's acts refuse \
+                 \"no carrier\" here until one stands; starting on"
+            ),
+        }
     }
 
     /// A live MACHINE row, created empty when absent. Never another kind, and

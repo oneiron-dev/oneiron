@@ -2941,9 +2941,9 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -3045,7 +3045,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
@@ -8974,7 +8974,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/campaign/compliance/doors.rs",
@@ -18127,7 +18127,7 @@
      "path": "src/deletion/actor_fields.rs",
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -18406,7 +18406,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 25,
+      "crate-vis": 26,
       "re-export": 9
      }
     },
@@ -21283,7 +21283,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "SieveLeaseCounter",
@@ -27686,7 +27686,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7,
       "struct": 2
      }
@@ -33738,6 +33738,16 @@
      "path": "src/memory/transcript/tests.rs",
      "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/web_fetch.rs",
+     "purpose": "Actor-bound web acquisition and import",
+     "surface": {
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -39813,6 +39823,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "AdmissionReceipt",
+      "AdmissionReceiptsRequest",
+      "AdmissionStatus",
+      "AdmissionStatusRequest",
+      "AdmissionTracker"
+     ],
+     "path": "src/receipt/admission.rs",
+     "purpose": "Durable admission observations of named typed calls (ARCH-0044 C5)",
+     "surface": {
+      "enum": 1,
+      "fn": 6,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/receipt/archive_source/access.rs",
      "purpose": "Archive receipt I/O through ordinary ASSET admission, not terminal ledgers",
@@ -40092,6 +40120,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 19,
+      "mod": 1,
       "re-export": 18
      }
     },
@@ -41101,7 +41130,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RepoProposal",
@@ -41968,12 +41997,22 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 13,
       "re-export": 4,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/plain_resume.rs",
+     "purpose": "A plain call's resume target (ARCH-0080 §3 Ask): a call no credential came in on, which settlement runs…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -42003,7 +42042,7 @@
      "path": "src/runtime_hooks/verb/resume.rs",
      "purpose": "Settlement resumes a stopped call once (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -51868,7 +51907,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 822
+      "fn": 826
      }
     },
     {
@@ -55294,9 +55333,24 @@
       "const": 2,
       "enum": 6,
       "fn": 22,
+      "re-export": 1,
       "struct": 13,
       "trait": 2,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebCrawlRequest",
+      "WebFetchRequest"
+     ],
+     "path": "src/web_fetch/door.rs",
+     "purpose": "Typed inputs for the two acquisition doors",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -55333,6 +55387,7 @@
      "kind": "src",
      "notable": [
       "LineCrossing",
+      "LineObserver",
       "LinePermit",
       "TaskWorkTurn",
       "WaitTimedOut",
@@ -55342,9 +55397,9 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…",
      "surface": {
       "const": 2,
-      "fn": 13,
+      "fn": 15,
       "struct": 4,
-      "trait": 1
+      "trait": 2
      }
     },
     {
@@ -58629,7 +58684,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58832,7 +58887,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58855,7 +58910,7 @@
     "repo_mutation": {
      "files": 24,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -58902,7 +58957,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59273,7 +59328,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -59308,9 +59363,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 196,
+   "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3619,
+   "source_files": 3623,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59483,7 +59538,7 @@
       "const": 5,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -67843,7 +67898,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 791
+      "fn": 795
      }
     },
     {
@@ -68892,7 +68947,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 792
+      "fn": 796
      }
     },
     {
@@ -71792,6 +71847,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/admission_doors.rs",
+     "purpose": "Admission observations wrap the original generated typed dispatch, not a generic submit endpoint",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/affect_doors.rs",
      "purpose": "Retrieval-prior setup and VAD consolidation on the caller's own owner proof",
      "surface": {
@@ -72305,7 +72370,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 133
+      "crate-vis": 134
      }
     },
     {
@@ -72774,6 +72839,16 @@
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/web_fetch_doors.rs",
+     "purpose": "Distinct typed fetch and crawl doors, shared by HTTP, SDK and MCP",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75391,7 +75466,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 19,
       "re-export": 2
      }
@@ -79336,6 +79411,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/web_fetch.rs",
+     "purpose": "The host owns renderer configuration; acquisition itself stays in the engine",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
@@ -80104,7 +80190,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 396,
+     "files": 398,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80461,7 +80547,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80533,7 +80619,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 739,
+   "source_files": 742,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80740,6 +80826,10 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AdmissionReceipt",
+      "AdmissionReceiptsRequest",
+      "AdmissionStatus",
+      "AdmissionStatusRequest",
       "AffectAnnotationPut",
       "AffectClaimConsolidateRequest",
       "AffectClaimConsolidation",
@@ -81402,6 +81492,10 @@
       "CraftCandidatesView",
       "CraftVerdict",
       "CraftVerdictView",
+      "CrawlCompletion",
+      "CrawlPageFailure",
+      "CrawlResult",
+      "CrawlScope",
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
@@ -81661,6 +81755,7 @@
       "FeedbackSendSubjectRequest",
       "FeedbackSubjectPreview",
       "FeedbackSubjectSent",
+      "FetchResult",
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
@@ -82540,6 +82635,7 @@
       "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
+      "RendererKind",
       "ReplyCode",
       "ReplyDisposition",
       "ReplyRouteRule",
@@ -83371,6 +83467,8 @@
       "WeaveSectionView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
+      "WebCrawlRequest",
+      "WebFetchRequest",
       "WellnessPersonRequest",
       "WellnessPolicyConfigureRequest",
       "WellnessProjection",
@@ -83450,8 +83548,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 672,
-      "struct": 2047
+      "enum": 676,
+      "struct": 2055
      }
     },
     {

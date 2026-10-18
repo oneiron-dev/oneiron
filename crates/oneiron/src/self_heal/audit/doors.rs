@@ -10,8 +10,8 @@ use crate::learning::honesty::{SealAssessment, seal_assessment};
 use crate::{Error, Result, Vault};
 
 use super::{
-    AttemptConfession, SEALS, SealCheckKind, SealCheckOutcome, SealCheckRequest, SealedAttemptReceipt,
-    audit_rate_in_txn, draw_audit,
+    AttemptConfession, SEALS, SealCheckKind, SealCheckOutcome, SealCheckRequest,
+    SealedAttemptReceipt, audit_rate_in_txn, draw_audit,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -120,7 +120,11 @@ pub fn pending_as_owner(
     let txn = vault.store.env.read_txn()?;
     validate_owner_in_txn(vault, &txn, owner)?;
     let mut requests = vault.pending_seal_checks_in_txn(&txn)?;
-    requests.retain(|request| input.attempt.is_none_or(|attempt| request.attempt == attempt));
+    requests.retain(|request| {
+        input
+            .attempt
+            .is_none_or(|attempt| request.attempt == attempt)
+    });
     requests.sort_by(|a, b| (a.created_at, &a.reference).cmp(&(b.created_at, &b.reference)));
     Ok(requests)
 }

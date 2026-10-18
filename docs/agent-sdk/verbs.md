@@ -6,6 +6,8 @@ not a claim that every engine-internal method is a public SDK verb.
 Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
+- `fetch`
+- `crawl`
 - `report`
 - `feedback.preview`
 - `feedback.send`
@@ -102,6 +104,8 @@ both bindings and their export-census tests in one change.
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`
+- `self.admission.status`
+- `self.admission.receipts`
 - `vault.explain.memory`
 - `vault.explain.gate`
 - `vault.kv.get`

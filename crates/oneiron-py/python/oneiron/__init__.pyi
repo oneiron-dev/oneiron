@@ -367,6 +367,10 @@ class Oneiron:
     def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
         """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
+    def fetch(self, spec: Facade.WebFetchRequest) -> Facade.FetchResult:
+        """Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links."""
+    def crawl(self, spec: Facade.WebCrawlRequest) -> Facade.CrawlResult:
+        """Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion."""
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
     @property
@@ -2327,6 +2331,8 @@ class Oneiron:
         @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
         @property
+        def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         @property
         def consent(self) -> "Oneiron._SelfConsentVerbs": ...
@@ -2416,6 +2422,11 @@ class Oneiron:
     class _SelfCredentialVerbs:
         def attenuate(self, spec: Facade.CredentialAttenuationRequest) -> Facade.CredentialAttenuated:
             """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
+    class _SelfAdmissionVerbs:
+        def status(self, spec: Facade.AdmissionStatusRequest) -> Facade.AdmissionReceipt | None:
+            """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
+        def receipts(self, spec: Facade.AdmissionReceiptsRequest) -> list[Facade.AdmissionReceipt]:
+            """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
