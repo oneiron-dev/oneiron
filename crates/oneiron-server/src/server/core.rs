@@ -25,7 +25,7 @@ use crate::usage::UsageLedger;
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
-mod pattern_workflow;
+pub(super) mod pattern_workflow;
 
 /// Internal fan-out. Recovery notices never become wire frames.
 #[derive(Debug, Clone)]
@@ -270,6 +270,7 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        vault.recover_admission_intents()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.
         // An empty configured secret mints nothing either: it carries no key
@@ -821,7 +822,9 @@ impl SyncServer {
     /// it runs without a turn. Hold the turn until the work ends; take it
     /// before the engine opens a transaction.
     pub async fn admit_task_work(&self, caller: oneiron::EntityId) -> TaskWorkTurn {
-        self.vault.admit_task_work(caller).await
+        self.vault
+            .admit_task_work_observed(caller, crate::api::admission_observer())
+            .await
     }
 
     /// Allocates a new unique nonzero connection ID.

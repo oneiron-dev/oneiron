@@ -81,6 +81,7 @@ pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
+pub(crate) use super::run_review_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -96,6 +97,7 @@ pub(crate) use super::skill_doors::*;
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
+pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::persona_doors::*;
@@ -166,6 +168,7 @@ pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::coach_offer_doors::*;
+pub(crate) use super::eval_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
@@ -1099,6 +1102,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "ai.steps.receipt"
         | "vault.runs.step"
         | "vault.runs.checkpoint"
+        | "vault.runs.review"
+        | "vault.runs.settle"
+        | "vault.runs.settlement"
+        | "vault.revert_run"
         | "ai.reply"
         | "calendar.connector.configure"
         | "calendar.connector.get"
@@ -1369,6 +1376,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.evals.author_now"
+        | "vault.evals.authoring.result"
+        | "vault.evals.families"
+        | "vault.evals.families.assign"
+        | "vault.evals.cases"
+        | "vault.evals.cases.record"
+        | "vault.evals.cohorts"
+        | "vault.evals.cohorts.open"
+        | "vault.evals.exposure"
+        | "vault.evals.sufficiency"
+        | "vault.evals.labels.blocked"
+        | "vault.evals.labels.pick"
         | "vault.coach.training_offers"
         | "vault.coach.training_offers.get"
         | "vault.coach.training_offers.trigger"
@@ -1500,6 +1519,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
         }
+        "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),

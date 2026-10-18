@@ -128,6 +128,8 @@ vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
+selfAdmissionStatus(input: unknown): unknown
+selfAdmissionReceipts(input: unknown): unknown
 vaultExplainMemory(input: unknown): unknown
 vaultExplainGate(input: unknown): unknown
 vaultKvGet(requestJson: string): string
@@ -301,6 +303,18 @@ vaultResearchArchiveRepropose(input: unknown): unknown
 vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
+vaultEvalsAuthorNow(input: unknown): unknown
+vaultEvalsAuthoringResult(input: unknown): unknown
+vaultEvalsFamilies(input: unknown): unknown
+vaultEvalsFamiliesAssign(input: unknown): unknown
+vaultEvalsCases(input: unknown): unknown
+vaultEvalsCasesRecord(input: unknown): unknown
+vaultEvalsCohorts(input: unknown): unknown
+vaultEvalsCohortsOpen(input: unknown): unknown
+vaultEvalsExposure(input: unknown): unknown
+vaultEvalsSufficiency(input: unknown): unknown
+vaultEvalsLabelsBlocked(input: unknown): unknown
+vaultEvalsLabelsPick(input: unknown): unknown
 vaultCoachTrainingOffers(input: unknown): unknown
 vaultCoachTrainingOffersGet(input: unknown): unknown
 vaultCoachTrainingOffersTrigger(input: unknown): unknown
@@ -462,6 +476,7 @@ vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
@@ -796,6 +811,10 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+vaultRunsReview(input: unknown): unknown
+vaultRunsSettle(input: unknown): unknown
+vaultRunsSettlement(input: unknown): unknown
+vaultRevertRun(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown

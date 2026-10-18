@@ -16,7 +16,8 @@ use super::app_tier::{
 };
 use super::conn_state::ConnState;
 use super::ephemeral::late_join_presence;
-use super::hello::{HelloOutcome, await_protocol_hello};
+use super::hello::HelloOutcome;
+use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 
 use crate::auth::{RevokedTokenJtis, is_revoked_or_unreadable, require_owner_auth};
@@ -97,21 +98,21 @@ async fn ws_upgrade_handler(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
-    // OF-237: over an embedded engine's channel the whole socket, hello
-    // included, lives under the engine's stop, and its stop waits for it
-    // from before the upgrade registers.
+    // OF-237: over an embedded engine's channel or mesh the whole socket,
+    // hello included, lives under the engine's stop, which it answers itself,
+    // and the stop waits for it and every call it admitted from before the
+    // upgrade registers.
     let hold = crate::embedded::UpgradeHold::take(&extensions);
     let mut response = ws
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
-            crate::embedded::UpgradeHold::run(
-                hold,
+            crate::embedded::UpgradeHold::run(hold, move |stop| {
                 crate::api::call_receipt::on_connection(
                     connection,
                     handle_connection(
-                        socket,
+                        (socket, stop),
                         server,
                         conn_id,
                         session_jti,
@@ -119,8 +120,8 @@ async fn ws_upgrade_handler(
                         locality,
                         machine,
                     ),
-                ),
-            )
+                )
+            })
         })
         .into_response();
     if let Some(value) = home_proof {
@@ -196,9 +197,13 @@ const MAX_VERB_CALLS_IN_FLIGHT: usize = 8;
 /// consult. Keeping the socket whole means the borrow checker enforces what no
 /// runtime check could: while a guarded frame is pending, no read exists to
 /// flush it. See [`GuardedTransport`].
+///
+/// `socket` comes with the engine's stop it lives under (OF-237): on it the
+/// loop stops reading at its next wait, the transport closes, and the
+/// connection ends once every verb RPC it admitted has.
 #[expect(clippy::cognitive_complexity)]
 async fn handle_connection(
-    socket: WebSocket,
+    (socket, mut stop): (WebSocket, crate::embedded::UpgradeStop),
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
@@ -210,13 +215,15 @@ async fn handle_connection(
     // re-consults the revocation registry first. The hello close below is the
     // single deliberate exception: it carries no vault state and is the
     // refusal itself.
-    let mut transport = GuardedTransport::new(
+    let transport = GuardedTransport::new(
         socket,
         Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
         session_jti.clone(),
         conn_id,
     )
     .with_inbound_cap(server.config.max_frame_size);
+    // Its hello and sends give way to the engine's stop.
+    let mut transport = StoppingTransport::new(transport, stop.clone());
 
     // Phase 0: protocol-version hello (ONE-1127). The client's FIRST frame
     // must be a supported protocol hello. Malformed frames or unsupported
@@ -227,7 +234,7 @@ async fn handle_connection(
     // timeout, so a revocation can land between the handshake and the first
     // frame. The sends below therefore cannot rely on the handshake's proof
     // of liveness, and do not: they consult at the chokepoint.
-    let protocol_version = match await_protocol_hello(&mut transport).await {
+    let protocol_version = match transport.hello().await {
         HelloOutcome::Valid(version) => version,
         HelloOutcome::Reject(reason) => {
             tracing::warn!(conn_id, reason, "protocol hello rejected — closing");
@@ -291,8 +298,8 @@ async fn handle_connection(
     );
     let mut app_tick = tokio::time::interval(Duration::from_millis(25));
     // Verb RPCs answer off this loop, which serves the socket meanwhile; their
-    // answers queue on `direct_tx`. Dropped with the loop, a call still running
-    // ends with the socket, at its next await.
+    // answers queue on `direct_tx`. A call still running when the loop ends
+    // runs to its end below.
     let mut verb_calls = tokio::task::JoinSet::new();
 
     // One loop, one owner. The outbound arms used to run in a spawned task over
@@ -308,6 +315,8 @@ async fn handle_connection(
     loop {
         let event = tokio::select! {
             biased;
+            // OF-237: the engine's stop ends the loop at its wait.
+            () = stop.turned() => break,
             // A VV catch-up queues its UPDATE and VV_RESPONSE before binding
             // the subscription. Drain those direct frames before a concurrent
             // broadcast can overtake their causal prefix on this socket.
@@ -659,12 +668,16 @@ async fn handle_connection(
                 }
                 // Rule 5: a new session or subscription waits its turn here,
                 // before the synchronous app tier runs it; only a live bound
-                // credential that may read joins a line.
+                // credential that may read joins a line. The wait gives way to
+                // the engine's stop (OF-237).
                 if let SyncMessage::Sub(payload) = &msg
                     && let Ok(auth) = super::app_tier::require_bound_app_auth(&server, &conn_state)
                     && auth.require(crate::auth::CoreScope::Read).is_ok()
                 {
-                    app_connection.admit(Some(auth), payload).await;
+                    let admitted = app_connection.admit(Some(auth), payload);
+                    if stop.until(admitted).await.is_none() {
+                        break;
+                    }
                 }
                 let handle_result = match msg {
                     SyncMessage::Rpc(payload) => handle_app_message_with_connection(
@@ -793,6 +806,11 @@ async fn handle_connection(
         }
     }
 
+    // OF-237: the socket closes, then every verb RPC it admitted runs to its
+    // end; none is aborted. Only after them does its place in an embedded
+    // engine's drain go, so no worker stops under one.
+    drop(transport);
+    while verb_calls.join_next().await.is_some() {}
     tracing::info!(conn_id, "connection closed");
 }
 
