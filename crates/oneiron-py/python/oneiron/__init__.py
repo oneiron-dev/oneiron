@@ -653,6 +653,12 @@ class Oneiron:
         def forget(self, input: dict[str, Any]) -> Any:
             """Retracts claims by exact claim or by subject and predicate; never a hard delete."""
             return json.loads(_translate(lambda: self._client.vault_forget(json.dumps(input, allow_nan=False))))
+        @property
+        def booking(self) -> "Oneiron._VaultBookingVerbs":
+            return Oneiron._VaultBookingVerbs(self._client)
+        @property
+        def calendar(self) -> "Oneiron._VaultCalendarVerbs":
+            return Oneiron._VaultCalendarVerbs(self._client)
         def delete(self, input: dict[str, Any]) -> Any:
             """Deletes one entity under a named reason; an owner verb that only a verified human may call."""
             return json.loads(_translate(lambda: self._client.vault_delete(json.dumps(input, allow_nan=False))))
@@ -1835,6 +1841,24 @@ class Oneiron:
             return json.loads(_translate(lambda: self._client.vault_decisions_asks_answer(json.dumps(spec))))
         def climb(self, spec):
             return json.loads(_translate(lambda: self._client.vault_decisions_asks_climb(json.dumps(spec))))
+    class _VaultBookingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def page_token(self, spec):
+            """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
+            return json.loads(_translate(lambda: self._client.vault_booking_page_token(json.dumps(spec))))
+    class _VaultCalendarVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_read(json.dumps(spec))))
+        def search(self, spec):
+            """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_search(json.dumps(spec))))
+        def freebusy(self, spec):
+            """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
