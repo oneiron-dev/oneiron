@@ -498,6 +498,7 @@ pub use super::recall_door::{
     recall_with_vector,
 };
 pub use super::sdk_agents::*;
+pub use super::sdk_authority_history::*;
 pub use super::sdk_calendar::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
