@@ -2590,7 +2590,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ForwardedCallerProof",
@@ -3037,16 +3037,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "ActAuthority",
+      "GrantedAct",
       "KeyWork"
      ],
      "path": "src/authority/owner_act.rs",
      "purpose": "The L02 side of the owner-act record (mesh contract §3): the one rule every owner act's carrier is judged…",
      "surface": {
-      "crate-vis": 2,
-      "enum": 1
+      "crate-vis": 8,
+      "enum": 2,
+      "fn": 4,
+      "struct": 1
      }
     },
     {
@@ -3238,7 +3242,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OwnerDeviceRenewalProof"
@@ -20264,7 +20268,7 @@
       "const": 4,
       "crate-vis": 7,
       "enum": 4,
-      "fn": 8,
+      "fn": 9,
       "struct": 10
      }
     },
@@ -26989,13 +26993,33 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "EngineCause",
+      "SealAuthority",
+      "SealStanding",
+      "TopologySeal",
+      "TopologySealBy"
+     ],
+     "path": "src/identity_topology/act_admission.rs",
+     "purpose": "Who decided a topology seal, and whether that decision stands here (mesh PR2-topology, amended 10-19 03:0x…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 12,
+      "enum": 4,
+      "fn": 8,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "AdmissionDisposition",
       "AdmissionVerdict"
      ],
      "path": "src/identity_topology/admission_disposition.rs",
      "purpose": "Signed append-only admission facts, independent of a decision's erasable author",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 17,
       "enum": 1,
       "struct": 1
      }
@@ -27029,6 +27053,16 @@
      "purpose": "The low-level MessagePack field codec for the type-76 event body, plus the stateless admission checks every…",
      "surface": {
       "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/identity_topology/integrity_refusal.rs",
+     "purpose": "The engine's integrity refusals on the type-76 family: a deletion's or a redaction's signed refusal of a…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -27068,7 +27102,7 @@
      "purpose": "ARCH-0055 identity-topology op family: merge / split / facet / assert_distinct as typed ops over an…",
      "surface": {
       "crate-vis": 15,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -27081,9 +27115,9 @@
      "path": "src/identity_topology/op_apply.rs",
      "purpose": "The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -27094,7 +27128,7 @@
      "path": "src/identity_topology/op_undo.rs",
      "purpose": "The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event…",
      "surface": {
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -27127,7 +27161,7 @@
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
       "crate-vis": 6,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -27238,7 +27272,7 @@
      "purpose": "Pinned wire vocabulary of the identity-topology family: the type-76 body field keys, the reassignment-map…",
      "surface": {
       "const": 2,
-      "crate-vis": 60
+      "crate-vis": 63
      }
     },
     {
@@ -57613,7 +57647,7 @@
      "purpose": "ChannelIdentity reputation claims and warmup delivery floors (OF-347 R4)"
     },
     "identity_topology": {
-     "files": 20,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58420,7 +58454,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3563,
+   "source_files": 3565,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58608,7 +58642,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ActBy",
@@ -58622,7 +58656,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 3,
-      "fn": 5,
+      "fn": 7,
       "struct": 1
      }
     },
