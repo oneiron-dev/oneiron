@@ -384,6 +384,47 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::task_verb::TaskAccept>(),
             ),
             (
+                "vault.commit_message",
+                crate::code_run::vault_read::request_schema::<crate::memory::CommitMessageRequest>(
+                ),
+            ),
+            (
+                "vault.begin_message_stream",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::BeginMessageStreamRequest,
+                >(),
+            ),
+            (
+                "vault.append_to_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::AppendToStreamRequest>(
+                ),
+            ),
+            (
+                "vault.flush_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamRequest>(
+                ),
+            ),
+            (
+                "vault.finalize_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamRequest>(
+                ),
+            ),
+            (
+                "vault.cancel_stream",
+                crate::code_run::vault_read::request_schema::<crate::memory::CancelStreamRequest>(),
+            ),
+            (
+                "vault.message_stream_partial",
+                crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamRequest>(
+                ),
+            ),
+            (
+                "vault.messages.durability",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::MessageDurabilityRequest,
+                >(),
+            ),
+            (
                 "vault.witness",
                 crate::code_run::vault_read::request_schema::<crate::memory::WitnessTurn>(),
             ),
@@ -5061,6 +5102,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.commit_message",
+    "vault.begin_message_stream",
+    "vault.append_to_stream",
+    "vault.flush_stream",
+    "vault.finalize_stream",
+    "vault.cancel_stream",
+    "vault.message_stream_partial",
+    "vault.messages.durability",
     "vault.recall",
     "vault.retrieval.aging.get",
     "vault.retrieval.aging.configure",
@@ -5676,6 +5725,26 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.commit_message" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
+        }
+        "vault.begin_message_stream" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamHandle>()
+        }
+        "vault.append_to_stream" => crate::code_run::vault_read::request_schema::<()>(),
+        "vault.flush_stream" => crate::code_run::vault_read::request_schema::<()>(),
+        "vault.finalize_stream" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamReceipt>()
+        }
+        "vault.cancel_stream" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamReceipt>()
+        }
+        "vault.message_stream_partial" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MessageStreamPartial>()
+        }
+        "vault.messages.durability" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>,
         >(),
         "vault.recall" => {
             crate::code_run::vault_read::request_schema::<crate::memory::MemoryPack>()
@@ -7809,6 +7878,62 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/task_ref")?.clone(),
             );
             &["spec", "task_ref"]
+        }
+        "vault.commit_message" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.begin_message_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.append_to_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.flush_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.finalize_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cancel_stream" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.message_stream_partial" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.messages.durability" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "vault.witness" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -13783,6 +13908,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.accept" => {
             let _input: crate::task_verb::TaskAccept = decode(value.clone())?;
         }
+        "vault.commit_message" => {
+            let _input: crate::memory::CommitMessageRequest = decode(value.clone())?;
+        }
+        "vault.begin_message_stream" => {
+            let _input: crate::memory::BeginMessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.append_to_stream" => {
+            let _input: crate::memory::AppendToStreamRequest = decode(value.clone())?;
+        }
+        "vault.flush_stream" => {
+            let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.finalize_stream" => {
+            let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.cancel_stream" => {
+            let _input: crate::memory::CancelStreamRequest = decode(value.clone())?;
+        }
+        "vault.message_stream_partial" => {
+            let _input: crate::memory::MessageStreamRequest = decode(value.clone())?;
+        }
+        "vault.messages.durability" => {
+            let _input: crate::memory::MessageDurabilityRequest = decode(value.clone())?;
+        }
         "vault.witness" => {
             let input: crate::memory::WitnessTurn = decode(value.clone())?;
             crate::memory::caps::check_witness_turn(&input)?;
@@ -16828,6 +16977,16 @@ pub fn invoke(
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
         "tasks.update" => encode(tasks_update(memory, decode(value)?)?),
         "tasks.accept" => encode(tasks_accept(memory, decode(value)?)?),
+        "vault.commit_message" => encode(vault_commit_message(memory, decode(value)?)?),
+        "vault.begin_message_stream" => encode(vault_begin_message_stream(memory, decode(value)?)?),
+        "vault.append_to_stream" => encode(vault_append_to_stream(memory, decode(value)?)?),
+        "vault.flush_stream" => encode(vault_flush_stream(memory, decode(value)?)?),
+        "vault.finalize_stream" => encode(vault_finalize_stream(memory, decode(value)?)?),
+        "vault.cancel_stream" => encode(vault_cancel_stream(memory, decode(value)?)?),
+        "vault.message_stream_partial" => {
+            encode(vault_message_stream_partial(memory, decode(value)?)?)
+        }
+        "vault.messages.durability" => encode(vault_messages_durability(memory, decode(value)?)?),
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
@@ -19106,6 +19265,54 @@ pub fn tasks_accept(
         &["/task_ref"],
     )?;
     memory.tasks_accept(input)
+}
+pub fn vault_commit_message(
+    memory: &Memory<'_>,
+    input: crate::memory::CommitMessageRequest,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    memory.messages_commit(&input)
+}
+pub fn vault_begin_message_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::BeginMessageStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamHandle> {
+    memory.messages_begin_stream(&input)
+}
+pub fn vault_append_to_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::AppendToStreamRequest,
+) -> MemoryResult<()> {
+    memory.messages_append_stream(&input)
+}
+pub fn vault_flush_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageStreamRequest,
+) -> MemoryResult<()> {
+    memory.messages_flush_stream(&input)
+}
+pub fn vault_finalize_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamReceipt> {
+    memory.messages_finalize_stream(&input)
+}
+pub fn vault_cancel_stream(
+    memory: &Memory<'_>,
+    input: crate::memory::CancelStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamReceipt> {
+    memory.messages_cancel_stream(&input)
+}
+pub fn vault_message_stream_partial(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageStreamRequest,
+) -> MemoryResult<crate::memory::MessageStreamPartial> {
+    memory.messages_stream_partial(&input)
+}
+pub fn vault_messages_durability(
+    memory: &Memory<'_>,
+    input: crate::memory::MessageDurabilityRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>> {
+    memory.messages_durability(&input)
 }
 pub fn vault_witness(
     memory: &Memory<'_>,

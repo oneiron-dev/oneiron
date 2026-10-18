@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 890 facade rows, 3058 declarations.
-Inputs: 838 of 890 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 806 of 890 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 101; unread shapes: 0.
+Census: 898 facade rows, 3083 declarations.
+Inputs: 844 of 898 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 814 of 898 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1877,10 +1877,122 @@ class TaskAccept(TypedDict):
     task_ref: EntityId
     intent_key: str
 WitnessAuthor = Literal["user", "companion", "system"]
+class WitnessAssertions(TypedDict):
+    cited: list[RecordRef]
+    created: list[RecordRef]
 class QuoteSpan(TypedDict):
     message: EntityId
     start: int
     end: int
+class MessageBirth(TypedDict):
+    conversation_ref: str
+    turn_ref: NotRequired[str | None]
+    author: WitnessAuthor
+    message_type: str
+    metadata: NotRequired[Any | None]
+    is_visible: bool
+    order: int
+    occurred_at: int
+    assertions: NotRequired[WitnessAssertions]
+    quote: NotRequired[QuoteSpan | None]
+class MessageCommitOptions(TypedDict):
+    register: NotRequired[str | None]
+class CommitMessageRequest(TypedDict):
+    message_id: str
+    content: str
+    birth: MessageBirth
+    options: NotRequired[MessageCommitOptions]
+StreamSyncVisibility = Literal["originator_only", "all_devices"]
+class StreamCadencePerWindowBody(TypedDict):
+    chars: int
+class StreamCadencePerWindow(TypedDict):
+    per_window: StreamCadencePerWindowBody
+StreamCadence = Literal["per_token", "per_sentence", "manual"] | StreamCadencePerWindow
+class MessageStreamModeAtomic(TypedDict):
+    kind: Literal["atomic"]
+class MessageStreamModeStreamed(TypedDict):
+    kind: Literal["streamed"]
+    syncVisibility: StreamSyncVisibility
+    cadence: StreamCadence
+MessageStreamMode = MessageStreamModeAtomic | MessageStreamModeStreamed
+class MessageStreamOptions(TypedDict):
+    mode: NotRequired[MessageStreamMode | None]
+    register: NotRequired[str | None]
+class BeginMessageStreamRequest(TypedDict):
+    message_id: str
+    birth: NotRequired[MessageBirth | None]
+    options: NotRequired[MessageStreamOptions]
+class MessageStreamHandle(TypedDict):
+    message: EntityId
+    generation: EntityId
+class AppendToStreamRequest(TypedDict):
+    handle: MessageStreamHandle
+    delta: str
+class MessageStreamRequest(TypedDict):
+    handle: MessageStreamHandle
+StreamFinality = Literal["final", "partial", "cancelled"]
+class StreamFinalityReasonIdleTimeoutBody(TypedDict):
+    timeout_ms: int
+class StreamFinalityReasonIdleTimeout(TypedDict):
+    idle_timeout: StreamFinalityReasonIdleTimeoutBody
+class StreamFinalityReasonCustom(TypedDict):
+    custom: str
+StreamFinalityReason = Literal["explicit_finalize", "idle_timeout30s", "process_crash_recovery", "user_interrupted", "agent_aborted", "external_signal"] | StreamFinalityReasonIdleTimeout | StreamFinalityReasonCustom
+class FinishReasonOtherBody(TypedDict):
+    name: str
+class FinishReasonOther(TypedDict):
+    other: FinishReasonOtherBody
+FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
+class MessageStreamReceipt(TypedDict):
+    message_id: EntityId
+    actor: EntityId
+    generation: EntityId
+    finality: StreamFinality
+    finality_reason: StreamFinalityReason
+    finish_reason: NotRequired[FinishReason | None]
+    bytes: int
+    recovered: bool
+    ephemeral_text_lost: bool
+    receipt_ref: str
+MessageCancelKind = Literal["user_interrupted", "agent_aborted", "external_signal"]
+MessageCustomCancelKind = Literal["custom"]
+class MessageCustomCancel(TypedDict):
+    kind: MessageCustomCancelKind
+    description: str
+MessageCancelReason = MessageCancelKind | MessageCustomCancel
+class CancelStreamRequest(TypedDict):
+    handle: MessageStreamHandle
+    reason: MessageCancelReason
+class MessageWriteModeStreamedBody(TypedDict):
+    visibility: StreamSyncVisibility
+    cadence: StreamCadence
+class MessageWriteModeStreamed(TypedDict):
+    streamed: MessageWriteModeStreamedBody
+MessageWriteMode = Literal["atomic"] | MessageWriteModeStreamed
+class MessageStreamPartial(TypedDict):
+    message_id: EntityId
+    text: str
+    sequence: int
+    mode: MessageWriteMode
+class MessageDurabilityRequest(TypedDict):
+    message_id: str
+    after_generation: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class MessageCompletion(TypedDict):
+    incomplete: bool
+    generating: bool
+    finish_reason: NotRequired[FinishReason | None]
+class MessageDocumentState(TypedDict):
+    frontier: list[int]
+    content: str
+class MessageDurability(TypedDict):
+    message_id: str
+    completion: MessageCompletion
+    latest_receipt: NotRequired[MessageStreamReceipt | None]
+    receipts: list[MessageStreamReceipt]
+    next_after_generation: NotRequired[str | None]
+    document_exists: bool
+    document_history: list[MessageDocumentState]
 class WitnessMessage(TypedDict):
     id: NotRequired[str | None]
     author: WitnessAuthor
@@ -1890,9 +2002,6 @@ class WitnessMessage(TypedDict):
     is_visible: bool
     order: int
     quote: NotRequired[QuoteSpan | None]
-class WitnessAssertions(TypedDict):
-    cited: list[RecordRef]
-    created: list[RecordRef]
 class WitnessTurn(TypedDict):
     conversation_ref: str
     turn_ref: NotRequired[str | None]
@@ -11207,11 +11316,6 @@ class LlmUsage(TypedDict):
     input: LlmInputUsage
     output: LlmOutputUsage
     raw_provider: Any
-class FinishReasonOtherBody(TypedDict):
-    name: str
-class FinishReasonOther(TypedDict):
-    other: FinishReasonOtherBody
-FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
 class LlmResponse(TypedDict):
     message: LlmMessage
     usage: LlmUsage

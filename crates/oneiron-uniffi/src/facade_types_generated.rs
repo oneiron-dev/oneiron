@@ -3,10 +3,10 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 890 facade rows, 3031 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 846.
-// WireJson rows: self.skills.call (result).
-// WireJson leaves inside the generated types, past each serde_json::Value: CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
+// UniFFI census: 898 facade rows, 3057 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 851.
+// WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
+// WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
     clippy::enum_variant_names,
@@ -5762,6 +5762,414 @@ pub struct TaskAccept {
     pub task_ref: String,
     #[serde(rename = "intent_key")]
     pub intent_key: String,
+}
+
+/// `oneiron::memory::witness::types::WitnessAuthor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WireWitnessAuthor {
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "companion")]
+    Companion,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::memory::witness::types::WitnessAssertions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WitnessAssertions {
+    #[serde(rename = "cited")]
+    pub cited: Vec<RecordRef>,
+    #[serde(rename = "created")]
+    pub created: Vec<RecordRef>,
+}
+
+/// `oneiron::conversation_dag::types::QuoteSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WireQuoteSpan {
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "start")]
+    pub start: u32,
+    #[serde(rename = "end")]
+    pub end: u32,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageBirth`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageBirth {
+    #[serde(rename = "conversation_ref")]
+    pub conversation_ref: String,
+    #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
+    pub turn_ref: Option<String>,
+    #[serde(rename = "author")]
+    pub author: WireWitnessAuthor,
+    #[serde(rename = "message_type")]
+    pub message_type: String,
+    #[serde(rename = "metadata", default, skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<crate::WireJson>,
+    #[serde(rename = "is_visible")]
+    pub is_visible: bool,
+    #[serde(rename = "order")]
+    pub order: u32,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+    #[serde(
+        rename = "assertions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub assertions: Option<WitnessAssertions>,
+    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<WireQuoteSpan>,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageCommitOptions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageCommitOptions {
+    #[serde(rename = "register", default, skip_serializing_if = "Option::is_none")]
+    pub register: Option<String>,
+}
+
+/// `oneiron::memory::witness::stream::api_types::CommitMessageRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CommitMessageRequest {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "content")]
+    pub content: String,
+    #[serde(rename = "birth")]
+    pub birth: MessageBirth,
+    #[serde(rename = "options", default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<MessageCommitOptions>,
+}
+
+/// `oneiron::memory::witness::stream::types::StreamSyncVisibility`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StreamSyncVisibility {
+    #[serde(rename = "originator_only")]
+    OriginatorOnly,
+    #[serde(rename = "all_devices")]
+    AllDevices,
+}
+
+/// `oneiron::memory::witness::stream::types::StreamCadence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StreamCadence {
+    #[serde(rename = "per_token")]
+    PerToken,
+    #[serde(rename = "per_sentence")]
+    PerSentence,
+    #[serde(rename = "per_window")]
+    PerWindow {
+        #[serde(rename = "chars")]
+        chars: u32,
+    },
+    #[serde(rename = "manual")]
+    Manual,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageStreamMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum MessageStreamMode {
+    #[serde(rename = "atomic")]
+    Atomic,
+    #[serde(rename = "streamed")]
+    Streamed {
+        #[serde(rename = "syncVisibility")]
+        sync_visibility: StreamSyncVisibility,
+        #[serde(rename = "cadence")]
+        cadence: StreamCadence,
+    },
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageStreamOptions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageStreamOptions {
+    #[serde(rename = "mode", default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<MessageStreamMode>,
+    #[serde(rename = "register", default, skip_serializing_if = "Option::is_none")]
+    pub register: Option<String>,
+}
+
+/// `oneiron::memory::witness::stream::api_types::BeginMessageStreamRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BeginMessageStreamRequest {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "birth", default, skip_serializing_if = "Option::is_none")]
+    pub birth: Option<MessageBirth>,
+    #[serde(rename = "options", default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<MessageStreamOptions>,
+}
+
+/// `oneiron::memory::witness::stream::types::MessageStreamHandle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageStreamHandle {
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "generation")]
+    pub generation: String,
+}
+
+/// `oneiron::memory::witness::stream::api_types::AppendToStreamRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AppendToStreamRequest {
+    #[serde(rename = "handle")]
+    pub handle: MessageStreamHandle,
+    #[serde(rename = "delta")]
+    pub delta: String,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageStreamRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageStreamRequest {
+    #[serde(rename = "handle")]
+    pub handle: MessageStreamHandle,
+}
+
+/// `oneiron::memory::witness::stream::types::StreamFinality`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StreamFinality {
+    #[serde(rename = "final")]
+    Final,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// `oneiron::memory::witness::stream::types::StreamFinalityReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StreamFinalityReason {
+    #[serde(rename = "explicit_finalize")]
+    ExplicitFinalize,
+    #[serde(rename = "idle_timeout30s")]
+    IdleTimeout30s,
+    #[serde(rename = "idle_timeout")]
+    IdleTimeout {
+        #[serde(rename = "timeout_ms")]
+        timeout_ms: u64,
+    },
+    #[serde(rename = "process_crash_recovery")]
+    ProcessCrashRecovery,
+    #[serde(rename = "user_interrupted")]
+    UserInterrupted,
+    #[serde(rename = "agent_aborted")]
+    AgentAborted,
+    #[serde(rename = "external_signal")]
+    ExternalSignal,
+    #[serde(rename = "custom")]
+    Custom(String),
+}
+
+/// `oneiron_model::llm::protocol::FinishReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FinishReason {
+    #[serde(rename = "stop")]
+    Stop,
+    #[serde(rename = "length")]
+    Length,
+    #[serde(rename = "tool_calls")]
+    ToolCalls,
+    #[serde(rename = "content_filtered")]
+    ContentFiltered,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "other")]
+    Other {
+        #[serde(rename = "name")]
+        name: String,
+    },
+}
+
+/// `oneiron::memory::witness::stream::types::MessageStreamReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageStreamReceipt {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "generation")]
+    pub generation: String,
+    #[serde(rename = "finality")]
+    pub finality: StreamFinality,
+    #[serde(rename = "finality_reason")]
+    pub finality_reason: StreamFinalityReason,
+    #[serde(
+        rename = "finish_reason",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub finish_reason: Option<FinishReason>,
+    #[serde(rename = "bytes")]
+    pub bytes: u64,
+    #[serde(rename = "recovered")]
+    pub recovered: bool,
+    #[serde(rename = "ephemeral_text_lost")]
+    pub ephemeral_text_lost: bool,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageCancelKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MessageCancelKind {
+    #[serde(rename = "user_interrupted")]
+    UserInterrupted,
+    #[serde(rename = "agent_aborted")]
+    AgentAborted,
+    #[serde(rename = "external_signal")]
+    ExternalSignal,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageCustomCancelKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MessageCustomCancelKind {
+    #[serde(rename = "custom")]
+    Custom,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageCustomCancel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageCustomCancel {
+    #[serde(rename = "kind")]
+    pub kind: MessageCustomCancelKind,
+    #[serde(rename = "description")]
+    pub description: String,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageCancelReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum MessageCancelReason {
+    Named(MessageCancelKind),
+    Custom(MessageCustomCancel),
+}
+
+/// `oneiron::memory::witness::stream::api_types::CancelStreamRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CancelStreamRequest {
+    #[serde(rename = "handle")]
+    pub handle: MessageStreamHandle,
+    #[serde(rename = "reason")]
+    pub reason: MessageCancelReason,
+}
+
+/// `oneiron::memory::witness::stream::types::MessageWriteMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MessageWriteMode {
+    #[serde(rename = "atomic")]
+    Atomic,
+    #[serde(rename = "streamed")]
+    Streamed {
+        #[serde(rename = "visibility")]
+        visibility: StreamSyncVisibility,
+        #[serde(rename = "cadence")]
+        cadence: StreamCadence,
+    },
+}
+
+/// `oneiron::memory::witness::stream::types::MessageStreamPartial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageStreamPartial {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "sequence")]
+    pub sequence: u64,
+    #[serde(rename = "mode")]
+    pub mode: MessageWriteMode,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageDurabilityRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MessageDurabilityRequest {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(
+        rename = "after_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_generation: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+}
+
+/// `oneiron::memory::witness::stream::completion::MessageCompletion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageCompletion {
+    #[serde(rename = "incomplete")]
+    pub incomplete: bool,
+    #[serde(rename = "generating")]
+    pub generating: bool,
+    #[serde(
+        rename = "finish_reason",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub finish_reason: Option<FinishReason>,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageDocumentState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageDocumentState {
+    #[serde(rename = "frontier")]
+    pub frontier: Vec<u8>,
+    #[serde(rename = "content")]
+    pub content: String,
+}
+
+/// `oneiron::memory::witness::stream::api_types::MessageDurability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MessageDurability {
+    #[serde(rename = "message_id")]
+    pub message_id: String,
+    #[serde(rename = "completion")]
+    pub completion: MessageCompletion,
+    #[serde(
+        rename = "latest_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub latest_receipt: Option<MessageStreamReceipt>,
+    #[serde(rename = "receipts")]
+    pub receipts: Vec<MessageStreamReceipt>,
+    #[serde(
+        rename = "next_after_generation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after_generation: Option<String>,
+    #[serde(rename = "document_exists")]
+    pub document_exists: bool,
+    #[serde(rename = "document_history")]
+    pub document_history: Vec<MessageDocumentState>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalMessageDurability`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalMessageDurability {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<MessageDurability>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::memory::claim_admission::ScopedClaimInput`.
@@ -16875,29 +17283,6 @@ pub struct OffRecordSessionRequest {
     pub session_ref: String,
 }
 
-/// `oneiron::memory::witness::types::WitnessAuthor`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum WireWitnessAuthor {
-    #[serde(rename = "user")]
-    User,
-    #[serde(rename = "companion")]
-    Companion,
-    #[serde(rename = "system")]
-    System,
-}
-
-/// `oneiron::conversation_dag::types::QuoteSpan`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WireQuoteSpan {
-    #[serde(rename = "message")]
-    pub message: String,
-    #[serde(rename = "start")]
-    pub start: u32,
-    #[serde(rename = "end")]
-    pub end: u32,
-}
-
 /// `oneiron::memory::witness::types::WitnessMessage`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -16918,16 +17303,6 @@ pub struct WireWitnessMessage {
     pub order: u32,
     #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
     pub quote: Option<WireQuoteSpan>,
-}
-
-/// `oneiron::memory::witness::types::WitnessAssertions`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct WitnessAssertions {
-    #[serde(rename = "cited")]
-    pub cited: Vec<RecordRef>,
-    #[serde(rename = "created")]
-    pub created: Vec<RecordRef>,
 }
 
 /// `oneiron::memory::witness::types::WitnessTurn`.
@@ -34670,26 +35045,6 @@ pub struct LlmUsage {
     pub output: LlmOutputUsage,
     #[serde(rename = "raw_provider")]
     pub raw_provider: crate::WireJson,
-}
-
-/// `oneiron_model::llm::protocol::FinishReason`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum FinishReason {
-    #[serde(rename = "stop")]
-    Stop,
-    #[serde(rename = "length")]
-    Length,
-    #[serde(rename = "tool_calls")]
-    ToolCalls,
-    #[serde(rename = "content_filtered")]
-    ContentFiltered,
-    #[serde(rename = "cancelled")]
-    Cancelled,
-    #[serde(rename = "other")]
-    Other {
-        #[serde(rename = "name")]
-        name: String,
-    },
 }
 
 /// `oneiron_model::llm::protocol::LlmResponse`.

@@ -416,6 +416,22 @@ class Oneiron:
         def fanout(self) -> "Oneiron._VaultFanoutVerbs": ...
         @property
         def budgets(self) -> "Oneiron._VaultBudgetsVerbs": ...
+        def commit_message(self, spec: Facade.CommitMessageRequest) -> Facade.WitnessReceipt:
+            """Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes."""
+        def begin_message_stream(self, spec: Facade.BeginMessageStreamRequest) -> Facade.MessageStreamHandle:
+            """Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation."""
+        def append_to_stream(self, spec: Facade.AppendToStreamRequest) -> None:
+            """Appends one authored delta to this actor's generation-bound stream through its existing write gate."""
+        def flush_stream(self, spec: Facade.MessageStreamRequest) -> None:
+            """Publishes the current partial at once when streamed visibility allows it; atomic mode stays private."""
+        def finalize_stream(self, spec: Facade.MessageStreamRequest) -> Facade.MessageStreamReceipt:
+            """Commits the stream as final and releases its handle, returning the immutable terminal receipt."""
+        def cancel_stream(self, spec: Facade.CancelStreamRequest) -> Facade.MessageStreamReceipt:
+            """Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason."""
+        def message_stream_partial(self, spec: Facade.MessageStreamRequest) -> Facade.MessageStreamPartial:
+            """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
+        @property
+        def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         def witness(self, turn: WitnessTurn) -> WitnessReceipt: ...
         @property
         def claims(self) -> "Oneiron._VaultClaimsVerbs": ...
@@ -554,8 +570,6 @@ class Oneiron:
         def rooms(self) -> "Oneiron._VaultRoomsVerbs": ...
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs": ...
-        @property
-        def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
@@ -741,6 +755,11 @@ class Oneiron:
             """The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume."""
         def resume(self, spec: Facade.BudgetHoldRequest) -> Facade.PartialResultHold:
             """The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."""
+    class _VaultMessagesVerbs:
+        def durability(self, spec: Facade.MessageDurabilityRequest) -> Facade.ScopedReadResult[Facade.MessageDurability | None]:
+            """Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."""
+        def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
+            """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
     class _VaultClaimsVerbs:
         def upsert(self, spec: Facade.ScopedClaimInput) -> Facade.CommitReceipt:
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
@@ -2179,9 +2198,6 @@ class Oneiron:
     class _VaultConversationsRecordsVerbs:
         def append(self, spec: Facade.DagRecordAppendInput) -> Facade.DagRecordAppendReceipt:
             """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
-    class _VaultMessagesVerbs:
-        def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
-            """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...

@@ -1109,6 +1109,113 @@
       "section": true
     },
     {
+      "name": "vault.commit_message",
+      "description": "Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes.",
+      "input": "crate::memory::CommitMessageRequest",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "memory.messages_commit(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "lands_turn": true
+    },
+    {
+      "name": "vault.begin_message_stream",
+      "description": "Opens one caller-owned MESSAGE stream, with birth axes for a new message or stored axes for a continuation.",
+      "input": "crate::memory::BeginMessageStreamRequest",
+      "output": "crate::memory::MessageStreamHandle",
+      "call": "memory.messages_begin_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.append_to_stream",
+      "description": "Appends one authored delta to this actor's generation-bound stream through its existing write gate.",
+      "input": "crate::memory::AppendToStreamRequest",
+      "output": "()",
+      "call": "memory.messages_append_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.flush_stream",
+      "description": "Publishes the current partial at once when streamed visibility allows it; atomic mode stays private.",
+      "input": "crate::memory::MessageStreamRequest",
+      "output": "()",
+      "call": "memory.messages_flush_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.finalize_stream",
+      "description": "Commits the stream as final and releases its handle, returning the immutable terminal receipt.",
+      "input": "crate::memory::MessageStreamRequest",
+      "output": "crate::memory::MessageStreamReceipt",
+      "call": "memory.messages_finalize_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "lands_turn": true
+    },
+    {
+      "name": "vault.cancel_stream",
+      "description": "Keeps the stream's text as one incomplete MESSAGE with cancelled finality and the caller's explicit reason.",
+      "input": "crate::memory::CancelStreamRequest",
+      "output": "crate::memory::MessageStreamReceipt",
+      "call": "memory.messages_cancel_stream(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "lands_turn": true
+    },
+    {
+      "name": "vault.message_stream_partial",
+      "description": "Reads only this actor's accepted in-memory partial using its generation-bound stream handle.",
+      "input": "crate::memory::MessageStreamRequest",
+      "output": "crate::memory::MessageStreamPartial",
+      "call": "memory.messages_stream_partial(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.messages.durability",
+      "description": "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane.",
+      "input": "crate::memory::MessageDurabilityRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::MessageDurability>>",
+      "call": "memory.messages_durability(&input)?",
+      "scope": "Read",
+      "admission": {
+        "projection_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.witness",
       "description": "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch.",
       "input": "crate::memory::WitnessTurn",

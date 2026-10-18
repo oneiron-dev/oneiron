@@ -9,7 +9,7 @@ pub const MAX_MESSAGE_STREAM_BYTES: usize = 1024 * 1024;
 pub const DEFAULT_MESSAGE_STREAM_IDLE_MS: u64 = 30_000;
 
 /// Presence publication cadence. Windows count Unicode scalar values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamCadence {
     /// Publish each accepted append.
@@ -22,14 +22,14 @@ pub enum StreamCadence {
     Manual,
 }
 /// Partial-text visibility. Finalized text follows the ordinary record sync lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamSyncVisibility {
     OriginatorOnly,
     AllDevices,
 }
 /// Atomic is the default; it buffers without publishing partials.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageWriteMode {
     #[default]
@@ -57,7 +57,7 @@ impl Default for MessageStreamPolicy {
     }
 }
 /// An opaque generation-bound handle. Reusing an old handle never edits a successor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageStreamHandle {
     pub(super) message: EntityId,
     pub(super) generation: EntityId,
@@ -68,14 +68,14 @@ impl MessageStreamHandle {
         self.message
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamFinality {
     Final,
     Partial,
     Cancelled,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StreamFinalityReason {
     ExplicitFinalize,
@@ -98,7 +98,7 @@ pub enum StreamCancelReason {
 /// Durable audit. A crash recovers the stream's last checkpoint: every accepted
 /// delta is saved in its seed before it is published, so the loss flag is set
 /// only when accepted text was ahead of that checkpoint.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageStreamReceipt {
     pub message_id: EntityId,
     /// Original authenticated writer, including unattributed system MESSAGEs.
@@ -115,7 +115,7 @@ pub struct MessageStreamReceipt {
     pub receipt_ref: String,
 }
 /// Observable local partial. This is never serialized into LMDB.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MessageStreamPartial {
     pub message_id: EntityId,
     pub text: String,

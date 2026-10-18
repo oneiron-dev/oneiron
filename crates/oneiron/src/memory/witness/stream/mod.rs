@@ -1,6 +1,8 @@
 //! Ephemeral MESSAGE streams, waiting their turn past the vault's row, with
 //! transactional finality.
 mod admission;
+mod api;
+mod api_types;
 mod completion;
 mod lifecycle;
 mod lift;
@@ -15,6 +17,7 @@ mod types;
 use crate::batch::secret_scan::Lifted;
 use crate::memory::Memory;
 use crate::{EntityId, Vault};
+pub use api_types::*;
 pub use completion::MessageCompletion;
 pub(crate) use completion::message_completion_in_txn;
 pub use lifecycle::MessageStreamPump;
