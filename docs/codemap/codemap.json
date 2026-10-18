@@ -1372,8 +1372,8 @@
      "surface": {
       "const": 1,
       "enum": 1,
-      "fn": 4,
-      "re-export": 1,
+      "fn": 5,
+      "re-export": 2,
       "struct": 6
      }
     },
@@ -1385,6 +1385,29 @@
      "purpose": "Identity-stamped conversation and membership projections; no writes or index repairs",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "InboxConcernGroup",
+      "InboxLensConcern",
+      "InboxLensDiaryReview",
+      "InboxLensKind",
+      "InboxLensPage",
+      "InboxLensParticipant",
+      "InboxLensPile",
+      "InboxLensRequest",
+      "InboxLensRow",
+      "InboxRunGroupsRequest"
+     ],
+     "path": "src/agent_inbox_lens/serve.rs",
+     "purpose": "Typed pages over the existing identity lens and Dreamer consent groups",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 8
      }
     },
     {
@@ -8891,6 +8914,7 @@
      "path": "src/campaign/compliance/amend.rs",
      "purpose": "Propose/stamp amendment transaction: classification, activation, notices, proposal hash",
      "surface": {
+      "crate-vis": 5,
       "enum": 2,
       "fn": 6
      }
@@ -8903,6 +8927,39 @@
      "purpose": "Claim-store readers, comm-party mirror, and the msgpack value toolkit",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ComplianceAmendRequest",
+      "ComplianceApprovalRequest",
+      "ComplianceDisposition",
+      "ComplianceOperation",
+      "ComplianceOwnerStamp",
+      "CompliancePendingProposal",
+      "ComplianceReceipt",
+      "ComplianceResult",
+      "ComplianceResultRequest",
+      "ComplianceRowVerification",
+      "ComplianceVerifyRequest"
+     ],
+     "path": "src/campaign/compliance/contracts.rs",
+     "purpose": "Typed compliance-pack amendments, owner decisions and source verification",
+     "surface": {
+      "enum": 2,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/compliance/doors.rs",
+     "purpose": "Caller-bound doors over the existing compliance classifier and stamp writer",
+     "surface": {
+      "fn": 6
      }
     },
     {
@@ -8942,7 +8999,7 @@
      "purpose": "CA-06's compliance pack: versioned, vault-resident legal rule rows and the dispatch gate that enforces them",
      "surface": {
       "crate-vis": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -10991,7 +11048,7 @@
      "purpose": "The policy-gated read lane: [`ScopedReadActorKey`], [`ScopedRead`], and the admission/filtering surface that…",
      "surface": {
       "crate-vis": 6,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 1
      }
     },
@@ -11265,10 +11322,23 @@
      "path": "src/claim/scoped_read/weave_serve.rs",
      "purpose": "The served weave lens (OF-499): the per-reader report and its saved digests as wire views, for the…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 2,
       "fn": 13,
       "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveDigestRendered"
+     ],
+     "path": "src/claim/scoped_read/weave_trigger.rs",
+     "purpose": "Typed weave publication and persisted correction reads for the bound reader",
+     "surface": {
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -12162,7 +12232,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -12567,6 +12637,8 @@
       "MemoryTimeRange",
       "MemoryWriteOutput",
       "ReaderSpawnInput",
+      "ReportBlockedInput",
+      "ReportBlockedOutput",
       "SkillCallInput",
       "SpawnCare",
       "SpawnKnob",
@@ -12582,10 +12654,10 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 7,
       "fn": 1,
-      "struct": 22
+      "struct": 24
      }
     },
     {
@@ -19867,7 +19939,7 @@
      "purpose": "Home-node gate, atomic admission, and the private wake-budget ledger",
      "surface": {
       "crate-vis": 6,
-      "fn": 21
+      "fn": 22
      }
     },
     {
@@ -20536,7 +20608,7 @@
      "purpose": "The seal's checks, run (ARCH-0079 #stuck-confession-and-the-seal, OF-544, OF-420): \"A confession triggers a…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1,
       "trait": 1
      }
@@ -20907,6 +20979,7 @@
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
       "crate-vis": 12,
+      "mod": 1,
       "re-export": 11
      }
     },
@@ -21111,14 +21184,15 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
-      "SieveAudit"
+      "SieveAudit",
+      "SieveConsumeReceipt"
      ],
      "path": "src/dreamer_wake/sieve/recipes.rs",
      "purpose": "Durable model-rung inputs, queue spending and unbiased retained-span samples",
      "surface": {
-      "crate-vis": 17,
-      "fn": 1,
-      "struct": 1
+      "crate-vis": 18,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -21150,6 +21224,31 @@
      "purpose": "The prose under the sieve's rules: code, sentences, words, and runs of capitalized words and of katakana…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SieveLeaseCounter",
+      "SieveLeaseRefillRequest",
+      "SieveLeaseRequest",
+      "SieveLeaseView",
+      "SievePageRequest",
+      "SievePolicyRequest",
+      "SievePolicySetRequest",
+      "SieveQueuePage",
+      "SieveReceiptView",
+      "SieveReceiptsPage",
+      "SieveRecipePolicySetRequest",
+      "SieveRetainedPage",
+      "SieveSpanView"
+     ],
+     "path": "src/dreamer_wake/sieve_doors.rs",
+     "purpose": "Typed owner doors over the sieve interest queue, its retained spans, its consumed-span receipts, the sieve…",
+     "surface": {
+      "fn": 9,
+      "struct": 13
      }
     },
     {
@@ -32135,6 +32234,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BlockedReportView",
+      "CoachInspectRequest",
+      "CoachInspectionView",
+      "CoachProposalView",
+      "CoachWorkingSetView",
+      "DiagnosticEventView",
+      "DiagnosticsGetRequest",
+      "DiagnosticsListRequest"
+     ],
+     "path": "src/memory/diagnostics.rs",
+     "purpose": "Typed diagnostic reads and scoped Coach repair inspection (OPERATIONS-01)",
+     "surface": {
+      "fn": 3,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -32512,7 +32631,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 14,
-      "re-export": 46
+      "re-export": 47
      }
     },
     {
@@ -42796,10 +42915,29 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
+      "mod": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealAttemptRequest",
+      "SealCompleteRequest",
+      "SealPendingRequest",
+      "SealReceiptView",
+      "SealRunReceipt",
+      "SealRunRequest"
+     ],
+     "path": "src/self_heal/audit/doors.rs",
+     "purpose": "Typed owner doors for the seal's existing receipts and check lifecycle",
+     "surface": {
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -42809,7 +42947,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -45706,7 +45844,7 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 4,
       "fn": 7,
       "re-export": 4,
@@ -45779,7 +45917,7 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -46119,6 +46257,7 @@
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 13,
+      "mod": 2,
       "re-export": 17
      }
     },
@@ -46149,6 +46288,48 @@
       "enum": 4,
       "fn": 9,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfferAnswerRequest",
+      "OfferListRequest",
+      "OfferPassRef",
+      "OfferPassRequest",
+      "OfferPassResult",
+      "OfferRef",
+      "OfferUndoReceipt",
+      "OfferView"
+     ],
+     "path": "src/skill_optimize/offer_doors.rs",
+     "purpose": "Typed owner doors for the production Coach offer pass and its evidence",
+     "surface": {
+      "fn": 6,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OfferCandidateQuery",
+      "OfferCandidateRecord",
+      "OfferCandidateSetup",
+      "OfferPilot",
+      "OfferPilotComplete",
+      "OfferPilotMeasurement",
+      "OfferPilotPrepare",
+      "OfferPilotPrepared",
+      "OfferPilotRef"
+     ],
+     "path": "src/skill_optimize/offer_pilot.rs",
+     "purpose": "Per-seat candidate pins and externally measured pilot evidence for OF-577",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 11,
+      "struct": 9
      }
     },
     {
@@ -51159,7 +51340,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 58,
+      "re-export": 59,
       "struct": 36
      }
     },
@@ -51592,7 +51773,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 753
+      "fn": 800
      }
     },
     {
@@ -52321,6 +52502,20 @@
       "fn": 5,
       "re-export": 1,
       "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WeaveEnqueueRequest",
+      "WeaveScheduleCleared"
+     ],
+     "path": "src/task_verb/sdk_weave.rs",
+     "purpose": "Typed owner setup for weave work and the inbox's real producers",
+     "surface": {
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -57493,7 +57688,7 @@
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate"
     },
     "agent_inbox_lens": {
-     "files": 5,
+     "files": 6,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -57612,7 +57807,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 48,
+     "files": 50,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57668,7 +57863,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 69,
+     "files": 70,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57990,7 +58185,7 @@
      "purpose": "OF-366 tournament claim-authoring runner primitives"
     },
     "dreamer_wake": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58312,7 +58507,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 186,
+     "files": 187,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58648,7 +58843,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58732,7 +58927,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 40,
+     "files": 42,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58823,7 +59018,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 174,
+     "files": 175,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58993,7 +59188,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3602,
+   "source_files": 3612,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67525,7 +67720,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 717
+      "fn": 769
      }
     },
     {
@@ -68574,7 +68769,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 718
+      "fn": 770
      }
     },
     {
@@ -70393,11 +70588,31 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/training_offer.rs",
      "purpose": "The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer/cost.rs",
+     "purpose": "Fixed-code projection on the same dated workload, with each tokenizer",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_offer/pilot.rs",
+     "purpose": "Measured per-seat pilot evidence beside the production offer skill's brief",
      "surface": {
       "crate-vis": 2
      }
@@ -71471,7 +71686,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",
@@ -71537,7 +71752,7 @@
      "path": "src/api/facade/browser_doors.rs",
      "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -71634,6 +71849,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/coach_offer_doors.rs",
+     "purpose": "Typed owner doors for Coach offers and counted pilot evidence",
+     "surface": {
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_doors.rs",
      "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
      "surface": {
@@ -71666,6 +71891,16 @@
      "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/compliance_doors.rs",
+     "purpose": "Compliance owner decisions use the request's owner proof and its own Memory",
      "surface": {
       "crate-vis": 4
      }
@@ -71937,7 +72172,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 128
+      "crate-vis": 132
      }
     },
     {
@@ -71987,7 +72222,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -72174,6 +72409,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/seal_doors.rs",
+     "purpose": "Owner-authorized seal lifecycle, shared by generated HTTP, SDK and MCP calls",
+     "surface": {
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/secret_grant_doors.rs",
      "purpose": "The host doors of `self.secrets.*` (DOOR-124, e2e SECRETS-03): an agent run's secret grants, minted…",
      "surface": {
@@ -72248,6 +72493,16 @@
      "purpose": "The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every…",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/sieve_doors.rs",
+     "purpose": "The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -72379,13 +72634,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/weave_doors.rs",
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 15
      }
     },
     {
@@ -73285,7 +73540,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/owner_routes/inbox_routes.rs",
-     "purpose": "`/v1/owner/inbox`: the owner's view of the agent inbox lens (ARCH-0063 R4, INB-03)",
+     "purpose": "The owner's cross-identity inbox lens, shared with the typed facade",
      "surface": {
       "crate-vis": 1
      }
@@ -79709,14 +79964,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 45,
+     "files": 47,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 391,
+     "files": 395,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80145,7 +80400,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 732,
+   "source_files": 738,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80508,6 +80763,7 @@
       "AttemptCancelReceiptKind",
       "AttemptCancelState",
       "AttemptCancellation",
+      "AttemptConfession",
       "AttemptHandle",
       "AttemptId",
       "AttemptLanding",
@@ -80515,6 +80771,7 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuditDraw",
       "AuthorBriefRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
@@ -80527,6 +80784,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "B2bExemption",
       "BandMode",
       "BatchInput",
       "BatchOutput",
@@ -80535,6 +80793,8 @@
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
+      "BlockedCategory",
+      "BlockedReportView",
       "BodyBlockKind",
       "BodyCell",
       "BodyConflict",
@@ -80748,6 +81008,10 @@
       "CleanupPosture",
       "CleanupRunView",
       "ClickInput",
+      "CoachInspectRequest",
+      "CoachInspectionView",
+      "CoachProposalView",
+      "CoachWorkingSetView",
       "CodeBlameView",
       "CodeChangeView",
       "CodeConflictHistory",
@@ -80827,7 +81091,25 @@
       "CompanionSharingStored",
       "CompanionSharingTarget",
       "CompanionSharingView",
+      "ComplianceAmendRequest",
+      "ComplianceAmendmentClass",
+      "ComplianceApprovalRequest",
+      "ComplianceDisposition",
+      "ComplianceExemptionEvidence",
+      "ComplianceOperation",
+      "ComplianceOwnerStamp",
+      "CompliancePack",
+      "CompliancePendingProposal",
+      "ComplianceReceipt",
+      "ComplianceResult",
+      "ComplianceResultRequest",
+      "ComplianceRowVerification",
+      "ComplianceRuleKind",
+      "ComplianceRuleRow",
+      "ComplianceSource",
+      "ComplianceVerifyRequest",
       "ComposerStamp",
+      "ComputeDestination",
       "ConcernCardRequest",
       "ConcernCardSummary",
       "ConcernMove",
@@ -80835,6 +81117,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConditionalExemptionEvidence",
       "ConfidenceBand",
       "ConfirmationReceipt",
       "Conflict",
@@ -81068,6 +81351,9 @@
       "DerivationEnvelopeView",
       "DerivationKind",
       "DeterministicFallback",
+      "DiagnosticEventView",
+      "DiagnosticsGetRequest",
+      "DiagnosticsListRequest",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
       "DiaryQueryEntry",
@@ -81096,6 +81382,7 @@
       "DoneMeans",
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
+      "DreamerAttemptRef",
       "DreamerAttemptView",
       "DreamerParkCauseView",
       "DreamerParkedAttemptView",
@@ -81366,8 +81653,23 @@
       "ImagePin",
       "ImagePoint",
       "ImageViewRequest",
+      "InboxConcernGroup",
+      "InboxExceptionClass",
+      "InboxGroup",
+      "InboxGroupMember",
+      "InboxLensConcern",
+      "InboxLensDiaryReview",
+      "InboxLensKind",
+      "InboxLensPage",
+      "InboxLensParticipant",
+      "InboxLensPile",
+      "InboxLensRequest",
+      "InboxLensRow",
       "InboxListRequest",
       "InboxMarkRequest",
+      "InboxPointerRow",
+      "InboxRunGroupsRequest",
+      "InboxSubCluster",
       "InferenceDefaultsReplaceRequest",
       "InputKind",
       "InspectionResolveRequest",
@@ -81474,6 +81776,14 @@
       "LensStatus",
       "LensTextSpan",
       "LibraryCard",
+      "LibraryFindInput",
+      "LibraryFindOutput",
+      "LibraryRetireInput",
+      "LibraryRetireOutput",
+      "LibraryRetiredInput",
+      "LibraryRetiredOutput",
+      "LibraryRunInput",
+      "LibraryRunOutput",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -81503,10 +81813,16 @@
       "LiveRunRequestFindInput",
       "LiveRunRequestHandoverInput",
       "LiveRunRequestLeaderSplitInput",
+      "LiveRunRequestLibraryFindInput",
+      "LiveRunRequestLibraryRetireInput",
+      "LiveRunRequestLibraryRetiredInput",
+      "LiveRunRequestLibraryRunInput",
       "LiveRunRequestMemorySupersedeInput",
       "LiveRunRequestObserveInput",
       "LiveRunRequestOpenInput",
       "LiveRunRequestPointInput",
+      "LiveRunRequestProposeInput",
+      "LiveRunRequestReportBlockedInput",
       "LiveRunRequestScreenshotInput",
       "LiveRunRequestSecretGrantMintRequest",
       "LiveRunRequestSecretGrantRenewRequest",
@@ -81665,6 +81981,8 @@
       "NotificationPage",
       "NotificationRow",
       "NotificationSource",
+      "ObjectiveConfession",
+      "ObjectiveFinding",
       "Observation",
       "Observation2",
       "ObservationIssue",
@@ -81709,13 +82027,38 @@
       "OffRecordWitnessRequest",
       "Offer",
       "OfferAnswer",
+      "OfferAnswerRecord",
       "OfferAnswerRequest",
+      "OfferCandidate",
+      "OfferCandidateQuery",
+      "OfferCandidateRecord",
+      "OfferCandidateSetup",
       "OfferCard",
+      "OfferCheck",
       "OfferConnect",
+      "OfferCost",
       "OfferDraft",
+      "OfferEvidence",
+      "OfferIntent",
+      "OfferListRequest",
+      "OfferModelPin",
+      "OfferOption",
+      "OfferPassRef",
+      "OfferPassResult",
+      "OfferPilot",
+      "OfferPilotComplete",
+      "OfferPilotMeasurement",
+      "OfferPilotPrepare",
+      "OfferPilotPrepared",
+      "OfferPilotRef",
+      "OfferRef",
       "OfferReopenRequest",
+      "OfferSettleOfferAnswer",
+      "OfferSettleOfferAnswerRequest",
       "OfferSettlement",
       "OfferState",
+      "OfferUndoReceipt",
+      "OfferView",
       "OfferVoteRequest",
       "OfferVoteTally",
       "OffersPage",
@@ -81934,6 +82277,8 @@
       "ProposalMember",
       "ProposalSettleRequest",
       "ProposalSettlement",
+      "ProposeInput",
+      "ProposeOutput",
       "ProseSpan",
       "ProspectiveQueryHint",
       "ProviderPin",
@@ -81987,6 +82332,7 @@
       "ReceiptEvidence",
       "ReceiptKind",
       "ReceiptRecord",
+      "ReceiptView",
       "RecipientRole",
       "RecipientState",
       "RecordEraseConfirmRequest",
@@ -82022,6 +82368,8 @@
       "RepoProposalDecision",
       "RepoProposalSettlement",
       "RepoProposalStatus",
+      "ReportBlockedInput",
+      "ReportBlockedOutput",
       "ReportDisclosure",
       "ReportDisclosureChoice",
       "ReportDisclosureRequest",
@@ -82122,6 +82470,7 @@
       "ResultTaintState",
       "ResultWithheld",
       "RetentionDefault",
+      "RetiredCard",
       "RetrievalAction",
       "RetrievalBlendWeights",
       "RetrievalDiagnosticExport",
@@ -82254,11 +82603,14 @@
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultCoachInspectionView",
       "ScopedReadResultConsolidationEvidenceSourceList",
+      "ScopedReadResultDiagnosticEventViewList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalClaimView",
+      "ScopedReadResultOptionalDiagnosticEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
@@ -82283,11 +82635,23 @@
       "ScreenshotOutput",
       "ScreenshotTrigger",
       "ScrollDirection",
+      "SealAssessment",
       "SealAtom",
+      "SealAttemptRequest",
+      "SealCheckKind",
+      "SealCheckOutcome",
+      "SealCheckReceipt",
+      "SealCheckRequest",
+      "SealCompleteRequest",
       "SealLevel",
+      "SealPendingRequest",
+      "SealReceiptView",
+      "SealRunReceipt",
+      "SealedAttemptReceipt",
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
+      "SeatWorkload",
       "SecretGrantCleanup",
       "SecretGrantMintRequest",
       "SecretGrantPurpose",
@@ -82413,6 +82777,19 @@
       "SharedVaultRequest",
       "ShedBlocker",
       "ShedCause",
+      "SieveLeaseCounter",
+      "SieveLeaseRefillRequest",
+      "SieveLeaseRequest",
+      "SieveLeaseView",
+      "SievePageRequest",
+      "SievePolicy",
+      "SievePolicySetRequest",
+      "SieveQueuePage",
+      "SieveReceiptView",
+      "SieveReceiptsPage",
+      "SieveRecipePolicySetRequest",
+      "SieveRetainedPage",
+      "SieveSpanView",
       "SignalExtractionClaim",
       "SignalExtractionMessage",
       "SignalExtractionRequest",
@@ -82711,6 +83088,7 @@
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
+      "TrainingOffer",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TravelChoice",
@@ -82751,6 +83129,7 @@
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
+      "UnknownJurisdictionDefault",
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
@@ -82786,15 +83165,24 @@
       "WaitForInput",
       "WaitForOutput",
       "WakePolicySetRequest",
+      "WakeRecipePolicy",
+      "WeaveDigestCadence",
+      "WeaveDigestRendered",
       "WeaveDigestRequest",
       "WeaveDigestView",
+      "WeaveEnqueueRequest",
       "WeaveItemCorrectionView",
       "WeaveItemView",
       "WeaveLensRefusal",
       "WeaveLinkCorrectionView",
+      "WeaveReaderKind",
+      "WeaveReaderRef",
       "WeaveReceipt",
       "WeaveReportRequest",
       "WeaveReportView",
+      "WeaveScheduleCleared",
+      "WeaveScheduleHold",
+      "WeaveScheduleView",
       "WeaveSectionInput",
       "WeaveSectionKind",
       "WeaveSectionView",
@@ -82829,6 +83217,7 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowCheck",
       "WorkflowDispatchRequest",
       "WorkflowRequest",
       "WorkflowRunRequest",
@@ -82875,8 +83264,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 639,
-      "struct": 1893
+      "enum": 658,
+      "struct": 2008
      }
     },
     {
