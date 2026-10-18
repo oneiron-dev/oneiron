@@ -766,22 +766,22 @@ export_facade! {
     let output = client.vault_guests_mint_slip(&input)?;
     crate::codec::lift_record("vault.guests.mint_slip", &output)
 };
-"vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeChanged = |client| {
+"vault.residence.mode" => fn vault_residence_mode(&self, input: ResidenceModeRequest) -> ResidenceModeAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceModeRequest = crate::codec::lower_record("vault.residence.mode", input)?;
     let output = client.vault_residence_mode(&input)?;
     crate::codec::lift_record("vault.residence.mode", &output)
 };
-"vault.residence.open" => fn vault_residence_open(&self, input: ResidenceOpenRequest) -> ResidenceOpened = |client| {
+"vault.residence.open" => fn vault_residence_open(&self, input: ResidenceOpenRequest) -> ResidenceOpenAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceOpenRequest = crate::codec::lower_record("vault.residence.open", input)?;
     let output = client.vault_residence_open(&input)?;
     crate::codec::lift_record("vault.residence.open", &output)
 };
-"vault.residence.index" => fn vault_residence_index(&self, input: ResidenceMachineRequest) -> ResidenceIndex = |client| {
+"vault.residence.index" => fn vault_residence_index(&self, input: ResidenceMachineRequest) -> ResidenceIndexAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidenceMachineRequest = crate::codec::lower_record("vault.residence.index", input)?;
     let output = client.vault_residence_index(&input)?;
     crate::codec::lift_record("vault.residence.index", &output)
 };
-"vault.residence.prune" => fn vault_residence_prune(&self, input: ResidencePruneRequest) -> ResidencePruned = |client| {
+"vault.residence.prune" => fn vault_residence_prune(&self, input: ResidencePruneRequest) -> ResidencePruneAnswer = |client| {
     let input: oneiron::task_verb::sdk::ResidencePruneRequest = crate::codec::lower_record("vault.residence.prune", input)?;
     let output = client.vault_residence_prune(&input)?;
     crate::codec::lift_record("vault.residence.prune", &output)
@@ -1355,6 +1355,41 @@ export_facade! {
     let input: oneiron::memory::codebase_doors::CodeSnapshotDefinitionsRequest = crate::codec::lower_record("vault.code.symbols.definitions", input)?;
     let output = client.vault_code_symbols_definitions(&input)?;
     crate::codec::lift_record("vault.code.symbols.definitions", &output)
+};
+"vault.code.merge_queue.enqueue" => fn vault_code_merge_queue_enqueue(&self, input: MergeQueueEnqueueRequest) -> MergeQueueBatchView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest = crate::codec::lower_record("vault.code.merge_queue.enqueue", input)?;
+    let output = client.vault_code_merge_queue_enqueue(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.enqueue", &output)
+};
+"vault.code.merge_queue.stage" => fn vault_code_merge_queue_stage(&self, input: MergeQueueBatchRequest) -> MergeQueueBatchView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.stage", input)?;
+    let output = client.vault_code_merge_queue_stage(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.stage", &output)
+};
+"vault.code.merge_queue.observe" => fn vault_code_merge_queue_observe(&self, input: MergeQueueObserveRequest) -> MergeQueueObservation = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueObserveRequest = crate::codec::lower_record("vault.code.merge_queue.observe", input)?;
+    let output = client.vault_code_merge_queue_observe(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.observe", &output)
+};
+"vault.code.merge_queue.requeue_survivors" => fn vault_code_merge_queue_requeue_survivors(&self, input: MergeQueueBatchRequest) -> MergeQueueRequeueView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.requeue_survivors", input)?;
+    let output = client.vault_code_merge_queue_requeue_survivors(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.requeue_survivors", &output)
+};
+"vault.code.merge_queue.land_reviewed" => fn vault_code_merge_queue_land_reviewed(&self, input: MergeQueueBatchRequest) -> MergeQueueBatchView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest = crate::codec::lower_record("vault.code.merge_queue.land_reviewed", input)?;
+    let output = client.vault_code_merge_queue_land_reviewed(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.land_reviewed", &output)
+};
+"vault.code.merge_queue.settle_slow" => fn vault_code_merge_queue_settle_slow(&self, input: MergeQueueRepoRequest) -> MergeQueuePointersView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest = crate::codec::lower_record("vault.code.merge_queue.settle_slow", input)?;
+    let output = client.vault_code_merge_queue_settle_slow(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.settle_slow", &output)
+};
+"vault.code.merge_queue.recover" => fn vault_code_merge_queue_recover(&self, input: MergeQueueRepoRequest) -> MergeQueuePointersView = |client| {
+    let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest = crate::codec::lower_record("vault.code.merge_queue.recover", input)?;
+    let output = client.vault_code_merge_queue_recover(&input)?;
+    crate::codec::lift_record("vault.code.merge_queue.recover", &output)
 };
 "vault.artifacts.export" => fn vault_artifacts_export(&self, input: ArtifactExportRequest) -> Option<ArtifactExportFile> = |client| {
     let input: oneiron::blob_artifact::ArtifactExportRequest = crate::codec::lower_record("vault.artifacts.export", input)?;

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 477 facade rows, 1807 declarations.
-Inputs: 428 of 477 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 424 of 477 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 86; unread shapes: 0.
+Census: 484 facade rows, 1827 declarations.
+Inputs: 435 of 484 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 430 of 484 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -3463,6 +3463,14 @@ class ResidenceModeChanged(TypedDict):
     retained: list[str]
     unsynced: list[str]
     pruned_items: int
+class ResidenceQueued(TypedDict):
+    directive: EntityId
+    machine: EntityId
+class ResidenceModeAnswerApplied(ResidenceModeChanged):
+    state: Literal["applied"]
+class ResidenceModeAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceModeAnswer = ResidenceModeAnswerApplied | ResidenceModeAnswerQueued
 class NoteReadSpan(TypedDict):
     start: int
     end: int
@@ -3497,6 +3505,11 @@ class ResidenceOpened(TypedDict):
     bytes: int
     source: NoteReadSource
     note: NotRequired[NoteReadView | None]
+class ResidenceOpenAnswerApplied(ResidenceOpened):
+    state: Literal["applied"]
+class ResidenceOpenAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceOpenAnswer = ResidenceOpenAnswerApplied | ResidenceOpenAnswerQueued
 class ResidenceMachineRequest(TypedDict):
     machine: EntityId
 class ResidenceIndexEntry(TypedDict):
@@ -3508,11 +3521,21 @@ class ResidenceIndexWindowView(TypedDict):
     items: list[ResidenceIndexEntry]
 class ResidenceIndex(TypedDict):
     windows: list[ResidenceIndexWindowView]
+class ResidenceIndexAnswerApplied(ResidenceIndex):
+    state: Literal["applied"]
+class ResidenceIndexAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceIndexAnswer = ResidenceIndexAnswerApplied | ResidenceIndexAnswerQueued
 class ResidencePruneRequest(TypedDict):
     machine: EntityId
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+class ResidencePruneAnswerApplied(ResidencePruned):
+    state: Literal["applied"]
+class ResidencePruneAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidencePruneAnswer = ResidencePruneAnswerApplied | ResidencePruneAnswerQueued
 OffRecordEnterMode = Literal["off_record", "anonymous"]
 OffRecordBackendClass = Literal["local", "remote_provider"]
 class OffRecordStartRequest(TypedDict):
@@ -5376,6 +5399,87 @@ class CodeSnapshotDefinitionsView(TypedDict):
     repo: EntityId
     snapshot: str
     definitions: list[CodeSnapshotDefinition]
+class MergeQueueEnqueueRequest(TypedDict):
+    repo: EntityId
+    proposals: list[EntityId]
+    base_green: str
+BatchState = Literal["Queued", "Staged", "Ready", "Landing", "HeadAdvanced", "GreenAdvanced", "Quarantined", "RollingBack", "RolledBack", "Cancelled"]
+class MergeQueuePathView(TypedDict):
+    mask: int
+    commit: str
+    tree: str
+    verdict_ref: NotRequired[str | None]
+class Quarantine(TypedDict):
+    proposal_ids: list[str]
+    failing_mask: int
+    verdict: str
+class AffectedTests(TypedDict):
+    packages: list[str]
+    targets: dict[str, list[str]]
+class MergeQueueBatchView(TypedDict):
+    batch_ref: str
+    baseline_ref: str
+    expected_head: str
+    base_green: str
+    proposals: list[str]
+    state: BatchState
+    paths: list[MergeQueuePathView]
+    landed_head: NotRequired[str | None]
+    slow_verdict_ref: NotRequired[str | None]
+    quarantine: NotRequired[Quarantine | None]
+    selected_tests: AffectedTests
+class MergeQueueBatchRequest(TypedDict):
+    repo: EntityId
+    batch_ref: str
+class MergeQueueObserveRequest(TypedDict):
+    repo: EntityId
+    batches: list[str]
+class CommandOutput(TypedDict):
+    status: int
+    stdout: list[int]
+    stderr: list[int]
+class ContractDiffRemovedPublicNameBody(TypedDict):
+    name: str
+class ContractDiffRemovedPublicName(TypedDict):
+    RemovedPublicName: ContractDiffRemovedPublicNameBody
+class ContractDiffSchemaDriftBody(TypedDict):
+    contract: str
+    pointer: str
+    before: NotRequired[Any | None]
+    after: NotRequired[Any | None]
+class ContractDiffSchemaDrift(TypedDict):
+    SchemaDrift: ContractDiffSchemaDriftBody
+class ContractDiffOutputDriftBody(TypedDict):
+    contract: str
+    before: NotRequired[CommandOutput | None]
+    after: NotRequired[CommandOutput | None]
+class ContractDiffOutputDrift(TypedDict):
+    OutputDrift: ContractDiffOutputDriftBody
+ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift
+class ContractVerdict(TypedDict):
+    schema_version: int
+    id: str
+    baseline_id: str
+    candidate: str
+    tests_passed: bool
+    diffs: list[ContractDiff]
+class MergeQueueObservation(TypedDict):
+    repo: EntityId
+    head_commit: str
+    green_commit: str
+    pending_slow_batch_refs: list[str]
+    batches: list[MergeQueueBatchView]
+    verdicts: list[ContractVerdict]
+class MergeQueueRequeueView(TypedDict):
+    source_batch_ref: str
+    batch: NotRequired[MergeQueueBatchView | None]
+class MergeQueueRepoRequest(TypedDict):
+    repo: EntityId
+class MergeQueuePointersView(TypedDict):
+    repo: EntityId
+    head_commit: str
+    green_commit: str
+    pending_slow_batch_refs: list[str]
 class ArtifactExportRequest(TypedDict):
     artifact_ref: str
     version: NotRequired[int | None]

@@ -47,14 +47,28 @@ async fn tasks_wave_answer(
     if !auth.is_owner_grade() {
         return Err(refused("a credential's wave is root, so it is the owner's"));
     }
-    let actor = match auth.principal_ref() {
-        Some(reference) => EntityId::from_hex(reference).map_err(MemoryError::from)?,
-        None => server.vault().ensure_embedded_owner_actor()?,
-    };
-    let class = match auth.actor_class() {
-        Some("agent") => EdgeActorClass::Agent,
-        Some("system") => EdgeActorClass::System,
-        _ => EdgeActorClass::Human,
+    // A self-hosted root or the dev mode plans as the owner its host action
+    // names; a hosted operator's root plans for no one, and no request
+    // creates an owner to plan as (FIX 2222).
+    let (actor, class) = match crate::api::host_action::host_action_of(server.vault(), auth) {
+        Some(action) => {
+            let actor = action.map_err(MemoryError::from)?.actor();
+            (actor.entity_ref(), actor.actor_class())
+        }
+        None => {
+            let reference = auth
+                .principal_ref()
+                .ok_or_else(|| refused("the credential names no principal to plan as"))?;
+            let class = match auth.actor_class() {
+                Some("agent") => EdgeActorClass::Agent,
+                Some("system") => EdgeActorClass::System,
+                _ => EdgeActorClass::Human,
+            };
+            (
+                EntityId::from_hex(reference).map_err(MemoryError::from)?,
+                class,
+            )
+        }
     };
     let server = Arc::clone(server);
     let auth = auth.clone();

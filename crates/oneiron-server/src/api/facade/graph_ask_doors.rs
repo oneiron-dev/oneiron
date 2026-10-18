@@ -461,12 +461,13 @@ fn asker(auth: &CoreAuth, server: &SyncServer, verb: &str) -> MemoryResult<Write
             &["Present a slip that names its principal, or the owner's own credential."],
         )
     };
+    // A self-hosted root or the dev mode asks as the owner its host action
+    // names; a hosted operator's root asks for no one (FIX 2222).
+    if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
+        return Ok(action.map_err(MemoryError::from)?.actor());
+    }
     let principal = match auth.principal_ref() {
         Some(reference) => EntityId::from_hex(reference).map_err(|_| refused())?,
-        None if auth.is_owner_grade() => server
-            .vault()
-            .ensure_embedded_owner_actor()
-            .map_err(|_| refused())?,
         None => return Err(refused()),
     };
     let class = match auth.actor_class() {

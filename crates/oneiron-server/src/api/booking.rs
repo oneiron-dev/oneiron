@@ -48,7 +48,7 @@ use oneiron::booking::{
 use oneiron::{EntityId, Vault};
 
 use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
-use super::{check_api_auth, json_payload};
+use super::{check_api_owner_act, json_payload};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;
 use crate::server::SyncServer;
@@ -216,7 +216,7 @@ pub(crate) async fn booking_agent_instructions(
     State(server): State<Arc<SyncServer>>,
     Path(page_token): Path<String>,
 ) -> Result<Response, ApiError> {
-    check_api_auth(&headers, &server)?;
+    check_api_owner_act(&headers, &server)?;
     let page_ref = resolve_booking_page(&server, &page_token)?;
     let block = booking_agent_instructions_block(&server, &page_token, page_ref)?;
     if wants_html_fragment(&headers) {
