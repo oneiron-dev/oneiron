@@ -14,6 +14,7 @@ pub enum RunVerb {
     SelfUnfold,
     SelfFolds,
     TasksRefuse,
+    SelfReportBlocked,
     SelfAgentsSpawn,
     SelfLeaderAdvice,
     SelfLeaderPattern,
@@ -38,6 +39,7 @@ impl RunVerb {
         Self::SelfUnfold,
         Self::SelfFolds,
         Self::TasksRefuse,
+        Self::SelfReportBlocked,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
@@ -65,6 +67,7 @@ impl RunVerb {
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SelfReportBlocked => "self.report_blocked",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
@@ -89,6 +92,7 @@ impl RunVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -111,6 +115,7 @@ impl RunVerb {
             Self::SelfUnfold => crate::code_run::SelfEffect::Fold,
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
+            Self::SelfReportBlocked => crate::code_run::SelfEffect::ReportBlocked,
             Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,

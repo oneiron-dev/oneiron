@@ -259,6 +259,16 @@ export class Oneiron {
       /** The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it. */
       outbound: (input: Facade.ReportOutboundRequest): Facade.ReportOutboundView => this.#call(() => this.#client.vaultReportsOutbound(input) as Facade.ReportOutboundView),
     },
+    diagnostics: {
+      /** Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt. */
+      list: (input: Facade.DiagnosticsListRequest): Facade.ScopedReadResult<Facade.DiagnosticEventView[]> => this.#call(() => this.#client.vaultDiagnosticsList(input) as Facade.ScopedReadResult<Facade.DiagnosticEventView[]>),
+      /** Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt. */
+      get: (input: Facade.DiagnosticsGetRequest): Facade.ScopedReadResult<Facade.DiagnosticEventView | null> => this.#call(() => this.#client.vaultDiagnosticsGet(input) as Facade.ScopedReadResult<Facade.DiagnosticEventView | null>),
+    },
+    coach: {
+      /** Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane. */
+      inspect: (input: Facade.CoachInspectRequest): Facade.ScopedReadResult<Facade.CoachInspectionView> => this.#call(() => this.#client.vaultCoachInspect(input) as Facade.ScopedReadResult<Facade.CoachInspectionView>),
+    },
     people: {
       /** One page of the people the caller reads, in handle order. */
       list: (input: Facade.PeopleListRequest): Facade.PeoplePage => this.#call(() => this.#client.vaultPeopleList(input) as Facade.PeoplePage),
@@ -1874,6 +1884,8 @@ export class Oneiron {
     compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
     /** Appends a fold of the attached run after its current tail, without replacing the earlier stub. */
     unfold: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldUnfolded> => this.#call(() => this.#client.selfUnfold(input) as Facade.FoldReply<Facade.FoldUnfolded>),
+    /** Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task. */
+    report_blocked: (input: Facade.LiveRunRequest<Facade.ReportBlockedInput>): Facade.ReportBlockedOutput => this.#call(() => this.#client.selfReportBlocked(input) as Facade.ReportBlockedOutput),
     agents: {
       /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
       spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),

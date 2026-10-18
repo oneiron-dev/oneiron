@@ -345,6 +345,12 @@ class Oneiron:
         def reports(self) -> "Oneiron._VaultReportsVerbs":
             return Oneiron._VaultReportsVerbs(self._client)
         @property
+        def diagnostics(self) -> "Oneiron._VaultDiagnosticsVerbs":
+            return Oneiron._VaultDiagnosticsVerbs(self._client)
+        @property
+        def coach(self) -> "Oneiron._VaultCoachVerbs":
+            return Oneiron._VaultCoachVerbs(self._client)
+        @property
         def people(self) -> "Oneiron._VaultPeopleVerbs":
             return Oneiron._VaultPeopleVerbs(self._client)
         @property
@@ -670,6 +676,21 @@ class Oneiron:
         def outbound(self, spec):
             """The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."""
             return json.loads(_translate(lambda: self._client.vault_reports_outbound(json.dumps(spec))))
+    class _VaultDiagnosticsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def list(self, spec):
+            """Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_diagnostics_list(json.dumps(spec))))
+        def get(self, spec):
+            """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_diagnostics_get(json.dumps(spec))))
+    class _VaultCoachVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def inspect(self, spec):
+            """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
+            return json.loads(_translate(lambda: self._client.vault_coach_inspect(json.dumps(spec))))
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3199,6 +3220,9 @@ class Oneiron:
         def unfold(self, spec):
             """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
             return json.loads(_translate(lambda: self._client.self_unfold(json.dumps(spec))))
+        def report_blocked(self, spec):
+            """Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task."""
+            return json.loads(_translate(lambda: self._client.self_report_blocked(json.dumps(spec))))
         @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs":
             return Oneiron._SelfAgentsVerbs(self._client)

@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 712 code-mode rows (691 host rows, 21 run rows), 2505 declarations.
-// Replies: 630 fully typed, 78 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 716 code-mode rows (694 host rows, 22 run rows), 2516 declarations.
+// Replies: 631 fully typed, 81 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 100; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -109,6 +109,27 @@ declare namespace Sdk {
   type ConcernMove = "ask_coach";
   type ConcernMoveRequest = { card: string; move: ConcernMove };
   type ConcernMoveOutcome = { card: string; ask: AgentHealthCoachAsk };
+  type DiagnosticsListRequest = { event_class?: string | null; actor_ref?: string | null; evidence_ref?: string | null; limit: number };
+  type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
+  type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
+  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
+  type DiagnosticEventView = { diagnostic_ref: string; detector_id: string; event_class: string; signal?: string | null; actor_class: string; actor_ref?: string | null; source: string; criticality: string; expected: unknown; actual: unknown; delta: unknown; replay_content_hash: string; replay_run_ref?: string | null; replay_checkpoint_ref?: string | null; evidence_refs: string[]; untrusted_detail?: string | null; valid_from: number; valid_to?: number | null };
+  type DiagnosticsGetRequest = { diagnostic_ref: string };
+  type CoachInspectRequest = { receipt_ref: string };
+  type BlockedReportView = { receipt_ref: string; category: string; untrusted_detail: string; attempt?: string | null; semi_trusted: boolean };
+  type CoachWorkingSetView = { evidence_refs: string[]; diagnostic_refs: string[]; reporter?: string | null; run_ref?: string | null; reported_at?: number | null; retries?: number | null };
+  type AllRelationships = "all";
+  type ClaimRelationships = AllRelationships | string[];
+  type ClaimScope = { world_id: string; scope_facet_id: string; scope_relationship_id: ClaimRelationships; scope_project_id: string };
+  type MadeByInputRole = "input" | "prompt";
+  type MadeByInput = { row: string; role: MadeByInputRole };
+  type MadeByClass = "stated" | "concluded";
+  type MadeByProcess = { actor: string; class: MadeByClass; identity: string; version: string; params_hash: string };
+  type MadeByTrigger = { task: string } | { ask: string } | { run: string } | { skill: string };
+  type MadeBy = { inputs: MadeByInput[]; process: MadeByProcess; at: number; trigger?: MadeByTrigger | null };
+  type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; claim_scope: ClaimScope; made_by?: MadeBy | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean; claim?: RecordRef | null };
+  type CoachProposalView = { claim: ClaimView; route?: string | null; decided?: string | null; repair?: unknown | null; settled_at: number };
+  type CoachInspectionView = { receipt_ref: string; state: string; report?: BlockedReportView | null; diagnostic?: DiagnosticEventView | null; working_set: CoachWorkingSetView; proposal?: CoachProposalView | null };
   type PeopleListRequest = { vault?: string | null; page?: number | null };
   type PersonKind = "human" | "agent";
   type PersonRow = { person: EntityId; actors: EntityId[]; handle: string; name: string; kind: PersonKind; role: string; about?: string | null };
@@ -325,9 +346,6 @@ declare namespace Sdk {
   type WitnessMessage = { id?: string | null; author: WitnessAuthor; message_type: string; content: string; metadata?: unknown | null; is_visible: boolean; order: number; quote?: QuoteSpan | null };
   type WitnessAssertions = { cited: RecordRef[]; created: RecordRef[] };
   type WitnessTurn = { conversation_ref: string; turn_ref?: string | null; thread_audience?: EntityId[] | null; messages: WitnessMessage[]; occurred_at: number; assertions?: WitnessAssertions };
-  type AllRelationships = "all";
-  type ClaimRelationships = AllRelationships | string[];
-  type ClaimScope = { world_id: string; scope_facet_id: string; scope_relationship_id: ClaimRelationships; scope_project_id: string };
   type ScopedClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; scope: ClaimScope; sensitivity?: number | null; evidence_turn_refs?: string[]; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
@@ -352,8 +370,6 @@ declare namespace Sdk {
   type RerankSkip = "no_reranker" | "no_candidates" | "deadline" | "device_only";
   type RerankReport = { status: "applied"; model: string; served_model?: string | null; candidates: number; calls: number } | { status: "skipped"; reason: RerankSkip };
   type RetrievalMeta = { quality?: RetrievalQuality; degradation?: RetrievalDegradation[]; confidence_adjustment?: ConfidenceAdjustment; sparse?: boolean | null; total_candidates: number; claims_returned: number; deep_pending?: boolean | null; partial?: boolean; temporal_hints?: TemporalHintReport[]; rerank?: RerankReport | null; limit_clamped?: boolean };
-  type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
-  type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type RetrievalRunId = { bytes: number[] };
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
   type RetrievalWeights = { affect: number; arousal: number; community: number; vad: number };
@@ -435,12 +451,6 @@ declare namespace Sdk {
   type ExportChannel = { channel_ref: string; scope: ChannelCeiling };
   type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };
   type RecordPosition = { kind: "position"; scope: Scope };
-  type MadeByInputRole = "input" | "prompt";
-  type MadeByInput = { row: string; role: MadeByInputRole };
-  type MadeByClass = "stated" | "concluded";
-  type MadeByProcess = { actor: string; class: MadeByClass; identity: string; version: string; params_hash: string };
-  type MadeByTrigger = { task: string } | { ask: string } | { run: string } | { skill: string };
-  type MadeBy = { inputs: MadeByInput[]; process: MadeByProcess; at: number; trigger?: MadeByTrigger | null };
   type WithheldRole = "input" | "prompt" | "trigger";
   type WithheldRef = { handle: string; role: WithheldRole };
   type RowBirth = { made_by: MadeBy; content_hash: string; withheld?: WithheldRef[] };
@@ -482,7 +492,6 @@ declare namespace Sdk {
   type WeaveSectionKind = "changes" | "projects" | "open_asks" | "links" | "conflicts" | "exceptions" | "admissions" | "budgets" | "sieve_score" | "digest";
   type WeaveSectionInput = { kind: WeaveSectionKind; predicates?: string[]; edge_kinds?: string[] };
   type WeaveReportRequest = { sections: WeaveSectionInput[] };
-  type ClaimView = { claim_ref: string; short_ref?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; approval: string; lifecycle: string; source?: string | null; world_ref?: string | null; scope?: unknown | null; claim_scope: ClaimScope; made_by?: MadeBy | null; valid_from?: number | null; valid_to?: number | null; salience?: number | null; stale: boolean; claim?: RecordRef | null };
   type WeaveItemView = { item: "claim"; claim: ClaimView } | { item: "project"; project_ref: string; goal_ref?: string | null } | { item: "budget"; project_ref: string; budget_ref: string } | { item: "link"; source_ref: string; kind: string; target_ref: string } | { item: "dream_progress"; resident_ref: string; dreamed_at: number; entries: number } | { item: "agent_health"; card_ref: string; card: AgentHealthCard };
   type WeaveSectionView = { kind: WeaveSectionKind; items: WeaveItemView[] };
   type WeaveReportView = { sections: WeaveSectionView[]; narrowing: ScopedReadReceipt };
@@ -1301,7 +1310,6 @@ declare namespace Sdk {
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
-  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
   type RevealRequest = { handle: string; why: string };
@@ -2488,6 +2496,9 @@ declare namespace Sdk {
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
   type RefusalOutcome = "proceed" | "object" | "decline";
   type TaskRefuseOutput = { task: EntityId; level: RefusalLevel; outcome: RefusalOutcome; replay: boolean };
+  type BlockedCategory = "tool" | "permission" | "context" | "environment";
+  type ReportBlockedInput = { category: BlockedCategory; detail: string };
+  type ReportBlockedOutput = { receipt: string };
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
@@ -2792,6 +2803,7 @@ declare namespace self {
     /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
   };
+  const report_blocked: (input: Sdk.ReportBlockedInput) => Promise<Sdk.ReportBlockedOutput | StoredResult>;
   const run: {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
@@ -3160,6 +3172,10 @@ declare const vault: Sdk.VaultHost & {
     /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
     run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
   };
+  coach: {
+    /** Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane. */
+    inspect(input: Sdk.CoachInspectRequest): Promise<Sdk.ScopedReadResult<Sdk.CoachInspectionView> | StoredResult>;
+  };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
     blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
@@ -3342,6 +3358,12 @@ declare const vault: Sdk.VaultHost & {
       /** The owner retracts a delivery-window policy through the existing claim lifecycle door. */
       retract(input: Sdk.DeliveryWindowPolicyRetractRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     };
+  };
+  diagnostics: {
+    /** Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt. */
+    get(input: Sdk.DiagnosticsGetRequest): Promise<Sdk.ScopedReadResult<Sdk.DiagnosticEventView | null> | StoredResult>;
+    /** Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt. */
+    list(input: Sdk.DiagnosticsListRequest): Promise<Sdk.ScopedReadResult<Sdk.DiagnosticEventView[]> | StoredResult>;
   };
   disclosure: {
     /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */

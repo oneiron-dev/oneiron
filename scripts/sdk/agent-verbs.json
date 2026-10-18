@@ -347,6 +347,49 @@
       "section": false
     },
     {
+      "name": "vault.diagnostics.list",
+      "description": "Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt.",
+      "input": "crate::memory::DiagnosticsListRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>",
+      "call": "memory.diagnostics_list(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.diagnostics.get",
+      "description": "Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt.",
+      "input": "crate::memory::DiagnosticsGetRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>",
+      "call": "memory.diagnostics_get(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.coach.inspect",
+      "description": "Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane.",
+      "input": "crate::memory::CoachInspectRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>",
+      "call": "memory.coach_inspect(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.people.list",
       "description": "One page of the people the caller reads, in handle order.",
       "input": "crate::memory::PeopleListRequest",
@@ -11646,6 +11689,19 @@
       "host": {
         "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>",
         "description": "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
+      }
+    },
+    {
+      "name": "self.report_blocked",
+      "input": "crate::code_run::ReportBlockedInput",
+      "output": "crate::code_run::ReportBlockedOutput",
+      "scope": "Write",
+      "context": "run",
+      "effect": "ReportBlocked",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput>",
+        "description": "Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task.",
+        "openapi": true
       }
     },
     {

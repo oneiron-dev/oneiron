@@ -52,6 +52,9 @@ selfInboxMark(input: unknown): unknown
 selfInboxConcern(input: unknown): unknown
 selfInboxConcernOutcome(input: unknown): unknown
 selfInboxConcernMove(input: unknown): unknown
+vaultDiagnosticsList(input: unknown): unknown
+vaultDiagnosticsGet(input: unknown): unknown
+vaultCoachInspect(input: unknown): unknown
 vaultPeopleList(input: unknown): unknown
 vaultPeopleGet(input: unknown): unknown
 vaultShapeRead(input: unknown): unknown
@@ -699,6 +702,7 @@ selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown
 selfFolds(input: unknown): unknown
 tasksRefuse(input: unknown): unknown
+selfReportBlocked(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown

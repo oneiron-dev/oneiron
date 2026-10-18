@@ -26,6 +26,9 @@ pub enum AgentVerb {
     SelfInboxConcern,
     SelfInboxConcernOutcome,
     SelfInboxConcernMove,
+    VaultDiagnosticsList,
+    VaultDiagnosticsGet,
+    VaultCoachInspect,
     VaultPeopleList,
     VaultPeopleGet,
     VaultShapeRead,
@@ -698,6 +701,7 @@ pub enum AgentVerb {
     SelfUnfold,
     SelfFolds,
     TasksRefuse,
+    SelfReportBlocked,
     SelfAgentsSpawn,
     SelfLeaderSplit,
     SelfSkillsCall,
@@ -729,6 +733,9 @@ impl AgentVerb {
         Self::SelfInboxConcern,
         Self::SelfInboxConcernOutcome,
         Self::SelfInboxConcernMove,
+        Self::VaultDiagnosticsList,
+        Self::VaultDiagnosticsGet,
+        Self::VaultCoachInspect,
         Self::VaultPeopleList,
         Self::VaultPeopleGet,
         Self::VaultShapeRead,
@@ -1401,6 +1408,7 @@ impl AgentVerb {
         Self::SelfUnfold,
         Self::SelfFolds,
         Self::TasksRefuse,
+        Self::SelfReportBlocked,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
         Self::SelfSkillsCall,
@@ -1435,6 +1443,9 @@ impl AgentVerb {
             Self::SelfInboxConcern => "self.inbox.concern",
             Self::SelfInboxConcernOutcome => "self.inbox.concern.outcome",
             Self::SelfInboxConcernMove => "self.inbox.concern.move",
+            Self::VaultDiagnosticsList => "vault.diagnostics.list",
+            Self::VaultDiagnosticsGet => "vault.diagnostics.get",
+            Self::VaultCoachInspect => "vault.coach.inspect",
             Self::VaultPeopleList => "vault.people.list",
             Self::VaultPeopleGet => "vault.people.get",
             Self::VaultShapeRead => "vault.shape.read",
@@ -2123,6 +2134,7 @@ impl AgentVerb {
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SelfReportBlocked => "self.report_blocked",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
             Self::SelfSkillsCall => "self.skills.call",
@@ -2153,6 +2165,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultDiagnosticsList
+                | Self::VaultDiagnosticsGet
+                | Self::VaultCoachInspect
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::VaultShapeRead
@@ -2800,6 +2815,7 @@ impl AgentVerb {
                 | Self::SelfUnfold
                 | Self::SelfFolds
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -2878,6 +2894,9 @@ impl AgentVerb {
                 | Self::SelfInboxConcern
                 | Self::SelfInboxConcernOutcome
                 | Self::SelfInboxConcernMove
+                | Self::VaultDiagnosticsList
+                | Self::VaultDiagnosticsGet
+                | Self::VaultCoachInspect
                 | Self::VaultPeopleList
                 | Self::VaultPeopleGet
                 | Self::VaultShapeRead
@@ -3525,6 +3544,7 @@ impl AgentVerb {
                 | Self::SelfUnfold
                 | Self::SelfFolds
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -3615,6 +3635,9 @@ impl AgentVerb {
                 | Self::SelfFocusUnsubscribe
                 | Self::SelfInboxList
                 | Self::SelfInboxMark
+                | Self::VaultDiagnosticsList
+                | Self::VaultDiagnosticsGet
+                | Self::VaultCoachInspect
                 | Self::Describe
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
@@ -4307,6 +4330,7 @@ impl AgentVerb {
                 | Self::SelfUnfold
                 | Self::SelfFolds
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -4729,6 +4753,7 @@ impl AgentVerb {
                 | Self::SelfCompact
                 | Self::SelfUnfold
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -4783,6 +4808,9 @@ impl AgentVerb {
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
             Self::SelfInboxConcernMove => &["spec"],
+            Self::VaultDiagnosticsList => &["spec"],
+            Self::VaultDiagnosticsGet => &["spec"],
+            Self::VaultCoachInspect => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::VaultShapeRead => &["spec"],
@@ -5472,6 +5500,7 @@ impl AgentVerb {
             Self::SelfUnfold => &["spec"],
             Self::SelfFolds => &["spec"],
             Self::TasksRefuse => &["spec"],
+            Self::SelfReportBlocked => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
             Self::SelfSkillsCall => &["spec"],
@@ -5504,6 +5533,9 @@ impl AgentVerb {
             Self::SelfInboxConcern => &["spec"],
             Self::SelfInboxConcernOutcome => &["spec"],
             Self::SelfInboxConcernMove => &["spec"],
+            Self::VaultDiagnosticsList => &["spec"],
+            Self::VaultDiagnosticsGet => &["spec"],
+            Self::VaultCoachInspect => &["spec"],
             Self::VaultPeopleList => &["spec"],
             Self::VaultPeopleGet => &["spec"],
             Self::VaultShapeRead => &["spec"],
@@ -6176,6 +6208,7 @@ impl AgentVerb {
             Self::SelfUnfold => &["spec"],
             Self::SelfFolds => &["spec"],
             Self::TasksRefuse => &["spec"],
+            Self::SelfReportBlocked => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
             Self::SelfSkillsCall => &["spec"],
@@ -6251,6 +6284,15 @@ impl AgentVerb {
             Self::SelfInboxConcern => "",
             Self::SelfInboxConcernOutcome => "",
             Self::SelfInboxConcernMove => "",
+            Self::VaultDiagnosticsList => {
+                "Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt."
+            }
+            Self::VaultDiagnosticsGet => {
+                "Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."
+            }
+            Self::VaultCoachInspect => {
+                "Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."
+            }
             Self::VaultPeopleList => "One page of the people the caller reads, in handle order.",
             Self::VaultPeopleGet => "One person the vault knows, by their pr handle.",
             Self::VaultShapeRead => {
@@ -8172,6 +8214,9 @@ impl AgentVerb {
             }
             Self::TasksRefuse => {
                 "Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."
+            }
+            Self::SelfReportBlocked => {
+                "Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task."
             }
             Self::SelfAgentsSpawn => {
                 "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."

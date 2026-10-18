@@ -401,6 +401,10 @@ class Oneiron:
         @property
         def reports(self) -> "Oneiron._VaultReportsVerbs": ...
         @property
+        def diagnostics(self) -> "Oneiron._VaultDiagnosticsVerbs": ...
+        @property
+        def coach(self) -> "Oneiron._VaultCoachVerbs": ...
+        @property
         def people(self) -> "Oneiron._VaultPeopleVerbs": ...
         @property
         def shape(self) -> "Oneiron._VaultShapeVerbs": ...
@@ -601,6 +605,14 @@ class Oneiron:
             """The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to."""
         def outbound(self, spec: Facade.ReportOutboundRequest) -> Facade.ReportOutboundView:
             """The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it."""
+    class _VaultDiagnosticsVerbs:
+        def list(self, spec: Facade.DiagnosticsListRequest) -> Facade.ScopedReadResult[list[Facade.DiagnosticEventView]]:
+            """Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt."""
+        def get(self, spec: Facade.DiagnosticsGetRequest) -> Facade.ScopedReadResult[Facade.DiagnosticEventView | None]:
+            """Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt."""
+    class _VaultCoachVerbs:
+        def inspect(self, spec: Facade.CoachInspectRequest) -> Facade.ScopedReadResult[Facade.CoachInspectionView]:
+            """Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane."""
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -2052,6 +2064,8 @@ class Oneiron:
             """Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."""
         def unfold(self, spec: Facade.FoldUnfoldRequest) -> Facade.FoldReply[Facade.FoldUnfolded]:
             """Appends a fold of the attached run after its current tail, without replacing the earlier stub."""
+        def report_blocked(self, spec: Facade.LiveRunRequest[Facade.ReportBlockedInput]) -> Facade.ReportBlockedOutput:
+            """Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task."""
         @property
         def agents(self) -> "Oneiron._SelfAgentsVerbs": ...
         @property

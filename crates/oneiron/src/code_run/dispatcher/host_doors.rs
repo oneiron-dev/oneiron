@@ -5,7 +5,8 @@ use super::HostSelfDispatcher;
 use crate::EntityId;
 use crate::code_run::{
     AgentSpawnInput, AgentSpawnKind, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput,
-    SelfAgentSpawnResult, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
+    ReportBlockedInput, ReportBlockedOutput, SelfAgentSpawnResult, SelfDispatchOutcome,
+    TaskRefuseInput, TaskRefuseOutput,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
@@ -129,6 +130,59 @@ impl<'a> HostSelfDispatcher<'a> {
                 level: refusal.level,
                 outcome: refusal.level.outcome(),
                 replay: refusal.replay,
+            }),
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
+            }
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
+    /// The host door's `self.report_blocked`, under its admitted credential
+    /// and hooks. The report is witnessed on the attached run through the
+    /// same dispatch as code mode: the host stamps the next free speech
+    /// position of the run (its attempt is the run id, as the failure
+    /// ladder reads it) and the time, the receipt binds this run's own
+    /// attempt, and filing wakes the Coach's Issues job. The report arms
+    /// nothing: no authority, scope, self-clear or task completion.
+    pub fn report_blocked_from_host(
+        &self,
+        input: ReportBlockedInput,
+    ) -> MemoryResult<ReportBlockedOutput> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        let parent = self.agent_parent.ok_or_else(|| {
+            MemoryError::bad_request("a blocked report requires its acquired parent lease")
+        })?;
+        let run_id = EntityId::from_bytes(*parent.as_bytes())?;
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a blocked report requires canonical live-run storage",
+            ));
+        };
+        // The live-run hold serializes this call with the run's executor
+        // entries, so the first free speech position stays free until the
+        // witness lands.
+        let mut order = 0u32;
+        while vault
+            .get_raw(&crate::code_run::executor_speech_message_id_in_run(
+                &self.run_ref,
+                run_id,
+                order,
+            )?)?
+            .is_some()
+        {
+            order = order
+                .checked_add(1)
+                .ok_or_else(|| MemoryError::bad_request("the run's speech positions are spent"))?;
+        }
+        let call = input.into_call().stamped(order, crate::unix_seconds_now());
+        match self.dispatch_report_blocked(call, Some(run_id))? {
+            SelfDispatchOutcome::ReportBlocked { receipt } => Ok(ReportBlockedOutput {
+                receipt: receipt.to_hex(),
             }),
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))

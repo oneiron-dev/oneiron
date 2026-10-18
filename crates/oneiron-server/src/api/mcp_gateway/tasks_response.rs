@@ -803,6 +803,9 @@ fn mcp_agent_verb_input(
         "self.inbox.concern" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern.outcome" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.concern.move" => a.spec.clone().ok_or_else(invalid),
+        "vault.diagnostics.list" => a.spec.clone().ok_or_else(invalid),
+        "vault.diagnostics.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.coach.inspect" => a.spec.clone().ok_or_else(invalid),
         "vault.people.list" => a.spec.clone().ok_or_else(invalid),
         "vault.people.get" => a.spec.clone().ok_or_else(invalid),
         "vault.shape.read" => a.spec.clone().ok_or_else(invalid),
@@ -1632,6 +1635,7 @@ fn mcp_agent_verb_input(
         "self.unfold" => a.spec.clone().ok_or_else(invalid),
         "self.folds" => a.spec.clone().ok_or_else(invalid),
         "tasks.refuse" => a.spec.clone().ok_or_else(invalid),
+        "self.report_blocked" => a.spec.clone().ok_or_else(invalid),
         "self.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "self.leader.split" => a.spec.clone().ok_or_else(invalid),
         "self.skills.call" => a.spec.clone().ok_or_else(invalid),
@@ -1732,6 +1736,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.inbox.concern.move" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.diagnostics.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.diagnostics.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.coach.inspect" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.people.list" => {
@@ -3747,6 +3760,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "tasks.refuse" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "self.report_blocked" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "self.agents.spawn" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -4222,6 +4238,30 @@ async fn execute_agent_verb_row(
             let input: oneiron::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_inbox_concern_move(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.diagnostics.list" => {
+            let input: oneiron::memory::DiagnosticsListRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_diagnostics_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.diagnostics.get" => {
+            let input: oneiron::memory::DiagnosticsGetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_diagnostics_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.coach.inspect" => {
+            let input: oneiron::memory::CoachInspectRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_coach_inspect(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -14358,6 +14398,29 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = crate::api::facade::host_doors::tasks_refuse(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.report_blocked" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.report_blocked", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::LiveRunRequest<
+                oneiron::code_run::ReportBlockedInput,
+            > = serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_report_blocked(
                 server,
                 auth,
                 actor
