@@ -71542,7 +71542,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "HostedCloner"
@@ -71609,7 +71609,7 @@
      "purpose": "The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible…",
      "surface": {
       "crate-vis": 24,
-      "fn": 16,
+      "fn": 17,
       "struct": 3
      }
     },
@@ -71648,7 +71648,7 @@
      "path": "src/models/offer.rs",
      "purpose": "What a run admission binds a model call to: one model at one provider, the route it goes out on, who pays…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
