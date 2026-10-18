@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 496 facade rows, 1853 declarations.
-Inputs: 446 of 496 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 440 of 496 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 501 facade rows, 1875 declarations.
+Inputs: 451 of 501 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 445 of 501 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -7002,6 +7002,126 @@ class AiAnswer(TypedDict):
     model: str
     parts: list[AiPart]
     usage: MediaUsage
+class VoiceRefOriginCaptured(TypedDict):
+    kind: Literal["captured"]
+    consent_event_ref: str
+class VoiceRefOriginDesigned(TypedDict):
+    kind: Literal["designed"]
+    vendor: str
+class VoiceRefOriginGenerated(TypedDict):
+    kind: Literal["generated"]
+VoiceRefOrigin = VoiceRefOriginCaptured | VoiceRefOriginDesigned | VoiceRefOriginGenerated
+class VoiceBankClipInput(TypedDict):
+    register: str
+    media_type: str
+    audio: str
+    transcript: str
+class VoiceBankPackPutRequest(TypedDict):
+    voice_id: str
+    pack_id: str
+    origin: VoiceRefOrigin
+    clips: list[VoiceBankClipInput]
+class VoiceBankPackReceipt(TypedDict):
+    voice_id: str
+    pack_id: str
+class VoiceConsentBasisConversationalNoticeBody(TypedDict):
+    notice: str
+class VoiceConsentBasisConversationalNotice(TypedDict):
+    ConversationalNotice: VoiceConsentBasisConversationalNoticeBody
+class VoiceConsentBasisVerbalOnRecordingBody(TypedDict):
+    recording_ref: str
+    start_ms: int
+    end_ms: int
+    words: str
+class VoiceConsentBasisVerbalOnRecording(TypedDict):
+    VerbalOnRecording: VoiceConsentBasisVerbalOnRecordingBody
+class VoiceConsentBasisSettingsToggleBody(TypedDict):
+    surface_ref: str
+class VoiceConsentBasisSettingsToggle(TypedDict):
+    SettingsToggle: VoiceConsentBasisSettingsToggleBody
+VoiceConsentBasis = VoiceConsentBasisConversationalNotice | VoiceConsentBasisVerbalOnRecording | VoiceConsentBasisSettingsToggle
+VoiceConsentState = Literal["granted", "withdrawn"]
+class VoiceRenderConsentRequest(TypedDict):
+    voice_id: str
+    event_id: str
+    occurred_at: int
+    reach: ModelLocality
+    basis: VoiceConsentBasis
+    state: VoiceConsentState
+VoiceVendorDeleteStatus = Literal["deleted", "no_clone_wire", "delete_failed", "absent"]
+class VoiceVendorEviction(TypedDict):
+    target: str
+    vendor_voice_id: str
+    vendor: VoiceVendorDeleteStatus
+class VoiceRenderConsentReceipt(TypedDict):
+    voice_id: str
+    state: VoiceConsentState
+    reach: ModelLocality
+    revision: str
+    evicted: list[VoiceVendorEviction]
+class VoiceTargetProvisionRequest(TypedDict):
+    voice_id: str
+    target: str
+    include_generated: NotRequired[bool]
+    language: NotRequired[str | None]
+class VoiceTargetReceipt(TypedDict):
+    voice_id: str
+    target: str
+    vendor_voice_id: str
+    cloned_at: int
+    revision: str
+class VoiceTargetEvictRequest(TypedDict):
+    voice_id: str
+    target: str
+class VoiceTargetEvictReceipt(TypedDict):
+    voice_id: str
+    target: str
+    evicted: bool
+    vendor: VoiceVendorDeleteStatus
+class VoiceBankInspectRequest(TypedDict):
+    voice_id: str
+    target: str
+    include_generated: NotRequired[bool]
+class VoiceIdentityView(TypedDict):
+    version: int
+    id: str
+    owner: str
+    pack_ids: list[str]
+class VoiceClipSummary(TypedDict):
+    register: str
+    media_type: str
+    audio_bytes: int
+class VoicePackSummary(TypedDict):
+    version: int
+    id: str
+    origin: VoiceRefOrigin
+    clips: list[VoiceClipSummary]
+class VoiceRenderConsentView(TypedDict):
+    event_id: str
+    subject: str
+    recorded_by: str
+    occurred_at: int
+    reach: ModelLocality
+    basis: VoiceConsentBasis
+    state: VoiceConsentState
+    revision: str
+class VoiceTargetCloneView(TypedDict):
+    vendor_voice_id: str
+    source_packs: list[str]
+    ref_digest: str
+    cloned_at: int
+    revision: str
+class VoiceTargetInspection(TypedDict):
+    target: str
+    locality: ModelLocality
+    include_generated: bool
+    current: NotRequired[VoiceTargetCloneView | None]
+class VoiceBankInspection(TypedDict):
+    voice_id: str
+    identity: NotRequired[VoiceIdentityView | None]
+    packs: list[VoicePackSummary]
+    render_consent: NotRequired[VoiceRenderConsentView | None]
+    target: VoiceTargetInspection
 AiOperation = Literal["text", "image", "video", "speech", "transcribe", "embed"]
 class AiVideoTicket(TypedDict):
     job: str

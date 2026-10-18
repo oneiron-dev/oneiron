@@ -47438,7 +47438,7 @@
      "purpose": "The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must…",
      "surface": {
       "const": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -49403,7 +49403,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 41,
+      "re-export": 42,
       "struct": 36
      }
     },
@@ -49714,7 +49714,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 542
+      "fn": 547
      }
     },
     {
@@ -50205,6 +50205,32 @@
       "enum": 1,
       "fn": 8,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "VoiceBankClipInput",
+      "VoiceBankInspectRequest",
+      "VoiceBankPackPutRequest",
+      "VoiceBankPackReceipt",
+      "VoiceRenderConsentReceipt",
+      "VoiceRenderConsentRequest",
+      "VoiceTargetEvictReceipt",
+      "VoiceTargetEvictRequest",
+      "VoiceTargetProvisionRequest",
+      "VoiceTargetReceipt",
+      "VoiceVendorDeleteStatus",
+      "VoiceVendorEviction"
+     ],
+     "path": "src/task_verb/sdk_voice_bank.rs",
+     "purpose": "The owner's voice-bank rows (DOOR-143, e2e VOICE-02): `vault.voices.packs.put` banks a reference pack of the…",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "re-export": 1,
+      "struct": 11
      }
     },
     {
@@ -52558,7 +52584,27 @@
       "crate-vis": 5,
       "enum": 1,
       "fn": 10,
+      "re-export": 1,
       "struct": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "VoiceBankInspection",
+      "VoiceClipSummary",
+      "VoiceIdentityView",
+      "VoicePackSummary",
+      "VoiceRenderConsentView",
+      "VoiceTargetCloneView",
+      "VoiceTargetInspection"
+     ],
+     "path": "src/voice_identity/ref_bank/owner_acts.rs",
+     "purpose": "The owner's own doors onto the voice bank (DOOR-143, e2e VOICE-02)",
+     "surface": {
+      "fn": 6,
+      "struct": 7
      }
     },
     {
@@ -56443,7 +56489,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 153,
+     "files": 154,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56555,7 +56601,7 @@
      "purpose": "ONE-1807: the engine half of a transport-neutral text-brain voice cascade"
     },
     "voice_identity": {
-     "files": 11,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56613,7 +56659,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3450,
+   "source_files": 3452,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65027,7 +65073,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 492
+      "fn": 497
      }
     },
     {
@@ -66076,7 +66122,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 493
+      "fn": 498
      }
     },
     {
@@ -67971,7 +68017,7 @@
      "path": "src/api/ai/mod.rs",
      "purpose": "`/v1/ai`: the server's model-backed surfaces — status, chat turns, the session hints the Dreamer's triggers…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -68001,7 +68047,7 @@
      "path": "src/api/ai/voices.rs",
      "purpose": "The voice bank's provisioning door, the owner's alone: `POST /v1/ai/voices/{voice_id}/packs` banks a…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 11
      }
     },
     {
@@ -69239,7 +69285,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 95
+      "crate-vis": 96
      }
     },
     {
@@ -69518,6 +69564,16 @@
      "purpose": "`vault.shape.apply` (ARCH-0070) as a host door: the gated landing of a shape plan",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/voice_bank_doors.rs",
+     "purpose": "The owner's voice-bank host doors (DOOR-143, e2e VOICE-02): `vault.voices.packs.put`, `.render_consent`…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -70130,6 +70186,16 @@
      "purpose": "Security-scheme wiring and schema property-description helper",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/voice_bank_paths.rs",
+     "purpose": "The voice bank's `/v1/ai/voices` routes in the OpenAPI document (DOOR-143)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -76664,7 +76730,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 352,
+     "files": 354,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77079,7 +77145,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 678,
+   "source_files": 680,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78956,7 +79022,29 @@
       "VadBadge",
       "VerdictBinding",
       "VerdictMode",
+      "VoiceBankClipInput",
+      "VoiceBankInspectRequest",
+      "VoiceBankInspection",
+      "VoiceBankPackPutRequest",
+      "VoiceBankPackReceipt",
+      "VoiceClipSummary",
+      "VoiceConsentBasis",
+      "VoiceConsentState",
+      "VoiceIdentityView",
       "VoiceLineAtom",
+      "VoicePackSummary",
+      "VoiceRefOrigin",
+      "VoiceRenderConsentReceipt",
+      "VoiceRenderConsentRequest",
+      "VoiceRenderConsentView",
+      "VoiceTargetCloneView",
+      "VoiceTargetEvictReceipt",
+      "VoiceTargetEvictRequest",
+      "VoiceTargetInspection",
+      "VoiceTargetProvisionRequest",
+      "VoiceTargetReceipt",
+      "VoiceVendorDeleteStatus",
+      "VoiceVendorEviction",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
       "WeaveDigestView",
@@ -79042,8 +79130,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 467,
-      "struct": 1298
+      "enum": 471,
+      "struct": 1316
      }
     },
     {

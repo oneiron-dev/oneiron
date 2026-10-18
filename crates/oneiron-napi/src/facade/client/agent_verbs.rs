@@ -3296,6 +3296,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_voices_packs_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_render_consent(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.render_consent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_targets_provision(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.targets.provision", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_targets_evict(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.targets.evict", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_inspect(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.inspect", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_transcribe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.transcribe", input)

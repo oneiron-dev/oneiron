@@ -85,6 +85,7 @@ pub(super) mod tests;
 mod trusted_contact_doors;
 pub(super) mod ui_action_routes;
 mod vault_shape_doors;
+mod voice_bank_doors;
 mod wave_doors;
 mod weave_doors;
 mod widen_proposal_doors;

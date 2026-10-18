@@ -5859,6 +5859,81 @@
       "section": false
     },
     {
+      "name": "vault.voices.packs.put",
+      "description": "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op.",
+      "input": "crate::task_verb::sdk::VoiceBankPackPutRequest",
+      "output": "crate::task_verb::sdk::VoiceBankPackReceipt",
+      "call": "crate::task_verb::sdk::put_voice_bank_pack_as(memory.vault(), &memory.embedded_owner(\"vault.voices.packs.put\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.render_consent",
+      "description": "The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs.",
+      "input": "crate::task_verb::sdk::VoiceRenderConsentRequest",
+      "output": "crate::task_verb::sdk::VoiceRenderConsentReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.render_consent\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.targets.provision",
+      "description": "The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call.",
+      "input": "crate::task_verb::sdk::VoiceTargetProvisionRequest",
+      "output": "crate::task_verb::sdk::VoiceTargetReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.provision\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.targets.evict",
+      "description": "The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay.",
+      "input": "crate::task_verb::sdk::VoiceTargetEvictRequest",
+      "output": "crate::task_verb::sdk::VoiceTargetEvictReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.targets.evict\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.voices.inspect",
+      "description": "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone.",
+      "input": "crate::task_verb::sdk::VoiceBankInspectRequest",
+      "output": "crate::task_verb::sdk::VoiceBankInspection",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.voices.inspect\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.transcribe",
       "description": "Text out of speech audio, from the host's transcription model.",
       "input": "AiCallRequest",
