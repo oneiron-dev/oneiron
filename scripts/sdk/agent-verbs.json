@@ -2637,6 +2637,67 @@
       "openapi": true
     },
     {
+      "name": "vault.federation.coreference.link",
+      "description": "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads.",
+      "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
+      "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
+      "call": "crate::task_verb::sdk::link_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.link\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.coreference.confirm",
+      "description": "The owner atomically confirms cross-vault identity without changing either person or their claims.",
+      "input": "crate::task_verb::sdk::CoreferencePairRequest",
+      "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
+      "call": "crate::task_verb::sdk::confirm_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.confirm\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.coreference.share_consent",
+      "description": "The owner consents to exporting an existing identity link into exactly one named federation pact.",
+      "input": "crate::task_verb::sdk::CoreferenceShareConsentRequest",
+      "output": "crate::task_verb::sdk::CoreferenceShareConsentReceipt",
+      "call": "crate::task_verb::sdk::share_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.share_consent\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.pact_id()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.coreference.unlink",
+      "description": "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims.",
+      "input": "crate::task_verb::sdk::CoreferencePairRequest",
+      "output": "crate::task_verb::sdk::CoreferenceUnlinkReceipt",
+      "call": "crate::task_verb::sdk::unlink_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.unlink\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.connect.identity",
       "description": "The owner reads this vault identity and the host key used for reciprocal Connect consent.",
       "input": "crate::task_verb::sdk::EmptyRequest",

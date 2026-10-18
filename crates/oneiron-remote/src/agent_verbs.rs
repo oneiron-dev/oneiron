@@ -533,6 +533,20 @@ impl OneironClient {
                 "vault.shared.policy.change" => remote_agent_verb_output::<
                     oneiron::federation::SharedActPolicyChange,
                 >(client, verb, &input),
+                "vault.federation.coreference.link" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CoreferenceLinkReceipt,
+                >(client, verb, &input),
+                "vault.federation.coreference.confirm" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CoreferenceLinkReceipt,
+                >(client, verb, &input),
+                "vault.federation.coreference.share_consent" => {
+                    remote_agent_verb_output::<
+                        oneiron::task_verb::sdk::CoreferenceShareConsentReceipt,
+                    >(client, verb, &input)
+                }
+                "vault.federation.coreference.unlink" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::CoreferenceUnlinkReceipt,
+                >(client, verb, &input),
                 "vault.federation.connect.identity" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectIdentity,
                 >(client, verb, &input),
@@ -3944,6 +3958,55 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shared.policy.change", value)
+    }
+    pub fn vault_federation_coreference_link(
+        &self,
+        input: &oneiron::task_verb::sdk::CoreferenceLinkRequest,
+    ) -> Result<oneiron::task_verb::sdk::CoreferenceLinkReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.coreference.link", value)
+    }
+    pub fn vault_federation_coreference_confirm(
+        &self,
+        input: &oneiron::task_verb::sdk::CoreferencePairRequest,
+    ) -> Result<oneiron::task_verb::sdk::CoreferenceLinkReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.coreference.confirm", value)
+    }
+    pub fn vault_federation_coreference_share_consent(
+        &self,
+        input: &oneiron::task_verb::sdk::CoreferenceShareConsentRequest,
+    ) -> Result<oneiron::task_verb::sdk::CoreferenceShareConsentReceipt, MemoryError> {
+        input.pact_id()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.coreference.share_consent", value)
+    }
+    pub fn vault_federation_coreference_unlink(
+        &self,
+        input: &oneiron::task_verb::sdk::CoreferencePairRequest,
+    ) -> Result<oneiron::task_verb::sdk::CoreferenceUnlinkReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.coreference.unlink", value)
     }
     pub fn vault_federation_connect_identity(
         &self,

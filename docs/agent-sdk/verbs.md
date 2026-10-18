@@ -166,6 +166,10 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.federation.coreference.link`
+- `vault.federation.coreference.confirm`
+- `vault.federation.coreference.share_consent`
+- `vault.federation.coreference.unlink`
 - `vault.federation.connect.identity`
 - `vault.federation.connect.grants.mint`
 - `vault.federation.connect.offer`

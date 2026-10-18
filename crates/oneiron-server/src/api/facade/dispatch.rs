@@ -3683,6 +3683,110 @@ async fn vault_shared_policy_change(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_federation_coreference_link(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.coreference.link")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.coreference.link", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.coreference.link", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_coreference_link(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_coreference_confirm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.coreference.confirm")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.coreference.confirm", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.federation.coreference.confirm", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_coreference_confirm(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_coreference_share_consent(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.coreference.share_consent")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.coreference.share_consent", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.coreference.share_consent",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_federation_coreference_share_consent(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_coreference_unlink(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.coreference.unlink")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.coreference.unlink", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.federation.coreference.unlink", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_coreference_unlink(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_federation_connect_identity(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14436,6 +14540,18 @@ pub(crate) async fn call_verb(
         "vault.shared.policy.propose" => vault_shared_policy_propose(server, call, input).await,
         "vault.shared.policy.answer" => vault_shared_policy_answer(server, call, input).await,
         "vault.shared.policy.change" => vault_shared_policy_change(server, call, input).await,
+        "vault.federation.coreference.link" => {
+            vault_federation_coreference_link(server, call, input).await
+        }
+        "vault.federation.coreference.confirm" => {
+            vault_federation_coreference_confirm(server, call, input).await
+        }
+        "vault.federation.coreference.share_consent" => {
+            vault_federation_coreference_share_consent(server, call, input).await
+        }
+        "vault.federation.coreference.unlink" => {
+            vault_federation_coreference_unlink(server, call, input).await
+        }
         "vault.federation.connect.identity" => {
             vault_federation_connect_identity(server, call, input).await
         }
