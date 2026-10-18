@@ -8,10 +8,13 @@
 //! binding to its row) apply in every arrival order.
 //!
 //! Revisions form one chain per admitter and supersede only their own chain:
-//! the roster's, and one per owner anchor. Inside the roster's chain the
-//! revisions a key the owner holds signed form a chain of their own, so a
-//! custodian's later demote, removal or conflicting revision never reaches
-//! it. Which chains this install trusts is local: the accepted roster
+//! the roster's, and one per owner anchor. The owner's answers carried by a
+//! linked machine's install key under his act join the roster's chain
+//! ([`owner_answers`], mesh PR1b). Inside the roster's chain the approved
+//! revisions, those a key the owner holds signed and the admitted answers,
+//! form a chain of their own, so a custodian's later demote, removal or
+//! conflicting revision never reaches it. An admitted answer that saw a
+//! chain's head supersedes it causally, an anchor's included. Which chains this install trusts is local: the accepted roster
 //! revisions, plus the pinned anchor's chain (world privacy P6b, contract §4).
 //! Poison applies within one admitter's chains for admission, and across the
 //! trusted chains for trust; an untrusted admitter's poison never touches a
@@ -46,6 +49,11 @@ pub enum SignerClass {
     /// A cloud root, or a key in the host's custody on a hosted vault: it
     /// registers, demotes or removes, and never answers for the owner.
     Custodial,
+    /// A linked machine's install key carrying the owner's act (mesh PR1b):
+    /// the act answers for the owner, never the key, and the label says
+    /// nothing of who holds the key. A revision it signed stands only while
+    /// its act does.
+    Carrier,
 }
 
 /// The root this install pins: only its anchor's chain is trusted here, and
@@ -89,6 +97,10 @@ pub struct MachineRevision {
     pub signer_class: SignerClass,
     /// The authority-log entry that carried the revision.
     pub entry: AuthorityEntryHash,
+    /// The admitted owner act an owner answer stands on, while it stands
+    /// here ([`owner_answers::act_stands`]); `None` for a roster or anchor
+    /// revision, and for an answer whose carrier lost the removal race.
+    pub(in crate::authority) act: Option<Arc<ActProof>>,
 }
 
 /// One machine's folded standing: a chain per admitter.
@@ -121,12 +133,14 @@ pub struct TrustedMachine<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(super) struct MachineChain {
     pub(super) head: MachineRevision,
-    /// The roster's chain only: the highest revision an owner-held key
-    /// signed. Its removal is judged again from `owner_held_removals`.
+    /// The roster's chain only: the highest approved revision, one an
+    /// owner-held key signed or an admitted owner answer. Its removal is
+    /// judged again from `owner_held_removals`.
     pub(super) owner_held: Option<MachineRevision>,
-    /// The roster's chain only: each owner-held signer's removal, so one
-    /// stands while its own signer stays accepted, whatever custody later
-    /// finds of the key that signed the head.
+    /// The roster's chain only: each approving signer's removal (an
+    /// owner-held roster key's, or a carrier's install key's), so one stands
+    /// while its own signer stays accepted, whatever custody later finds of
+    /// the key that signed the head.
     pub(super) owner_held_removals: BTreeMap<AuthorityKey, MachineRevision>,
     /// Every revision of the machine in this chain that this history holds.
     /// The race rule reads the whole set, so no merge order or grouping
@@ -142,6 +156,10 @@ pub(super) struct KeyClaim {
     /// The roster key that signed it, when that key was owner-held as the
     /// revision folded. Custody is judged again on the merged history.
     pub(super) owner_held: Option<AuthorityKey>,
+    /// The carrier whose admitted owner act claimed it, beside custody and
+    /// never in its place: an answer's claim counts in the approved chain's
+    /// scope whatever custody finds.
+    pub(super) act_carrier: Option<EntityId>,
 }
 
 impl MachineRevision {
@@ -154,16 +172,24 @@ impl MachineRevision {
         }
     }
 
-    /// An owned revision stands only when a key the owner holds signed it.
+    /// An owned revision stands only when a key the owner holds signed it,
+    /// or as an admitted owner answer; a carrier's revision stands only
+    /// while its act does. A custodial key registers its node or demotes,
+    /// and never answers "yours", "work/school" or "rented" (truthful
+    /// custody, FIX 2222).
     #[must_use]
     pub fn is_live(&self) -> bool {
+        let approved = match self.signer_class {
+            SignerClass::OwnerHeld => true,
+            SignerClass::Custodial => !matches!(self.profile.role, MachineRole::Owned(_)),
+            SignerClass::Carrier => self.act.is_some(),
+        };
         !self.conflicted
             && !self.removed
             && !self.stale
             && !self.admitter_unsettled
             && !self.floor_held
-            && (self.signer_class == SignerClass::OwnerHeld
-                || !matches!(self.profile.role, MachineRole::Owned(_)))
+            && approved
     }
 
     /// Live, and the owner's explicit `Yours`.
@@ -228,6 +254,12 @@ impl FoldedMachine {
     /// code-R3 S3-F3); a held chain admits nothing, but its removal, conflict
     /// and keys still block. Pin-free; the install view's holds are in the
     /// chains.
+    ///
+    /// An admitted owner answer that saw another chain's head supersedes it,
+    /// an older anchor-era "yours" included, under any pin and in any
+    /// arrival order; an answer and a head it never saw that say otherwise
+    /// conflict (mesh PR1b C5). Shared-key poison and a terminal removal
+    /// still veto every chain.
     #[must_use]
     pub fn trusted_under(&self, admitter: &MachineAdmitter) -> Option<TrustedMachine<'_>> {
         let chains = self.trust_chains(admitter);
@@ -238,7 +270,7 @@ impl FoldedMachine {
         {
             return None;
         }
-        chains
+        owner_answers::effective_chains(chains)?
             .into_iter()
             .rev()
             .find(|(_, chain)| chain.says_yours())
@@ -430,9 +462,14 @@ impl AuthorityFold {
 
 mod apply;
 mod merge;
+mod owner_answers;
 
 pub(super) use apply::{
     apply_anchor_profile, apply_machine_profile, in_host_custody, key_is_authority,
     machine_is_actor,
 };
 pub(super) use merge::{merge_machine, merge_machine_chain, merge_machine_maps};
+pub(super) use owner_answers::{
+    ActProof, MarkProof, act_stands, answer_contested, answer_revision_of, apply_owner_answer,
+    live_answers_by,
+};

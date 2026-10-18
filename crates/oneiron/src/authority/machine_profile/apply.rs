@@ -9,11 +9,16 @@ use super::merge::add_removal;
 use super::*;
 
 /// One fold transition, signed by an owner roster key, for a machine that is
-/// not an actor and whose key is not authority. Only an owner-held key answers
-/// "yours", "work/school" or "rented": a cloud or custodial root, which the
-/// hosted posture lets consent, can register its own node or demote and remove
-/// a machine, but never vouch for a machine as the owner's. Neither can the
-/// host's own root on a hosted vault, whatever its role labels say.
+/// not an actor and whose key is not authority: the explicit bootstrap arm
+/// (the host's own node, the fresh self-host first install; C4) and older
+/// roster revisions. The owner's answer carried by a linked machine under his
+/// act folds through [`super::apply_owner_answer`] instead. Only an
+/// owner-held key answers "yours", "work/school" or "rented" here (truthful
+/// custody): a cloud or custodial root, which the hosted posture lets
+/// consent, can register its own node or demote and remove a machine, but
+/// never vouch for a machine as the owner's. Neither can the host's own root
+/// on a hosted vault, whatever its role labels say (FIX 2222): an unproved
+/// host-root `Owned` answer refuses.
 pub(in crate::authority) fn apply_machine_profile(
     state: &mut FoldState,
     signer: &AuthorityKey,
@@ -59,6 +64,7 @@ pub(in crate::authority) fn apply_machine_profile(
         signer: signer.clone(),
         signer_class,
         entry: hash,
+        act: None,
     };
     let revisions = crate::authority::machine_standing::with_revision(
         roster_chain(state, profile.machine),
@@ -106,6 +112,7 @@ pub(in crate::authority) fn apply_machine_profile(
             machine: profile.machine,
             admitter: MachineAdmitter::Roster,
             owner_held: (signer_class == SignerClass::OwnerHeld).then(|| signer.clone()),
+            act_carrier: None,
         });
     Ok(())
 }
@@ -144,6 +151,7 @@ pub(in crate::authority) fn apply_anchor_profile(
         signer: AuthorityKey::Ed25519(anchor),
         signer_class: SignerClass::OwnerHeld,
         entry: hash,
+        act: None,
     };
     let revisions =
         crate::authority::machine_standing::with_revision(chain, &folded, true, restriction_only);
@@ -164,6 +172,7 @@ pub(in crate::authority) fn apply_anchor_profile(
             machine: profile.machine,
             admitter,
             owner_held: None,
+            act_carrier: None,
         });
     Ok(())
 }

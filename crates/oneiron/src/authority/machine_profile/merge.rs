@@ -42,17 +42,23 @@ fn merge_chain(left: &MachineChain, right: &MachineChain) -> MachineChain {
     for (signer, removal) in &right.owner_held_removals {
         add_removal(&mut owner_held_removals, signer, removal);
     }
+    let revisions =
+        crate::authority::machine_standing::merge_revisions(&left.revisions, &right.revisions);
+    // Concurrent owner answers that say otherwise conflict, whatever their
+    // numeric revisions (mesh PR1b C5): the higher number never wins them.
+    let contest = |mut head: MachineRevision| {
+        head.conflicted |= super::answer_contested(&head, &revisions);
+        head
+    };
     MachineChain {
-        head: merge_machine(&left.head, &right.head),
+        head: contest(merge_machine(&left.head, &right.head)),
         owner_held: match (&left.owner_held, &right.owner_held) {
             (Some(left), Some(right)) => Some(merge_machine(left, right)),
             (one, other) => one.clone().or_else(|| other.clone()),
-        },
+        }
+        .map(contest),
         owner_held_removals,
-        revisions: crate::authority::machine_standing::merge_revisions(
-            &left.revisions,
-            &right.revisions,
-        ),
+        revisions,
     }
 }
 

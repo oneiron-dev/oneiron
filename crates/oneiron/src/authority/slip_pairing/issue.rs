@@ -51,13 +51,16 @@ impl Vault {
             None,
         )
     }
-    /// The owner adds a machine: the link carries the owner's answer (yours,
-    /// work/school or rented), and redeeming it enrols the machine under that
-    /// answer in the same transaction as its slip.
+    /// The owner adds a machine, from any surface where he is authenticated
+    /// (`surface`, audit only): the single-use link keeps his approval, his
+    /// act and his answer (yours, work/school or rented), and redeeming it
+    /// enrols the machine under them in the same transaction as its slip,
+    /// carried by the redeeming install (mesh PR1b C2).
     pub fn issue_machine_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
         owner: &crate::consent::AuthenticatedOwner,
+        surface: ActSurface,
         scope: Scope,
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
@@ -69,7 +72,7 @@ impl Vault {
             slip_lifetime_secs,
             principal,
             Some(owner),
-            Some((owner, ownership)),
+            Some((owner, surface, ownership)),
         )
     }
     fn issue_pairing_link_in(
@@ -79,7 +82,11 @@ impl Vault {
         slip_lifetime_secs: u64,
         principal: PairingPrincipal,
         link_owner: Option<&crate::consent::AuthenticatedOwner>,
-        answer: Option<(&crate::consent::AuthenticatedOwner, MachineOwnership)>,
+        answer: Option<(
+            &crate::consent::AuthenticatedOwner,
+            ActSurface,
+            MachineOwnership,
+        )>,
     ) -> Result<PairingLink> {
         if slip_lifetime_secs == 0 {
             return Err(invalid_authority());
@@ -92,10 +99,13 @@ impl Vault {
         // live, judged in the transaction that stores the answer.
         let machine = match answer {
             None => None,
-            Some((owner, ownership)) => {
+            Some((owner, surface, ownership)) => {
                 let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
                 Some(PendingMachine {
                     owner: actor,
+                    by: ActBy::Owner,
+                    surface,
+                    kind: OwnerActKind::Pairing,
                     ownership,
                 })
             }

@@ -54,15 +54,19 @@ pub(super) async fn create_link(
                 )
             })?,
         },
-        // Only the owner, in person, answers for a machine.
+        // Only the owner answers for a machine, from any surface where he is
+        // authenticated (the mesh ruling, 10-19): the owner proof comes from
+        // this request's auth, verified once above, with no second prompt.
+        // A hosted operator's root acts as nobody (FIX 2222); `owner()`
+        // refuses it.
         Some(ownership) => {
-            let auth =
-                crate::auth::require_owner_auth(&headers, &server.config, server.vault().as_ref())?;
             let owner = super::owner_routes::owner(&auth, &server)?;
+            let surface = super::owner_routes::machine_routes::act_surface(&server, &auth, &headers);
             with_issuer(&server, |issuer| {
                 server.vault().issue_machine_pairing_link(
                     issuer,
                     &owner,
+                    surface,
                     request.scope,
                     request.lifetime_secs,
                     request.principal,

@@ -6,7 +6,16 @@ use ed25519_dalek::{Signature, VerifyingKey};
 use super::code::pairing_row_key;
 use super::principal::canonical_id;
 use super::*;
+use crate::authority::machine_answers::AnswerAct;
 use crate::authority::slip_vault::{random_slip_id, require_host};
+
+/// The install the explicit bootstrap arm serves (C4): one the vault never
+/// profiled, such as a fresh self-host first install, whose host root signs
+/// as the owner's own key. A profiled install that cannot carry (removed,
+/// poisoned) never falls back to the root.
+fn unprofiled_install(fold: &AuthorityFold, machine: Option<crate::EntityId>) -> bool {
+    machine.is_none_or(|machine| fold.machine(machine).is_none())
+}
 
 impl Vault {
     /// No prior bearer is required. The link is the one-use enrollment grant;
@@ -165,13 +174,7 @@ impl Vault {
                 if !crate::policy_model::is_live_vault_owner_in_txn(self, &txn, &answer.owner)? {
                     return Err(invalid_authority());
                 }
-                Some(self.enroll_machine_in_txn(
-                    &mut txn,
-                    issuer,
-                    answer.owner,
-                    request,
-                    MachineRole::Owned(answer.ownership),
-                )?)
+                Some(self.redeem_machine_answer_in_txn(&mut txn, issuer, answer, request)?)
             }
             _ => None,
         };
@@ -197,6 +200,40 @@ impl Vault {
             link_owner: pending.owner,
         })
     }
+    /// Enrols the machine a link adds under the approval it kept (C2): this
+    /// install carries the owner's act, its target the redeeming machine and
+    /// its `seen` that machine's revision here, zero for a new one. An
+    /// install the vault never profiled takes the explicit bootstrap arm
+    /// instead (C4, a fresh self-host first install): the host root signs
+    /// the owner's answer with no act, as it always has, and the fold judges
+    /// the root's custody, so a hosted root never answers for the owner
+    /// there. Any other install that cannot carry refuses, and nothing is
+    /// written.
+    fn redeem_machine_answer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        answer: PendingMachine,
+        request: &MachineEnrolmentRequest,
+    ) -> Result<FoldedMachine> {
+        let role = MachineRole::Owned(answer.ownership);
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if self.carrier_in_txn(txn, &fold).is_ok() {
+            let act = AnswerAct {
+                owner: answer.owner,
+                by: answer.by,
+                surface: answer.surface,
+                kind: answer.kind,
+                seen: None,
+            };
+            return self.enroll_machine_in_txn(txn, act, request, role);
+        }
+        if unprofiled_install(&fold, crate::identity::read_machine_id_in_txn(self, txn)?) {
+            return self.enroll_bootstrap_in_txn(txn, issuer, answer.owner, request, role);
+        }
+        Err(crate::authority::machine_answers::no_carrier())
+    }
+
     /// The facet a credential redeemed from a link writes in, as the owner
     /// named it there: `None` for a link that named none.
     pub fn paired_write_facet(&self, slip_id: &[u8; 32]) -> Result<Option<crate::EntityId>> {

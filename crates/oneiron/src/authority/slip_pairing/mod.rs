@@ -105,8 +105,9 @@ struct PairingPending {
     scope: Scope,
     host_key: [u8; 32],
     principal: PairingPrincipal,
-    /// The owner's answer for the machine this link adds; redemption must
-    /// enrol that machine and cannot change the answer.
+    /// The owner's approval of the machine this link adds: his act and his
+    /// answer; redemption must enrol that machine and cannot change either
+    /// (mesh PR1b C2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     machine: Option<PendingMachine>,
     /// The checkpoint pin the link hands the joining device (OF-469).
@@ -117,10 +118,17 @@ struct PairingPending {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     owner: Option<crate::EntityId>,
 }
+/// The owner's approval a single-use machine link keeps (mesh PR1b C2): his
+/// act's owner, by, surface and kind, and his answer. Redemption fills the
+/// act's target (the redeeming machine) and `seen` (its revision on the
+/// carrier, zero for a new machine), and the carrier signs.
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PendingMachine {
     owner: crate::EntityId,
+    by: ActBy,
+    surface: ActSurface,
+    kind: OwnerActKind,
     ownership: MachineOwnership,
 }
 
