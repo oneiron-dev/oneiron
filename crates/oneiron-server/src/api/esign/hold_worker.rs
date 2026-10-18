@@ -23,7 +23,7 @@ use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{EntityId, Error, Result};
 use serde_json::json;
 
-use crate::server::SyncServer;
+use crate::server::{HousekeepingAdmission, SyncServer};
 
 const TICK: Duration = Duration::from_secs(15);
 /// The clock one hold's ask runs under.
@@ -42,6 +42,42 @@ pub(crate) fn spawn(server: Arc<SyncServer>) -> tokio::task::JoinHandle<()> {
                 break;
             };
             match tokio::task::spawn_blocking(move || tick(&server)).await {
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, "esign hold pass failed; it runs again next tick");
+                }
+                Err(error) => tracing::warn!(%error, "esign hold pass stopped"),
+                Ok(Ok(())) => {}
+            }
+        }
+    })
+}
+
+/// [`spawn`] for a host whose passes wait on an admission (managed serve's
+/// reap freeze): a pass runs only while `admit` gives a guard, which it
+/// holds to the pass's end; a refused tick waits for the next.
+pub(crate) fn spawn_admitted(
+    server: Arc<SyncServer>,
+    admit: HousekeepingAdmission,
+) -> tokio::task::JoinHandle<()> {
+    let weak = Arc::downgrade(&server);
+    drop(server);
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(TICK);
+        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            every.tick().await;
+            let Some(server) = weak.upgrade() else {
+                break;
+            };
+            let Some(pass) = admit() else {
+                continue;
+            };
+            match tokio::task::spawn_blocking(move || {
+                let _pass = pass;
+                tick(&server)
+            })
+            .await
+            {
                 Ok(Err(error)) => {
                     tracing::warn!(%error, "esign hold pass failed; it runs again next tick");
                 }

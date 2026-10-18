@@ -5,8 +5,8 @@ use crate::{
     Result,
     code_sandbox::{
         SandboxCredentialCall, SandboxCredentialHandle, SandboxFileDeleteProposal,
-        SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxMount, SandboxProposalWrite,
-        SandboxVirtualPath,
+        SandboxFileRenameProposal, SandboxFileWriteProposal, SandboxMount, SandboxProposalBody,
+        SandboxProposalBodyWriter, SandboxProposalWrite, SandboxVirtualPath,
         microvm::{
             CredentialEgressProxy, CredentialReadTransport, ExecutionBudget, MicroVmExit,
             MicroVmHandle,
@@ -38,10 +38,15 @@ enum GuestFrame {
         scheme: String,
         host: String,
     },
-    Write {
+    /// A proposed file streams in: its path, then its frames, then its end.
+    /// One file is open at a time.
+    WriteOpen {
         path: String,
+    },
+    WriteChunk {
         bytes: Vec<u8>,
     },
+    WriteClose,
     Delete {
         path: String,
     },
@@ -259,9 +264,30 @@ fn receive_proposals_cancellable(
     // The snapshot tree (empty directories included) with every accepted
     // proposal applied, under the same rules as the guest and the walker.
     let mut shape = base.shape.clone();
-    for _ in 0..MAX_REQUESTS {
+    // The file streaming in, if any. Its frames are not requests: a file's
+    // size never spends the request budget.
+    let mut open: Option<(SandboxVirtualPath, SandboxProposalBodyWriter)> = None;
+    let mut requests = 0;
+    loop {
         cancel.check()?;
-        match read_frame(&mut stream, deadline)? {
+        let frame = read_frame(&mut stream, deadline)?;
+        if !matches!(frame, GuestFrame::WriteChunk { .. }) {
+            if requests == MAX_REQUESTS {
+                return Err(refused("guest protocol request budget exhausted"));
+            }
+            requests += 1;
+        }
+        if open.is_some()
+            && !matches!(
+                frame,
+                GuestFrame::WriteChunk { .. }
+                    | GuestFrame::WriteClose
+                    | GuestFrame::CredentialRead { .. }
+            )
+        {
+            return Err(refused("guest frame inside an open file proposal"));
+        }
+        match frame {
             GuestFrame::Hello { .. } => return Err(refused("duplicate guest hello")),
             GuestFrame::CredentialRead {
                 handle,
@@ -287,7 +313,7 @@ fn receive_proposals_cancellable(
                 cancel.check()?;
                 write_frame(&mut stream, &HostFrame::Receipt { accepted }, deadline)?;
             }
-            GuestFrame::Write { path, bytes } => {
+            GuestFrame::WriteOpen { path } => {
                 let path = SandboxVirtualPath::try_new(path)?;
                 if path.mount() != SandboxMount::Workspace
                     || !occupied.insert(path.as_str().to_owned())
@@ -295,11 +321,36 @@ fn receive_proposals_cancellable(
                     return Err(refused("guest proposal path or duplicate refused"));
                 }
                 shape
-                    .replace_file(&workspace_path(&path)?, bytes.len())
+                    .replace_file(&workspace_path(&path)?, 0)
+                    .map_err(|error| refused(error.reason()))?;
+                open = Some((path, SandboxProposalBody::spool()?));
+                write_frame(
+                    &mut stream,
+                    &HostFrame::Receipt { accepted: true },
+                    deadline,
+                )?;
+            }
+            GuestFrame::WriteChunk { bytes } => {
+                let Some((_, body)) = open.as_mut() else {
+                    return Err(refused("guest file frame outside a file proposal"));
+                };
+                body.append(&bytes)?;
+            }
+            GuestFrame::WriteClose => {
+                let Some((path, body)) = open.take() else {
+                    return Err(refused("guest file end outside a file proposal"));
+                };
+                let body = body.finish()?;
+                shape
+                    .replace_file(
+                        &workspace_path(&path)?,
+                        usize::try_from(body.len())
+                            .map_err(|_| refused("guest proposal length overflow"))?,
+                    )
                     .map_err(|error| refused(error.reason()))?;
                 writes.insert(
                     path.as_str().to_owned(),
-                    SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, bytes)),
+                    SandboxProposalWrite::FileWrite(SandboxFileWriteProposal::new(path, body)),
                 );
                 write_frame(
                     &mut stream,
@@ -381,7 +432,6 @@ fn receive_proposals_cancellable(
             }
         }
     }
-    Err(refused("guest protocol request budget exhausted"))
 }
 
 fn set_deadline(stream: &UnixStream, deadline: Instant) -> Result<()> {

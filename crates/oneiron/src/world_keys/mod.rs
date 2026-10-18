@@ -45,12 +45,6 @@ pub use self::bundle::{
     SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload,
     retired_bundle_generations, sealed_bundle_slot,
 };
-pub use self::content::{
-    OpenedSealedContent, SEALED_RETENTION_SECS, SealedContentBinding, SealedContentId,
-    SealedContentKind, SealedResidenceContent,
-};
-#[cfg(feature = "sync")]
-pub use self::content_window::SealedTake;
 pub use self::doors::WorldKeyStatus;
 pub(crate) use self::doors::{MachineSecret, SequenceCounter, open_counted, recipients};
 pub use self::kit::{
