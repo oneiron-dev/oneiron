@@ -162,10 +162,10 @@ pub(crate) fn resolve_core_interlocutor_set(
         None => vault.resolve_interlocutors_under(&input, read, read_rosters),
     }
     .map(Some)
-        .map_err(|error| {
-            tracing::error!(error = %error, "core context-pack interlocutor resolution failed");
-            core_engine_error("core context-pack interlocutor resolution failed", error)
-        })
+    .map_err(|error| {
+        tracing::error!(error = %error, "core context-pack interlocutor resolution failed");
+        core_engine_error("core context-pack interlocutor resolution failed", error)
+    })
 }
 
 /// A room read's audience: every member but the room's proven reader,

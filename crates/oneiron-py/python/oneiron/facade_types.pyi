@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 318 facade rows, 1279 declarations.
+Census: 318 facade rows, 1280 declarations.
 Inputs: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 73; unread shapes: 0.
@@ -6769,11 +6769,12 @@ class NoteEditOutcomeReviewRequired(TypedDict):
 NoteEditOutcome = NoteEditOutcomeEdited | NoteEditOutcomeRewriteFork | NoteEditOutcomeProposedFork | NoteEditOutcomeReviewRequired
 class NoteRefRequest(TypedDict):
     note_ref: str
+NoteActor = str
 class NoteSeal(TypedDict):
     note: str
     document: str
     frontier: list[int]
-    sealed_by: str
+    sealed_by: NoteActor
     sealed_at: int
 NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
