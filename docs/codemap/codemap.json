@@ -1013,6 +1013,7 @@
      "path": "src/agent_dispatch/planner_live/intent.rs",
      "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
      "surface": {
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -1023,7 +1024,17 @@
      "path": "src/agent_dispatch/planner_live/root_plan.rs",
      "purpose": "The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/team_launch.rs",
+     "purpose": "The owner's planned launch (DOOR-111 S4a): a planned intent's plan, launched at the root as one group",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -51793,7 +51804,6 @@
       "ResolvedTeam",
       "RouteObservation",
       "SkillRevisionView",
-      "SpawnPhase",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
       "TaskTypeTreePin",
@@ -51809,7 +51819,7 @@
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "enum": 4,
+      "enum": 3,
       "fn": 3,
       "struct": 23
      }
@@ -51879,9 +51889,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "PatternLaunchRunner",
+      "PatternLaunchSpec",
       "PatternSkill",
       "TeamAxis",
       "TeamPattern"
@@ -51893,7 +51905,8 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 7,
-      "struct": 1
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -51971,10 +51984,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "PlannedIntentPhase",
       "PlannedIntentView",
       "PlannedSpawnHost",
-      "PlannedSpawnRequest"
+      "PlannedSpawnRequest",
+      "SpawnPhase"
      ],
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
@@ -56470,7 +56483,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57977,7 +57990,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3534,
+   "source_files": 3535,
    "test_files": 902
   },
   "oneiron-android": {
