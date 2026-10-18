@@ -23498,6 +23498,16 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/gate/coach_offer_reach.rs",
+     "purpose": "The Coach's born-with reach to ask the vault owner about its own training offers (OF-577, FIX 856; Engine…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "CriticalWriteConfirmBinding",
       "CriticalWriteConfirmResolution"
@@ -23926,7 +23936,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 62,
+      "crate-vis": 63,
       "re-export": 8
      }
     },
@@ -24744,7 +24754,7 @@
      "path": "src/gate/witness_message.rs",
      "purpose": "ONE-1686 (RT-04): the witness MESSAGE approval-ceiling door",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -43055,7 +43065,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "re-export": 16
      }
     },
@@ -43082,6 +43092,7 @@
      "purpose": "The Coach's training offer (OF-577): a cheaper stock model or a custom one for a seat, which the owner…",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "enum": 4,
       "fn": 9,
       "struct": 10
@@ -46742,7 +46753,7 @@
      "path": "src/task_verb/ask_facade.rs",
      "purpose": "Async scope-authority asks over existing consult TASKs",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "fn": 7
      }
     },
@@ -47453,7 +47464,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 31,
+      "crate-vis": 32,
       "mod": 2,
       "re-export": 24
      }
@@ -48437,6 +48448,16 @@
      "purpose": "Shared fixtures and helpers for the task_verb tests",
      "surface": {
       "crate-vis": 59
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/training_offer_ask.rs",
+     "purpose": "A pending training offer asked as a real `tasks.ask` (OF-577, FIX 856)",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -53636,7 +53657,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 132,
+     "files": 133,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54350,7 +54371,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 131,
+     "files": 132,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54520,7 +54541,7 @@
    },
    "over_bar": 188,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3314,
+   "source_files": 3316,
    "test_files": 902
   },
   "oneiron-android": {
