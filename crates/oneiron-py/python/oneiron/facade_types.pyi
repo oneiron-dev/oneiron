@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 780 facade rows, 2722 declarations.
-Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 785 facade rows, 2739 declarations.
+Inputs: 733 of 785 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 704 of 785 fully typed, 81 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -1934,6 +1934,76 @@ class RetrievalWeightsConfigureRequest(TypedDict):
 class RetrievalWeightsReceipt(TypedDict):
     configuration: RetrievalWeightsView
     receipt_ref: str
+class GroundingContext(TypedDict):
+    bindings: dict[str, str]
+class HydeOptions(TypedDict):
+    channel_limit: int
+    retry_once: bool
+class HydeHostConfig(TypedDict):
+    expander: str
+    grounding: GroundingContext
+    options: HydeOptions
+class HydeHostConfigureRequest(TypedDict):
+    binding: NotRequired[HydeHostConfig | None]
+class HydeHostConfiguration(TypedDict):
+    binding: NotRequired[HydeHostConfig | None]
+class HydeHostPendingRequest(TypedDict):
+    limit: NotRequired[int | None]
+class HydeRequest(TypedDict):
+    query: str
+    max_subqueries: int
+class HydeHostCandidate(TypedDict):
+    id: str
+    score: float
+    claim: NotRequired[ClaimView | None]
+class HydeHostInputExpansion(TypedDict):
+    stage: Literal["expansion"]
+    request: HydeRequest
+class HydeHostInputEvidence(TypedDict):
+    stage: Literal["evidence"]
+    query: str
+    candidates: list[HydeHostCandidate]
+HydeHostInput = HydeHostInputExpansion | HydeHostInputEvidence
+class HydeHostWork(TypedDict):
+    request_id: str
+    expander: str
+    requested_at_ms: int
+    deadline_at_ms: NotRequired[int | None]
+    input: HydeHostInput
+class HydeExpansion(TypedDict):
+    grounded_query: str
+    hypothetical_answer: str
+    embedding: list[float]
+    subqueries: list[str]
+class EvidenceVerdictInsufficientBody(TypedDict):
+    gaps: list[str]
+class EvidenceVerdictInsufficient(TypedDict):
+    Insufficient: EvidenceVerdictInsufficientBody
+EvidenceVerdict = Literal["Sufficient"] | EvidenceVerdictInsufficient
+class HydeHostAnswerExpansion(TypedDict):
+    stage: Literal["expansion"]
+    expansion: HydeExpansion
+class HydeHostAnswerEvidence(TypedDict):
+    stage: Literal["evidence"]
+    verdict: EvidenceVerdict
+class HydeHostAnswerFailed(TypedDict):
+    stage: Literal["failed"]
+    reason: str
+HydeHostAnswer = HydeHostAnswerExpansion | HydeHostAnswerEvidence | HydeHostAnswerFailed
+class HydeHostCompleteRequest(TypedDict):
+    request_id: str
+    answer: HydeHostAnswer
+HydeHostStatus = Literal["pending", "expired", "completed", "failed", "discarded_deadline", "cancelled"]
+class HydeHostReceipt(TypedDict):
+    request_id: str
+    expander: str
+    requested_at_ms: int
+    deadline_at_ms: NotRequired[int | None]
+    completed_at_ms: NotRequired[int | None]
+    status: HydeHostStatus
+    received_bytes: int
+class HydeHostReceiptRequest(TypedDict):
+    request_id: str
 VadAnnotationSource = Literal["model_inference", "user_self_report"]
 class AffectAnnotationPut(TypedDict):
     turn_ref: str

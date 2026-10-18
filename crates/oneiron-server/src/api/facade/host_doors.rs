@@ -167,6 +167,7 @@ pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::coach_offer_doors::*;
 pub(crate) use super::retrieval_doors::*;
+pub(crate) use super::hyde_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1195,6 +1196,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.aging.configure"
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
+        | "vault.retrieval.hyde.configure"
+        | "vault.retrieval.hyde.get"
         | "vault.affect.claims.consolidate"
         | "vault.slim.policy"
         | "vault.slim.state"
@@ -1497,6 +1500,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"
         | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
+        "vault.retrieval.hyde.pending"
+        | "vault.retrieval.hyde.complete"
+        | "vault.retrieval.hyde.receipt" => super::hyde_doors::hyde_caller(server, auth).map(drop),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

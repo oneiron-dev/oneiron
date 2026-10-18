@@ -96,6 +96,11 @@ vaultRetrievalAgingGet(input: unknown): unknown
 vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
+vaultRetrievalHydeConfigure(input: unknown): unknown
+vaultRetrievalHydeGet(input: unknown): unknown
+vaultRetrievalHydePending(input: unknown): unknown
+vaultRetrievalHydeComplete(input: unknown): unknown
+vaultRetrievalHydeReceipt(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
 vaultTaggingStatus(input: unknown): unknown
 vaultTaggingTags(input: unknown): unknown

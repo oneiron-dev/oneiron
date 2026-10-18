@@ -520,6 +520,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_retrieval_hyde_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_pending(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.pending", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_complete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.complete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.receipt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_affect_annotations_put(
         &self,
         input: serde_json::Value,

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 821 code-mode rows (798 host rows, 23 run rows), 2783 declarations.
+// Replies: 733 fully typed, 84 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -396,6 +396,23 @@ declare namespace Sdk {
   type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
+  type GroundingContext = { bindings: Record<string, string> };
+  type HydeOptions = { channel_limit: number; retry_once: boolean };
+  type HydeHostConfig = { expander: string; grounding: GroundingContext; options: HydeOptions };
+  type HydeHostConfigureRequest = { binding?: HydeHostConfig | null };
+  type HydeHostConfiguration = { binding?: HydeHostConfig | null };
+  type HydeHostPendingRequest = { limit?: number | null };
+  type HydeRequest = { query: string; max_subqueries: number };
+  type HydeHostCandidate = { id: string; score: number; claim?: ClaimView | null };
+  type HydeHostInput = { stage: "expansion"; request: HydeRequest } | { stage: "evidence"; query: string; candidates: HydeHostCandidate[] };
+  type HydeHostWork = { request_id: string; expander: string; requested_at_ms: number; deadline_at_ms?: number | null; input: HydeHostInput };
+  type HydeExpansion = { grounded_query: string; hypothetical_answer: string; embedding: number[]; subqueries: string[] };
+  type EvidenceVerdict = "Sufficient" | { Insufficient: { gaps: string[] } };
+  type HydeHostAnswer = { stage: "expansion"; expansion: HydeExpansion } | { stage: "evidence"; verdict: EvidenceVerdict } | { stage: "failed"; reason: string };
+  type HydeHostCompleteRequest = { request_id: string; answer: HydeHostAnswer };
+  type HydeHostStatus = "pending" | "expired" | "completed" | "failed" | "discarded_deadline" | "cancelled";
+  type HydeHostReceipt = { request_id: string; expander: string; requested_at_ms: number; deadline_at_ms?: number | null; completed_at_ms?: number | null; status: HydeHostStatus; received_bytes: number };
+  type HydeHostReceiptRequest = { request_id: string };
   type VadAnnotationSource = "model_inference" | "user_self_report";
   type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
   type TaggingTurnRequest = { turn_ref: string };
@@ -4343,6 +4360,18 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
     export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
+    hyde: {
+      /** Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded. */
+      complete(input: Sdk.HydeHostCompleteRequest): Promise<Sdk.HydeHostReceipt | StoredResult>;
+      /** The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work. */
+      configure(input: Sdk.HydeHostConfigureRequest): Promise<Sdk.HydeHostConfiguration | StoredResult>;
+      /** The owner reads the serving host HyDE binding, grounding and bounded retry options. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.HydeHostConfiguration | StoredResult>;
+      /** Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing. */
+      pending(input: Sdk.HydeHostPendingRequest): Promise<Sdk.HydeHostWork[] | StoredResult>;
+      /** Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline. */
+      receipt(input: Sdk.HydeHostReceiptRequest): Promise<Sdk.HydeHostReceipt | null | StoredResult>;
+    };
     outcomes: {
       /** The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward. */
       end(input: Sdk.RetrievalEndOutcome): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;

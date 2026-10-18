@@ -1532,6 +1532,126 @@ async fn vault_retrieval_weights_configure(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_retrieval_hyde_configure(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.hyde.configure")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.configure", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.hyde.configure", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_hyde_configure(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_retrieval_hyde_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.hyde.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.hyde.get", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_hyde_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_retrieval_hyde_pending(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.hyde.pending")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.pending", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.hyde.pending", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_hyde_pending(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_retrieval_hyde_complete(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.hyde.complete")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.complete", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.hyde.complete", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_hyde_complete(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_retrieval_hyde_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.hyde.receipt")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.hyde.receipt", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.hyde.receipt", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_hyde_receipt(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_affect_annotations_put(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18445,6 +18565,13 @@ pub(crate) async fn call_verb(
         "vault.retrieval.weights.configure" => {
             vault_retrieval_weights_configure(server, call, input).await
         }
+        "vault.retrieval.hyde.configure" => {
+            vault_retrieval_hyde_configure(server, call, input).await
+        }
+        "vault.retrieval.hyde.get" => vault_retrieval_hyde_get(server, call, input).await,
+        "vault.retrieval.hyde.pending" => vault_retrieval_hyde_pending(server, call, input).await,
+        "vault.retrieval.hyde.complete" => vault_retrieval_hyde_complete(server, call, input).await,
+        "vault.retrieval.hyde.receipt" => vault_retrieval_hyde_receipt(server, call, input).await,
         "vault.affect.annotations.put" => vault_affect_annotations_put(server, call, input).await,
         "vault.tagging.status" => vault_tagging_status(server, call, input).await,
         "vault.tagging.tags" => vault_tagging_tags(server, call, input).await,

@@ -366,6 +366,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.retrieval.hyde.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.hyde.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.hyde.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostPendingRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.hyde.complete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostCompleteRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.hyde.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostReceiptRequest,
+                >(),
+            ),
+            (
                 "vault.affect.annotations.put",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::affect::AffectAnnotationPut,
@@ -4437,6 +4465,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
+    "vault.retrieval.hyde.configure",
+    "vault.retrieval.hyde.get",
+    "vault.retrieval.hyde.pending",
+    "vault.retrieval.hyde.complete",
+    "vault.retrieval.hyde.receipt",
     "vault.affect.annotations.put",
     "vault.tagging.status",
     "vault.tagging.tags",
@@ -4932,6 +4965,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.retrieval.weights.configure" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::RetrievalWeightsReceipt,
+        >(),
+        "vault.retrieval.hyde.configure" => crate::code_run::vault_read::request_schema::<
+            crate::query_expansion::host::HydeHostConfiguration,
+        >(),
+        "vault.retrieval.hyde.get" => crate::code_run::vault_read::request_schema::<
+            crate::query_expansion::host::HydeHostConfiguration,
+        >(),
+        "vault.retrieval.hyde.pending" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::query_expansion::host::HydeHostWork>,
+        >(),
+        "vault.retrieval.hyde.complete" => crate::code_run::vault_read::request_schema::<
+            crate::query_expansion::host::HydeHostReceipt,
+        >(),
+        "vault.retrieval.hyde.receipt" => crate::code_run::vault_read::request_schema::<
+            Option<crate::query_expansion::host::HydeHostReceipt>,
         >(),
         "vault.affect.annotations.put" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
@@ -6713,6 +6761,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.retrieval.weights.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.complete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.receipt" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11932,6 +12015,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::policy_manifest_doors::RetrievalWeightsConfigureRequest =
                 decode(value.clone())?;
         }
+        "vault.retrieval.hyde.configure" => {
+            let _input: crate::query_expansion::host::HydeHostConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.pending" => {
+            let _input: crate::query_expansion::host::HydeHostPendingRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.complete" => {
+            let _input: crate::query_expansion::host::HydeHostCompleteRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.receipt" => {
+            let _input: crate::query_expansion::host::HydeHostReceiptRequest =
+                decode(value.clone())?;
+        }
         "vault.affect.annotations.put" => {
             let _input: crate::memory::affect::AffectAnnotationPut = decode(value.clone())?;
         }
@@ -14601,6 +14703,19 @@ pub fn invoke(
         "vault.retrieval.weights.configure" => {
             encode(vault_retrieval_weights_configure(memory, decode(value)?)?)
         }
+        "vault.retrieval.hyde.configure" => {
+            encode(vault_retrieval_hyde_configure(memory, decode(value)?)?)
+        }
+        "vault.retrieval.hyde.get" => encode(vault_retrieval_hyde_get(memory, decode(value)?)?),
+        "vault.retrieval.hyde.pending" => {
+            encode(vault_retrieval_hyde_pending(memory, decode(value)?)?)
+        }
+        "vault.retrieval.hyde.complete" => {
+            encode(vault_retrieval_hyde_complete(memory, decode(value)?)?)
+        }
+        "vault.retrieval.hyde.receipt" => {
+            encode(vault_retrieval_hyde_receipt(memory, decode(value)?)?)
+        }
         "vault.affect.annotations.put" => {
             encode(vault_affect_annotations_put(memory, decode(value)?)?)
         }
@@ -16694,6 +16809,36 @@ pub fn vault_retrieval_weights_configure(
         input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_retrieval_hyde_configure(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostConfigureRequest,
+) -> MemoryResult<crate::query_expansion::host::HydeHostConfiguration> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.configure", &input)
+}
+pub fn vault_retrieval_hyde_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::query_expansion::host::HydeHostConfiguration> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.get", &_input)
+}
+pub fn vault_retrieval_hyde_pending(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostPendingRequest,
+) -> MemoryResult<Vec<crate::query_expansion::host::HydeHostWork>> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.pending", &input)
+}
+pub fn vault_retrieval_hyde_complete(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostCompleteRequest,
+) -> MemoryResult<crate::query_expansion::host::HydeHostReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.complete", &input)
+}
+pub fn vault_retrieval_hyde_receipt(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostReceiptRequest,
+) -> MemoryResult<Option<crate::query_expansion::host::HydeHostReceipt>> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.receipt", &input)
 }
 pub fn vault_affect_annotations_put(
     memory: &Memory<'_>,
