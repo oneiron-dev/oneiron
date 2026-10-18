@@ -56,6 +56,10 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
 - `vault.affect.annotations.put`
+- `vault.tagging.status`
+- `vault.tagging.tags`
+- `vault.tagging.history`
+- `vault.tagging.mentions`
 - `vault.affect.claims.consolidate`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
@@ -511,6 +515,7 @@ both bindings and their export-census tests in one change.
 - `vault.refs.resolve`
 - `vault.refs.links`
 - `vault.search.hybrid`
+- `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`
@@ -590,6 +595,7 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
 - `vault.notes.create`
+- `vault.notes.author_take`
 - `vault.notes.from_entity`
 - `vault.notes.read`
 - `vault.notes.history`

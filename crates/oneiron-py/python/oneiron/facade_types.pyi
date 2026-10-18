@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 626 facade rows, 2326 declarations.
-Inputs: 574 of 626 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 557 of 626 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 632 facade rows, 2354 declarations.
+Inputs: 580 of 632 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 563 of 632 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -1662,6 +1662,163 @@ class AffectAnnotationPut(TypedDict):
     annotated_at: int
     scope: ClaimScope
     sensitivity: NotRequired[int | None]
+class TaggingTurnRequest(TypedDict):
+    turn_ref: str
+TaggingMarkerState = Literal["unconfigured", "absent", "pending", "retrying", "settled", "failed"]
+class TaggingMarkerView(TypedDict):
+    attempt_ref: str
+    state: str
+    checkpoint: NotRequired[str | None]
+    stack: NotRequired[str | None]
+    attempt_count: int
+    retry_of: NotRequired[str | None]
+    scheduled_at: NotRequired[int | None]
+    last_error: NotRequired[str | None]
+    created_at: int
+    updated_at: int
+TaggingFailureView = TypedDict("TaggingFailureView", {"class": str, "code": NotRequired[str | None], "refusal": NotRequired[str | None]})
+class TaggingOutcomeViewSaved(TypedDict):
+    outcome: Literal["saved"]
+    spans: int
+    links: int
+    mood: bool
+    linked: int
+    minted: int
+    context_links: int
+    speaker_links: int
+    unresolved_context_links: int
+    unresolved_speaker_links: int
+    surprise: NotRequired[float | None]
+class TaggingOutcomeViewShadowed(TypedDict):
+    outcome: Literal["shadowed"]
+    spans: int
+    links: int
+    mood: bool
+    mapped_spans: int
+    context_links: int
+    speaker_links: int
+class TaggingOutcomeViewImported(TypedDict):
+    outcome: Literal["imported"]
+    spans: int
+    links: int
+    mood: bool
+class TaggingOutcomeViewSkipped(TypedDict):
+    outcome: Literal["skipped"]
+    reason: str
+class TaggingOutcomeViewSuperseded(TypedDict):
+    outcome: Literal["superseded"]
+    retry_at: int
+class TaggingOutcomeViewDeferred(TypedDict):
+    outcome: Literal["deferred"]
+    retry_at: int
+class TaggingOutcomeViewFailed(TypedDict):
+    outcome: Literal["failed"]
+    failure: TaggingFailureView
+    retry_at: int
+class TaggingOutcomeViewRekeyed(TypedDict):
+    outcome: Literal["rekeyed"]
+class TaggingOutcomeViewHandedBack(TypedDict):
+    outcome: Literal["handed_back"]
+    reason: str
+    retry_at: int
+class TaggingOutcomeViewUnreadable(TypedDict):
+    outcome: Literal["unreadable"]
+TaggingOutcomeView = TaggingOutcomeViewSaved | TaggingOutcomeViewShadowed | TaggingOutcomeViewImported | TaggingOutcomeViewSkipped | TaggingOutcomeViewSuperseded | TaggingOutcomeViewDeferred | TaggingOutcomeViewFailed | TaggingOutcomeViewRekeyed | TaggingOutcomeViewHandedBack | TaggingOutcomeViewUnreadable
+class TaggingTraceView(TypedDict):
+    recorded_at: int
+    attempt: str
+    turn_ref: NotRequired[str | None]
+    checkpoint: str
+    stack: NotRequired[str | None]
+    model: NotRequired[str | None]
+    input_hash: NotRequired[str | None]
+    try_number: int
+    call_micros: NotRequired[int | None]
+    outcome: TaggingOutcomeView
+class TaggingStatusView(TypedDict):
+    turn_ref: str
+    state: TaggingMarkerState
+    configured: bool
+    checkpoint: NotRequired[str | None]
+    stack: NotRequired[str | None]
+    mode: NotRequired[str | None]
+    model: NotRequired[str | None]
+    marker: NotRequired[TaggingMarkerView | None]
+    failure: NotRequired[TaggingFailureView | None]
+    retry_at: NotRequired[int | None]
+    try_number: NotRequired[int | None]
+    has_tags: bool
+    saved_at: NotRequired[int | None]
+    last_trace: NotRequired[TaggingTraceView | None]
+class DerivationEnvelopeView(TypedDict):
+    content_hash: str
+    model_id: str
+    stack: NotRequired[str | None]
+    version: str
+    params_hash: str
+class MentionLinkViewTag(TypedDict):
+    link: Literal["tag"]
+class MentionLinkViewCandidates(TypedDict):
+    link: Literal["candidates"]
+    kind: int
+    entity_refs: list[str]
+class MentionLinkViewMinted(TypedDict):
+    link: Literal["minted"]
+    kind: int
+    entity_ref: str
+MentionLinkView = MentionLinkViewTag | MentionLinkViewCandidates | MentionLinkViewMinted
+TaggingSpeakerTarget = Literal["speaker", "addressee"]
+class MentionReferenceViewContext(TypedDict):
+    kind: Literal["context"]
+class MentionReferenceViewSpeaker(TypedDict):
+    kind: Literal["speaker"]
+    target: TaggingSpeakerTarget
+    resolved: bool
+MentionReferenceView = MentionReferenceViewContext | MentionReferenceViewSpeaker
+class TaggedMentionView(TypedDict):
+    index: int
+    message_ref: str
+    start: int
+    end: int
+    label: str
+    confidence: float
+    link: MentionLinkView
+    antecedent: NotRequired[int | None]
+    reference: NotRequired[MentionReferenceView | None]
+    link_confidence: NotRequired[float | None]
+class MergeEvidenceView(TypedDict):
+    span: int
+    antecedent: int
+    confidence: float
+class TaggingVadView(TypedDict):
+    valence: float
+    arousal: float
+    dominance: float
+class TurnTagsView(TypedDict):
+    turn_ref: str
+    envelope: DerivationEnvelopeView
+    message_refs: list[str]
+    mentions: list[TaggedMentionView]
+    merge_evidence: list[MergeEvidenceView]
+    mood: NotRequired[TaggingVadView | None]
+    saved_at: int
+    surprise: NotRequired[float | None]
+class TaggingTagsView(TypedDict):
+    turn_ref: str
+    tags: NotRequired[TurnTagsView | None]
+class TaggingHistoryView(TypedDict):
+    turn_ref: str
+    traces: list[TaggingTraceView]
+class TaggingMentionsRequest(TypedDict):
+    entity_ref: str
+    limit: int
+class TaggingMentionHitView(TypedDict):
+    turn_ref: str
+    index: int
+    mention: TaggedMentionView
+class TaggingMentionsView(TypedDict):
+    entity_ref: str
+    mentions: list[TaggingMentionHitView]
 class AffectClaimConsolidateRequest(TypedDict):
     claim_ref: str
 class AffectTurnEvidence(TypedDict):
@@ -9860,6 +10017,34 @@ class HybridSearchHit(TypedDict):
     score: float
     access_factor: NotRequired[float | None]
     components: list[RetrievalScoreComponent]
+TemporalAnchorMode = Literal["occurred", "learned", "both", "auto"]
+class TemporalSearchRange(TypedDict):
+    start: int
+    end: int
+class TemporalSearchRequest(TypedDict):
+    start: int
+    end: int
+    sigma_secs: int
+    anchor_mode: NotRequired[TemporalAnchorMode]
+    learned_start: NotRequired[int | None]
+    learned_end: NotRequired[int | None]
+    adaptive: NotRequired[bool]
+    occurred_range: NotRequired[TemporalSearchRange | None]
+    learned_range: NotRequired[TemporalSearchRange | None]
+    limit: int
+class TemporalSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    occurred_start: int
+    occurred_end: int
+    learned_at: int
+class TemporalSearchReport(TypedDict):
+    sigma_secs: int
+    rounds: int
+class TemporalSearchResult(TypedDict):
+    hits: list[TemporalSearchHit]
+    widening: NotRequired[TemporalSearchReport | None]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int
@@ -11578,6 +11763,14 @@ class SummaryRegenerateRequest(TypedDict):
     read_refs: list[str]
 class SummaryProposalRequest(TypedDict):
     proposal_ref: str
+class AuthorTakeTargetSubject(TypedDict):
+    subject: str
+class AuthorTakeTargetClaim(TypedDict):
+    claim: str
+AuthorTakeTarget = AuthorTakeTargetSubject | AuthorTakeTargetClaim
+class AuthorTakeRequest(TypedDict):
+    target: AuthorTakeTarget
+    markdown: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

@@ -41,15 +41,15 @@ mod tests;
 pub(crate) use self::action_inputs::self_call_inputs;
 pub(crate) use self::agent_authoring::{agent_put_draft, parse_agent_put_request};
 pub(crate) use self::codec::encode_code_run_replay_value;
-pub use self::compaction_home::{
-    CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome,
-    bind_compaction_caller, compaction_home_budget, load_compaction_home,
-    resolve_compaction_identity,
-};
 pub use self::codec::{
     CODE_RUN_ABI_LAYOUT_CHECK_KEYS, CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS,
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
+};
+pub use self::compaction_home::{
+    CompactionHome, CompactionHostBinding, CompactionIdentity, RenderedHome,
+    bind_compaction_caller, compaction_home_budget, load_compaction_home,
+    resolve_compaction_identity,
 };
 pub(crate) use self::consent_wait::{
     CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED, CodeConsentCallSite, CodeConsentConnectorCall,

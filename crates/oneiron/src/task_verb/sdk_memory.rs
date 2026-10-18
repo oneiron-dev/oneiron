@@ -98,6 +98,36 @@ pub struct CreateNoteFromEntityRequest {
     pub kind: String,
 }
 
+/// An opinion's subject or claim, named by short ref or 32-hex id.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorTakeTarget {
+    /// Links the NOTE to a subject with `about`.
+    Subject(String),
+    /// Links the NOTE to a CLAIM with `claim_of`; the engine checks its type.
+    Claim(String),
+}
+
+/// `vault.notes.author_take`: attribution comes only from the bound caller.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorTakeRequest {
+    pub target: AuthorTakeTarget,
+    pub markdown: String,
+}
+
+pub(super) fn author_take(
+    memory: &Memory<'_>,
+    input: AuthorTakeRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    let resolve = |reference: &str| crate::memory::resolve_entity_ref(memory.vault(), reference);
+    let target = match input.target {
+        AuthorTakeTarget::Subject(reference) => crate::note::TakeTarget::Subject(resolve(&reference)?),
+        AuthorTakeTarget::Claim(reference) => crate::note::TakeTarget::Claim(resolve(&reference)?),
+    };
+    memory.author_take(target, input.markdown)
+}
+
 pub(super) fn forget_claims(
     memory: &Memory<'_>,
     request: ForgetRequest,

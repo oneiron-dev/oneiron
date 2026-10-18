@@ -54,6 +54,10 @@ pub enum AgentVerb {
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
     VaultAffectAnnotationsPut,
+    VaultTaggingStatus,
+    VaultTaggingTags,
+    VaultTaggingHistory,
+    VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
@@ -555,6 +559,7 @@ pub enum AgentVerb {
     VaultRefsResolve,
     VaultRefsLinks,
     VaultSearchHybrid,
+    VaultSearchTemporal,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -634,6 +639,7 @@ pub enum AgentVerb {
     VaultSummariesProposalsSwitch,
     VaultSummariesProposalsReject,
     VaultNotesCreate,
+    VaultNotesAuthorTake,
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
@@ -726,6 +732,10 @@ impl AgentVerb {
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
         Self::VaultAffectAnnotationsPut,
+        Self::VaultTaggingStatus,
+        Self::VaultTaggingTags,
+        Self::VaultTaggingHistory,
+        Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
@@ -1227,6 +1237,7 @@ impl AgentVerb {
         Self::VaultRefsResolve,
         Self::VaultRefsLinks,
         Self::VaultSearchHybrid,
+        Self::VaultSearchTemporal,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -1306,6 +1317,7 @@ impl AgentVerb {
         Self::VaultSummariesProposalsSwitch,
         Self::VaultSummariesProposalsReject,
         Self::VaultNotesCreate,
+        Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
@@ -1401,6 +1413,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
+            Self::VaultTaggingStatus => "vault.tagging.status",
+            Self::VaultTaggingTags => "vault.tagging.tags",
+            Self::VaultTaggingHistory => "vault.tagging.history",
+            Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
@@ -1914,6 +1930,7 @@ impl AgentVerb {
             Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultRefsLinks => "vault.refs.links",
             Self::VaultSearchHybrid => "vault.search.hybrid",
+            Self::VaultSearchTemporal => "vault.search.temporal",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -1997,6 +2014,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => "vault.summaries.proposals.switch",
             Self::VaultSummariesProposalsReject => "vault.summaries.proposals.reject",
             Self::VaultNotesCreate => "vault.notes.create",
+            Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
@@ -2088,6 +2106,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -2549,6 +2571,7 @@ impl AgentVerb {
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
                 | Self::VaultSearchHybrid
+                | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -2628,6 +2651,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -2767,6 +2791,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -3228,6 +3256,7 @@ impl AgentVerb {
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
                 | Self::VaultSearchHybrid
+                | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -3307,6 +3336,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3447,6 +3477,7 @@ impl AgentVerb {
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
                 | Self::VaultSearchHybrid
+                | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultProductivityTree
@@ -3504,6 +3535,10 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -4063,6 +4098,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4480,6 +4516,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4596,6 +4633,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultTaggingStatus => &["spec"],
+            Self::VaultTaggingTags => &["spec"],
+            Self::VaultTaggingHistory => &["spec"],
+            Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
@@ -5097,6 +5138,7 @@ impl AgentVerb {
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
+            Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -5176,6 +5218,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -5269,6 +5312,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultTaggingStatus => &["spec"],
+            Self::VaultTaggingTags => &["spec"],
+            Self::VaultTaggingHistory => &["spec"],
+            Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
@@ -5770,6 +5817,7 @@ impl AgentVerb {
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
+            Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -5849,6 +5897,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -6036,6 +6085,18 @@ impl AgentVerb {
             }
             Self::VaultAffectAnnotationsPut => {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
+            }
+            Self::VaultTaggingStatus => {
+                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."
+            }
+            Self::VaultTaggingTags => {
+                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."
+            }
+            Self::VaultTaggingHistory => {
+                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."
+            }
+            Self::VaultTaggingMentions => {
+                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
@@ -7454,6 +7515,9 @@ impl AgentVerb {
             Self::VaultSearchHybrid => {
                 "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."
             }
+            Self::VaultSearchTemporal => {
+                "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."
+            }
             Self::VaultSearchBm25 => {
                 "BM25 text search over the engine index; surfaceable claims only."
             }
@@ -7686,6 +7750,9 @@ impl AgentVerb {
             }
             Self::VaultNotesCreate => {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."
+            }
+            Self::VaultNotesAuthorTake => {
+                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."

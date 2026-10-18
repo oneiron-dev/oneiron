@@ -927,6 +927,77 @@
       "openapi": true
     },
     {
+      "name": "vault.tagging.status",
+      "description": "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason.",
+      "refs": [
+        "/turn_ref"
+      ],
+      "input": "crate::tagging::TaggingTurnRequest",
+      "output": "crate::tagging::TaggingStatusView",
+      "call": "memory.tagging_status(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "turn_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.tags",
+      "description": "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them.",
+      "refs": [
+        "/turn_ref"
+      ],
+      "input": "crate::tagging::TaggingTurnRequest",
+      "output": "crate::tagging::TaggingTagsView",
+      "call": "memory.tagging_tags(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "turn_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.history",
+      "description": "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome.",
+      "refs": [
+        "/turn_ref"
+      ],
+      "input": "crate::tagging::TaggingTurnRequest",
+      "output": "crate::tagging::TaggingHistoryView",
+      "call": "memory.tagging_history(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "turn_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.tagging.mentions",
+      "description": "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller.",
+      "input": "crate::tagging::TaggingMentionsRequest",
+      "output": "crate::tagging::TaggingMentionsView",
+      "call": "memory.tagging_mentions(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.affect.claims.consolidate",
       "description": "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction.",
       "input": "crate::memory::affect::AffectClaimConsolidateRequest",
@@ -8660,6 +8731,25 @@
       "openapi": true
     },
     {
+      "name": "vault.search.temporal",
+      "description": "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds.",
+      "input": "crate::memory::TemporalSearchRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>",
+      "call": "memory.query_temporal(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.search.bm25",
       "description": "BM25 text search over the engine index; surfaceable claims only.",
       "uniffi": {
@@ -10492,6 +10582,27 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.notes.author_take",
+      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.",
+      "refs": [
+        "/target/subject",
+        "/target/claim"
+      ],
+      "input": "AuthorTakeRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory_requests::author_take(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.from_entity",

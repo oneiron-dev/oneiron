@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use oneiron::artifact_hosting::door_types::*;
 use oneiron::artifact_hosting::ArtifactPointer;
+use oneiron::artifact_hosting::door_types::*;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
@@ -21,14 +21,18 @@ async fn as_owner<T: Send + 'static>(
 ) -> Listed<T> {
     let admitted = || {
         let owner = owner_proof(auth, server, verb)?;
-        let caller = super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+        let caller =
+            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
         Ok::<_, MemoryError>((owner, caller))
     };
     let (owner, caller) = match admitted() {
         Ok(admitted) => admitted,
         Err(error) => return refused(error),
     };
-    credential_listing(server, auth, caller, verb, move |_, _, memory| act(&memory, &owner)).await
+    credential_listing(server, auth, caller, verb, move |_, _, memory| {
+        act(&memory, &owner)
+    })
+    .await
 }
 
 pub(crate) async fn vault_artifacts_publish_approval(
@@ -36,9 +40,13 @@ pub(crate) async fn vault_artifacts_publish_approval(
     auth: &CoreAuth,
     input: ArtifactPublishRequest,
 ) -> Listed<ArtifactPublishApproval> {
-    as_owner(server, auth, "vault.artifacts.publish_approval", move |memory, owner| {
-        memory.artifact_publish_approval_as(owner, input)
-    }).await
+    as_owner(
+        server,
+        auth,
+        "vault.artifacts.publish_approval",
+        move |memory, owner| memory.artifact_publish_approval_as(owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_artifacts_publish(
@@ -46,9 +54,13 @@ pub(crate) async fn vault_artifacts_publish(
     auth: &CoreAuth,
     input: ArtifactPublishRequest,
 ) -> Listed<ArtifactPublishView> {
-    as_owner(server, auth, "vault.artifacts.publish", move |memory, owner| {
-        memory.artifact_publish_as(owner, input)
-    }).await
+    as_owner(
+        server,
+        auth,
+        "vault.artifacts.publish",
+        move |memory, owner| memory.artifact_publish_as(owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_artifacts_repoint(
@@ -56,9 +68,13 @@ pub(crate) async fn vault_artifacts_repoint(
     auth: &CoreAuth,
     input: ArtifactPublishRequest,
 ) -> Listed<ArtifactPublishView> {
-    as_owner(server, auth, "vault.artifacts.repoint", move |memory, owner| {
-        memory.artifact_publish_as(owner, input)
-    }).await
+    as_owner(
+        server,
+        auth,
+        "vault.artifacts.repoint",
+        move |memory, owner| memory.artifact_publish_as(owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_artifacts_pointer(
@@ -66,9 +82,13 @@ pub(crate) async fn vault_artifacts_pointer(
     auth: &CoreAuth,
     input: ArtifactPointerRequest,
 ) -> Listed<Option<ArtifactPointer>> {
-    as_owner(server, auth, "vault.artifacts.pointer", move |memory, owner| {
-        memory.artifact_pointer_as(owner, input)
-    }).await
+    as_owner(
+        server,
+        auth,
+        "vault.artifacts.pointer",
+        move |memory, owner| memory.artifact_pointer_as(owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_artifacts_unpublish(
@@ -76,9 +96,13 @@ pub(crate) async fn vault_artifacts_unpublish(
     auth: &CoreAuth,
     input: ArtifactPointerRequest,
 ) -> Listed<ArtifactUnpublished> {
-    as_owner(server, auth, "vault.artifacts.unpublish", move |memory, owner| {
-        memory.artifact_unpublish_as(owner, input)
-    }).await
+    as_owner(
+        server,
+        auth,
+        "vault.artifacts.unpublish",
+        move |memory, owner| memory.artifact_unpublish_as(owner, input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_artifacts_link_token(
@@ -86,13 +110,19 @@ pub(crate) async fn vault_artifacts_link_token(
     auth: &CoreAuth,
     _: EmptyRequest,
 ) -> Listed<ArtifactLinkToken> {
-    as_owner(server, auth, "vault.artifacts.link_token", |memory, owner| {
-        memory.artifact_link_token_as(owner)
-    }).await
+    as_owner(
+        server,
+        auth,
+        "vault.artifacts.link_token",
+        |memory, owner| memory.artifact_link_token_as(owner),
+    )
+    .await
 }
 
 fn preview_owner(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<String> {
-    Ok(owner_proof(auth, server, verb)?.revalidate(server.vault())?.to_hex())
+    Ok(owner_proof(auth, server, verb)?
+        .revalidate(server.vault())?
+        .to_hex())
 }
 
 pub(crate) async fn vault_artifacts_live_preview_register(
@@ -104,7 +134,13 @@ pub(crate) async fn vault_artifacts_live_preview_register(
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
-    (server.artifact_previews.register(input.into_manifest(owner)).await, Vec::new())
+    (
+        server
+            .artifact_previews
+            .register(input.into_manifest(owner))
+            .await,
+        Vec::new(),
+    )
 }
 
 pub(crate) async fn vault_artifacts_live_preview_read(
@@ -114,7 +150,13 @@ pub(crate) async fn vault_artifacts_live_preview_read(
     _: Option<oneiron::runtime_hooks::InvocationId>,
     input: ArtifactPreviewRequest,
 ) -> Listed<Option<ArtifactPreviewView>> {
-    (server.artifact_previews.read(&caller.0.to_hex(), input).await, Vec::new())
+    (
+        server
+            .artifact_previews
+            .read(&caller.0.to_hex(), input)
+            .await,
+        Vec::new(),
+    )
 }
 
 pub(crate) async fn vault_artifacts_live_preview_close(
@@ -126,7 +168,10 @@ pub(crate) async fn vault_artifacts_live_preview_close(
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
-    (server.artifact_previews.close(&owner, input).await, Vec::new())
+    (
+        server.artifact_previews.close(&owner, input).await,
+        Vec::new(),
+    )
 }
 
 pub(crate) async fn vault_artifacts_live_preview_invite(
@@ -138,7 +183,13 @@ pub(crate) async fn vault_artifacts_live_preview_invite(
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
-    (server.artifact_previews.invitation(&owner, input, true).await, Vec::new())
+    (
+        server
+            .artifact_previews
+            .invitation(&owner, input, true)
+            .await,
+        Vec::new(),
+    )
 }
 
 pub(crate) async fn vault_artifacts_live_preview_revoke_invite(
@@ -150,7 +201,13 @@ pub(crate) async fn vault_artifacts_live_preview_revoke_invite(
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
-    (server.artifact_previews.invitation(&owner, input, false).await, Vec::new())
+    (
+        server
+            .artifact_previews
+            .invitation(&owner, input, false)
+            .await,
+        Vec::new(),
+    )
 }
 
 pub(crate) async fn vault_artifacts_live_preview_share(
@@ -162,7 +219,10 @@ pub(crate) async fn vault_artifacts_live_preview_share(
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
-    (server.artifact_previews.share(&owner, input, true).await, Vec::new())
+    (
+        server.artifact_previews.share(&owner, input, true).await,
+        Vec::new(),
+    )
 }
 
 pub(crate) async fn vault_artifacts_live_preview_revoke_share(
@@ -174,5 +234,8 @@ pub(crate) async fn vault_artifacts_live_preview_revoke_share(
         Ok(owner) => owner,
         Err(error) => return refused(error),
     };
-    (server.artifact_previews.share(&owner, input, false).await, Vec::new())
+    (
+        server.artifact_previews.share(&owner, input, false).await,
+        Vec::new(),
+    )
 }
