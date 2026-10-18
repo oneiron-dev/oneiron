@@ -50902,7 +50902,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 671
+      "fn": 672
      }
     },
     {
@@ -51065,6 +51065,8 @@
      "kind": "src",
      "notable": [
       "AppendBlobVersionRequest",
+      "AuthorTakeRequest",
+      "AuthorTakeTarget",
       "BlobContent",
       "ClaimRefRequest",
       "CommitRequest",
@@ -51085,9 +51087,9 @@
      "path": "src/task_verb/sdk_memory.rs",
      "purpose": "Typed inputs for the public memory verbs in the SDK inventory",
      "surface": {
-      "crate-vis": 6,
-      "enum": 1,
-      "struct": 16
+      "crate-vis": 7,
+      "enum": 2,
+      "struct": 17
      }
     },
     {
@@ -66717,7 +66719,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 621
+      "fn": 622
      }
     },
     {
@@ -67766,7 +67768,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 622
+      "fn": 623
      }
     },
     {
@@ -79530,6 +79532,8 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuthorTakeRequest",
+      "AuthorTakeTarget",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
       "AuthorityAuditOrder",
@@ -81625,8 +81629,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 588,
-      "struct": 1670
+      "enum": 589,
+      "struct": 1671
      }
     },
     {
