@@ -17451,7 +17451,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 2,
       "fn": 7,
       "struct": 2
@@ -52339,7 +52339,7 @@
      "path": "src/world_keys/pads.rs",
      "purpose": "A world key's erasable half, and the world erase that destroys it (world privacy fix 7)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 1,
       "struct": 1
