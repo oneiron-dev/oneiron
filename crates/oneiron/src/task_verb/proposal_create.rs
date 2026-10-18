@@ -29,7 +29,8 @@ use super::highway_post::{
 };
 use super::verb_kind::{TaskKind, TaskTtl};
 use super::wire_decode::{
-    decode_consult_payload, decode_task_assignee, task_body_field, task_body_optional,
+    decode_consult_payload, decode_entity_ref, decode_task_assignee, task_body_field,
+    task_body_optional,
 };
 
 fn invalid(field: &'static str) -> MemoryError {
@@ -39,7 +40,8 @@ fn invalid(field: &'static str) -> MemoryError {
 /// Decodes the stored value of one brief-less `tasks.create` proposal:
 /// every field `task_create_proposal_value` writes, `Nil` meaning absent.
 /// The kind and a consult's payload ride through, so an approved consult
-/// lands as a consult, never silently as a standard task. `created_at` is
+/// lands as a consult, never silently as a standard task; so does the
+/// parent, so it lands filed where it asked (DOOR-113). `created_at` is
 /// the proposal's own time and comes back as the spec's `now`.
 pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCreateSpec> {
     let Value::Map(entries) = value else {
@@ -104,6 +106,9 @@ pub(super) fn decode_task_create_proposal(value: &Value) -> MemoryResult<TaskCre
                 .ok_or_else(|| invalid("tasks.proposal.type_ref"))
         })
         .transpose()?;
+    spec.parent_ref = task_body_optional(entries, "parent_ref")?
+        .map(|value| decode_entity_ref(value, "tasks.proposal.parent_ref"))
+        .transpose()?;
     Ok(spec)
 }
 
@@ -148,9 +153,9 @@ pub(super) fn settle_create_in_txn(
 impl Memory<'_> {
     /// The landing half of [`settle_create_in_txn`], as the proposer: the
     /// spec validated at approval time, the TASK minted with the stored
-    /// owner or else the proposer, routed in the same transaction under the
-    /// creator the proposal witnessed, and an addressed standard task's
-    /// Assigned fact.
+    /// owner or else the proposer, filed under its parent, routed in the same
+    /// transaction under the creator the proposal witnessed, and an addressed
+    /// standard task's Assigned fact.
     fn land_settled_create_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -178,6 +183,7 @@ impl Memory<'_> {
             &provenance,
             now,
         )?;
+        self.attach_task_parent_in_txn(wtxn, task_ref, spec.parent_ref)?;
         self.route_created_task_with_origin_in_txn(wtxn, task_ref, &validated, origin, now)?;
         if validated.kind == TaskKind::Standard
             && let Some(assignee) = validated.assignee

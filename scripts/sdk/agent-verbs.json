@@ -446,6 +446,9 @@
         "/spec/notes",
         "/spec/instructions"
       ],
+      "refs": [
+        "/parent_ref"
+      ],
       "input": "TaskCreateRequest",
       "output": "crate::task_verb::TaskCreateReceipt",
       "call": "memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?",
@@ -457,7 +460,8 @@
         "assignee": "assignee",
         "intent_key": "intent_key",
         "brief": "brief",
-        "ttl": "ttl"
+        "ttl": "ttl",
+        "parent_ref": "parent_ref"
       },
       "mcp_required_fields": [
         "spec"

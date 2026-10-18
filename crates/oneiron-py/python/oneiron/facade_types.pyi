@@ -1089,6 +1089,7 @@ class TaskCreateRequest(TypedDict):
     intent_key: NotRequired[str | None]
     brief: NotRequired[QueueTaskBrief | None]
     ttl: NotRequired[TaskTtl | None]
+    parent_ref: NotRequired[str | None]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]

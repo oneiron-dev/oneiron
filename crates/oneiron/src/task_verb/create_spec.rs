@@ -31,6 +31,10 @@ pub struct TaskCreateSpec {
     pub brief: Option<super::brief::QueueTaskBrief>,
     /// The caller's idempotency key for a briefed create.
     pub intent_key: Option<String>,
+    /// DOOR-113: the TASK this one files under, by one checked `ChildOf`
+    /// edge its landing transaction writes. The nesting matrix decides, so
+    /// a Task nests under a Milestone; absent is a root.
+    pub parent_ref: Option<EntityId>,
 }
 
 impl TaskCreateSpec {
@@ -54,6 +58,7 @@ impl TaskCreateSpec {
             type_ref: None,
             brief: None,
             intent_key: None,
+            parent_ref: None,
         }
     }
 
@@ -90,6 +95,13 @@ impl TaskCreateSpec {
     #[must_use]
     pub const fn with_ttl(mut self, ttl: TaskTtl) -> Self {
         self.ttl = Some(ttl);
+        self
+    }
+
+    /// Files the TASK under `parent_ref` (DOOR-113).
+    #[must_use]
+    pub const fn with_parent_ref(mut self, parent_ref: EntityId) -> Self {
+        self.parent_ref = Some(parent_ref);
         self
     }
 

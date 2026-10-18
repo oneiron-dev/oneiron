@@ -2929,6 +2929,12 @@ pub struct TaskCreateRequest {
     pub brief: Option<QueueTaskBrief>,
     #[serde(rename = "ttl", default, skip_serializing_if = "Option::is_none")]
     pub ttl: Option<TaskTtl>,
+    #[serde(
+        rename = "parent_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_ref: Option<String>,
 }
 
 /// `oneiron::task_verb::route_receipts::TaskCreateReceipt`.
