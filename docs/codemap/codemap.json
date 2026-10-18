@@ -45707,7 +45707,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "WindowManager"
@@ -45715,7 +45715,7 @@
      "path": "src/sync/manager.rs",
      "purpose": "Production window manager: ARCH-0023b startup orchestration + registry",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 12,
       "struct": 1
      }
@@ -45732,7 +45732,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/manager/live_mirror.rs",
@@ -46235,13 +46235,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 13
      }
     },
     {
@@ -52042,7 +52042,7 @@
      "path": "src/workspace_roster/rooms/offers.rs",
      "purpose": "Offer cards (OF-530): an agent asks to join a room or one of its threads by a card, never by a turn…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 3,
       "struct": 5
@@ -54921,7 +54921,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 189,
+   "over_bar": 191,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3343,
    "test_files": 902
