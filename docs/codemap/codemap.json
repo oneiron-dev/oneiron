@@ -10437,7 +10437,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "CheckoutLeaseService"
@@ -10456,8 +10456,28 @@
      "path": "src/checkout/lease/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/lease/teardown.rs",
+     "purpose": "Restartable teardown shared by the trusted service and credential doors",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/checkout/lease/transactions.rs",
+     "purpose": "Shared lease transitions",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -31635,6 +31655,55 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/checkout_doors/mod.rs",
+     "purpose": "Credential-bound CHECKOUT lease and result doors (ARCH-0068 RC1/RC2)",
+     "surface": {
+      "crate-vis": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/checkout_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CheckoutAction",
+      "CheckoutClaimInput",
+      "CheckoutClass",
+      "CheckoutGetInput",
+      "CheckoutLeaseView",
+      "CheckoutPublishInput",
+      "CheckoutPublished",
+      "CheckoutReclaimInput",
+      "CheckoutRenewInput",
+      "CheckoutRetention",
+      "CheckoutSettleInput",
+      "CheckoutSettled",
+      "CheckoutState",
+      "CheckoutTakeoverInput",
+      "CheckoutTeardownInput",
+      "CheckoutTornDown"
+     ],
+     "path": "src/memory/checkout_doors/types.rs",
+     "purpose": "Typed checkout custody calls",
+     "surface": {
+      "enum": 5,
+      "struct": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "AllRelationships",
       "ClaimRelationships",
@@ -32345,7 +32414,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 12,
+      "mod": 13,
       "re-export": 46
      }
     },
@@ -35064,7 +35133,7 @@
      "path": "src/origin/publication/publication_protocol.rs",
      "purpose": "Public protocol surface: pin/unpin, publish_origin_ref, reconcile census driver, reads and advertisement…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9
      }
     },
@@ -50036,6 +50105,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/task_verb/checkout_facts.rs",
+     "purpose": "Checkout ACTs and their synced TASK FACTs share the credential's transaction",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/task_verb/code_consent_word.rs",
      "purpose": "The person's word a code consent answer stands on (DOOR-079 1a)",
      "surface": {
@@ -50493,7 +50572,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "fn": 1,
       "mod": 3,
       "re-export": 25
@@ -51236,7 +51315,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 715
+      "fn": 723
      }
     },
     {
@@ -57233,7 +57312,7 @@
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)"
     },
     "checkout": {
-     "files": 10,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -57884,7 +57963,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 178,
+     "files": 181,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58395,7 +58474,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58565,7 +58644,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3572,
+   "source_files": 3578,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67095,7 +67174,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 679
+      "fn": 687
      }
     },
     {
@@ -68144,7 +68223,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 680
+      "fn": 688
      }
     },
     {
@@ -71174,6 +71253,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/checkout_doors.rs",
+     "purpose": "One credential-backed CHECKOUT door for HTTP, MCP and the generated SDK",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/claim_settle_doors.rs",
      "purpose": "The host doors of one proposed claim's review and settlement (DOOR-115): `vault.claims.review` and…",
      "surface": {
@@ -71487,7 +71576,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 125
+      "crate-vis": 126
      }
     },
     {
@@ -79216,7 +79305,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 387,
+     "files": 388,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79638,7 +79727,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 725,
+   "source_files": 726,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80174,8 +80263,24 @@
       "ChartSeries",
       "ChartSource",
       "ChatProjection",
+      "CheckoutAction",
+      "CheckoutClaimInput",
+      "CheckoutClass",
       "CheckoutDoorBindRequest",
       "CheckoutDoorBinding",
+      "CheckoutGetInput",
+      "CheckoutLeaseView",
+      "CheckoutPublishInput",
+      "CheckoutPublished",
+      "CheckoutReclaimInput",
+      "CheckoutRenewInput",
+      "CheckoutRetention",
+      "CheckoutSettleInput",
+      "CheckoutSettled",
+      "CheckoutState",
+      "CheckoutTakeoverInput",
+      "CheckoutTeardownInput",
+      "CheckoutTornDown",
       "CheckpointReadRequest",
       "CheckpointResumeView",
       "CheckpointStepView",
@@ -82280,8 +82385,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 621,
-      "struct": 1823
+      "enum": 626,
+      "struct": 1834
      }
     },
     {
