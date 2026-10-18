@@ -20,17 +20,30 @@
 //! The host's replay library (OF-598) rides the session too: an `open`
 //! lists the site's library programs, and the library verbs check, replay
 //! and run programs through this session's own gated verbs.
+//!
+//! A person can take the browser over (CUA-001), asked by the agent's
+//! `handover` or not, to sign in or pay inside the same guest. While the
+//! agent waits on its ask, and while a person holds the browser, every agent
+//! verb refuses `browser_taken_over` and takes no screenshot; the person sees
+//! the viewport and drives the page through the same driver. Handing it back
+//! ends the takeover with its record, which is its receipt.
+//!
+//! A long outline is answered in pages (Rule 5): each answer carries as
+//! many rows as fit one page, and `next` names the cursor `observe` reads
+//! the rest from.
 
 use crate::cdp::Pipe;
 use crate::driver::CdpDriver;
 use crate::{
-    BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, EFFECT_ACCOUNT,
-    EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH, EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt,
-    ExpectInput, ExpectOutput, FindInput, FindOutput, ImageOutput, LibraryFindInput,
-    LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput, LibraryRunInput, LibraryRunOutput,
-    NoDecider, Observation, ObserveInput, OpenInput, PointInput, PressMode, ProposeInput,
-    ProposeOutput, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput, ScreenshotOutput,
-    ScreenshotTrigger, SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput,
+    AbandonedTakeover, BatchInput, BatchOutput, BrowserDriver, BrowserError, BrowserPersonInput,
+    ClickInput, CropInput, EFFECT_ACCOUNT, EFFECT_DESTRUCTIVE, EFFECT_PAY, EFFECT_PUBLISH,
+    EFFECT_SEND, EFFECT_UNKNOWN, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput,
+    HandoverInput, HandoverOutput, ImageOutput, LibraryFindInput, LibraryFindOutput,
+    LibraryRetireInput, LibraryRetireOutput, LibraryRetiredInput, LibraryRetiredOutput,
+    LibraryRunInput, LibraryRunOutput, NoDecider, Observation, ObservationPage, ObserveInput,
+    OpenInput, PointInput, PressMode, ProposeInput, ProposeOutput, ReceiptEvidenceSink,
+    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, SelectInput,
+    SendPolicy, Takeover, TakeoverRecord, TypeInput, ViewInput, WaitForInput, WaitForOutput,
     WorkflowLibrary, ZoomInput, site_of,
 };
 use oneiron_container::{
@@ -39,6 +52,9 @@ use oneiron_container::{
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
+/// The longest reason a `handover` ask may give, in characters.
+const HANDOVER_REASON_CHARS: usize = 500;
 
 /// Words in a control's name that mark its effect class.
 const EFFECT_PHRASES: &[(&str, &[&str])] = &[
@@ -93,6 +109,10 @@ pub struct BrowserSession {
     decider: Option<Box<dyn RoutineDecider>>,
     library: Option<Box<dyn WorkflowLibrary>>,
     receipt_sink: Option<Box<dyn ReceiptEvidenceSink>>,
+    /// Who has the browser now.
+    takeover: Takeover,
+    /// The takeover that ended since the agent's last answer.
+    returned: Option<TakeoverRecord>,
 }
 
 impl BrowserSession {
@@ -128,6 +148,8 @@ impl BrowserSession {
             decider: None,
             library: None,
             receipt_sink: None,
+            takeover: Takeover::Agent,
+            returned: None,
         })
     }
 
@@ -212,14 +234,163 @@ impl BrowserSession {
         self.guest.abandoned()
     }
 
-    fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
+    /// Who has the browser now.
+    #[must_use]
+    pub fn takeover(&self) -> &Takeover {
+        &self.takeover
+    }
+
+    /// Person `by` takes the browser, asked or not. The caller holds the
+    /// session, so the agent's call in flight has ended; its next one
+    /// refuses until `by` hands the browser back. Taking it again is a no-op.
+    pub fn take_over(&mut self, by: &str) -> Result<&Takeover, BrowserError> {
+        self.guest_up()?;
+        let asked = match &self.takeover {
+            Takeover::Agent => None,
+            Takeover::Waiting { reason, .. } => Some(reason.clone()),
+            Takeover::Held { by: holder, .. } if holder == by => return Ok(&self.takeover),
+            Takeover::Held { .. } => {
+                return Err(BrowserError::BrowserTakenOver("held".to_owned()));
+            }
+        };
+        self.takeover = Takeover::Held {
+            by: by.to_owned(),
+            asked,
+            taken_at_ms: now_ms(),
+            inputs: 0,
+        };
+        Ok(&self.takeover)
+    }
+
+    /// The viewport as a PNG for the person: unmasked, never held in the
+    /// session's images and never a receipt.
+    pub fn person_screen(&mut self) -> Result<Vec<u8>, BrowserError> {
+        self.guest_up()?;
+        self.driver.person_screen()
+    }
+
+    /// One input from `by`, who must hold the browser, at the viewport's
+    /// pixels, or a page to go to; it counts toward the takeover's record.
+    /// No press gates it: the person's own input is their press.
+    pub fn person_input(
+        &mut self,
+        by: &str,
+        input: BrowserPersonInput,
+    ) -> Result<u64, BrowserError> {
+        self.guest_up()?;
+        match &self.takeover {
+            Takeover::Held { by: holder, .. } if holder == by => {}
+            Takeover::Held { .. } => {
+                return Err(BrowserError::BrowserTakenOver("held".to_owned()));
+            }
+            Takeover::Agent | Takeover::Waiting { .. } => {
+                return Err(BrowserError::Input(
+                    "take the browser over first".to_owned(),
+                ));
+            }
+        }
+        if let BrowserPersonInput::Navigate { url } = &input
+            && !web_page(url)
+        {
+            return Err(BrowserError::Url(url.clone()));
+        }
+        self.driver.person_input(input)?;
+        let Takeover::Held { inputs, .. } = &mut self.takeover else {
+            return Err(BrowserError::GuestLost);
+        };
+        *inputs += 1;
+        Ok(*inputs)
+    }
+
+    /// `by` hands the browser back, from holding it or from the agent's ask
+    /// it never took: the agent's next read is a whole observation of the
+    /// page the person left, and its next answer carries this record once.
+    pub fn hand_back(&mut self, by: &str) -> Result<TakeoverRecord, BrowserError> {
+        let returned_at_ms = now_ms();
+        let record = match &self.takeover {
+            Takeover::Held {
+                by: holder,
+                asked,
+                taken_at_ms,
+                inputs,
+            } if holder == by => TakeoverRecord {
+                by: by.to_owned(),
+                asked: asked.clone(),
+                taken_at_ms: *taken_at_ms,
+                returned_at_ms,
+                inputs: *inputs,
+            },
+            Takeover::Held { .. } => {
+                return Err(BrowserError::BrowserTakenOver("held".to_owned()));
+            }
+            Takeover::Waiting { reason, .. } => TakeoverRecord {
+                by: by.to_owned(),
+                asked: Some(reason.clone()),
+                taken_at_ms: returned_at_ms,
+                returned_at_ms,
+                inputs: 0,
+            },
+            Takeover::Agent => {
+                return Err(BrowserError::Input("the agent has the browser".to_owned()));
+            }
+        };
+        self.takeover = Takeover::Agent;
+        self.driver.forget_observations();
+        self.returned = Some(record.clone());
+        Ok(record)
+    }
+
+    /// The takeover that ended since the agent's last answer, once.
+    pub fn take_returned(&mut self) -> Option<TakeoverRecord> {
+        self.returned.take()
+    }
+
+    /// Ends a takeover still asked or held as the browser goes away, with
+    /// what it held so far; `None` while the agent has the browser.
+    pub fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
+        match std::mem::replace(&mut self.takeover, Takeover::Agent) {
+            Takeover::Agent => None,
+            state => Some(AbandonedTakeover {
+                state,
+                ended_at_ms: now_ms(),
+            }),
+        }
+    }
+
+    /// An agent verb's first check: the agent has the browser. While it
+    /// waits on its ask or a person holds it, the verb refuses.
+    fn agent_has(&self) -> Result<(), BrowserError> {
+        match self.takeover {
+            Takeover::Agent => Ok(()),
+            Takeover::Waiting { .. } => Err(BrowserError::BrowserTakenOver("asked".to_owned())),
+            Takeover::Held { .. } => Err(BrowserError::BrowserTakenOver("held".to_owned())),
+        }
+    }
+
+    fn guest_up(&mut self) -> Result<(), BrowserError> {
         if self.guest.abandoned() {
             return Err(BrowserError::Abandoned);
         }
         if self.guest.is_running() {
-            Ok(&mut self.driver)
+            Ok(())
         } else {
             Err(BrowserError::GuestLost)
+        }
+    }
+
+    /// An agent verb's entry: the agent has the browser and the guest runs.
+    fn live(&mut self) -> Result<&mut CdpDriver, BrowserError> {
+        self.agent_has()?;
+        self.guest_up()?;
+        Ok(&mut self.driver)
+    }
+
+    /// Pages a batch's last observation, as an answer pages it.
+    fn page_batch(&mut self, batch: &mut BatchOutput) {
+        if let Some(observation) = batch.observation.take() {
+            let page = self.driver.paged(observation);
+            batch.observation = Some(page.observation);
+            batch.next = page.next;
         }
     }
 
@@ -279,6 +450,22 @@ fn no_library() -> BrowserError {
     BrowserError::Library("this browser host keeps no library".to_owned())
 }
 
+/// Whether `url` is a page the browser opens: http or https only.
+fn web_page(url: &str) -> bool {
+    let scheme = url
+        .split_once("://")
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
+    matches!(scheme.as_deref(), Some("http" | "https"))
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
 /// Whether an effect of `class` on `row` may run now under `policy`, and
 /// under what press. A spent batch falls back to a press per send.
 pub(crate) fn press_for(
@@ -334,11 +521,8 @@ pub(crate) fn receipt_class(
 
 impl BrowserDriver for BrowserSession {
     fn open(&mut self, input: OpenInput) -> Result<Observation, BrowserError> {
-        let scheme = input
-            .url
-            .split_once("://")
-            .map(|(scheme, _)| scheme.to_ascii_lowercase());
-        if !matches!(scheme.as_deref(), Some("http" | "https")) {
+        self.agent_has()?;
+        if !web_page(&input.url) {
             return Err(BrowserError::Url(input.url));
         }
         let mut observation = self.live()?.open(input)?;
@@ -355,6 +539,14 @@ impl BrowserDriver for BrowserSession {
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?.observe(input)
+    }
+
+    fn paged(&mut self, observation: Observation) -> ObservationPage {
+        self.driver.paged(observation)
+    }
+
+    fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
+        self.live()?.observe_page(input)
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
@@ -437,6 +629,7 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn library_find(&mut self, input: LibraryFindInput) -> Result<LibraryFindOutput, BrowserError> {
+        self.agent_has()?;
         let site = match input.site {
             Some(site) => site.trim().to_ascii_lowercase(),
             None => site_of(&self.live()?.url()?).ok_or_else(|| {
@@ -451,26 +644,77 @@ impl BrowserDriver for BrowserSession {
     }
 
     fn library_propose(&mut self, input: ProposeInput) -> Result<ProposeOutput, BrowserError> {
-        self.with_library(|session, library, decider| {
+        self.agent_has()?;
+        let mut output = self.with_library(|session, library, decider| {
             crate::library::propose(session, library, decider, input)
-        })
+        })?;
+        if let Some(replay) = output.replay.as_mut() {
+            self.page_batch(replay);
+        }
+        Ok(output)
     }
 
     fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
-        self.with_library(|session, library, decider| {
+        // A run refused mid-takeover would count as a missed postcondition.
+        self.agent_has()?;
+        let mut output = self.with_library(|session, library, decider| {
             crate::library::run(session, library, decider, input)
-        })
+        })?;
+        self.page_batch(&mut output.batch);
+        Ok(output)
     }
 
     fn library_retire(
         &mut self,
         input: LibraryRetireInput,
     ) -> Result<LibraryRetireOutput, BrowserError> {
+        self.agent_has()?;
         let library = self.library.as_mut().ok_or_else(no_library)?;
         let retired = library
             .retire(&input.workflow, input.reason.as_deref())?
             .ok_or(BrowserError::NoWorkflow(input.workflow))?;
         Ok(LibraryRetireOutput { retired })
+    }
+
+    fn library_retired(
+        &mut self,
+        input: LibraryRetiredInput,
+    ) -> Result<LibraryRetiredOutput, BrowserError> {
+        self.agent_has()?;
+        let site = match input.site {
+            Some(site) => site.trim().to_ascii_lowercase(),
+            None => site_of(&self.live()?.url()?).ok_or_else(|| {
+                BrowserError::Input("the open page has no site; name one".to_owned())
+            })?,
+        };
+        let library = self.library.as_mut().ok_or_else(no_library)?;
+        Ok(LibraryRetiredOutput {
+            retired: library.retired(&site)?,
+            site,
+        })
+    }
+
+    fn handover(&mut self, input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
+        self.live()?;
+        let reason = input
+            .reason
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        if reason.is_empty() || reason.chars().count() > HANDOVER_REASON_CHARS {
+            return Err(BrowserError::Input(format!(
+                "a handover gives its reason in 1 to {HANDOVER_REASON_CHARS} characters"
+            )));
+        }
+        let asked_at_ms = now_ms();
+        self.takeover = Takeover::Waiting {
+            reason: reason.clone(),
+            asked_at_ms,
+        };
+        Ok(HandoverOutput {
+            reason,
+            asked_at_ms,
+        })
     }
 
     fn batch(&mut self, input: BatchInput) -> Result<BatchOutput, BrowserError> {
@@ -480,6 +724,8 @@ impl BrowserDriver for BrowserSession {
             None => self.batch_with(input, &mut NoDecider),
         };
         self.decider = decider;
-        output
+        let mut output = output?;
+        self.page_batch(&mut output);
+        Ok(output)
     }
 }

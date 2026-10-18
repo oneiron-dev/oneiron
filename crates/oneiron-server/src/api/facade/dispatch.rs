@@ -544,11 +544,12 @@ async fn describe(
     let hooks = facade_hooks_pre(server, call, "describe", value).await?;
     let value = hooks.args.clone();
     if value.get("self").and_then(serde_json::Value::as_bool) == Some(true) {
-        let output =
+        let (output, rows) =
             crate::api::context_board::describe_self_for_auth(server, auth, &value).await?;
-        return Ok(FacadeCallOutput::unlisted(
-            facade_hooks_post(server, hooks, output).await?,
-        ));
+        return Ok(FacadeCallOutput {
+            value: facade_hooks_post(server, hooks, output).await?,
+            rows: Some(rows),
+        });
     }
     let (actor, class) = facade_actor(auth)?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
@@ -874,17 +875,22 @@ async fn vault_export(
     })?;
     let hooks = facade_hooks_pre(server, call, "vault.export", value).await?;
     let input: oneiron::memory::ExportOptions = facade_input(hooks.args.clone())?;
-    let output = if proof.claims().holder_ref == "host" {
+    // Beside the archive, the rows its snapshot read past the
+    // caller's locality: both owner paths list them.
+    let (output, rows) = if proof.claims().holder_ref == "host" {
         server
             .vault
-            .export_with_verified_host_owner(&input, proof, auth.locality())?
+            .export_with_verified_host_owner_listing(&input, proof, auth.locality())?
     } else {
         let (actor, class) = facade_actor(auth)?;
-        server
+        let producers = oneiron::memory::ProducerRows::default();
+        let output = server
             .vault
             .memory(actor, class)
             .at(auth.locality())
-            .export_with_verified_owner(&input, proof)?
+            .listing_producers(&producers)
+            .export_with_verified_owner(&input, proof)?;
+        (output, producers.take())
     };
     let output = serde_json::to_value(output).map_err(|_| {
         FacadeApiError::new(
@@ -894,10 +900,10 @@ async fn vault_export(
             ["Report this SDK response mismatch."],
         )
     })?;
-    // The whole vault: no list names the rows it holds.
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: Some(rows),
+    })
 }
 async fn vault_receipts(
     server: &Arc<SyncServer>,
@@ -5148,12 +5154,13 @@ async fn ai_options(
     let value = input?;
     oneiron::task_verb::sdk::validate_input("ai.options", &value)?;
     let hooks = facade_hooks_pre(server, call, "ai.options", value).await?;
-    let output = facade_output(
-        super::host_doors::ai_options(server, auth, facade_input(hooks.args.clone())?).await?,
-    )?;
-    Ok(FacadeCallOutput::unlisted(
-        facade_hooks_post(server, hooks, output).await?,
-    ))
+    let (output, listed) =
+        super::host_doors::ai_options(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
 }
 async fn ai_image(
     server: &Arc<SyncServer>,
@@ -7432,7 +7439,9 @@ pub(crate) async fn call_verb(
         | "self.browser.library.find"
         | "self.browser.library.propose"
         | "self.browser.library.retire"
+        | "self.browser.library.retired"
         | "self.browser.library.run"
+        | "self.browser.handover"
         | "self.desktop.open"
         | "self.desktop.observe"
         | "self.desktop.find"

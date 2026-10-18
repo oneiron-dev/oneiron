@@ -84,6 +84,9 @@ pub struct WholeVaultExport {
     pub(crate) manifest: WholeVaultDocumentManifest,
     /// OF-490: the diaries this export read, for the vault's own log.
     pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
+    /// The rows the archive is derived from, as its snapshot read them
+    /// (DEC-0005), for a host that judges it again before it leaves.
+    pub(crate) sources: Vec<crate::entity_id::EntityId>,
 }
 
 impl WholeVaultExport {

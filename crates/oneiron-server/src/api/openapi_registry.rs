@@ -1,5 +1,6 @@
 //! OpenAPI ApiDoc registration for the HTTP API.
 
+use super::__path_core_reject_widen;
 use super::run_tree::CoreAttemptPlacement;
 use super::{
     __path_annotate_turn_vad, __path_append_core_record, __path_booking_agent_instructions,
@@ -133,6 +134,7 @@ use utoipa::OpenApi;
         core_batch,
         core_propose,
         core_accept_widen,
+        core_reject_widen,
         core_query,
         core_hydrate,
         core_batch_short_id_hydrate,

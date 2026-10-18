@@ -451,6 +451,9 @@ side_tables! {
     /// One check of a training offer's promise against later receipts. Key: id16 (offer) + id16
     /// (check).
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
+    /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
+    /// undo. Key: id16 (offer).
+    SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named;
     /// The owner's final pick between a blind preference pair's two responses (preferred side,
     /// picker, time). Key: string (pair reference).
     SKILL_OPTIMIZE_RESPONSE_PAIR: VaultMeta b"skill_optimize:response_pair:v1:" Named;
@@ -757,17 +760,8 @@ side_tables! {
     /// Permanent fact that a world's keys were destroyed with the world, with its ids-only
     /// receipt. Refuses a late pad, a remint and an open for that world. Key: id16 hex (world).
     WORLD_KEY_DESTROYED: VaultMeta b"world_keys:destroyed:v1:" Named;
-    /// A reader's own Loro document of one sealed private-world window: the history its sealed
-    /// packets continue. Purged with the world. Key: hex32 (world) ":" string (window label).
+    /// A reader's own Loro document of one sealed private-world window, which the sealed cloud
+    /// bundle's world section carries whole (FIX 922). Purged with an erased world. Key: hex32
+    /// (world) ":" string (window label).
     WORLD_KEY_SEALED_MIRROR: VaultMeta b"world_keys:mirror:v1:" Raw;
-    /// When a shelved sealed packet was retired (u64be vault seconds); it is purged 30 days on.
-    /// Key: hex64 (tag) ":" hex64 (packet digest).
-    WORLD_KEY_SEALED_RETIRED: VaultMeta b"world_keys:sealed-retired:v1:" Raw;
-    /// The newest shelved sealed packet of one window (its shelf id, `tag:digest` hex), so a
-    /// relay node that may not read the world can answer a reader's request for that window.
-    /// Key: string (window label).
-    WORLD_KEY_SEALED_WINDOW: VaultMeta b"world_keys:sealed-window:v1:" Raw;
-    /// One sealed packet of a private world's window, kept for a reader by a node that may not
-    /// read the world (OF-570). Key: hex64 (tag) ":" hex64 (packet digest).
-    WORLD_KEY_SEALED: VaultMeta b"world_keys:sealed:v1:" Raw Ciphertext;
 }
