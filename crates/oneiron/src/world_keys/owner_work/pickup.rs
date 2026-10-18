@@ -117,6 +117,9 @@ impl Vault {
             OwnerWorkBody::WorldKey { mode } => {
                 self.world_key_work_in_txn(txn, &fold, hash, &request, mode, secret)?
             }
+            OwnerWorkBody::Root { change } => {
+                self.root_work_in_txn(txn, &fold, &request, change, secret)?
+            }
         };
         let Some(outcome) = outcome else {
             return Ok(Ran::Pending);
