@@ -890,6 +890,9 @@ class Oneiron:
         def get(self, spec):
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_receipts_get(json.dumps(spec))))
+        def context(self, spec):
+            """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
+            return json.loads(_translate(lambda: self._client.vault_receipts_context(json.dumps(spec))))
     class _VaultImagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1241,6 +1244,24 @@ class Oneiron:
         def close_erase_ask(self, spec):
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
             return json.loads(_translate(lambda: self._client.vault_shared_close_erase_ask(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultSharedPolicyVerbs":
+            return Oneiron._VaultSharedPolicyVerbs(self._client)
+    class _VaultSharedPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_get(json.dumps(spec))))
+        def propose(self, spec):
+            """A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_propose(json.dumps(spec))))
+        def answer(self, spec):
+            """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_answer(json.dumps(spec))))
+        def change(self, spec):
+            """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2429,6 +2450,12 @@ class Oneiron:
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def steps(self) -> "Oneiron._AiStepsVerbs":
+            return Oneiron._AiStepsVerbs(self._client)
+        def reply(self, spec):
+            """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
+            return json.loads(_translate(lambda: self._client.ai_reply(json.dumps(spec))))
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
@@ -2450,6 +2477,15 @@ class Oneiron:
         def verdict(self, spec):
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
+    class _AiStepsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def submit(self, spec):
+            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            return json.loads(_translate(lambda: self._client.ai_steps_submit(json.dumps(spec))))
+        def receipt(self, spec):
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

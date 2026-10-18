@@ -654,6 +654,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shared.policy.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
+                "vault.shared.policy.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActPolicyProposeRequest,
+                >(),
+            ),
+            (
+                "vault.shared.policy.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActPolicyAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.shared.policy.change",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActPolicyChangeRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -1628,6 +1652,27 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "ai.steps.submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::ModelStepSubmit,
+                >(),
+            ),
+            (
+                "ai.steps.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::ModelStepReceiptRequest,
+                >(),
+            ),
+            (
+                "ai.reply",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
+                ),
+            ),
+            (
+                "vault.receipts.context",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -2542,6 +2587,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.shared.policy.get",
+    "vault.shared.policy.propose",
+    "vault.shared.policy.answer",
+    "vault.shared.policy.change",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -2551,6 +2600,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
+    "ai.steps.submit",
+    "ai.steps.receipt",
+    "ai.reply",
+    "vault.receipts.context",
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
@@ -2558,6 +2611,18 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPoliciesView,
+        >(),
+        "vault.shared.policy.propose" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPolicyChange,
+        >(),
+        "vault.shared.policy.answer" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPolicyChange,
+        >(),
+        "vault.shared.policy.change" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPolicyChange,
+        >(),
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
         >(),
@@ -2585,6 +2650,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
+        "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_step::ModelStepReceipt,
+        >(),
+        "ai.steps.receipt" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_step::ModelStepReceipt,
+        >(),
+        "ai.reply" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
+        }
+        "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
+            Option<crate::receipt::ContextEmitReceipt>,
+        >(),
         "vault.decisions.bands.read" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
@@ -3574,6 +3651,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.close_erase_ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.change" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4810,6 +4915,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "ai.steps.submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.steps.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.reply" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.context" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6166,6 +6299,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.close_erase_ask" => {
             let _input: crate::task_verb::sdk::SharedEraseAskCloseRequest = decode(value.clone())?;
         }
+        "vault.shared.policy.get" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
+        "vault.shared.policy.propose" => {
+            let _input: crate::task_verb::sdk::SharedActPolicyProposeRequest =
+                decode(value.clone())?;
+        }
+        "vault.shared.policy.answer" => {
+            let _input: crate::task_verb::sdk::SharedActPolicyAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.shared.policy.change" => {
+            let _input: crate::task_verb::sdk::SharedActPolicyChangeRequest =
+                decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -6728,6 +6876,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "ai.steps.submit" => {
+            let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
+        }
+        "ai.steps.receipt" => {
+            let _input: crate::llm::model_step::ModelStepReceiptRequest = decode(value.clone())?;
+        }
+        "ai.reply" => {
+            let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
+        }
+        "vault.receipts.context" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
@@ -7492,6 +7652,12 @@ pub fn invoke(
         "vault.shared.close_erase_ask" => {
             encode(vault_shared_close_erase_ask(memory, decode(value)?)?)
         }
+        "vault.shared.policy.get" => encode(vault_shared_policy_get(memory, decode(value)?)?),
+        "vault.shared.policy.propose" => {
+            encode(vault_shared_policy_propose(memory, decode(value)?)?)
+        }
+        "vault.shared.policy.answer" => encode(vault_shared_policy_answer(memory, decode(value)?)?),
+        "vault.shared.policy.change" => encode(vault_shared_policy_change(memory, decode(value)?)?),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
@@ -7803,6 +7969,10 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
+        "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
+        "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
+        "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -9299,6 +9469,46 @@ pub fn vault_shared_close_erase_ask(
         input,
     )
 }
+pub fn vault_shared_policy_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<crate::federation::SharedActPoliciesView> {
+    crate::task_verb::sdk::read_shared_act_policies(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.get")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActPolicyProposeRequest,
+) -> MemoryResult<crate::federation::SharedActPolicyChange> {
+    crate::task_verb::sdk::propose_shared_act_policy_change(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.propose")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActPolicyAnswerRequest,
+) -> MemoryResult<crate::federation::SharedActPolicyChange> {
+    crate::task_verb::sdk::answer_shared_act_policy_change(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.answer")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_change(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActPolicyChangeRequest,
+) -> MemoryResult<crate::federation::SharedActPolicyChange> {
+    crate::task_verb::sdk::read_shared_act_policy_change(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.change")?,
+        input,
+    )
+}
 pub fn vault_guests_revoke(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::GuestRevokeRequest,
@@ -10741,6 +10951,30 @@ pub fn self_skills_callables(
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
+}
+pub fn ai_steps_submit(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::ModelStepSubmit,
+) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
+    crate::task_verb::sdk::host_only(memory, "ai.steps.submit", &input)
+}
+pub fn ai_steps_receipt(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::ModelStepReceiptRequest,
+) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
+    crate::task_verb::sdk::host_only(memory, "ai.steps.receipt", &input)
+}
+pub fn ai_reply(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AiReplyRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiReply> {
+    crate::task_verb::sdk::host_only(memory, "ai.reply", &input)
+}
+pub fn vault_receipts_context(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
+    memory.context_emit_receipt(&input.receipt_ref)
 }
 pub fn ai_options(
     memory: &Memory<'_>,

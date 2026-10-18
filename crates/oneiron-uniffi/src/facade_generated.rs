@@ -646,6 +646,26 @@ export_facade! {
     let output = client.vault_shared_close_erase_ask(&input)?;
     crate::codec::lift_record("vault.shared.close_erase_ask", &output)
 };
+"vault.shared.policy.get" => fn vault_shared_policy_get(&self, input: SharedVaultRequest) -> SharedActPoliciesView = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.policy.get", input)?;
+    let output = client.vault_shared_policy_get(&input)?;
+    crate::codec::lift_record("vault.shared.policy.get", &output)
+};
+"vault.shared.policy.propose" => fn vault_shared_policy_propose(&self, input: SharedActPolicyProposeRequest) -> SharedActPolicyChange = |client| {
+    let input: oneiron::task_verb::sdk::SharedActPolicyProposeRequest = crate::codec::lower_record("vault.shared.policy.propose", input)?;
+    let output = client.vault_shared_policy_propose(&input)?;
+    crate::codec::lift_record("vault.shared.policy.propose", &output)
+};
+"vault.shared.policy.answer" => fn vault_shared_policy_answer(&self, input: SharedActPolicyAnswerRequest) -> SharedActPolicyChange = |client| {
+    let input: oneiron::task_verb::sdk::SharedActPolicyAnswerRequest = crate::codec::lower_record("vault.shared.policy.answer", input)?;
+    let output = client.vault_shared_policy_answer(&input)?;
+    crate::codec::lift_record("vault.shared.policy.answer", &output)
+};
+"vault.shared.policy.change" => fn vault_shared_policy_change(&self, input: SharedActPolicyChangeRequest) -> SharedActPolicyChange = |client| {
+    let input: oneiron::task_verb::sdk::SharedActPolicyChangeRequest = crate::codec::lower_record("vault.shared.policy.change", input)?;
+    let output = client.vault_shared_policy_change(&input)?;
+    crate::codec::lift_record("vault.shared.policy.change", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;
@@ -1535,6 +1555,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("self.skills.callables")?;
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
+};
+"ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
+    let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
+    let output = client.ai_steps_submit(&input)?;
+    crate::codec::lift_record("ai.steps.submit", &output)
+};
+"ai.steps.receipt" => fn ai_steps_receipt(&self, input: ModelStepReceiptRequest) -> ModelStepReceipt = |client| {
+    let input: oneiron::llm::model_step::ModelStepReceiptRequest = crate::codec::lower_record("ai.steps.receipt", input)?;
+    let output = client.ai_steps_receipt(&input)?;
+    crate::codec::lift_record("ai.steps.receipt", &output)
+};
+"ai.reply" => fn ai_reply(&self, input: AiReplyRequest) -> AiReply = |client| {
+    let input: oneiron::task_verb::sdk::AiReplyRequest = crate::codec::lower_record("ai.reply", input)?;
+    let output = client.ai_reply(&input)?;
+    crate::codec::lift_record("ai.reply", &output)
+};
+"vault.receipts.context" => fn vault_receipts_context(&self, input: CallReceiptRequest) -> Option<ContextEmitReceipt> = |client| {
+    let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.context", input)?;
+    let output = client.vault_receipts_context(&input)?;
+    crate::codec::lift_record("vault.receipts.context", &output)
 };
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
