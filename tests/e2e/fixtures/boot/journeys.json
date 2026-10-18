@@ -1,0 +1,110 @@
+{
+  "occurredAt": 1792281600,
+  "restart": {
+    "conversationId": "01101010101010101010101010101010",
+    "turnId": "01202020202020202020202020202020",
+    "messageId": "01303030303030303030303030303030",
+    "claimId": "01404040404040404040404040404040",
+    "marker": "cobalt-boot-restart",
+    "text": "cobalt-boot-restart: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "cobalt-boot-restart"
+    }
+  },
+  "typescript": {
+    "conversationId": "02101010101010101010101010101010",
+    "turnId": "02202020202020202020202020202020",
+    "messageId": "02303030303030303030303030303030",
+    "claimId": "02404040404040404040404040404040",
+    "marker": "saffron-typescript-seat",
+    "text": "saffron-typescript-seat: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "saffron-typescript-seat"
+    }
+  },
+  "python": {
+    "conversationId": "03101010101010101010101010101010",
+    "turnId": "03202020202020202020202020202020",
+    "messageId": "03303030303030303030303030303030",
+    "claimId": "03404040404040404040404040404040",
+    "marker": "juniper-python-seat",
+    "text": "juniper-python-seat: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "juniper-python-seat"
+    }
+  },
+  "native": {
+    "conversationId": "04101010101010101010101010101010",
+    "turnId": "04202020202020202020202020202020",
+    "messageId": "04303030303030303030303030303030",
+    "claimId": "04404040404040404040404040404040",
+    "marker": "marigold-native-seat",
+    "text": "marigold-native-seat: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "marigold-native-seat"
+    }
+  },
+  "cli": {
+    "conversationId": "05101010101010101010101010101010",
+    "turnId": "05202020202020202020202020202020",
+    "messageId": "05303030303030303030303030303030",
+    "claimId": "05404040404040404040404040404040",
+    "marker": "indigo-cli-seat",
+    "text": "indigo-cli-seat: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "indigo-cli-seat"
+    }
+  },
+  "mcp": {
+    "conversationId": "07101010101010101010101010101010",
+    "turnId": "07202020202020202020202020202020",
+    "messageId": "07303030303030303030303030303030",
+    "claimId": "07404040404040404040404040404040",
+    "marker": "tamarind-mcp-seat",
+    "text": "tamarind-mcp-seat: I prefer a window seat when I fly.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "tamarind-mcp-seat"
+    }
+  },
+  "deniedMessageId": "dd303030303030303030303030303030",
+  "deniedTurnId": "dd202020202020202020202020202020",
+  "deniedText": "refused-boot-write-must-not-exist",
+  "isolationA": {
+    "conversationId": "08101010101010101010101010101010",
+    "turnId": "08202020202020202020202020202020",
+    "messageId": "08303030303030303030303030303030",
+    "claimId": "08404040404040404040404040404040",
+    "marker": "identical-isolation-seat",
+    "text": "identical-isolation-seat: this sentence is identical in both private vaults.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "window",
+      "marker": "identical-isolation-seat"
+    }
+  },
+  "isolationB": {
+    "conversationId": "09101010101010101010101010101010",
+    "turnId": "09202020202020202020202020202020",
+    "messageId": "09303030303030303030303030303030",
+    "claimId": "09404040404040404040404040404040",
+    "marker": "identical-isolation-seat",
+    "text": "identical-isolation-seat: this sentence is identical in both private vaults.",
+    "predicate": "preference.travel.seat",
+    "value": {
+      "seat": "aisle",
+      "marker": "identical-isolation-seat"
+    }
+  }
+}
