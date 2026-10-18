@@ -470,6 +470,5 @@ pub(super) use apply::{
 };
 pub(super) use merge::{merge_machine, merge_machine_chain, merge_machine_maps};
 pub(super) use owner_answers::{
-    ActProof, MarkProof, act_stands, answer_contested, answer_revision_of, apply_owner_answer,
-    live_answers_by,
+    ActProof, MarkProof, act_stands, answer_contested, apply_owner_answer, live_answers_by,
 };
