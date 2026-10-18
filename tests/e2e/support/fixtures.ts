@@ -4,6 +4,8 @@ import { createReadStream } from "node:fs";
 import { readFile, readdir, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Facade } from "@oneiron/client";
+import type { PublicHttpClient } from "./clients.ts";
 
 export type Profile = "deterministic" | "real-small-model";
 export interface SourcePin { readonly uri: string; readonly revision?: string }
@@ -164,6 +166,27 @@ export class FixtureCatalog {
   }
 }
 export const loadFixtures = FixtureCatalog.load;
+
+/** Fresh-vault claims use base reality, the owner's substrate, all relationships and the default project. */
+export async function ownerBaseClaimScope(client: PublicHttpClient, ownerRef: string): Promise<Facade.ClaimScope> {
+  const facets = await client.call("vault.neighbors", {
+    entity_ref: ownerRef, opts: { edge_kind: "has_facet", limit: 100 },
+  });
+  for (const facet of facets.value) {
+    const { value: row } = await client.call("vault.get", { entity_ref: facet.short_id });
+    const body = row?.body;
+    if (row?.kind === "FACET" && typeof body === "object" && body !== null
+      && "kind" in body && body.kind === "substrate") {
+      return {
+        world_id: "00000000000000000000000000000001",
+        scope_facet_id: row.id_hex,
+        scope_relationship_id: "all",
+        scope_project_id: "00000000000000000000000000000002",
+      };
+    }
+  }
+  throw new FixturePinError("Fresh vault has no readable owner substrate facet");
+}
 
 export async function loadBuildManifest(profile: Profile): Promise<BuildManifest> {
   const path = process.env.E2E_BUILD_MANIFEST;

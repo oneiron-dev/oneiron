@@ -2,7 +2,7 @@ import { afterAll, expect, test } from "bun:test";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
 import type { McpClient } from "./support/clients.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import type { FixtureCatalog } from "./support/fixtures.ts";
 import { defineFile, redactor } from "./support/run.ts";
 
@@ -116,8 +116,9 @@ suite.test(test, "HOOKS-02", "Hook replay lands nothing should work", async () =
   const call = <V extends HookMcpVerb>(verb: V, input: FacadeInput<V>) =>
     mcpCall(engine.mcp, tools, verb, input);
   const subject = engine.pairedActor.principalRef;
+  const scope = await ownerBaseClaimScope(engine.client, subject);
   const upsert = (id: string, predicate: string, value: unknown) => call("vault.claims.upsert", {
-    id, subject_ref: subject, predicate, value, confidence: 1, source: "user_stated",
+    id, subject_ref: subject, predicate, value, confidence: 1, source: "user_stated", scope,
   });
   const readClaims = async () => {
     const reply = await call("vault.claims.list", { subject_ref: subject, limit: data.pageBound });
@@ -269,6 +270,7 @@ suite.test(test, "HOOKS-04", "After-hook redaction is monotone should work", asy
   const engine = await EngineFixture.start({ id: "HOOKS-04", profile });
   const subject = engine.pairedActor.principalRef;
   await engine.client.call("vault.claims.upsert", {
+    scope: await ownerBaseClaimScope(engine.client, subject),
     id: spec.claimId, subject_ref: subject, predicate: spec.predicate,
     value: spec.value, confidence: 1, source: "user_stated",
   });

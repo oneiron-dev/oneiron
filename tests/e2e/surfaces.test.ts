@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture } from "./support/engine.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -132,12 +132,15 @@ suite.test(test, "SURFACES-04", "Ledger dossier and thread inspection should wor
       body: { name: data.conversationName },
       occurred_start: data.oldAt, occurred_end: data.oldAt, learned_at: data.oldAt,
     });
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const oldClaim = await engine.client.call("vault.claims.upsert", {
+      scope,
       subject_ref: conversation.id, predicate: data.predicate, value: data.firstName,
       confidence: 1, source: data.expected.claimSource,
       occurred_at: data.oldAt, learned_at: data.oldAt, valid_from: data.oldAt,
     });
     const currentClaim = await engine.client.call("vault.claims.upsert", {
+      scope,
       subject_ref: conversation.id, predicate: data.predicate, value: data.currentName,
       confidence: 1, source: data.expected.claimSource,
       occurred_at: data.currentAt, learned_at: data.currentAt, valid_from: data.currentAt,
