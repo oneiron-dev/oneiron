@@ -882,6 +882,12 @@ class Oneiron:
     class _VaultFanoutVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def spawn(self, spec):
+            """Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_spawn(json.dumps(spec))))
+        def slots(self, spec):
+            """Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."""
+            return json.loads(_translate(lambda: self._client.vault_fanout_slots(json.dumps(spec))))
         def launch(self, spec):
             """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
             return json.loads(_translate(lambda: self._client.vault_fanout_launch(json.dumps(spec))))

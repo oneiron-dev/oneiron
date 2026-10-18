@@ -152,6 +152,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.fanout.spawn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::FanoutBatchInput>,
+                >(),
+            ),
+            (
+                "vault.fanout.slots",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FanoutLaunchRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.launch",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutLaunchRequest,
@@ -4793,6 +4805,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.fanout.spawn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.fanout.slots" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.fanout.launch" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8946,6 +8972,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "tasks.wave" => {
             let _input: crate::task_verb::sdk::TaskWaveRequest = decode(value.clone())?;
         }
+        "vault.fanout.spawn" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::FanoutBatchInput,
+            > = decode(value.clone())?;
+        }
+        "vault.fanout.slots" => {
+            let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
+        }
         "vault.fanout.launch" => {
             let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
         }
@@ -11016,6 +11050,8 @@ pub fn invoke(
         "describe" => encode(describe(memory, decode(value)?)?),
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
+        "vault.fanout.spawn" => encode(vault_fanout_spawn(memory, decode(value)?)?),
+        "vault.fanout.slots" => encode(vault_fanout_slots(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
         "self.budget" => encode(self_budget(memory, decode(value)?)?),
         "self.budget.land" => encode(self_budget_land(memory, decode(value)?)?),
@@ -12448,6 +12484,18 @@ pub fn tasks_wave(
     input: crate::task_verb::sdk::TaskWaveRequest,
 ) -> MemoryResult<crate::task_verb::sdk::TaskWaveReceipt> {
     crate::task_verb::sdk::host_only(memory, "tasks.wave", &input)
+}
+pub fn vault_fanout_spawn(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::FanoutBatchInput>,
+) -> MemoryResult<crate::task_verb::sdk::FanoutBatchView> {
+    crate::task_verb::sdk::host_only(memory, "vault.fanout.spawn", &input)
+}
+pub fn vault_fanout_slots(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FanoutLaunchRequest,
+) -> MemoryResult<Option<crate::task_verb::sdk::FanoutBatchView>> {
+    memory.fanout_batch_slots(input)
 }
 pub fn vault_fanout_launch(
     memory: &Memory<'_>,

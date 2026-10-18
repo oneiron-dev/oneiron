@@ -31,6 +31,8 @@ pub enum AgentVerb {
     Describe,
     TasksCreate,
     TasksWave,
+    VaultFanoutSpawn,
+    VaultFanoutSlots,
     VaultFanoutLaunch,
     SelfBudget,
     SelfBudgetLand,
@@ -686,6 +688,8 @@ impl AgentVerb {
         Self::Describe,
         Self::TasksCreate,
         Self::TasksWave,
+        Self::VaultFanoutSpawn,
+        Self::VaultFanoutSlots,
         Self::VaultFanoutLaunch,
         Self::SelfBudget,
         Self::SelfBudgetLand,
@@ -1344,6 +1348,8 @@ impl AgentVerb {
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
+            Self::VaultFanoutSpawn => "vault.fanout.spawn",
+            Self::VaultFanoutSlots => "vault.fanout.slots",
             Self::VaultFanoutLaunch => "vault.fanout.launch",
             Self::SelfBudget => "self.budget",
             Self::SelfBudgetLand => "self.budget.land",
@@ -2012,6 +2018,8 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -2674,6 +2682,8 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -3399,6 +3409,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -4012,6 +4024,7 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
                 | Self::SelfBudgetLand
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLeaseTopUp
@@ -4460,6 +4473,8 @@ impl AgentVerb {
                 "parent_ref",
             ],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutSpawn => &["spec"],
+            Self::VaultFanoutSlots => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
@@ -5116,6 +5131,8 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutSpawn => &["spec"],
+            Self::VaultFanoutSlots => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
@@ -5820,6 +5837,12 @@ impl AgentVerb {
             }
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
+            }
+            Self::VaultFanoutSpawn => {
+                "Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."
+            }
+            Self::VaultFanoutSlots => {
+                "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."
             }
             Self::VaultFanoutLaunch => {
                 "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."

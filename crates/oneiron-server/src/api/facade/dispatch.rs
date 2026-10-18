@@ -628,6 +628,53 @@ async fn tasks_wave(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_fanout_spawn(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.fanout.spawn")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.fanout.spawn", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.fanout.spawn", value).await?;
+    let (output, listed) = super::host_doors::vault_fanout_spawn(
+        server,
+        auth,
+        call.session()?,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_fanout_slots(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.fanout.slots",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_fanout_launch(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14269,6 +14316,8 @@ pub(crate) async fn call_verb(
         "describe" => describe(server, call, input).await,
         "tasks.create" => tasks_create(server, call, input).await,
         "tasks.wave" => tasks_wave(server, call, input).await,
+        "vault.fanout.spawn" => vault_fanout_spawn(server, call, input).await,
+        "vault.fanout.slots" => vault_fanout_slots(server, call, input).await,
         "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
         "self.budget" => self_budget(server, call, input).await,
         "self.budget.land" => self_budget_land(server, call, input).await,
