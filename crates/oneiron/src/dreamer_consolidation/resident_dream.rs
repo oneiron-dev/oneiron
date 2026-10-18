@@ -3,13 +3,17 @@
 //! window, and the weaver never reads its diary. Since its last dreaming it
 //! reads its sealed scratchpads, its receipts and its INBOX rows, oldest
 //! first, as many as the window holds, and writes one diary entry in its own
-//! voice. What it did not read stays for its next dreaming.
+//! voice. It may also propose craft notes about itself, actor.lesson and
+//! actor.failure_mode candidates, which land Proposed beside the entry.
+//! What it did not read stays for its next dreaming.
 //!
 //! The host lends the model and the instruction; the engine ships no
-//! dreaming prompt. The Nightly recipe queues one child per resident whose
-//! definition is on and whose dreaming is not off.
+//! dreaming prompt, only the reply's shape ([`CRAFT_ASK`]). The Nightly
+//! recipe queues one child per resident whose definition is on and whose
+//! dreaming is not off.
 
 use super::step_charge::StepChargeTally;
+use crate::actor_claims::ResidentCraftCandidate;
 use crate::agent_def::DreamingMode;
 use crate::dreamer_runner::{
     DREAMER_RESIDENT_DREAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
@@ -39,6 +43,17 @@ const INPUT_SHARE_DIVISOR: u64 = 2;
 const MAX_FORK_DEPTH: usize = 16;
 /// The most of a diary-read reason the Inbox cut prints, as the board does.
 const REVIEW_REASON_BYTES: usize = 160;
+/// The fence that opens a dreaming reply's craft notes, after its entry.
+const CRAFT_FENCE: &str = "```oneiron-craft";
+/// The reply's shape, after the cut: the entry, then optionally the
+/// resident's craft notes about itself (OF-490). The host's instruction
+/// stays the voice; this only says where the notes go.
+const CRAFT_ASK: &str = "Write your diary entry. After it you may propose craft notes about \
+     yourself: end the reply with one block fenced ```oneiron-craft holding \
+     {\"lessons\":[\"<what you will do differently>\"],\
+     \"failure_modes\":[\"<a lapse of yours that keeps recurring>\"]}, either list empty \
+     when you have none. Nothing follows the closing fence; everything before the block is \
+     the diary entry.";
 
 /// Each resident's committed progress: what its dreaming already read.
 const PROGRESS: SideTable<EntityId, ResidentDreamProgress, Named> =
@@ -599,6 +614,76 @@ fn append_diary_entry_in_txn(
     Ok(first)
 }
 
+/// A dreaming reply's diary entry and the craft notes it proposes: a reply
+/// that ends with one ```oneiron-craft block whose lessons and failure
+/// modes parse proposes them, and its entry is what precedes the block. Any
+/// other reply is all entry and proposes nothing: a note is never made up.
+fn split_craft_notes(reply: &str) -> (&str, Vec<ResidentCraftCandidate>) {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct CraftBlock {
+        #[serde(default)]
+        lessons: Vec<String>,
+        #[serde(default)]
+        failure_modes: Vec<String>,
+    }
+    let parsed = reply
+        .strip_suffix("```")
+        .and_then(|rest| rest.rsplit_once(CRAFT_FENCE))
+        .and_then(|(entry, block)| {
+            let block = serde_json::from_str::<CraftBlock>(block.trim()).ok()?;
+            Some((entry.trim_end(), block))
+        });
+    let Some((entry, block)) = parsed else {
+        return (reply, Vec::new());
+    };
+    let craft = block
+        .lessons
+        .into_iter()
+        .map(ResidentCraftCandidate::Lesson)
+        .chain(
+            block
+                .failure_modes
+                .into_iter()
+                .map(ResidentCraftCandidate::FailureMode),
+        )
+        .collect();
+    (entry, craft)
+}
+
+/// Lands a dreaming's craft notes as Proposed candidates on the resident
+/// (OF-490), in the entry's write. The notes write in their own savepoint:
+/// a refusal rolls back alone, is logged, and the entry still lands.
+fn propose_craft_notes_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    resident: EntityId,
+    attempt: crate::attempt_queue::AttemptId,
+    craft: &[ResidentCraftCandidate],
+    at: u64,
+) -> Result<()> {
+    if craft.is_empty() {
+        return Ok(());
+    }
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match crate::actor_claims::write_resident_craft_candidates_in_txn(
+        vault,
+        &mut savepoint,
+        resident,
+        attempt,
+        craft,
+        at,
+    ) {
+        Ok(_) => savepoint.commit()?,
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            ?attempt,
+            "a resident's dreaming craft notes were not proposed"
+        ),
+    }
+    Ok(())
+}
+
 /// Runs one resident's dreaming: reads its cut, asks its model with the
 /// host's instruction, and writes the reply as one entry of its own diary,
 /// under its own stamp. A replay after the entry landed writes none.
@@ -667,7 +752,9 @@ pub async fn run_resident_dream(
             },
             LlmMessage {
                 role: LlmMessageRole::User,
-                content: vec![ContentPart::Text { text: cut.text() }],
+                content: vec![ContentPart::Text {
+                    text: format!("{}\n\n{CRAFT_ASK}", cut.text()),
+                }],
             },
         ],
         tools: Vec::new(),
@@ -744,14 +831,14 @@ pub async fn run_resident_dream(
             _ => None,
         })
         .collect();
-    let entry = entry.trim();
+    let (entry, craft) = split_craft_notes(entry.trim());
     if entry.is_empty() {
         return Ok(charges.park("the model wrote an empty diary entry"));
     }
     let now = ctx.now_ms / 1_000;
-    // The entry, every part of it, its landing marker and the progress it
-    // read commit in one write: a crash between them neither drops the
-    // progress nor lands the entry twice.
+    // The entry, every part of it, its craft notes, its landing marker and
+    // the progress it read commit in one write: a crash between them neither
+    // drops the progress nor lands the entry twice.
     ctx.vault.with_write_txn_grouped(|txn| {
         if LANDED.contains(&ctx.vault.store, txn, &attempt_id)? {
             return Ok(());
@@ -759,6 +846,7 @@ pub async fn run_resident_dream(
         let at = crate::ports::recorded_at_in_txn(&ctx.vault.store, txn)?;
         let entry_id = append_diary_entry_in_txn(ctx.vault, txn, resident, entry, at)
             .map_err(|error| invalid(&format!("diary entry: {error}")))?;
+        propose_craft_notes_in_txn(ctx.vault, txn, resident_id, attempt_id, &craft, at)?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
         for pad in &cut.pads {
             PADS.put(&ctx.vault.store, txn, &(resident_id, *pad), &[1])?;

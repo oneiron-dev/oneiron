@@ -85,7 +85,7 @@ pub use ladder::OfferLadder;
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::ServedOffer;
-pub(crate) use raw::{InjectedRuns, RawInference};
+pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
 pub(crate) use rerank::{rerank_request, rerank_scores};

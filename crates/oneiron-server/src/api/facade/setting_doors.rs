@@ -5,15 +5,21 @@
 //! and an SDK call meet one admission: the vault owner's proof, as
 //! `/v1/owner/settings/learning` takes it (`owner_routes::owner`). The
 //! engine's writers check the owner again in their own write.
+//!
+//! Each lists its rows (`host_door_lists`). The catalog, the knob and
+//! choice rows and the cached fits a knob's value falls back to live in
+//! side tables, which hold no row; each lists the goal claim and the
+//! project a row it shows is scoped to.
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::learning_setting_doors::{
     self, LearningSettingClear, LearningSettingPut, LearningSettingsRequest, LearningSettingsView,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -47,13 +53,37 @@ async fn as_owner<T: Send + 'static>(
         .map_err(|_| internal(verb))?
 }
 
+/// [`as_owner`] for a setting door, beside the goal claim and the project
+/// each row of its view is scoped to. A refusal lists none.
+async fn as_owner_listing(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, &AuthenticatedOwner) -> oneiron::Result<LearningSettingsView>
+    + Send
+    + 'static,
+) -> Listed<LearningSettingsView> {
+    let answer = as_owner(server, auth, verb, act).await;
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
+        |view| {
+            view.rows
+                .iter()
+                .flat_map(|row| row.goal.iter().chain(row.project.iter()))
+                .filter_map(|hex| EntityId::from_hex(hex).ok())
+                .collect()
+        },
+    );
+    (answer, rows)
+}
+
 /// `vault.settings.learning`: the catalog and the owner's rows.
 pub(crate) async fn vault_settings_learning(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningSettingsRequest,
-) -> MemoryResult<LearningSettingsView> {
-    as_owner(
+) -> Listed<LearningSettingsView> {
+    as_owner_listing(
         server,
         auth,
         "vault.settings.learning",
@@ -69,8 +99,8 @@ pub(crate) async fn vault_settings_learning_put(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningSettingPut,
-) -> MemoryResult<LearningSettingsView> {
-    as_owner(
+) -> Listed<LearningSettingsView> {
+    as_owner_listing(
         server,
         auth,
         "vault.settings.learning.put",
@@ -86,8 +116,8 @@ pub(crate) async fn vault_settings_learning_clear(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LearningSettingClear,
-) -> MemoryResult<LearningSettingsView> {
-    as_owner(
+) -> Listed<LearningSettingsView> {
+    as_owner_listing(
         server,
         auth,
         "vault.settings.learning.clear",
