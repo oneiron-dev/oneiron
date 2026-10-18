@@ -37,7 +37,7 @@ use crate::llm::{
 use crate::self_heal::audit::AttemptConfession;
 use crate::task_verb::QueueTaskBrief;
 use crate::{Vault, WriteActor};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 /// Why a TASK's realization parks on a host that lends no Dreamer model.
 pub const TASK_REALIZE_UNLENT_PARK_REASON: &str = "task realization needs a lent Dreamer model";
@@ -250,29 +250,9 @@ pub async fn run_task_realize(
 }
 
 /// The objectives a realization confesses against (OF-544): its brief's
-/// done-means question, each criterion that must hold, then each that must
-/// not as `none of: <text>`, in that order, whitespace folded as a workflow
-/// step's are. A blank one is left out and a repeat keeps its first place:
-/// a seal names each objective once.
+/// done-means, named as every TASK run's are.
 fn brief_objectives(brief: &QueueTaskBrief) -> Vec<String> {
-    let fold = |text: &str| text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let done = &brief.success;
-    let held = done
-        .yes_if_all
-        .iter()
-        .map(|criterion| fold(&criterion.text));
-    let none = done
-        .no_if_any
-        .iter()
-        .map(|criterion| fold(&criterion.text))
-        .filter(|text| !text.is_empty())
-        .map(|text| format!("none of: {text}"));
-    let mut seen = BTreeSet::new();
-    std::iter::once(fold(&done.question))
-        .chain(held)
-        .chain(none)
-        .filter(|objective| !objective.is_empty() && seen.insert(objective.clone()))
-        .collect()
+    brief.confession_objectives()
 }
 
 /// The confession a realization's stored answer makes against its brief's

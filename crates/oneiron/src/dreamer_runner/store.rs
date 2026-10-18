@@ -565,6 +565,19 @@ impl<'a> DreamerRunnerStore<'a> {
         self.complete_sealed(input, judged, None)
     }
 
+    /// [`Self::complete_judged`], sealing an agent run's `confession`
+    /// (OF-544) in the commit that closes its try, for a runner outside this
+    /// crate (the server's agent run pump). A refused seal leaves the
+    /// completion standing.
+    pub fn complete_with_confession(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+        confession: Option<&crate::self_heal::audit::AttemptConfession>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_sealed(input, judged, confession)
+    }
+
     /// [`Self::complete_judged`], sealing a TASK realization's `confession`
     /// (OF-544) in the commit that closes its try. A refused seal leaves the
     /// completion standing.
