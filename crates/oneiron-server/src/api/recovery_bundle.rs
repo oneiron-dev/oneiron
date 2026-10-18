@@ -20,11 +20,11 @@ use oneiron::sync::residence::{
     sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
 };
 use oneiron::world_keys::RecoveryRootId;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::auth::{parse_signature, parse_slip_id};
-use crate::error::{ApiError, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
 /// One signed request, with room to spare.
@@ -39,18 +39,46 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 /// One slice the kit asks for: the vault, the kit's root, the generation (none
 /// for the newest kept for the root), the object and the offset, signed at
 /// `timestamp` with a fresh `nonce`; each in lower-case hex.
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct PartRequest {
+pub(super) struct KitBundlePartRequest {
+    /// The vault, 64 hex.
     vault_id: String,
+    /// The kit's recovery root, 64 hex.
     root: String,
+    /// The generation, 48 hex; absent or null for the newest kept for the root.
     #[serde(default)]
     generation: Option<String>,
+    /// The object: `bundle` or `pads`.
     object: String,
+    /// The byte offset the slice starts at.
     offset: u64,
+    /// When the kit signed the request, in Unix seconds. The home takes it
+    /// within 300 seconds of its own clock.
     timestamp: u64,
+    /// 32 fresh random bytes, 64 hex. The home takes each nonce once.
     nonce: String,
+    /// The root's owner anchor's Ed25519 signature over the request, 128 hex.
     signature: String,
+}
+
+/// One slice of a kept object, with the object's whole length and digest.
+#[derive(Serialize, ToSchema)]
+pub(super) struct KitBundlePartResponse {
+    /// The generation the slice is from, 48 hex.
+    generation: String,
+    /// The object: `bundle` or `pads`.
+    object: String,
+    /// The object's whole length in bytes.
+    total: u64,
+    /// The object's BLAKE3 digest, 64 hex.
+    digest: String,
+    /// The byte offset the slice starts at.
+    offset: u64,
+    /// Whether the slice ends the object.
+    last: bool,
+    /// The slice, in standard base64; at most 16 MiB once decoded.
+    part: String,
 }
 
 /// The address a request names: the URI's authority (HTTP/2), else the Host
@@ -66,13 +94,29 @@ fn request_origin(uri: &Uri, headers: &HeaderMap) -> Option<String> {
 /// bundle or pad object, with its whole length and digest, as a machine reads
 /// it. A request that does not verify, a generation not kept for the root and
 /// an offset past the end all look missing.
-async fn part(
+#[utoipa::path(
+    post,
+    path = "/v1/recovery/sealed-bundle/part",
+    operation_id = "recovery_sealed_bundle_part",
+    request_body(
+        content = KitBundlePartRequest,
+        description = "One signed slice request. No bearer: the signature is the authentication. It is the owner anchor's, of the recovery root a publisher named for the generation, over the vault, the root, the home's address as the request names it (the URI authority or Host, port included), the method, this path, the object, the generation, the offset, the time and the nonce.",
+        content_type = "application/json"
+    ),
+    responses(
+        (status = 200, description = "The slice.", body = KitBundlePartResponse, content_type = "application/json"),
+        (status = 400, description = "The body does not parse, a field is malformed, or the request names no host.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "The request does not verify, no generation kept for the root matches, or the offset is at or past the object's end. All look the same.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 500, description = "The sealed bundle read stopped.", body = ApiErrorEnvelope, content_type = "application/json")
+    )
+)]
+pub(super) async fn part(
     State(server): State<Arc<SyncServer>>,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Json<Value>, EnvelopedApiError> {
-    let input: PartRequest = serde_json::from_slice(&body)
+) -> Result<Json<KitBundlePartResponse>, EnvelopedApiError> {
+    let input: KitBundlePartRequest = serde_json::from_slice(&body)
         .map_err(|_| ApiError::bad_request("the kit fetch does not parse", None))?;
     let bad = |field: &str| ApiError::bad_request("the kit fetch field is malformed", Some(field));
     let generation = input
@@ -106,13 +150,13 @@ async fn part(
         return Err(ApiError::not_found("sealed bundle", None).into());
     };
     let (total, digest) = entry.object(object);
-    Ok(Json(json!({
-        "generation": sealed_generation_hex(&entry.generation),
-        "object": object.name(),
-        "total": total,
-        "digest": sealed_digest_hex(&digest),
-        "offset": offset,
-        "last": offset.saturating_add(part.len() as u64) == total,
-        "part": base64::engine::general_purpose::STANDARD.encode(part),
-    })))
+    Ok(Json(KitBundlePartResponse {
+        generation: sealed_generation_hex(&entry.generation),
+        object: object.name().to_owned(),
+        total,
+        digest: sealed_digest_hex(&digest),
+        offset,
+        last: offset.saturating_add(part.len() as u64) == total,
+        part: base64::engine::general_purpose::STANDARD.encode(part),
+    }))
 }

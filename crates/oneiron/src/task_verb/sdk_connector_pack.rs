@@ -3,7 +3,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::connector_key::qualification::{ConnectorQualificationKit, ConnectorQualificationReceipt};
+use crate::connector_key::qualification::{
+    ConnectorQualificationKit, ConnectorQualificationReceipt,
+};
 use crate::connector_key::{SlateDisposition, SlateManifest, SlatePackSource, SlateRow};
 use crate::skill_hub::pack_catalog::{PackInstallReceipt, PackRuntimeRecipe};
 

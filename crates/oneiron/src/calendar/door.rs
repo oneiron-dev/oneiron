@@ -43,7 +43,10 @@ impl Memory<'_> {
         request: &CalendarEventCreateRequest,
     ) -> MemoryResult<CalendarEventCreated> {
         let (input, occurred) = match request {
-            CalendarEventCreateRequest::Native { summary, occurred_at } => (
+            CalendarEventCreateRequest::Native {
+                summary,
+                occurred_at,
+            } => (
                 CalendarEventInput {
                     origin: Some(CalendarOrigin::Native),
                     name: summary.clone(),
@@ -52,15 +55,21 @@ impl Memory<'_> {
                 *occurred_at,
             ),
             CalendarEventCreateRequest::Dreamer {
-                summary, occurred_at, evidence_turn_ids, source_frontiers,
+                summary,
+                occurred_at,
+                evidence_turn_ids,
+                source_frontiers,
             } => (
                 CalendarEventInput {
                     origin: Some(CalendarOrigin::Dreamer),
                     name: summary.clone(),
-                    evidence_turn_ids: evidence_turn_ids.iter().map(|reference| {
-                        EntityId::from_hex(reference)
-                            .map_err(|_| MemoryError::bad_request("invalid evidence TURN ref"))
-                    }).collect::<MemoryResult<Vec<_>>>()?,
+                    evidence_turn_ids: evidence_turn_ids
+                        .iter()
+                        .map(|reference| {
+                            EntityId::from_hex(reference)
+                                .map_err(|_| MemoryError::bad_request("invalid evidence TURN ref"))
+                        })
+                        .collect::<MemoryResult<Vec<_>>>()?,
                     source_frontiers: source_frontiers.clone(),
                     ..Default::default()
                 },
@@ -69,27 +78,39 @@ impl Memory<'_> {
         };
         let origin = input.validate()?;
         if !occurred.is_ordered() {
-            return Err(MemoryError::bad_request("calendar range start must not exceed end"));
+            return Err(MemoryError::bad_request(
+                "calendar range start must not exceed end",
+            ));
         }
         let vault = self.vault();
         let event = vault.store.clock.entity_id()?;
         let recorded_at = vault.now_recorded_at();
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         self.with_verified_actor_write_txn(|txn| {
-            if !lane.entities_readable_in_txn(txn, &input.evidence_turn_ids)?
-                .into_iter().all(|readable| readable)
+            if !lane
+                .entities_readable_in_txn(txn, &input.evidence_turn_ids)?
+                .into_iter()
+                .all(|readable| readable)
             {
-                return Err(MemoryError::not_found("calendar evidence is absent or withheld"));
+                return Err(MemoryError::not_found(
+                    "calendar evidence is absent or withheld",
+                ));
             }
             vault.stage_calendar_event(
-                txn, &input, occurred.to_time_range(),
-                WriteActor::new(self.actor(), self.actor_class()), event, recorded_at,
+                txn,
+                &input,
+                occurred.to_time_range(),
+                WriteActor::new(self.actor(), self.actor_class()),
+                event,
+                recorded_at,
             )?;
             Ok(())
         })?;
         self.produced_from(input.evidence_turn_ids.iter().copied().chain([event]));
         Ok(CalendarEventCreated {
-            event_ref: event.to_hex(), origin: origin.as_str().to_owned(), recorded_at,
+            event_ref: event.to_hex(),
+            origin: origin.as_str().to_owned(),
+            recorded_at,
         })
     }
 }

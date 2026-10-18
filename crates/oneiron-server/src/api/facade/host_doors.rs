@@ -58,11 +58,14 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
+// The shared-act policy doors (DOOR-129) too.
+pub(crate) use super::shared_policy_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::extraction_doors::*;
+pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -87,8 +90,8 @@ pub(crate) use super::vault_shape_doors::*;
 // The owner's embedding-space doors (OF-370), likewise.
 pub(crate) use super::embedding_space_doors::*;
 // The owner's fan-out ruling doors (OF-393), likewise.
-pub(crate) use super::fanout_doors::*;
 pub(crate) use super::budget_doors::*;
+pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -112,6 +115,7 @@ pub(crate) use super::connector_pack_doors::*;
 pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
+pub(crate) use super::reply_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
@@ -1016,7 +1020,10 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.calendar.ics.import"
+        "ai.steps.submit"
+        | "ai.steps.receipt"
+        | "ai.reply"
+        | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.packs.put"
         | "vault.packs.connector.prepare"
@@ -1145,7 +1152,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.recall"
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
-        | "self.off_record.execute" => owner_proof(auth, server, verb).map(drop),
+        | "self.off_record.execute"
+        | "vault.shared.policy.get"
+        | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -1171,7 +1180,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_preview"
         | "vault.records.erase_confirm"
         | "vault.workspace.establish"
-        | "vault.workspace.members.onboard" => {
+        | "vault.workspace.members.onboard"
+        | "vault.shared.policy.propose"
+        | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

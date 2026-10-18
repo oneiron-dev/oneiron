@@ -8,7 +8,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use super::{CallEnvelope, ModelId};
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmRequest {
     pub model: ModelId,
     pub envelope: CallEnvelope,
@@ -95,20 +95,20 @@ fn is_route_selector(key: &str) -> bool {
     ROUTE_SELECTOR_KEYS.contains(&key)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmResponse {
     pub message: LlmMessage,
     pub usage: LlmUsage,
     pub finish_reason: FinishReason,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmMessage {
     pub role: LlmMessageRole,
     pub content: Vec<ContentPart>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmMessageRole {
     System,
@@ -118,7 +118,7 @@ pub enum LlmMessageRole {
 }
 
 /// Bidirectional content representation shared by history-in and generation-out.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ContentPart {
     Text {
@@ -154,7 +154,7 @@ pub enum ContentPart {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum ImageContent {
     Base64 { data: String },
@@ -165,7 +165,7 @@ pub enum ImageContent {
 ///
 /// Adapters must not emit [`Self::Done`] for a successful empty response; they
 /// should report [`FatalLlmError::EmptyResponse`](crate::llm::FatalLlmError::EmptyResponse) instead.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "event", rename_all = "snake_case")]
 pub enum LlmStreamEvent {
     TextStart {
@@ -240,7 +240,7 @@ pub enum LlmStreamEvent {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmUsage {
     pub input: LlmInputUsage,
     pub output: LlmOutputUsage,
@@ -281,7 +281,7 @@ impl LlmUsage {
 }
 
 /// Absolute per-attempt input token totals, never retry deltas.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmInputUsage {
     pub total: u64,
     pub cache_read: u64,
@@ -289,21 +289,21 @@ pub struct LlmInputUsage {
 }
 
 /// Absolute per-attempt output token totals, never retry deltas.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmOutputUsage {
     pub total: u64,
     pub text: u64,
     pub reasoning: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmToolSpec {
     pub name: String,
     pub description: String,
     pub input_schema: JsonValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum FinishReason {
     Stop,

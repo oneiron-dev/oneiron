@@ -115,8 +115,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/context_board/explain.rs` | src | s | 8 crate-vis | — | Explain receipts (OF-278): GET /v1/core/explain/memory/{entity} answers why a memory appeared in the… |
 | `src/api/context_board/history.rs` | src | m | 8 crate-vis | — | Board history on the board's own surface (ARCH-0067 §3) |
 | `src/api/context_board/memories.rs` | src | m | 28 crate-vis | — | MEMORIES request controls, response DTOs, slot-budget resolution and companion assembly |
-| `src/api/context_board/mod.rs` | src | m | 16 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
+| `src/api/context_board/mod.rs` | src | m | 17 crate-vis | — | The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional… |
 | `src/api/context_board/prefix.rs` | src | s | 7 crate-vis | — | Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter |
+| `src/api/context_board/reply.rs` | src | s | 1 crate-vis | — | The actual context-bearing text emit behind the generated `ai.reply` door |
 | `src/api/context_board/scratchpad.rs` | src | m | 11 crate-vis | — | POST /v1/core/context-board/scratchpad: the caller's one session pad (OF-548) |
 | `src/api/context_board/session.rs` | src | s | 2 crate-vis | — | Actor-bound session observations shared by core reads and board rendering |
 | `src/api/context_board/standing.rs` | src | s | 3 crate-vis | — | Standing blocks are pinned before Context Board retrieval can fill the session |
@@ -173,6 +174,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/craft_candidate_doors.rs` | src | s | 2 crate-vis | — | The host doors of the owner's review of residents' craft candidates (OF-490): `vault.craft_candidates` and… |
 | `src/api/facade/critic_review_doors.rs` | src | s | 1 crate-vis | — | The host door of one critic review (`vault.critic.review`, OF-352): the caller binds a target, a session, a… |
 | `src/api/facade/decision_ask_doors.rs` | src | s | 4 crate-vis | — | OF-493's role-holder doors (Q3 by role) as SDK verbs: a person or a bound agent that holds the role a… |
+| `src/api/facade/decision_band_doors.rs` | src | s | 3 crate-vis | — | The owner's live decision-band policy through the typed verb table |
 | `src/api/facade/decision_role_asks.rs` | src | s | 1 crate-vis | — | OF-516: a role holder's door to the ladder's person asks (Q3 by role) |
 | `src/api/facade/dispatch.rs` | src | XL | 1 crate-vis | — | The facade's one admission and typed call per verb-table row (OF-489) |
 | `src/api/facade/embedding_space_doors.rs` | src | s | 13 crate-vis | — | The host doors of the owner's embedding-space rows (OF-370): `vault.embedding_spaces.*` |
@@ -181,17 +183,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 8 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | XL | 84 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 88 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/hub_doors.rs` | src | m | 16 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
 | `src/api/facade/linear_doors.rs` | src | s | 1 crate-vis | — | The host door of `vault.tasks.linear.mapping.edit` (OF-427 C6) |
 | `src/api/facade/live_run_doors.rs` | src | s | 2 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
+| `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
 | `src/api/facade/note_doors.rs` | src | s | 2 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
 | `src/api/facade/off_record_doors.rs` | src | m | 8 crate-vis | — | The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/origin_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
 | `src/api/facade/reaction_doors.rs` | src | s | 2 crate-vis | — | The host door of `vault.messages.react` (OF-181) |
+| `src/api/facade/reply_doors.rs` | src | s | 1 crate-vis | — | The generated context-bearing reply door, under the existing owner's inference authority |
 | `src/api/facade/residence_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`… |
 | `src/api/facade/role_picks.rs` | src | s | 1 crate-vis | — | OF-495: role holders' tradeoff picks (ROLES-EVERYWHERE) |
 | `src/api/facade/secret_lift_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's historical secret lift sweep, `vault.secrets.lift_history` (OF-067) |
@@ -200,6 +204,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/share_doors.rs` | src | s | 2 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
 | `src/api/facade/shared_member_doors.rs` | src | m | 15 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
+| `src/api/facade/shared_policy_doors.rs` | src | s | 4 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
 | `src/api/facade/ui_action_routes.rs` | src | s | 2 crate-vis | — | OF-181: a host-rendered lens card's events, against the frame this server holds for it… |
@@ -226,7 +231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/git_lfs/tests.rs` | test | XL | 2 crate-vis | — | LFS handler tests |
 | `src/api/git_lfs/wire.rs` | src | s | 10 crate-vis | — | Git-LFS wire DTOs and batch types |
 | `src/api/lease.rs` | src | s | 3 crate-vis | — | — |
-| `src/api/llm.rs` | src | m | 4 crate-vis | — | Owner-authenticated raw inference |
+| `src/api/llm.rs` | src | m | 5 crate-vis | — | Owner-authenticated raw inference |
 | `src/api/llm/decision_read.rs` | src | s | 3 crate-vis | — | `POST /v1/llm/decision_read`: the owner's probe of the house model's decision read |
 | `src/api/llm/decision_read/tests.rs` | test | s | 1 crate-vis | — | The owner's decision-read probe: owner-only, one read admitted and settled once on its meter, a failed check… |
 | `src/api/llm/tests.rs` | test | L | — | — | — |
@@ -319,7 +324,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/pairing.rs` | src | m | 14 crate-vis | — | Pairing-only enrollment and unauthenticated liveness discovery |
 | `src/api/params.rs` | src | s | 9 crate-vis | — | Shared query/body param extractors, hex-id parsing, and small scalar helpers |
 | `src/api/reactive.rs` | src | s | 11 crate-vis | — | Reactive local-first read contract (ONE-1437 — the on-device half of OF-241) |
-| `src/api/recovery_bundle.rs` | src | s | 1 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
+| `src/api/recovery_bundle.rs` | src | s | 4 crate-vis | — | The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no… |
 | `src/api/report.rs` | src | s | 3 crate-vis | — | OF-537 report execution and owner triage |
 | `src/api/run_tree.rs` | src | m | 28 crate-vis | — | — |
 | `src/api/saved_query.rs` | src | s | 6 crate-vis | — | CA-07 saved-query HTTP routes |
@@ -675,6 +680,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/http.rs` | src | m | 21 crate-vis | — | The HTTP leg every provider kind shares: one client per provider entry, and the server-sent-events splitter… |
 | `src/models/kept_on_device_tests.rs` | test | m | — | — | World privacy on a fallback ladder (owner ruling 2026-10-14, "Models": no silent fallback to a cloud model… |
 | `src/models/ladder.rs` | src | XL | 1 struct · 12 fn · 18 crate-vis | OfferLadder | One role's ladder under a run: the engine sees a single seat model; each rung a call reaches is admitted on… |
+| `src/models/ladder/step_attempt.rs` | src | s | 1 crate-vis | — | The durable step executor owns retries; this door sends one gated attempt |
 | `src/models/launch_price.rs` | src | s | 2 crate-vis | — | The launch statement's USD quote (OF-532) |
 | `src/models/media.rs` | src | L | 3 struct · 17 fn · 24 crate-vis | MediaRow, MediaRuntime, MediaTicket | The `ai.*` media seats (`[models.media]`): one ladder per operation, each rung an OpenAI-compatible… |
 | `src/models/media/jobs.rs` | src | s | 7 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |

@@ -505,8 +505,8 @@ pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
 };
 pub use super::sdk_connector::*;
-pub use super::sdk_connector_pack::*;
 pub use super::sdk_connector_call::*;
+pub use super::sdk_connector_pack::*;
 pub use super::sdk_courtesy_delete::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
@@ -521,6 +521,7 @@ pub use super::sdk_live_run::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_off_record::*;
 pub use super::sdk_record_erase::*;
+pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_scratchpad::*;
@@ -530,6 +531,7 @@ pub use super::sdk_self::*;
 pub use super::sdk_share::*;
 pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
+pub use super::sdk_shared_policy::*;
 pub use super::sdk_workspace::*;
 
 /// `vault.writes.pending`'s one input.

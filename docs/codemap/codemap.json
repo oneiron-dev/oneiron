@@ -1564,7 +1564,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/anchored_annotation/verbs.rs",
@@ -23505,7 +23505,7 @@
       "crate-vis": 17,
       "enum": 1,
       "fn": 9,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 4
      }
     },
@@ -23520,6 +23520,24 @@
      "surface": {
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "SharedActPoliciesView",
+      "SharedActPolicyChange",
+      "SharedActPolicyChangeState"
+     ],
+     "path": "src/federation/pending_act/policy_change.rs",
+     "purpose": "Shared-act policy reads and durable changes (DOOR-129)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 4,
+      "struct": 2
      }
     },
     {
@@ -29186,7 +29204,10 @@
      "kind": "src",
      "notable": [
       "BandMode",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
       "DecisionBandPolicy",
+      "DecisionBandReadRequest",
       "LearnedBand",
       "PersonThreshold",
       "Reversibility",
@@ -29198,7 +29219,7 @@
       "const": 1,
       "enum": 2,
       "fn": 10,
-      "struct": 4
+      "struct": 7
      }
     },
     {
@@ -29695,7 +29716,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 9,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -30222,7 +30243,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -30234,6 +30255,7 @@
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
       "crate-vis": 8,
+      "mod": 1,
       "re-export": 5
      }
     },
@@ -30249,6 +30271,27 @@
       "crate-vis": 6,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ModelStepFailure",
+      "ModelStepFailureClass",
+      "ModelStepReceipt",
+      "ModelStepReceiptRequest",
+      "ModelStepResult",
+      "ModelStepRetryPolicy",
+      "ModelStepSubmit"
+     ],
+     "path": "src/llm/step/public.rs",
+     "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -38023,6 +38066,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ContextEmitReceipt"
+     ],
+     "path": "src/receipt/context_emit.rs",
+     "purpose": "Frozen context on text emits, retained on the existing outbound receipt spine",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "DecisionAskAnswerRequest",
       "DecisionAskClimbRequest"
      ],
@@ -38039,7 +38095,7 @@
      "path": "src/receipt/direct_dispatch.rs",
      "purpose": "Ordinary outbound receipts for hosts that call dispatch directly",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -38189,7 +38245,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters",
      "surface": {
       "crate-vis": 19,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -49043,7 +49099,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 34,
+      "re-export": 36,
       "struct": 36
      }
     },
@@ -49307,7 +49363,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 481
+      "fn": 492
      }
     },
     {
@@ -49527,6 +49583,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AiReply",
+      "AiReplyCompanion",
+      "AiReplyL2Base",
+      "AiReplyReader",
+      "AiReplyRequest",
+      "AiReplyStanding"
+     ],
+     "path": "src/task_verb/sdk_reply.rs",
+     "purpose": "Context-bearing text replies through the host's configured inference door",
+     "surface": {
+      "struct": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -49716,6 +49789,21 @@
       "crate-vis": 1,
       "fn": 15,
       "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SharedActPolicyAnswerRequest",
+      "SharedActPolicyChangeRequest",
+      "SharedActPolicyProposeRequest"
+     ],
+     "path": "src/task_verb/sdk_shared_policy.rs",
+     "purpose": "The shared-act policy rows a host door answers (DOOR-129): `vault.shared.policy.get` reads every row a live…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -55198,7 +55286,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 36,
+     "files": 37,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55401,7 +55489,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 98,
+     "files": 99,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55625,7 +55713,7 @@
      "purpose": "Message reactions as `conversation.reaction` claims (OF-372)"
     },
     "receipt": {
-     "files": 30,
+     "files": 31,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55933,7 +56021,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 146,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56103,7 +56191,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3417,
+   "source_files": 3422,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64516,7 +64604,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 431
+      "fn": 442
      }
     },
     {
@@ -65564,7 +65652,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 432
+      "fn": 443
      }
     },
     {
@@ -68011,7 +68099,7 @@
      "path": "src/api/context_board/mod.rs",
      "purpose": "The context-board API: POST /v1/core/context-board hydrates the assembled context — session prefix, optional…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -68022,6 +68110,16 @@
      "purpose": "Session prefix material: entity counts, latest activity, pending notifications, unprocessed work, token meter",
      "surface": {
       "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/context_board/reply.rs",
+     "purpose": "The actual context-bearing text emit behind the generated `ai.reply` door",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68584,6 +68682,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/decision_band_doors.rs",
+     "purpose": "The owner's live decision-band policy through the typed verb table",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/decision_role_asks.rs",
      "purpose": "OF-516: a role holder's door to the ladder's person asks (Q3 by role)",
      "surface": {
@@ -68667,7 +68775,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 84
+      "crate-vis": 88
      }
     },
     {
@@ -68706,6 +68814,16 @@
      "notable": [],
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/model_step_doors.rs",
+     "purpose": "Owner-proof model steps; HTTP, SDK and MCP reach the same typed door",
      "surface": {
       "crate-vis": 2
      }
@@ -68768,6 +68886,16 @@
      "purpose": "The host door of `vault.messages.react` (OF-181)",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/reply_doors.rs",
+     "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -68848,6 +68976,16 @@
      "purpose": "The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/shared_policy_doors.rs",
+     "purpose": "The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -69111,7 +69249,7 @@
      "path": "src/api/llm.rs",
      "purpose": "Owner-authenticated raw inference",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -70037,7 +70175,7 @@
      "path": "src/api/recovery_bundle.rs",
      "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -74026,6 +74164,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/ladder/step_attempt.rs",
+     "purpose": "The durable step executor owns retries; this door sends one gated attempt",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/launch_price.rs",
      "purpose": "The launch statement's USD quote (OF-532)",
      "surface": {
@@ -76002,7 +76150,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 339,
+     "files": 344,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76275,7 +76423,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76417,7 +76565,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 663,
+   "source_files": 669,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76655,6 +76803,12 @@
       "AiOptions",
       "AiOptionsRequest",
       "AiPart",
+      "AiReply",
+      "AiReplyCompanion",
+      "AiReplyL2Base",
+      "AiReplyReader",
+      "AiReplyRequest",
+      "AiReplyStanding",
       "AiVerdict",
       "AiVerdictRequest",
       "AiVerdictReversibility",
@@ -76729,6 +76883,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "BandMode",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -76775,7 +76930,10 @@
       "CalendarSearchRequest",
       "CalendarSel",
       "CalibrationPair",
+      "CallClass",
+      "CallEnvelope",
       "CallOutcome",
+      "CallPurpose",
       "CallReceipt",
       "CallReceiptRequest",
       "CallTransport",
@@ -76940,7 +77098,12 @@
       "ConsentStateRosterActor",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
+      "ContentPart",
       "ContextDefault",
+      "ContextEmitReceipt",
+      "ContextPackBudgetControls",
+      "ContextPackRetrievalBudgetControls",
+      "ContextReceiptFields",
       "ContextSpec",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
@@ -76991,6 +77154,9 @@
       "DecisionAskAnswerRequest",
       "DecisionAskClimbRequest",
       "DecisionBand",
+      "DecisionBandEnforceRequest",
+      "DecisionBandLearnRequest",
+      "DecisionBandReadRequest",
       "DecisionClass",
       "DecisionDial",
       "DecisionQuestion",
@@ -77034,6 +77200,7 @@
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
       "DerivationKind",
+      "DeterministicFallback",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
       "DiaryQueryEntry",
@@ -77137,6 +77304,7 @@
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
+      "FinishReason",
       "FoldCompactAsked",
       "FoldCompactRequest",
       "FoldDescription",
@@ -77248,6 +77416,7 @@
       "IdentityEffect",
       "IdentitySettled",
       "ImageBox",
+      "ImageContent",
       "ImagePin",
       "ImagePoint",
       "ImageViewRequest",
@@ -77292,6 +77461,7 @@
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
+      "LearnedBand",
       "LearningCell",
       "LearningChoiceValue",
       "LearningPredicate",
@@ -77364,6 +77534,14 @@
       "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
+      "LlmInputUsage",
+      "LlmMessage",
+      "LlmMessageRole",
+      "LlmOutputUsage",
+      "LlmRequest",
+      "LlmResponse",
+      "LlmToolSpec",
+      "LlmUsage",
       "LocalRunnerBudgetCounter",
       "LocalRunnerBudgetRequest",
       "LocalRunnerBudgetView",
@@ -77399,7 +77577,15 @@
       "MetricDirection",
       "MetricRole",
       "MetricSet",
+      "ModelLocality",
       "ModelSlot",
+      "ModelStepFailure",
+      "ModelStepFailureClass",
+      "ModelStepReceipt",
+      "ModelStepReceiptRequest",
+      "ModelStepResult",
+      "ModelStepRetryPolicy",
+      "ModelStepSubmit",
       "MutationIntent",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
@@ -77741,6 +77927,7 @@
       "ResidencePruned",
       "ResolveRecordRefRequest",
       "ResolvedRole",
+      "ResponseFormat",
       "RetentionDefault",
       "RetrievalScoreComponent",
       "RetrievalSignal",
@@ -77920,6 +78107,14 @@
       "SharedActExecutionReceipt",
       "SharedActExport",
       "SharedActOutcome",
+      "SharedActPoliciesView",
+      "SharedActPolicy",
+      "SharedActPolicyAnswerRequest",
+      "SharedActPolicyChange",
+      "SharedActPolicyChangeRequest",
+      "SharedActPolicyChangeState",
+      "SharedActPolicyProposeRequest",
+      "SharedActPrecedence",
       "SharedActRequest",
       "SharedBriefCitation",
       "SharedBriefView",
@@ -78003,6 +78198,7 @@
       "SteerRequest",
       "StepAssetKind",
       "StepOutcome",
+      "StepProgression",
       "StopCause",
       "StoredShapeSeed",
       "SufficiencyCard",
@@ -78089,6 +78285,7 @@
       "ThreadPassportsRequest",
       "ThreadPassportsView",
       "ThrobberAtom",
+      "TierPrecedence",
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
@@ -78187,8 +78384,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 435,
-      "struct": 1138
+      "enum": 449,
+      "struct": 1173
      }
     },
     {
