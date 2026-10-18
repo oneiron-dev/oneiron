@@ -1,5 +1,6 @@
 //! Causal citation floors, retained quotes and the owner's shallow-purge door.
 
+use super::doc_actor::{DocActor, names_no_actor};
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
 use super::{DocAuthorization, EntityDoc, ForkStatus, TextAnchor, invalid, storage};
@@ -23,7 +24,7 @@ pub struct CitationPin {
     pub entity: String,
     pub document: String,
     pub anchor: TextAnchor,
-    pub actor: String,
+    pub actor: DocActor,
 }
 
 #[cfg(feature = "sync")]
@@ -31,12 +32,12 @@ impl CitationPin {
     /// The quoted entity and the citing record, when the pin is whole: its
     /// ids each in their one spelling, its anchor on its own entity at a
     /// version that decodes, and a nonempty quote its hash proves (FIX 853).
+    /// A pin whose actor was erased is whole: it names no one (FIX 3520).
     pub(crate) fn carried_ids(&self) -> Option<(EntityId, EntityId)> {
         let named = |hex: &str| EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex);
         let entity = named(&self.entity)?;
         let citation = named(&self.citation)?;
         named(&self.document)?;
-        named(&self.actor)?;
         let anchor = &self.anchor;
         let whole = anchor.entity == self.entity
             && !anchor.quote.is_empty()
@@ -82,7 +83,7 @@ pub struct PurgeReceipt {
     pub receipt: String,
     pub entity: String,
     pub document: String,
-    pub actor: String,
+    pub actor: DocActor,
     pub requested: Vec<u8>,
     pub applied: Vec<u8>,
     pub at: u64,
@@ -97,6 +98,62 @@ pub(super) const ENTITY_DOC_PIN: SideTable<HexPair, CitationPin, Named> =
 /// entity then receipt id.
 pub(super) const ENTITY_DOC_PURGE_RECEIPT: SideTable<HexPair, PurgeReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_PURGE_RECEIPT);
+
+/// Erasing `actor` from the citation pins (FIX 3520): each pin it made stays,
+/// since its frontier floors the history a purge may drop, with its quote
+/// and its version, and names no one. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a pin row that cannot be read.
+pub(crate) fn erase_pin_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut pins = Vec::new();
+    for (key, mut pin) in ENTITY_DOC_PIN.scan(&vault.store, wtxn)? {
+        if pin.actor.forget(*actor) {
+            pins.push((key, pin));
+        }
+    }
+    for (key, pin) in pins {
+        ENTITY_DOC_PIN.put(&vault.store, wtxn, &key, &pin)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the owner purge receipts (FIX 3520): each purge it
+/// asked for keeps its receipt, its frontiers, its hash and its time, and
+/// names no one. One-way, in the erase's own transaction. An id whose entity
+/// is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn erase_purge_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut receipts = Vec::new();
+    for (key, mut receipt) in ENTITY_DOC_PURGE_RECEIPT.scan(&vault.store, wtxn)? {
+        if receipt.actor.forget(*actor) {
+            receipts.push((key, receipt));
+        }
+    }
+    for (key, receipt) in receipts {
+        ENTITY_DOC_PURGE_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
+    }
+    Ok(())
+}
 
 fn pins(vault: &Vault, txn: &RoTxn<'_>, entity: &EntityId) -> Result<Vec<CitationPin>> {
     Ok(ENTITY_DOC_PIN
@@ -141,7 +198,7 @@ impl Vault {
                 entity: entity.to_hex(),
                 document: h.document,
                 anchor: anchor.clone(),
-                actor: actor.entity_ref().to_hex(),
+                actor: DocActor::Actor(actor.entity_ref()),
             };
             let key = HexPair(HexId(*entity), HexId(*citation));
             if let Some(prior) = ENTITY_DOC_PIN.get(&self.store, txn, &key)? {
@@ -306,7 +363,7 @@ impl Vault {
                 receipt: receipt_id.to_hex(),
                 entity: entity.to_hex(),
                 document: h.document,
-                actor: owner_actor.to_hex(),
+                actor: DocActor::Actor(owner_actor),
                 requested: requested.to_vec(),
                 applied,
                 at,
@@ -446,7 +503,7 @@ impl Vault {
             entity: message.to_hex(),
             document: h.document,
             anchor,
-            actor: actor.entity_ref().to_hex(),
+            actor: DocActor::Actor(actor.entity_ref()),
         };
         ENTITY_DOC_PIN.put(&self.store, txn, &key, &pin)?;
         // The pin rides beside the message (FIX 853): the live mirror takes

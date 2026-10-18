@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use super::doc_actor::DocActor;
 use super::document::{BODY, decode_frontier};
 use super::forks::{
     ENTITY_DOC_FORK, ENTITY_DOC_FORK_SNAPSHOT, ENTITY_DOC_PROPOSAL_BUNDLE, ENTITY_DOC_RECEIPT,
@@ -38,6 +39,18 @@ fn raw(hex: &str) -> Result<[u8; 16]> {
 
 fn hex(bytes: [u8; 16]) -> Result<String> {
     Ok(EntityId::from_bytes(bytes)?.to_hex())
+}
+
+/// A row's actor as the snapshot carries it: none once erased (FIX 3520).
+fn raw_actor(actor: DocActor) -> Option<[u8; 16]> {
+    actor.id().map(|id| *id.as_bytes())
+}
+
+fn doc_actor(bytes: Option<[u8; 16]>) -> Result<DocActor> {
+    Ok(match bytes {
+        Some(bytes) => DocActor::Actor(EntityId::from_bytes(bytes)?),
+        None => DocActor::Erased,
+    })
 }
 
 fn prefix(entity: &EntityId) -> Vec<u8> {
@@ -255,7 +268,7 @@ fn history(
             Ok(CanonicalDocumentPin {
                 citation: raw(&pin.citation)?,
                 document: raw(&pin.document)?,
-                actor: raw(&pin.actor)?,
+                actor: raw_actor(pin.actor),
                 version: at(node),
                 start: u32::try_from(start).map_err(|_| invalid("entity document pin span"))?,
                 end: u32::try_from(end).map_err(|_| invalid("entity document pin span"))?,
@@ -272,7 +285,7 @@ fn history(
                 receipt: raw(&receipt.receipt)?,
                 proposal: raw(&receipt.proposal)?,
                 fork: raw(&receipt.fork)?,
-                actor: raw(&receipt.actor)?,
+                actor: raw_actor(receipt.actor),
                 verb: match receipt.verb {
                     SettleVerb::Merge => CanonicalSettleVerb::Merge,
                     SettleVerb::Switch => CanonicalSettleVerb::Switch,
@@ -292,7 +305,7 @@ fn history(
                 fork: raw(&fork.record.fork)?,
                 proposal: raw(&fork.record.proposal)?,
                 parent_document: raw(&fork.record.parent_document)?,
-                actor: raw(&fork.record.actor)?,
+                actor: raw_actor(fork.record.actor),
                 opened_at: fork.record.opened_at,
                 rewrite: fork.record.rewrite,
                 status: match fork.record.status {
@@ -317,7 +330,7 @@ fn history(
             Ok(CanonicalDocumentPurge {
                 receipt: raw(&purge.receipt)?,
                 document: raw(&purge.document)?,
-                actor: raw(&purge.actor)?,
+                actor: raw_actor(purge.actor),
                 requested: at(requested),
                 applied: at(applied),
                 at: purge.at,
@@ -662,7 +675,7 @@ fn bind_rows(
                 entity: entity.to_hex(),
                 document: hex(pin.document)?,
                 anchor,
-                actor: hex(pin.actor)?,
+                actor: doc_actor(pin.actor)?,
             },
         )?;
     }
@@ -677,7 +690,7 @@ fn bind_rows(
                 proposal: hex(receipt.proposal)?,
                 fork: hex(receipt.fork)?,
                 entity: entity.to_hex(),
-                actor: hex(receipt.actor)?,
+                actor: doc_actor(receipt.actor)?,
                 verb: match receipt.verb {
                     CanonicalSettleVerb::Merge => SettleVerb::Merge,
                     CanonicalSettleVerb::Switch => SettleVerb::Switch,
@@ -699,7 +712,7 @@ fn bind_rows(
                 receipt: id.to_hex(),
                 entity: entity.to_hex(),
                 document: hex(purge.document)?,
-                actor: hex(purge.actor)?,
+                actor: doc_actor(purge.actor)?,
                 requested: frontier(purge.requested)?,
                 applied: frontier(purge.applied)?,
                 at: purge.at,
@@ -720,7 +733,7 @@ fn bind_rows(
             entity: entity.to_hex(),
             parent_document: hex(fork.parent_document)?,
             base: base.clone(),
-            actor: hex(fork.actor)?,
+            actor: doc_actor(fork.actor)?,
             opened_at: fork.opened_at,
             rewrite: fork.rewrite,
             status: match fork.status {
@@ -791,7 +804,7 @@ pub(crate) fn restore_proposals(
         }
         let author = forks
             .first()
-            .map(|fork| fork.actor.clone())
+            .map(|fork| fork.actor)
             .ok_or(invalid("entity document proposal bundle"))?;
         let proposal = hex(proposal)?;
         ENTITY_DOC_PROPOSAL_BUNDLE.put(
