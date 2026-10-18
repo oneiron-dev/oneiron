@@ -70,6 +70,7 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::skill_execution_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
@@ -1091,6 +1092,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.rules.set"
         | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
+        | "vault.skills.pack_receipt"
+        | "vault.skills.outcomes.project"
+        | "vault.skills.outcomes.get"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
         | "vault.packs.hooks.qualify"

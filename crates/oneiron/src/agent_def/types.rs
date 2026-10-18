@@ -1,11 +1,12 @@
 //! AgentDefinition domain types, key/limit consts, and constructors.
 
+use super::models::AgentModel;
 use super::optional_memory::OptionalMemoryProfile;
 use super::refusal::RefusalDial;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::llm::ModelTierRef;
+use crate::llm::{ModelId, ModelTierRef};
 use crate::pipeline::WorldScope;
 use crate::skill::{SKILL_DEPENDENCY_KEYS, SkillDependency};
 use rmpv::Value;
@@ -28,9 +29,13 @@ use rmpv::Value;
 /// append in that order and are elided when absent, so older bodies re-encode
 /// byte-for-byte. Absent dreaming means inherit, on by default.
 ///
-/// `refusal` (OF-533) appends last and is elided when absent; absent means
+/// `refusal` (OF-533) appends next and is elided when absent; absent means
 /// every domain sits at the vault-kind default.
-pub const AGENT_DEF_BODY_KEYS: [&str; 27] = [
+///
+/// `models` and `compaction_model` (FIX 4472) append last, elided when empty
+/// or absent: no list runs the agent on its one house-routed model, and no
+/// compaction model takes the house's.
+pub const AGENT_DEF_BODY_KEYS: [&str; 29] = [
     "agentId",
     "desc",
     "version",
@@ -58,10 +63,15 @@ pub const AGENT_DEF_BODY_KEYS: [&str; 27] = [
     "dreamingModel",
     "wakeCadence",
     "refusal",
+    "models",
+    "compaction_model",
 ];
 
 /// The pinned key pair for an [`McpRef`] sub-map.
 pub const MCP_REF_KEYS: [&str; 2] = ["key", "minVersion"];
+
+/// The pinned key pair for one [`AgentModel`] entry, in encode order.
+pub const AGENT_MODEL_KEYS: [&str; 2] = ["model_ref", "when"];
 
 /// The pinned sub-map keys for a [`MemoryProfile`], in encode order.
 pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
@@ -159,6 +169,14 @@ pub(super) const KEY_DREAMING_MODEL: &str = AGENT_DEF_BODY_KEYS[24];
 pub(super) const KEY_WAKE_CADENCE: &str = AGENT_DEF_BODY_KEYS[25];
 
 pub(super) const KEY_REFUSAL: &str = AGENT_DEF_BODY_KEYS[26];
+
+pub(super) const KEY_MODELS: &str = AGENT_DEF_BODY_KEYS[27];
+
+pub(super) const KEY_COMPACTION_MODEL: &str = AGENT_DEF_BODY_KEYS[28];
+
+pub(super) const KEY_MODEL_REF: &str = AGENT_MODEL_KEYS[0];
+
+pub(super) const KEY_MODEL_WHEN: &str = AGENT_MODEL_KEYS[1];
 
 pub(super) const KEY_PROFILE_WINDOW_TOKEN_BUDGET: &str = MEMORY_PROFILE_KEYS[0];
 
@@ -566,6 +584,14 @@ pub struct AgentDefinition {
     /// vault-kind default; resolve through [`super::resolve_refusal`]. A
     /// dial, not identity: deliberately NOT in the freeze-set.
     pub refusal: Option<RefusalDial>,
+    /// The models the agent may run on, in its owner's order, each with the
+    /// owner's words on when (FIX 4472). Empty: its one house-routed model.
+    /// A dial, not identity: deliberately NOT in the freeze-set.
+    pub models: Vec<AgentModel>,
+    /// The model that compacts the agent's window; absent takes the house's.
+    /// It need not be listed; resolve through
+    /// [`super::resolve_compaction_model`].
+    pub compaction_model: Option<ModelId>,
 }
 
 impl AgentDefinition {
@@ -624,6 +650,8 @@ impl AgentDefinition {
             dreaming_model: None,
             wake_cadence: None,
             refusal: None,
+            models: Vec::new(),
+            compaction_model: None,
         }
     }
 
@@ -652,6 +680,22 @@ impl AgentDefinition {
     #[must_use]
     pub fn with_refusal(mut self, refusal: Option<RefusalDial>) -> Self {
         self.refusal = refusal;
+        self
+    }
+
+    /// Sets the owner's model list (FIX 4472); empty returns the agent to
+    /// its one house-routed model.
+    #[must_use]
+    pub fn with_models(mut self, models: Vec<AgentModel>) -> Self {
+        self.models = models;
+        self
+    }
+
+    /// Sets the model that compacts the agent's window; `None` takes the
+    /// house's.
+    #[must_use]
+    pub fn with_compaction_model(mut self, model: Option<ModelId>) -> Self {
+        self.compaction_model = model;
         self
     }
 

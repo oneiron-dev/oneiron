@@ -263,7 +263,8 @@ class Oneiron:
         ..., "readReceipt": ...}`` for a deterministic tool. A card the server
         no longer holds raises ``NOT_FOUND``: render the lens again. An
         embedded handle raises ``BAD_REQUEST``: lens frames live on the
-        server that rendered the card.
+        served host that rendered the card, so render the lens through a
+        connected handle and send its events on that same handle.
         """
         return json.loads(
             _translate(lambda: self._client.lens_frame_event(card_id, json.dumps(request)))
@@ -496,6 +497,9 @@ class Oneiron:
         def callables(self, spec=None):
             """Every loadable callable helper skill and its call contract: what it takes and returns."""
             return json.loads(_translate(lambda: self._client.self_skills_callables(json.dumps({} if spec is None else spec))))
+        def call(self, spec):
+            """Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."""
+            return json.loads(_translate(lambda: self._client.self_skills_call(json.dumps(spec))))
     class _SelfDecisionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1295,6 +1299,12 @@ class Oneiron:
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+        def pack_receipt(self, spec):
+            """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
+        @property
+        def outcomes(self) -> "Oneiron._VaultSkillsOutcomesVerbs":
+            return Oneiron._VaultSkillsOutcomesVerbs(self._client)
     class _VaultSkillsRulesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1313,6 +1323,15 @@ class Oneiron:
         def approve(self, spec):
             """The owner answers one imported skill permission ask at its exact hub source."""
             return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
+    class _VaultSkillsOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def project(self, spec):
+            """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
+            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_project(json.dumps(spec))))
+        def get(self, spec):
+            """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_skills_outcomes_get(json.dumps(spec))))
     class _VaultConnectorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

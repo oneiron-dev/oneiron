@@ -18,6 +18,7 @@ pub mod history;
 mod host;
 mod record;
 mod repl;
+mod skill_call;
 mod stack_floor;
 mod store;
 mod turn_hooks;
@@ -28,6 +29,7 @@ pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
 pub use self::driver::EngineNativeExecutor;
+pub use self::skill_call::execute_live_skill_call;
 #[cfg(test)]
 use self::record::step_state_hash;
 pub(crate) use self::store::{

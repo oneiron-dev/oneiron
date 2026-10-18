@@ -430,6 +430,9 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+vaultSkillsPackReceipt(input: unknown): unknown
+vaultSkillsOutcomesProject(input: unknown): unknown
+vaultSkillsOutcomesGet(input: unknown): unknown
 aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
@@ -610,6 +613,7 @@ selfUnfold(input: unknown): unknown
 selfFolds(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
+selfSkillsCall(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
