@@ -3079,6 +3079,77 @@
       "section": false
     },
     {
+      "name": "vault.org_admin.configure",
+      "description": "The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured.",
+      "input": "crate::task_verb::sdk::OrgAdminConfigureRequest",
+      "output": "crate::task_verb::sdk::OrgAdminConfigured",
+      "call": "crate::task_verb::sdk::configure_org_admin_as_owner(memory.vault(), &memory.embedded_owner(\"vault.org_admin.configure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.org_admin.powers",
+      "description": "The caller reads only the organization's fixed named Admin powers that their own credential carries.",
+      "input": "crate::task_verb::sdk::OrgAdminPowersRequest",
+      "output": "crate::task_verb::sdk::OrgAdminPowers",
+      "call": "crate::task_verb::sdk::read_org_admin_powers(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.members.reset_project_access",
+      "description": "An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override.",
+      "input": "crate::task_verb::sdk::SharedProjectAccessResetRequest",
+      "output": "crate::task_verb::sdk::SharedProjectAccessReset",
+      "call": "crate::task_verb::sdk::reset_shared_project_access(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.members.delegate",
+      "description": "A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward.",
+      "input": "crate::task_verb::sdk::FederationDelegateRequest",
+      "output": "crate::task_verb::sdk::FederationMemberGrant",
+      "call": "crate::task_verb::sdk::create_federation_delegate_as(memory.vault(), &memory.embedded_owner(\"vault.members.delegate\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.members.projection",
+      "description": "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority.",
+      "input": "crate::task_verb::sdk::SharedMemberRequest",
+      "output": "crate::task_verb::sdk::MemberProjection",
+      "call": "crate::task_verb::sdk::read_member_projection(memory, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.members.add",
       "description": "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending.",
       "input": "crate::task_verb::sdk::SharedMemberAddRequest",

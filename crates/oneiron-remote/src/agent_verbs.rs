@@ -621,6 +621,21 @@ impl OneironClient {
                 "vault.shared.deletion" => remote_agent_verb_output::<
                     Option<oneiron::federation::SharedVaultDeletion>,
                 >(client, verb, &input),
+                "vault.org_admin.configure" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OrgAdminConfigured,
+                >(client, verb, &input),
+                "vault.org_admin.powers" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OrgAdminPowers,
+                >(client, verb, &input),
+                "vault.members.reset_project_access" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SharedProjectAccessReset,
+                >(client, verb, &input),
+                "vault.members.delegate" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::FederationMemberGrant,
+                >(client, verb, &input),
+                "vault.members.projection" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::MemberProjection,
+                >(client, verb, &input),
                 "vault.members.add" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SharedMemberInvited,
                 >(client, verb, &input),
@@ -4786,6 +4801,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shared.deletion", value)
+    }
+    pub fn vault_org_admin_configure(
+        &self,
+        input: &oneiron::task_verb::sdk::OrgAdminConfigureRequest,
+    ) -> Result<oneiron::task_verb::sdk::OrgAdminConfigured, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.org_admin.configure", value)
+    }
+    pub fn vault_org_admin_powers(
+        &self,
+        input: &oneiron::task_verb::sdk::OrgAdminPowersRequest,
+    ) -> Result<oneiron::task_verb::sdk::OrgAdminPowers, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.org_admin.powers", value)
+    }
+    pub fn vault_members_reset_project_access(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedProjectAccessResetRequest,
+    ) -> Result<oneiron::task_verb::sdk::SharedProjectAccessReset, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.reset_project_access", value)
+    }
+    pub fn vault_members_delegate(
+        &self,
+        input: &oneiron::task_verb::sdk::FederationDelegateRequest,
+    ) -> Result<oneiron::task_verb::sdk::FederationMemberGrant, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.delegate", value)
+    }
+    pub fn vault_members_projection(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedMemberRequest,
+    ) -> Result<oneiron::task_verb::sdk::MemberProjection, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.members.projection", value)
     }
     pub fn vault_members_add(
         &self,

@@ -465,6 +465,8 @@ class Oneiron:
         @property
         def shared(self) -> "Oneiron._VaultSharedVerbs": ...
         @property
+        def org_admin(self) -> "Oneiron._VaultOrgAdminVerbs": ...
+        @property
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
         def federation(self) -> "Oneiron._VaultFederationVerbs": ...
@@ -1143,7 +1145,18 @@ class Oneiron:
             """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
         def change(self, spec: Facade.SharedActPolicyChangeRequest) -> Facade.SharedActPolicyChange:
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
+    class _VaultOrgAdminVerbs:
+        def configure(self, spec: Facade.OrgAdminConfigureRequest) -> Facade.OrgAdminConfigured:
+            """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""
+        def powers(self, spec: Facade.OrgAdminPowersRequest) -> Facade.OrgAdminPowers:
+            """The caller reads only the organization's fixed named Admin powers that their own credential carries."""
     class _VaultMembersVerbs:
+        def reset_project_access(self, spec: Facade.SharedProjectAccessResetRequest) -> Facade.SharedProjectAccessReset:
+            """An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."""
+        def delegate(self, spec: Facade.FederationDelegateRequest) -> Facade.FederationMemberGrant:
+            """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
+        def projection(self, spec: Facade.SharedMemberRequest) -> Facade.MemberProjection:
+            """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
         def invitation_slip(self, spec: Facade.InvitationSlipRequest) -> Facade.InvitationSlip:
