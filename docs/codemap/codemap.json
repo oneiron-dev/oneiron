@@ -46265,7 +46265,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 12,
+      "crate-vis": 15,
       "re-export": 11
      }
     },
@@ -46305,7 +46305,7 @@
      "path": "src/skill_optimize/gate/decision.rs",
      "purpose": "The gate itself: the entry points, and the transaction that rules",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -46345,7 +46345,7 @@
      "path": "src/skill_optimize/gate/live.rs",
      "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -46379,7 +46379,7 @@
      "path": "src/skill_optimize/gate/preflight.rs",
      "purpose": "A proposal's offline floors, judged on the held-out set before any live run is routed to it (ARCH-0053…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -46473,7 +46473,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SkillOptimizeOutcome"
@@ -46482,7 +46482,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3,
       "struct": 1
      }
@@ -46548,7 +46548,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
       "re-export": 18
      }
@@ -51632,7 +51632,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 59,
+      "re-export": 60,
       "struct": 36
      }
     },
@@ -52069,7 +52069,34 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 846
+      "fn": 858
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectGoalIntakeCompleteRequest",
+      "ProjectGoalIntakeReceipt",
+      "ProjectGoalView",
+      "SkillOptimizeGoalBindRequest",
+      "SkillOptimizeGoalRequest",
+      "SkillOptimizeGoalRevision",
+      "SkillOptimizeGoalView",
+      "SkillOptimizeMeasureRequest",
+      "SkillOptimizeMeasurement",
+      "SkillOptimizePreferencesSetRequest",
+      "SkillOptimizeProposalReceipt",
+      "SkillOptimizeProposalRequest",
+      "SkillOptimizeProposeRequest",
+      "SkillOptimizeTradeoffAskView",
+      "SkillOptimizeTradeoffPickRequest"
+     ],
+     "path": "src/task_verb/sdk_goal_optimize.rs",
+     "purpose": "Full witnessed goal intake and explicit optimizer proposal/admission doors",
+     "surface": {
+      "fn": 12,
+      "struct": 15
      }
     },
     {
@@ -55841,7 +55868,7 @@
      "purpose": "Room-backed completion of a loaded goal-intake skill interview",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -59362,7 +59389,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 175,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59530,9 +59557,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 197,
+   "over_bar": 198,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3632,
+   "source_files": 3633,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68065,7 +68092,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 815
+      "fn": 827
      }
     },
     {
@@ -69114,7 +69141,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 816
+      "fn": 828
      }
     },
     {
@@ -72514,6 +72541,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/goal_optimize_doors.rs",
+     "purpose": "Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/graduation_doors.rs",
      "purpose": "Consent-graduation host doors, under the consent lifecycle's owner proof",
      "surface": {
@@ -72557,7 +72594,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 138
+      "crate-vis": 139
      }
     },
     {
@@ -80417,7 +80454,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 402,
+     "files": 403,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80846,7 +80883,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 748,
+   "source_files": 749,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81239,6 +81276,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "AxisScores",
       "B2bExemption",
       "BandMode",
       "BatchInput",
@@ -81590,6 +81628,7 @@
       "ConcernOutcomeRequest",
       "ConditionalExemptionEvidence",
       "ConfidenceBand",
+      "ConfidenceInterval",
       "ConfirmationReceipt",
       "Conflict",
       "ConflictKind",
@@ -82075,7 +82114,15 @@
       "GeneratedUiResultSetSelection",
       "GeneratedUiStatePatch",
       "GeometryProps",
+      "GoalAxis",
+      "GoalAxisKind",
+      "GoalAxisReport",
+      "GoalAxisScore",
+      "GoalAxisSpec",
+      "GoalExplorationBudget",
+      "GoalInterviewTurns",
       "GoalPreference",
+      "GoalRecord",
       "GraduationAnswer",
       "GraduationAnswerReceipt",
       "GraduationAnswerRequest",
@@ -82221,6 +82268,7 @@
       "InvitationSlip",
       "InvitationSlipRequest",
       "IssueCategory",
+      "JevTradeoffVerdict",
       "JoinCause",
       "JoinDecision",
       "JoinDecisionView",
@@ -82640,6 +82688,8 @@
       "OfficeBodyView",
       "OfficeFormat",
       "OmittedKnowledge",
+      "OnlineAxisMeasurement",
+      "OnlineAxisOutcome",
       "OpaqueChange",
       "OpenInput",
       "OpenSpendLeaseRequest",
@@ -82800,9 +82850,12 @@
       "ProjectGoalDismissReceipt",
       "ProjectGoalDismissRequest",
       "ProjectGoalDraft",
+      "ProjectGoalIntakeCompleteRequest",
+      "ProjectGoalIntakeReceipt",
       "ProjectGoalInterviewContext",
       "ProjectGoalRecord",
       "ProjectGoalRevisionProposal",
+      "ProjectGoalView",
       "ProjectMintReceipt",
       "ProjectParentWitness",
       "ProjectProposalCard",
@@ -83377,6 +83430,7 @@
       "SkillContribution",
       "SkillConvertReceipt",
       "SkillConvertRequest",
+      "SkillEditPreflight",
       "SkillForkLineage",
       "SkillForkRequest",
       "SkillGovernanceSetRequest",
@@ -83400,10 +83454,22 @@
       "SkillLibraryScan",
       "SkillLibraryView",
       "SkillOptimizeAxisView",
+      "SkillOptimizeGoalBindRequest",
+      "SkillOptimizeGoalRequest",
+      "SkillOptimizeGoalRevision",
+      "SkillOptimizeGoalView",
+      "SkillOptimizeMeasureRequest",
+      "SkillOptimizeMeasurement",
+      "SkillOptimizePreferencesSetRequest",
+      "SkillOptimizeProposalReceipt",
+      "SkillOptimizeProposalRequest",
+      "SkillOptimizeProposeRequest",
       "SkillOptimizeResultRequest",
       "SkillOptimizeResultView",
       "SkillOptimizeStartReceipt",
       "SkillOptimizeStartRequest",
+      "SkillOptimizeTradeoffAskView",
+      "SkillOptimizeTradeoffPickRequest",
       "SkillOptimizeVerdictView",
       "SkillPackCreditRequest",
       "SkillPackOutcomeProjection",
@@ -83418,6 +83484,9 @@
       "SkillSourceEvidence",
       "SkillSourceFile",
       "SkillStaleView",
+      "SkillTradeoffAsk",
+      "SkillTradeoffPreferences",
+      "SkillTradeoffQuestion",
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
@@ -83661,6 +83730,9 @@
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
+      "TradeoffChoice",
+      "TradeoffRole",
+      "TradeoffRule",
       "TrainingOffer",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
@@ -83843,8 +83915,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 691,
-      "struct": 2108
+      "enum": 695,
+      "struct": 2139
      }
     },
     {
