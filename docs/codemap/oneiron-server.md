@@ -837,7 +837,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/voice_host/mod.rs` | src | m | 5 struct · 1 enum · 7 fn · 5 re-export · 3 crate-vis | EnrichmentWork, HostError, VoiceHost, VoiceHostBindings, VoiceHostConfig, VoiceOutputs | Private voice request adapter, not an audio/provider scheduler |
 | `src/voice_host/public.rs` | src | s | 16 crate-vis | — | Credential-bound public sessions |
 | `src/voice_host/public_events.rs` | src | s | 12 crate-vis | — | Public event correlation and dequeue fencing, independent of transport |
-| `src/voice_host/public_loop.rs` | src | s | 2 crate-vis | — | The public transport drives the existing voice host and media worker |
+| `src/voice_host/public_loop.rs` | src | m | 2 crate-vis | — | The public transport drives the existing voice host and media worker |
 | `src/voice_host/serve_bindings.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | VoiceServeBindings, VoiceServeConnection | One-shot bindings supplied by the existing private-connection owner |
 | `src/voice_host/speech.rs` | src | m | 2 struct · 1 enum · 3 fn · 16 crate-vis | PlayoutFrame, VoiceBrainOut, VoicePlayout | The brain's reply in the host's own voice (OF-410) |
 | `src/voice_host/tests.rs` | test | m | — | — | Source-only proofs with a manually released backend |

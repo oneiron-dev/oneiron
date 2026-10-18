@@ -76886,7 +76886,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/voice_host/public_loop.rs",
