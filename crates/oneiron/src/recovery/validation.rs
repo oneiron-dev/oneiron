@@ -206,6 +206,17 @@ pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
             {
                 return Err(invalid("claim outside window residence"));
             }
+        } else if header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
+            && world.is_some()
+        {
+            // A live key pad rides its world's window of the month it was
+            // learned (`ITEM11_LIVE_PAD_CARRIER`).
+            if crate::world_keys::pad_world_in_body(body).ok() != world
+                || crate::deletion::window_label_from_timestamp(header.learned_at)
+                    != snapshot.window[..7]
+            {
+                return Err(invalid("pad outside window residence"));
+            }
         } else if world.is_some()
             && (header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
                 || !body.is_empty()

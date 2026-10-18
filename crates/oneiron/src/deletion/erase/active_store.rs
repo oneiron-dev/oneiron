@@ -29,19 +29,18 @@ impl Vault {
         Ok(affected.into_iter().collect())
     }
 
-    /// The windows an erase of `id` stages its world's pad tombstones in, one
-    /// per pad's learned month. Read before the purge erases the pads, so the
-    /// door can publish them once it commits (FIX 343). Empty for any id
-    /// that is not a world with pads here.
+    /// The windows an erase of `id` stages its world's pad tombstones in, the
+    /// world's window of each pad's learned month. Read before the purge erases
+    /// the pads, so the door can publish them once it commits (FIX 343). Empty
+    /// for any id that is not a world with pads here.
     pub(in crate::deletion) fn world_pad_windows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
     ) -> Result<BTreeSet<String>> {
         Ok(
-            crate::world_keys::world_pad_learned_at_in_txn(&self.store, txn, *id)?
+            crate::world_keys::world_pad_windows_in_txn(&self.store, txn, *id)?
                 .into_iter()
-                .map(tombstone::window_label_from_timestamp)
                 .collect(),
         )
     }

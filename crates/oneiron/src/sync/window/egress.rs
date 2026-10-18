@@ -132,11 +132,14 @@ pub(super) fn scrub_local_only_carriers(
         }
     });
     // A destroyed world's pad that landed late leaves the window whatever its
-    // key; a live world's pad keeps replicating with the base rows.
+    // key, and so does a pad misplaced outside its world's window of its month;
+    // a live world's pad replicates with its world's rows.
     if !pad_carriers.is_empty() {
         let txn = vault.store.env.read_txn()?;
         for (raw_key, blob) in pad_carriers {
-            if !crate::world_keys::late_pad_in_txn(&vault.store, &txn, &blob)? {
+            if crate::sync::types::entity_belongs_to_window(&blob, key)
+                && !crate::world_keys::late_pad_in_txn(&vault.store, &txn, &blob)?
+            {
                 continue;
             }
             match EntityId::from_hex(&raw_key) {
@@ -166,7 +169,7 @@ pub(super) fn scrub_local_only_carriers(
         {
             Error::InvalidKey
         } else if crate::world_keys::pad_body_world(&blob).is_some() {
-            Error::InvalidConfig("a destroyed world's key pad cannot rejoin a window".into())
+            Error::InvalidConfig("a key pad rides only its live world's own window".into())
         } else {
             crate::secret_custody::reject_secret_custody_byte()
         };

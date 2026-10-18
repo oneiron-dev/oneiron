@@ -309,16 +309,23 @@ impl Vault {
         });
         let mut window_label = window_label_from_timestamp(header.learned_at);
         // Capture the world before soft erasure or hard purge removes the
-        // CLAIM body. The cfg-off pending marker and sync publication must
-        // address the same world-month document.
-        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        // CLAIM or key pad body. The cfg-off pending marker and sync
+        // publication must address the same world-month document.
+        let pad = header.entity_type == crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
+        if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM || pad {
             match self.get_raw_unsealed(id)? {
                 Some(raw) if raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN => {
-                    let body = crate::claim::decode_claim_body(
-                        &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-                        true,
-                    )?;
-                    if let Some(world) = body.world {
+                    // A pad that does not decode stays in the base window.
+                    let world = if pad {
+                        crate::world_keys::pad_body_world(&raw).and_then(Result::ok)
+                    } else {
+                        crate::claim::decode_claim_body(
+                            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                            true,
+                        )?
+                        .world
+                    };
+                    if let Some(world) = world {
                         window_label.push('@');
                         window_label.push_str(&world.to_hex());
                     }

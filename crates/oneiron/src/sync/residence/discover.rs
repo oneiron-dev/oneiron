@@ -26,7 +26,7 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
     {
         let row = row?;
         // The row is read in place: its header and, for a claim that carries
-        // its body, the body's world.
+        // its body or a key pad, the body's world.
         let Some((header, body_world)) = vault
             .store
             .port_entity_with_raw(&txn, &row.id, |raw| {
@@ -43,6 +43,9 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
                     let body =
                         crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?;
                     Some(body.world)
+                } else if let Some(Ok(world)) = crate::world_keys::pad_body_world(raw) {
+                    // A live pad rides its world's windows (`entity_world`).
+                    Some(Some(world))
                 } else {
                     None
                 };
@@ -67,6 +70,9 @@ pub fn discover_local_window_keys(vault: &Vault) -> Result<Vec<WindowKey>> {
             if let Some(world) = scoped {
                 keys.insert(WindowKey::for_month_world(&base, world).to_string());
             }
+        } else if let Some(Some(world)) = body_world {
+            // A pad-only month of a world is a partition too.
+            keys.insert(WindowKey::for_month_world(&base, world).to_string());
         }
     }
     // A snapshot's whole label names its window; an update or pending tombstone names it by

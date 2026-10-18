@@ -8,7 +8,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{WindowAddress, WindowDeletionRows};
-use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::store::{ManifestDbs, Store};
 
 use super::tombstone::{
@@ -42,10 +42,11 @@ pub(in crate::deletion) fn deletion_window_label(
 }
 
 /// The sync window that holds the pending deletion of the row `raw` stored
-/// under `id`: the window the row resides in. A CLAIM body names its world, a
-/// CLAIM shell has lost its body so its preserved deletion address answers,
-/// and every other row lives in the base month of its learned-at. A CLAIM body
-/// that does not decode names no world, which is also where sync places it.
+/// under `id`: the window the row resides in. A CLAIM or key pad body names
+/// its world, a shell of either has lost its body so its preserved deletion
+/// address answers, and every other row lives in the base month of its
+/// learned-at. A body that does not decode names no world, which is also
+/// where sync places it.
 ///
 /// A body is decoded only while some world window of its month holds a
 /// pending deletion at all: with none, every row of that month is answered
@@ -59,8 +60,8 @@ pub(crate) fn deletion_window_for_row(
     row_window(dbs, txn, id, raw, false)
 }
 
-/// [`deletion_window_for_row`] that always decodes a CLAIM body for its
-/// world, for a one-time pass that has no pending marker to go by.
+/// [`deletion_window_for_row`] that always decodes a CLAIM or key pad body
+/// for its world, for a one-time pass that has no pending marker to go by.
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
 pub(in crate::deletion) fn residence_window_for_row(
     dbs: &impl ManifestDbs,
@@ -80,7 +81,8 @@ fn row_window(
 ) -> Result<String> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let mut label = window_label_from_timestamp(header.learned_at);
-    if header.entity_type != ENTITY_TYPE_CLAIM {
+    let pad = header.entity_type == ENTITY_TYPE_WORLD_KEY_PAD;
+    if header.entity_type != ENTITY_TYPE_CLAIM && !pad {
         return Ok(label);
     }
     if raw.len() == ENTITY_METADATA_HEADER_LEN {
@@ -89,9 +91,15 @@ fn row_window(
     if !always_decode && !world_pending_tombstone_exists(dbs, txn, &label)? {
         return Ok(label);
     }
-    if let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
-        && let Some(world) = body.world
-    {
+    // A live pad rides its world's windows (`sync::types::entity_world`).
+    let world = if pad {
+        crate::world_keys::pad_body_world(raw).and_then(Result::ok)
+    } else {
+        crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)
+            .ok()
+            .and_then(|body| body.world)
+    };
+    if let Some(world) = world {
         label.push('@');
         label.push_str(&world.to_hex());
     }

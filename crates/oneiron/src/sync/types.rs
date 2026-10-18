@@ -155,10 +155,15 @@ pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
     crate::deletion::parse_window_label(key)
 }
 
-/// The ledger-plane partition axis: only CLAIM bodies can name a world.
+/// The ledger-plane partition axis: only CLAIM and WORLD_KEY_PAD bodies name a world.
 /// Other entity families remain in the shared base window.
 pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::EntityId>> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+    // ITEM11_LIVE_PAD_CARRIER: a live pad rides its world's month windows. A
+    // pad that does not decode stays in the base window's quarantine.
+    if let Some(Ok(world)) = crate::world_keys::pad_body_world(raw) {
+        return Ok(Some(world));
+    }
     let header =
         EntityMetadataHeader::parse(raw).ok_or(crate::Error::CorruptedIndex("entity metadata"))?;
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
@@ -447,8 +452,12 @@ pub(crate) fn tombstone_residence_in(
         if crate::registry::is_delete_protected_engine_record(header.entity_type) {
             return Ok(TombstoneResidence::Match);
         }
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-            || raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
+        // A CLAIM or key pad shell has lost the body that named its world: its
+        // deletion address answers below.
+        if !matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_CLAIM | crate::registry::ENTITY_TYPE_WORLD_KEY_PAD
+        ) || raw.len() > crate::batch::ENTITY_METADATA_HEADER_LEN
         {
             let actual_world = entity_world(&raw)?;
             let matches = actual_world == key.world()
