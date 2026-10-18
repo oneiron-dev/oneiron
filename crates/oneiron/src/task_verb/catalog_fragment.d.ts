@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 372 code-mode rows (352 host rows, 20 run rows), 1326 declarations.
-// Replies: 319 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 378 code-mode rows (358 host rows, 20 run rows), 1344 declarations.
+// Replies: 325 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1133,6 +1133,23 @@ declare namespace Sdk {
   type EsignCreateRequest = { document_ref: string; draft: EsignDocument };
   type DocumentStatus = "draft" | "pending" | "completed" | "rejected" | "voided" | "expired";
   type EsignDraftView = { document_ref: string; status: DocumentStatus; title: string; expires_at: number; project_ref?: string | null; recipients: string[]; fields: number };
+  type EsignGetRequest = { document_ref: string };
+  type DeliveryStatus = "unsent" | "sent" | "viewed";
+  type SigningStatus = "waiting" | "ready" | "completed" | "rejected";
+  type AccessStatus = "unverified" | "verified";
+  type RecipientState = { delivery: DeliveryStatus; signing: SigningStatus; access: AccessStatus; expires_at: number };
+  type FieldValue = { kind: "text"; value: string } | { kind: "checked"; value: boolean } | { kind: "signature"; value: { image_ref: string } };
+  type SignatureRow = { field: string; recipient: string; value: FieldValue; at: number };
+  type EsignEvent = { event: "drafted"; document: EsignDocument } | { event: "sent" } | { event: "viewed"; recipient: string } | { event: "field_saved"; signature: SignatureRow } | { event: "signed"; recipient: string; next?: string | null } | { event: "declined"; recipient: string; reason: string } | { event: "voided"; reason: string } | { event: "expired"; recipient?: string | null } | { event: "reminded"; recipient: string; rung: number } | { event: "sealed"; rejected: boolean; item_sha256: number[][] } | { event: "reseal_requested"; owner: string; authority: string };
+  type EsignAuditActor = { actor: string; ip?: string | null; user_agent?: string | null };
+  type EsignEventRow = { sequence: number; previous_sha256: number[]; event: EsignEvent; actor: EsignAuditActor; at: number };
+  type EsignDocumentView = { document_ref: string; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] };
+  type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
+  type EsignIssuedLink = { recipient: string; email: string; capability: string };
+  type EsignLinksView = { document_ref: string; issued: EsignIssuedLink[]; unchanged: string[] };
+  type EsignDispatchRequest = { document_ref: string; recipient_count: number; on_behalf_of?: string | null; idempotency_key?: string | null };
+  type EsignDispatchView = { document_ref: string; verb: string; intent_ref: string; outcome: string; gate_outcome: string; gate_decision_ref?: string | null; gate_reason_codes: string[] };
+  type EsignVoidRequest = { document_ref: string; recipient_count: number; reason: string; on_behalf_of?: string | null; idempotency_key?: string | null };
   type CoreWriteTextField = { field: string; value: string };
   type ConversationCreateInput = { id?: string | null; occurred_start?: number | null; occurred_end?: number | null; learned_at?: number | null; body: unknown; text?: CoreWriteTextField[] | null };
   type CoreEntityWriteReceipt = { id: string; entity_type: number; learned_at: number; body: unknown };
@@ -1162,7 +1179,8 @@ declare namespace Sdk {
   type BodyCell = { address: string; value: XlsxValue; formula?: string | null; style?: number | null; format?: string | null; locked?: XlsxLock | null };
   type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock };
   type XlsxTable = { name: string; first: [number, number]; last: [number, number]; header_rows: number; totals_rows: number; columns: string[]; worksheet: boolean };
-  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
+  type XlsxSheetVisibility = "visible" | "hidden" | "veryHidden";
+  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility };
   type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxStyle = { num_fmt: number; format?: string | null };
   type XlsxColor = { kind: "rgb"; argb: string } | { kind: "theme"; theme: number; tint?: number | null } | { kind: "indexed"; index: number } | { kind: "auto" };
@@ -1202,11 +1220,11 @@ declare namespace Sdk {
   type OfficeBodyCommitGap = "receipt_missing";
   type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
-  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
+  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "set_sheet_visibility"; sheet: string; visibility: XlsxSheetVisibility } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
-  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
+  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt; effects: string[] };
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
   type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
   type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
@@ -1238,7 +1256,7 @@ declare namespace Sdk {
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
-  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
+  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
@@ -1833,6 +1851,18 @@ declare const vault: Sdk.VaultHost & {
   esign: {
     /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
     create(input: Sdk.EsignCreateRequest): Promise<Sdk.EsignDraftView | StoredResult>;
+    /** Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail. */
+    get(input: Sdk.EsignGetRequest): Promise<Sdk.EsignDocumentView | StoredResult>;
+    links: {
+      /** The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient. */
+      issue(input: Sdk.EsignLinksIssueRequest): Promise<Sdk.EsignLinksView | StoredResult>;
+    };
+    /** Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller. */
+    remind(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    /** Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope. */
+    send_for_signature(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+    /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
+    void(input: Sdk.EsignVoidRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
   };
   explain: {
     /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
@@ -2095,6 +2125,8 @@ declare const vault: Sdk.VaultHost & {
       /** Pins an agent as a room's host, or clears the stored host, pin or handoff. */
       pin(input: Sdk.RoomHostPin): Promise<Sdk.RoomStanding | StoredResult>;
     };
+    /** The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent. */
+    invite(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** Files and decides a request to take part in a room or one of its threads. */
     join(input: Sdk.JoinRequest): Promise<Sdk.JoinOutcome | StoredResult>;
     /** The caller's rooms its own grants admit; inside a room turn, only that room. */

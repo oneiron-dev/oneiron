@@ -1713,6 +1713,12 @@ max_input_bytes = 4096  # the longest text one parse reads (the default and the 
 # A connector's register and refresh doors ask, for each tool on its grant slate:
 wording = "What should this connector tool's setting be?"
 budget_ms = 30000       # the whole draft's budget (the default)
+
+[models.decisions.import_audience]
+# Each topic a history import's claims raise is asked, once:
+sensitive_wording = "Is this imported topic sensitive?"
+audience_wording = "Who may see what later imports say about this topic?"
+budget_ms = 30000       # one topic's sensitivity read (the default)
 ```
 
 The Big rung asks each question as one model call on that seat. The call is
@@ -1744,6 +1750,22 @@ picks auto, always ask or never allow; only the owner picks always allow. An abs
 outside the options, a failed call or a row past `budget_ms` keeps the rule
 draft. Without the row, the rule draft alone fills the slate. The owner
 stamps the slate either way.
+
+An imported topic's audience (OF-492) is asked once per topic when
+`[models.decisions.import_audience]` words the two questions. Serve sweeps
+the pending history-import reviews every minute, CLI imports included, since
+their extraction runs in serve. It groups their extracted claims by the
+extractor's `topic_key` (an exact match; a claim with no topic joins none) and
+asks each new topic whether it is sensitive, up to the Big rung. A topic read
+as not sensitive is left alone. A sensitive or unsure one goes to the owner's
+ask queue as ONE choice: only me, one of the vault's projects (by goal and a
+short id; the root and corpora are not offered; at most 62), or everyone the
+source shared it with. Both questions show the model and the owner the topic
+and up to 16 of its claims. The owner answers on the decision-ask door, and a
+later sweep keeps the answer as a standing `disclosure.import_audience` rule
+for the topic's LATER imports. The import that raised the ask stays private,
+and nothing waits on the answer. Without the row, no topic is asked and every
+import stays private.
 
 The System One seat takes noul and choice questions. Each is one call,
 admitted and settled on its meter. It never runs on a relay vault. The

@@ -42,12 +42,9 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, TombstoneStore
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY,
 };
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
-
-/// The most timeline rows one list of the Dreamer's changes reads, newest
-/// first.
-const DREAMER_CHANGES_SCAN: usize = 20_000;
 
 /// The record a correction's supersession leaves on its replacement.
 const SUPERSESSION_PROVENANCE: &str = "core.supersession.provenance";
@@ -159,30 +156,29 @@ pub struct DreamerRevertReceipt {
     pub receipt_ref: String,
 }
 
-/// The Dreamer's standing changes, newest first, at most `limit`, from the
-/// newest [`DREAMER_CHANGES_SCAN`] rows, with each revertible `about`. A
-/// Proposed claim is no change yet: its run tray holds it.
+/// The Dreamer's standing changes, newest first, at most `limit`, with each
+/// revertible `about`. A Proposed claim is no change yet: its run tray holds
+/// it. The timeline is read until `limit` changes are found or it ends: past
+/// the scan's threshold row it raises one check and reads on (rule 5).
 pub(crate) fn dreamer_changes_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     limit: usize,
 ) -> Result<DreamerChanges> {
     let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::LearnedRangeRows, &[])?;
     let mut changes = Vec::new();
-    for entry in vault
-        .store
-        .port_entity_timeline(
-            txn,
-            crate::ports::TimelineQuery {
-                reverse: true,
-                ..Default::default()
-            },
-        )?
-        .take(DREAMER_CHANGES_SCAN)
-    {
+    for entry in vault.store.port_entity_timeline(
+        txn,
+        crate::ports::TimelineQuery {
+            reverse: true,
+            ..Default::default()
+        },
+    )? {
         if changes.len() >= limit {
             break;
         }
+        count.row();
         let entry = entry?;
         let Some(record) = vault.store.port_entity_record(txn, &entry.id)? else {
             continue;
@@ -217,6 +213,7 @@ pub(crate) fn dreamer_changes_in_txn(
             });
         }
     }
+    count.finish(vault);
     Ok(DreamerChanges {
         changes,
         people: revertible_person_abouts_in_txn(vault, txn)?,
@@ -382,24 +379,27 @@ fn revert_claim_in_txn(
     Ok(reverted)
 }
 
-/// The claims `claim` superseded.
+/// The claims `claim` superseded, every one: past the scan's threshold row
+/// it raises one check and reads on (rule 5).
 fn superseded_by_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     claim: EntityId,
 ) -> Result<Vec<EntityId>> {
+    let kind = crate::edge::EdgeKind::Supersedes;
+    let scope = [
+        &[EdgeDirection::Out as u8][..],
+        claim.as_bytes(),
+        &[kind as u8][..],
+    ]
+    .concat();
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::EdgePeerRows, &scope)?;
     let mut superseded = Vec::new();
-    for target in vault.port_edge_peers(
-        txn,
-        &claim,
-        EdgeDirection::Out,
-        crate::edge::EdgeKind::Supersedes,
-    )? {
-        if superseded.len() >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(crate::error::Error::IndexOverflow("superseded claims"));
-        }
+    for target in vault.port_edge_peers(txn, &claim, EdgeDirection::Out, kind)? {
+        count.row();
         superseded.push(target?);
     }
+    count.finish(vault);
     Ok(superseded)
 }
 

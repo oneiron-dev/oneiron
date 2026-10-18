@@ -30,6 +30,7 @@ use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::conversation::{OutputMark, TurnActionAttempt};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::{LlmEventBus, StreamSubscription, TerminalSink};
 use oneiron::memory::{
     Memory, MemoryError, MessageStreamError, MessageStreamHandle, MessageStreamReceipt,
@@ -57,6 +58,7 @@ type Refused = Box<Response>;
 fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refused {
     Box::new(refusal(status, code, message))
 }
+use crate::ai_host::payer_funding::room_launch_funding;
 use crate::ai_host::{AiHandle, CHAT_ROLE, TurnGuard};
 use crate::api::credential_memory;
 use crate::api::facade::{self, DoorClaim};
@@ -438,6 +440,9 @@ fn start_turn(
         )
     })?;
     let vault = Arc::clone(server.vault());
+    // The reply's newcomer barrier, marked before the first read the request
+    // is assembled from (FIX 1389).
+    let mark = vault.container_output_mark();
     let (actor, class) = principal(auth, &vault)?;
     let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
     let settings = server.ai.chat_settings();
@@ -490,6 +495,22 @@ fn start_turn(
     // it creates carries that origin to the agent that realizes it; a ref
     // that does not resolve binds none, and the witness refuses it.
     let origin = resolve_entity_ref(&vault, &request.conversation_ref).ok();
+    // A turn in a room bills the payer whose consent on the answering
+    // agent's join funds that room (FIX 805), resolved before anything is
+    // written: a turn with no payer to bill is refused, typed.
+    let funding = match origin {
+        Some(room) => {
+            crate::server::blocking(|| room_launch_funding(&vault, room, None, agent, actor))
+                .map_err(|fault| {
+                    refused(
+                        StatusCode::PAYMENT_REQUIRED,
+                        fault.reason(),
+                        fault.to_string(),
+                    )
+                })?
+        }
+        None => None,
+    };
     let hooked = || {
         let memory = match auth.principal_ref() {
             Some(_) => credential_memory(&vault, Some(auth), actor, class).at(locality),
@@ -582,9 +603,11 @@ fn start_turn(
             mode,
             admitted,
             payer: WriteActor::new(actor, class),
+            funding,
             budget_units: settings.turn_budget_units,
             credential: credential.clone(),
             keepalive,
+            mark,
         },
     )
     .map_err(|refusal| match refusal {
@@ -939,9 +962,18 @@ pub(crate) struct Answer {
     pub(crate) admitted: RoleCall,
     /// The actor whose budget line the turn runs on.
     pub(crate) payer: WriteActor,
+    /// Who the turn bills when a room pays for it (FIX 805), which its
+    /// caller resolved before anything was written; `None` is the vault
+    /// owner.
+    pub(crate) funding: Option<PayerPerson>,
     pub(crate) budget_units: u64,
     pub(crate) credential: TurnCredential,
     pub(crate) keepalive: Duration,
+    /// The newcomer barrier (OF-365 P5, FIX 1389): the container output mark
+    /// the caller took before the first read its request was assembled from,
+    /// so no delta goes out into the reply's conversation once an attendee
+    /// entered it from there on.
+    pub(crate) mark: OutputMark,
 }
 
 /// Where a reply is written.
@@ -996,14 +1028,12 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         mode,
         admitted,
         payer,
+        funding,
         budget_units,
         credential,
         keepalive,
+        mark,
     } = answer;
-    // The newcomer barrier (OF-365 P5): marked before the reply's stream
-    // opens, so no delta goes out into its conversation once an attendee
-    // entered it from here on.
-    let mark = vault.container_output_mark();
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
     let begun = crate::server::blocking(|| {
@@ -1027,9 +1057,9 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
     let wakes = container.map(|_| vault.subscribe_task_updates());
 
     // The turn is a run on the vault's budget policy for this actor, one line
-    // per turn. Each rung the call reaches is admitted on its own permit and
-    // settles itself; the first is admitted here, so a turn the line cannot
-    // hold is refused before any model is called.
+    // per turn, billed to its funding. Each rung the call reaches is admitted
+    // on its own permit and settles itself; the first is admitted here, so a
+    // turn the line cannot hold is refused before any model is called.
     let started = vault
         .policy_budget_guard(
             format!("chat:{}", handle.message_id().to_hex()),
@@ -1040,7 +1070,11 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         )
         .map_err(|error| error.to_string())
         .and_then(|meter| {
-            let run = ai.undeclared_run(format!("chat:{}", handle.message_id().to_hex()), meter);
+            let run = ai.model_runtime().funded_run(
+                format!("chat:{}", handle.message_id().to_hex()),
+                meter,
+                funding,
+            );
             admitted
                 .ladder
                 .stream(&run, admitted.request, None)

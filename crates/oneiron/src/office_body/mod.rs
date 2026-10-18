@@ -43,7 +43,7 @@ pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::xlsx_body::{
-    XlsxArea, XlsxBook, XlsxLock, XlsxStyle, XlsxTable, XlsxValue,
+    XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,
 };
 pub(crate) use pptx::live_refused;
 pub use pptx::{
@@ -141,12 +141,15 @@ pub struct OfficeBodyHead {
 }
 
 /// One call's commit: the new frontier, the ids it minted in operation order
-/// (paragraphs, deck nodes; none for a workbook), and its receipt.
+/// (paragraphs, deck nodes; none for a workbook), its receipt, and what the
+/// operations adapted so the document stays one its application opens
+/// (a workbook's sheet shown or added to keep one visible).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeBodyEdit {
     pub frontier: Vec<u8>,
     pub minted: Vec<String>,
     pub receipt: TextCommitReceipt,
+    pub effects: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -317,6 +320,12 @@ impl Vault {
             OfficeBodyKind::Xlsx => {
                 let book = read_xlsx_cells(&bytes, self.docedit_package_limits()?)
                     .map_err(|_| invalid("the XLSX package could not be read"))?;
+                // Past the row it asks; the workbook is imported whole.
+                let cells: usize = book.sheets.iter().map(|sheet| sheet.cells.len()).sum();
+                self.measure_limit(
+                    crate::limit_ask::EngineLimit::ImportXlsxLiveCells,
+                    u64::try_from(cells).unwrap_or(u64::MAX),
+                );
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
                     birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {
@@ -417,14 +426,17 @@ impl Vault {
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
-        self.edit_live(
+        let mut effects = Vec::new();
+        let mut edit = self.edit_live(
             artifact,
             OfficeBodyKind::Xlsx,
             base,
             (actor, made_by),
             |base, head| xlsx::admit_at(base, head, ops),
-            |doc| apply_xlsx(doc, ops),
-        )
+            |doc| apply_xlsx(doc, ops, &mut effects),
+        )?;
+        edit.effects = effects;
+        Ok(edit)
     }
 
     fn edit_live(
@@ -453,6 +465,7 @@ impl Vault {
                 frontier: commit.frontier,
                 minted,
                 receipt: commit.receipt,
+                effects: Vec::new(),
             })
         })
     }
@@ -530,12 +543,15 @@ impl Vault {
         made_by: &MadeBy,
     ) -> Result<OfficeBodyEdit> {
         bounded_ops(ops.len())?;
-        self.edit_fork(
+        let mut effects = Vec::new();
+        let mut edit = self.edit_fork(
             (artifact, fork),
             OfficeBodyKind::Xlsx,
             (actor, made_by),
-            |doc| apply_xlsx(doc, ops),
-        )
+            |doc| apply_xlsx(doc, ops, &mut effects),
+        )?;
+        edit.effects = effects;
+        Ok(edit)
     }
 
     fn edit_fork(
@@ -560,6 +576,7 @@ impl Vault {
                 frontier: commit.frontier,
                 minted,
                 receipt: commit.receipt,
+                effects: Vec::new(),
             })
         })
     }
@@ -972,9 +989,9 @@ fn apply_all(doc: &LoroDoc, ops: &[DocxBodyOp]) -> Result<Vec<String>> {
     Ok(minted)
 }
 
-fn apply_xlsx(doc: &LoroDoc, ops: &[XlsxBodyOp]) -> Result<Vec<String>> {
+fn apply_xlsx(doc: &LoroDoc, ops: &[XlsxBodyOp], effects: &mut Vec<String>) -> Result<Vec<String>> {
     for op in ops {
-        xlsx::apply(doc, op)?;
+        xlsx::apply(doc, op, effects)?;
     }
     Ok(Vec::new())
 }

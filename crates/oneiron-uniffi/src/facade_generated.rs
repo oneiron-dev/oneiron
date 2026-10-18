@@ -1031,6 +1031,11 @@ export_facade! {
     let output = client.vault_rooms_join(&input)?;
     crate::codec::lift_record("vault.rooms.join", &output)
 };
+"vault.rooms.invite" => fn vault_rooms_invite(&self, input: JoinRequest) -> JoinOutcome = |client| {
+    let input: oneiron::workspace_roster::JoinRequest = crate::codec::lower_record("vault.rooms.invite", input)?;
+    let output = client.vault_rooms_invite(&input)?;
+    crate::codec::lift_record("vault.rooms.invite", &output)
+};
 "vault.rooms.consent" => fn vault_rooms_consent(&self, input: ConsentAnswer) -> JoinOutcome = |client| {
     let input: oneiron::workspace_roster::ConsentAnswer = crate::codec::lower_record("vault.rooms.consent", input)?;
     let output = client.vault_rooms_consent(&input)?;
@@ -1365,6 +1370,31 @@ export_facade! {
     let input: oneiron::blob_artifact::esign::EsignCreateRequest = crate::codec::lower_record("vault.esign.create", input)?;
     let output = client.vault_esign_create(&input)?;
     crate::codec::lift_record("vault.esign.create", &output)
+};
+"vault.esign.get" => fn vault_esign_get(&self, input: EsignGetRequest) -> EsignDocumentView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignGetRequest = crate::codec::lower_record("vault.esign.get", input)?;
+    let output = client.vault_esign_get(&input)?;
+    crate::codec::lift_record("vault.esign.get", &output)
+};
+"vault.esign.links.issue" => fn vault_esign_links_issue(&self, input: EsignLinksIssueRequest) -> EsignLinksView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignLinksIssueRequest = crate::codec::lower_record("vault.esign.links.issue", input)?;
+    let output = client.vault_esign_links_issue(&input)?;
+    crate::codec::lift_record("vault.esign.links.issue", &output)
+};
+"vault.esign.send_for_signature" => fn vault_esign_send_for_signature(&self, input: EsignDispatchRequest) -> EsignDispatchView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignDispatchRequest = crate::codec::lower_record("vault.esign.send_for_signature", input)?;
+    let output = client.vault_esign_send_for_signature(&input)?;
+    crate::codec::lift_record("vault.esign.send_for_signature", &output)
+};
+"vault.esign.remind" => fn vault_esign_remind(&self, input: EsignDispatchRequest) -> EsignDispatchView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignDispatchRequest = crate::codec::lower_record("vault.esign.remind", input)?;
+    let output = client.vault_esign_remind(&input)?;
+    crate::codec::lift_record("vault.esign.remind", &output)
+};
+"vault.esign.void" => fn vault_esign_void(&self, input: EsignVoidRequest) -> EsignDispatchView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignVoidRequest = crate::codec::lower_record("vault.esign.void", input)?;
+    let output = client.vault_esign_void(&input)?;
+    crate::codec::lift_record("vault.esign.void", &output)
 };
 "vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
