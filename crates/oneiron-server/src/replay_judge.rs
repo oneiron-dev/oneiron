@@ -37,7 +37,7 @@ use oneiron::skill_attribution::{AttributionVerdict, attribution_judgments};
 use oneiron::skill_optimize::{
     AxisArm, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase,
     HeldOutReplayNotes, HonestyReplay, OnlineAxisSample, PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-    SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, judge_rubric,
+    SkillEditGoal, SkillOptimizeDecisions, SkillReplayPair, judge_incumbent, judge_rubric,
     register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::skill_reliability::{SkillReliabilityPosterior, effective_skill_outcome};
@@ -426,14 +426,10 @@ impl ServeReplayJudge {
         *wording = Box::leak(Box::new(next));
     }
 
-    /// The skill's goal as a judge question reads it: the joined project's
-    /// goal, its why, and each axis's measure and bound. `None` when the
-    /// skill has no goal, its goal joins no project, or the project states
-    /// no goal record.
-    fn goal_brief(&self, skill: &EntityId) -> Result<Option<Value>> {
-        let Ok(goal) = skill_edit_goal(&self.vault, skill) else {
-            return Ok(None);
-        };
+    /// The skill's already-read goal as a judge question reads it: the joined
+    /// project's goal, its why, and each axis's measure and bound. `None` when
+    /// the goal joins no project, or the project states no goal record.
+    fn goal_brief(&self, goal: &SkillEditGoal) -> Result<Option<Value>> {
         let Some((project, _)) = goal.project else {
             return Ok(None);
         };
@@ -501,8 +497,13 @@ impl HeldOutReplayNotes for ServeReplayJudge {
             "instructions": cut(case.instructions, MAX_INSTRUCTIONS),
             "replays": replays,
         });
-        if let Some(goal) = self.goal_brief(&case.skill)? {
-            state["goal"] = goal;
+        // One goal read: the revision the case is judged under rides beside
+        // the brief it was worded from.
+        if let Ok(goal) = skill_edit_goal(&self.vault, &case.skill) {
+            state["goal_revision"] = json!(goal.revision);
+            if let Some(brief) = self.goal_brief(&goal)? {
+                state["goal"] = brief;
+            }
         }
         if let Some(rubric) = judge_rubric(&self.vault)? {
             // Read whole; past its `[limits]` row it asks whether all is well.
@@ -796,7 +797,10 @@ impl<'a> ServeAxisBandit<'a> {
         let mut criteria: BTreeMap<String, Value> = goal
             .axes
             .iter()
-            .map(|axis| (axis.name.clone(), json!({"name": axis.name})))
+            .map(|axis| {
+                let criterion = json!({"name": axis.name, "goal_revision": goal.revision});
+                (axis.name.clone(), criterion)
+            })
             .collect();
         if let Some((project, _)) = goal.project
             && let Some(record) = vault.project_intake_goal(project)?
@@ -810,7 +814,7 @@ impl<'a> ServeAxisBandit<'a> {
                 if let Some(criterion) = criteria.get_mut(&axis.name) {
                     *criterion = json!({
                         "name": axis.name, "measure": axis.measure, "bound": axis.bound,
-                        "goal": record.goal, "why": record.why,
+                        "goal": record.goal, "why": record.why, "goal_revision": goal.revision,
                     });
                 }
             }
