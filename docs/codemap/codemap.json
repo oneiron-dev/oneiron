@@ -13217,7 +13217,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 4
      }
     },
@@ -30903,6 +30903,57 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/codebase_doors/mod.rs",
+     "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/codebase_doors/snapshots.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/codebase_doors/symbols.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRepoPointer",
+      "CodeSnapshotDefinition",
+      "CodeSnapshotDefinitionsRequest",
+      "CodeSnapshotDefinitionsView",
+      "CodeSnapshotFile",
+      "CodeSnapshotIngestRequest",
+      "CodeSnapshotPinnedFile",
+      "CodeSnapshotReadRequest",
+      "CodeSnapshotRequest",
+      "CodeSnapshotView"
+     ],
+     "path": "src/memory/codebase_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -31245,7 +31296,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 4,
+      "mod": 5,
       "re-export": 40
      }
     },
@@ -49389,7 +49440,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 496
+      "fn": 500
      }
     },
     {
@@ -55540,7 +55591,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 148,
+     "files": 152,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56221,7 +56272,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3424,
+   "source_files": 3428,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64634,7 +64685,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 446
+      "fn": 450
      }
     },
     {
@@ -65682,7 +65733,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 447
+      "fn": 451
      }
     },
     {
@@ -68642,6 +68693,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/codebase_doors.rs",
+     "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
@@ -68805,7 +68866,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 89
+      "crate-vis": 90
      }
     },
     {
@@ -76190,7 +76251,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 345,
+     "files": 346,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76605,7 +76666,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 670,
+   "source_files": 671,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77072,6 +77133,16 @@
       "CodeProposedStamp",
       "CodeRepoDiffRequest",
       "CodeRepoDiffView",
+      "CodeRepoPointer",
+      "CodeSnapshotDefinition",
+      "CodeSnapshotDefinitionsRequest",
+      "CodeSnapshotDefinitionsView",
+      "CodeSnapshotFile",
+      "CodeSnapshotIngestRequest",
+      "CodeSnapshotPinnedFile",
+      "CodeSnapshotReadRequest",
+      "CodeSnapshotRequest",
+      "CodeSnapshotView",
       "CodeSpanView",
       "CodeStateRequest",
       "CodeStateView",
@@ -78446,7 +78517,7 @@
      "purpose": "—",
      "surface": {
       "enum": 450,
-      "struct": 1193
+      "struct": 1203
      }
     },
     {
