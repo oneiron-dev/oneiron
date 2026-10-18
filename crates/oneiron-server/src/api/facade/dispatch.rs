@@ -553,17 +553,26 @@ async fn describe(
     }
     let (actor, class) = facade_actor(server, auth)?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let turn = if oneiron::task_verb::sdk::describe_takes_task_work_turn(&value) {
+        Some(Arc::new(server.admit_task_work(actor).await))
+    } else {
+        None
+    };
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_readable_task_rows(
-        &server.vault,
-        auth,
-        oneiron::task_verb::sdk::describe(
-            &credential_memory(&server.vault, Some(auth), actor, class)
-                .at(auth.locality())
-                .listing_producers(&producers),
-            facade_input(value)?,
-        )?,
-    )?;
+    let output = {
+        let memory = credential_memory(&server.vault, Some(auth), actor, class)
+            .at(auth.locality())
+            .listing_producers(&producers);
+        let memory = match turn {
+            Some(turn) => memory.with_task_work_turn(turn),
+            None => memory,
+        };
+        facade_readable_task_rows(
+            &server.vault,
+            auth,
+            oneiron::task_verb::sdk::describe(&memory, facade_input(value)?)?,
+        )?
+    };
     let rows = Some(producers.take());
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
@@ -6995,6 +7004,48 @@ async fn vault_workflows_status(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_task_types_pin(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.task_types.pin")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.task_types.pin", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.task_types.pin", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_task_types_pin(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_task_types_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.task_types.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.task_types.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.task_types.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_task_types_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_workspace_establish(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12679,6 +12730,8 @@ pub(crate) async fn call_verb(
         "vault.workflows.update" => vault_workflows_update(server, call, input).await,
         "vault.workflows.dispatch" => vault_workflows_dispatch(server, call, input).await,
         "vault.workflows.status" => vault_workflows_status(server, call, input).await,
+        "vault.task_types.pin" => vault_task_types_pin(server, call, input).await,
+        "vault.task_types.get" => vault_task_types_get(server, call, input).await,
         "vault.workspace.establish" => vault_workspace_establish(server, call, input).await,
         "vault.workspace.members.onboard" => {
             vault_workspace_members_onboard(server, call, input).await

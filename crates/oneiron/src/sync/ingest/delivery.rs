@@ -12,10 +12,16 @@
 //! with the exact bytes the peer's update brought is the pact's: a row this
 //! vault already held unchanged writes nothing, and another writer's image
 //! is not the peer's.
+//!
+//! The import also records each row as an intent before it lands any of them
+//! (FIX 3498), so a row forward rematerialization writes after a crash,
+//! outside the import's span, is still the pact's. An intent goes when a
+//! write lands its row, or other bytes there; it never expires.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use loro::LoroMap;
 
@@ -31,6 +37,19 @@ use crate::{Vault, ports};
 /// (epoch) ":" hex32 (record).
 const DELIVERED: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::FEDERATION_DELIVERED_RECORD);
+
+/// A row one pact's import brings, recorded before the import lands it: the
+/// pact (32 bytes), its epoch and when it was recorded (u64 big-endian
+/// seconds each), then the digest of the row's bytes. Key: hex32 (record)
+/// ":" hex64 (pact).
+const INTENT: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::FEDERATION_DELIVERY_INTENT);
+
+/// How long an intent waits for the write that lands its row: no limit
+/// (FIX 3498). A vault offline across a restart must not age a pact's
+/// attribution out; an intent goes only when its row lands, when other bytes
+/// land there, or when the pact delivers the row again.
+const DELIVERY_INTENT_EXPIRY: Option<Duration> = None;
 
 thread_local! {
     static DELIVERY: RefCell<Option<Delivery>> = const { RefCell::new(None) };
@@ -59,6 +78,25 @@ impl Delivery {
             epoch,
             rows: rows.clone(),
         }
+    }
+
+    /// Records each row of this delivery as an intent, committed before the
+    /// import lands any of them, so the write that lands one after a crash
+    /// still attributes it (FIX 3498). The pact's later delivery of the same
+    /// row supersedes its intent.
+    pub(in crate::sync) fn record_intents(&self, vault: &Vault) -> Result<()> {
+        if self.rows.is_empty() {
+            return Ok(());
+        }
+        let held = crate::unix_seconds_now().to_be_bytes();
+        let epoch = self.epoch.to_be_bytes();
+        vault.with_write_txn_grouped(|wtxn| {
+            for (id, sent) in &self.rows {
+                let intent = [&self.pact[..], &epoch, &held, sent].concat();
+                INTENT.put(&vault.store, wtxn, &intent_key(*id, &self.pact), &intent)?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -109,10 +147,54 @@ fn delivery_key(pact: &[u8; 32], epoch: u64, record: EntityId) -> String {
     )
 }
 
+fn intent_key(record: EntityId, pact: &[u8; 32]) -> String {
+    format!("{}:{}", record.to_hex(), bytes_to_hex_lower(pact))
+}
+
+/// An intent row's pact, epoch, when it was recorded and row digest.
+fn parse_intent(intent: &[u8]) -> Option<([u8; 32], u64, u64, [u8; 32])> {
+    let (pact, rest) = intent.split_first_chunk::<32>()?;
+    let (epoch, rest) = rest.split_first_chunk::<8>()?;
+    let (held, rest) = rest.split_first_chunk::<8>()?;
+    let sent = <[u8; 32]>::try_from(rest).ok()?;
+    Some((
+        *pact,
+        u64::from_be_bytes(*epoch),
+        u64::from_be_bytes(*held),
+        sent,
+    ))
+}
+
+/// Takes every intent recorded for `id` in `wtxn`, returning the pact and
+/// epoch of each that waited for the bytes that landed (`landed`). One that
+/// waited for other bytes goes too: its row was replaced.
+fn take_intents_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    landed: &[u8; 32],
+) -> Result<BTreeSet<([u8; 32], u64)>> {
+    let mut pacts = BTreeSet::new();
+    let prefix = format!("{}:", id.to_hex());
+    for (key, intent) in INTENT.scan_from(&vault.store, wtxn, prefix.as_bytes())? {
+        let (pact, epoch, held, sent) =
+            parse_intent(&intent).ok_or(Error::CorruptedIndex("federation delivery intent"))?;
+        let lapsed = DELIVERY_INTENT_EXPIRY.is_some_and(|expiry| {
+            crate::unix_seconds_now().saturating_sub(held) >= expiry.as_secs()
+        });
+        if sent == *landed && !lapsed {
+            pacts.insert((pact, epoch));
+        }
+        INTENT.delete(&vault.store, wtxn, &key)?;
+    }
+    Ok(pacts)
+}
+
 /// Attributes `blob`, which an entity door wrote at `id` in `wtxn`, to the
 /// pact and epoch of the delivery an import on this thread carries, when it
-/// is that delivery's row with the bytes the peer brought. A foreign world
-/// the record sits in is registered to the pact in the same transaction. A
+/// is that delivery's row with the bytes the peer brought, and to those of
+/// each intent recorded for those bytes (FIX 3498). A foreign world the
+/// record sits in is registered to the pact in the same transaction. A
 /// guest's WORLD row lands under its foreign id (FIX 3657): that id is the
 /// world it sits in, registered as a foreign CLAIM's world is.
 pub(in crate::sync) fn note_delivered_in_txn(
@@ -121,16 +203,17 @@ pub(in crate::sync) fn note_delivered_in_txn(
     id: EntityId,
     blob: &[u8],
 ) -> Result<()> {
-    let delivered = DELIVERY.with(|slot| {
+    let landed = digest(blob);
+    let mut pacts = take_intents_in_txn(vault, wtxn, id, &landed)?;
+    pacts.extend(DELIVERY.with(|slot| {
         slot.borrow().as_ref().and_then(|delivery| {
-            (delivery.vault == vault.store.env.path()
-                && delivery.rows.get(&id) == Some(&digest(blob)))
-            .then_some((delivery.pact, delivery.epoch))
+            (delivery.vault == vault.store.env.path() && delivery.rows.get(&id) == Some(&landed))
+                .then_some((delivery.pact, delivery.epoch))
         })
-    });
-    let Some((pact, epoch)) = delivered else {
+    }));
+    if pacts.is_empty() {
         return Ok(());
-    };
+    }
     let (Some(header), Some(body)) = (
         EntityMetadataHeader::parse(blob),
         blob.get(ENTITY_METADATA_HEADER_LEN..),
@@ -152,9 +235,12 @@ pub(in crate::sync) fn note_delivered_in_txn(
         .flatten()
     };
     let place = world.map_or_else(Vec::new, |world| world.as_bytes().to_vec());
-    DELIVERED.put(&vault.store, wtxn, &delivery_key(&pact, epoch, id), &place)?;
-    if let Some(foreign) = world.and_then(|world| ForeignWorldId::from_entity_id(world).ok()) {
-        crate::federation::register_foreign_world_for_pact_in(vault, wtxn, &pact, foreign)?;
+    let foreign = world.and_then(|world| ForeignWorldId::from_entity_id(world).ok());
+    for (pact, epoch) in pacts {
+        DELIVERED.put(&vault.store, wtxn, &delivery_key(&pact, epoch, id), &place)?;
+        if let Some(foreign) = foreign {
+            crate::federation::register_foreign_world_for_pact_in(vault, wtxn, &pact, foreign)?;
+        }
     }
     Ok(())
 }
