@@ -115,6 +115,10 @@ pub(crate) struct McpGatewayError {
     /// A verb hook's stop (ARCH-0080 §3), surfaced as `error.data.hook`; a
     /// code-mode door hands it back to the run as the typed stop.
     pub(super) hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
+    /// When a model call no provider answered may be sent again, in seconds
+    /// (FIX 3194), surfaced as `error.data.retry_after`; a code-mode door
+    /// hands it back to the run as the typed outage.
+    pub(super) retry_after: Option<u64>,
 }
 
 impl McpGatewayError {
@@ -131,6 +135,7 @@ impl McpGatewayError {
             wrong_root: None,
             call_receipt: None,
             hook: None,
+            retry_after: None,
         }
     }
 
