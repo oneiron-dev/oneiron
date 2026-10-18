@@ -159,7 +159,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
 | `src/api/facade/call_context.rs` | src | m | 22 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
 | `src/api/facade/campaign_split_doors.rs` | src | s | 1 crate-vis | — | The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores… |
-| `src/api/facade/connector_call_doors.rs` | src | s | 2 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
+| `src/api/facade/connector_call_doors.rs` | src | s | 3 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/core_write_doors.rs` | src | s | 6 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
 | `src/api/facade/courtesy_delete_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`… |
 | `src/api/facade/critic_review_doors.rs` | src | s | 1 crate-vis | — | The host door of one critic review (`vault.critic.review`, OF-352): the caller binds a target, a session, a… |
@@ -488,8 +488,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/config/tests.rs` | test | s | — | — | — |
 | `src/config/trusted_proxy.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | TrustedProxy | `trusted_proxies`: the reverse proxies whose `X-Forwarded-For` entries the server believes when it keys a… |
 | `src/connector_admission_host.rs` | src | L | 13 crate-vis | — | The host half of a generic MCP catalog connector's first admission (OF-189): discovery at the endpoint… |
-| `src/connector_call_host.rs` | src | m | 1 struct · 2 fn | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
+| `src/connector_call_host.rs` | src | m | 1 struct · 1 fn · 15 crate-vis | ServedConnectorCallHost | The served [`ConnectorCallHost`] (ONE-2510): the generic connector call's transport, credential and reply… |
+| `src/connector_call_host/live_exchange.rs` | src | m | 21 crate-vis | — | The live half of the call host: the worker that owns an exchange once its send returned, and the reply… |
 | `src/connector_call_settle.rs` | src | s | 3 crate-vis | — | The connector-call settler (ONE-2510): the served loop that re-enters every held or pending-delivery… |
+| `src/connector_elicitation.rs` | src | m | 11 crate-vis | — | The questions a connector asks mid-call, kept live for their caller, and the caller's answers (ONE-2510) |
 | `src/control_keys.rs` | src | s | 2 struct · 1 enum · 6 fn · 1 const · 1 mod | ControlKeys, KeyError, KeyRecord | Control-plane API keys: HMAC-SHA256 at rest, transactional uniqueness, and a database lookup on every… |
 | `src/control_keys/http.rs` | src | s | 1 fn | — | Optional private control-plane router; tenant bearer auth remains separate |
 | `src/control_keys/tests.rs` | test | s | — | — | — |
