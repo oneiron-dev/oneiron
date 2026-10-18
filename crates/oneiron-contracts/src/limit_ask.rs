@@ -101,11 +101,14 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Stored cells one workbook import writes into a live office body,
+    /// every sheet together. Past it the workbook is imported whole.
+    ImportXlsxLiveCells,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -128,6 +131,7 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::ImportXlsxLiveCells,
     ];
 
     /// The config key that sets the row.
@@ -155,6 +159,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
         }
     }
 
@@ -184,6 +189,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::ImportXlsxLiveCells => 200_000,
         }
     }
 }
