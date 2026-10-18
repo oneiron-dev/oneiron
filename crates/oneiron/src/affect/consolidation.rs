@@ -1,5 +1,6 @@
 //! Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans.
 
+use crate::ports::EdgeDirection;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use std::collections::BTreeSet;
@@ -23,8 +24,9 @@ use crate::entity_id::EntityId;
 use crate::error::{ClaimError, Error, Result};
 use crate::provenance::EdgeRef;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::temporal::TimeRange;
-use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, MAX_EDGE_QUERY_RESULTS, SUPERSEDES_DEFAULT_WEIGHT};
+use crate::vault::{CLAIM_OF_DEFAULT_WEIGHT, SUPERSEDES_DEFAULT_WEIGHT};
 struct StoredClaimVadState {
     id: EntityId,
     header: EntityMetadataHeader,
@@ -495,15 +497,19 @@ impl Vault {
         let mut seen = std::collections::HashSet::new();
         let mut semantic_edges = Vec::new();
         let mut structural_edges_skipped = 0;
+        // Each way is read whole: past its threshold row the scan raises one
+        // check and reads on.
+        let start = |direction: EdgeDirection| {
+            let scope = [&[direction as u8][..], claim_id.as_bytes()].concat();
+            ScanCount::start(&self.store, txn, EngineScan::ClaimVadIncidentEdges, &scope)
+        };
 
-        for (scanned, entry) in self
+        let mut count = start(EdgeDirection::Out)?;
+        for entry in self
             .store
-            .port_edges(txn, claim_id, crate::ports::EdgeDirection::Out, None, None)?
-            .enumerate()
+            .port_edges(txn, claim_id, EdgeDirection::Out, None, None)?
         {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("claim_vad_incident_edges"));
-            }
+            count.row();
             let edge_row = entry?;
             let info = edge_row;
             Self::record_claim_vad_edge(
@@ -513,15 +519,14 @@ impl Vault {
                 &mut structural_edges_skipped,
             );
         }
+        count.finish(self);
 
-        for (scanned, entry) in self
+        let mut count = start(EdgeDirection::In)?;
+        for entry in self
             .store
-            .port_edges(txn, claim_id, crate::ports::EdgeDirection::In, None, None)?
-            .enumerate()
+            .port_edges(txn, claim_id, EdgeDirection::In, None, None)?
         {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("claim_vad_incident_edges"));
-            }
+            count.row();
             let edge_row = entry?;
             let info = edge_row;
             Self::record_claim_vad_edge(
@@ -531,6 +536,7 @@ impl Vault {
                 &mut structural_edges_skipped,
             );
         }
+        count.finish(self);
 
         Ok((semantic_edges, structural_edges_skipped))
     }
@@ -557,20 +563,19 @@ impl Vault {
         claim_id: &EntityId,
     ) -> Result<Vec<StoredClaimVadState>> {
         let mut states = Vec::new();
-        for (scanned, entry) in self
+        let kind = EdgeKind::ClaimOf;
+        let scope = [
+            &[EdgeDirection::In as u8][..],
+            claim_id.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::EdgePeerRows, &scope)?;
+        for entry in self
             .store
-            .port_edges(
-                txn,
-                claim_id,
-                crate::ports::EdgeDirection::In,
-                Some(EdgeKind::ClaimOf),
-                None,
-            )?
-            .enumerate()
+            .port_edges(txn, claim_id, EdgeDirection::In, Some(kind), None)?
         {
-            if scanned >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("claim_vad_states"));
-            }
+            count.row();
             let edge_row = entry?;
             let state_id = edge_row.target;
             let Some(raw) = self
@@ -597,6 +602,7 @@ impl Vault {
                 });
             }
         }
+        count.finish(self);
         states.sort_by_key(|state| state.id);
         Ok(states)
     }
