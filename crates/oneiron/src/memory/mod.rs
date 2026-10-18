@@ -135,7 +135,10 @@ pub use diary_read::{
     DiaryReadsView, DiaryReviewAnswer, DiaryReviewState,
 };
 pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
-pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use dreamer::{
+    ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
+    DreamerParkedAttemptView,
+};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };

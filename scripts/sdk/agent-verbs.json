@@ -9799,7 +9799,40 @@
         "spec": "$"
       },
       "mcp_scope": "unrestricted",
-      "section": false
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.step",
+      "description": "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work.",
+      "input": "crate::llm::model_step::SettledStepRequest",
+      "output": "Option<crate::llm::model_step::SettledStepView>",
+      "call": "crate::llm::model_step::settled_step_as_owner(memory, &memory.embedded_owner(\"vault.runs.step\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.checkpoint",
+      "description": "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run.",
+      "input": "crate::engine_executor::checkpoint_read::CheckpointReadRequest",
+      "output": "Option<crate::engine_executor::checkpoint_read::CheckpointView>",
+      "call": "crate::engine_executor::checkpoint_read::checkpoint_as_owner(memory, &memory.embedded_owner(\"vault.runs.checkpoint\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.consolidation.promote",

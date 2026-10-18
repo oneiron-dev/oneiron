@@ -587,6 +587,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.artifacts.read", post(facade_route))
         .route("/vault.consolidation.enqueue", post(facade_route))
         .route("/vault.consolidation.status", post(facade_route))
+        .route("/vault.runs.step", post(facade_route))
+        .route("/vault.runs.checkpoint", post(facade_route))
         .route("/vault.consolidation.promote", post(facade_route))
         .route("/vault.consolidation.evidence", post(facade_route))
         .route("/vault.claims.vet", post(facade_route))

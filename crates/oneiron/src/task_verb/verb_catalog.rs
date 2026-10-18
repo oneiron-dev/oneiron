@@ -597,6 +597,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultRunsStep,
+    VaultRunsCheckpoint,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
     VaultClaimsVet,
@@ -1269,6 +1271,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultRunsStep,
+        Self::VaultRunsCheckpoint,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
         Self::VaultClaimsVet,
@@ -1956,6 +1960,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultRunsStep => "vault.runs.step",
+            Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
             Self::VaultClaimsVet => "vault.claims.vet",
@@ -2591,6 +2597,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -3270,6 +3278,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -4029,6 +4039,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultRunsStep
+                | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
                 | Self::VaultClaimsVet
@@ -5136,6 +5148,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -5809,6 +5823,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultRunsStep => &["spec"],
+            Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
             Self::VaultClaimsVet => &["spec"],
@@ -7572,6 +7588,12 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultRunsStep => {
+                "Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."
+            }
+            Self::VaultRunsCheckpoint => {
+                "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationPromote => {
                 "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."

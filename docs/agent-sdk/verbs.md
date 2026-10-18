@@ -559,6 +559,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.runs.step`
+- `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
 - `vault.claims.vet`

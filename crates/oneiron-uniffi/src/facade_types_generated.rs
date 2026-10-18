@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 626 facade rows, 2280 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 585.
+// UniFFI census: 628 facade rows, 2288 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 587.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -33489,6 +33489,92 @@ pub struct DeckPreview {
     pub slides: Vec<DeckPreviewSlide>,
 }
 
+/// `oneiron::llm::step::settled::SettledStepRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SettledStepRequest {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+}
+
+/// `oneiron::llm::step::settled::SettledStepView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettledStepView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "step_hash")]
+    pub step_hash: String,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "purpose")]
+    pub purpose: String,
+    #[serde(rename = "params_hash")]
+    pub params_hash: String,
+    #[serde(rename = "response")]
+    pub response: LlmResponse,
+}
+
+/// `oneiron::engine_executor::checkpoint_read::CheckpointReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CheckpointReadRequest {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "from_step", default, skip_serializing_if = "Option::is_none")]
+    pub from_step: Option<u64>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::engine_executor::checkpoint_read::CheckpointStepView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckpointStepView {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "state_hash")]
+    pub state_hash: String,
+    #[serde(rename = "created_at_ms")]
+    pub created_at_ms: u64,
+}
+
+/// `oneiron::engine_executor::checkpoint_read::CheckpointResumeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckpointResumeView {
+    #[serde(rename = "step")]
+    pub step: u64,
+    #[serde(rename = "wait_ref")]
+    pub wait_ref: String,
+    #[serde(rename = "effect")]
+    pub effect: String,
+    #[serde(rename = "output_handle")]
+    pub output_handle: String,
+    #[serde(rename = "reply", default, skip_serializing_if = "Option::is_none")]
+    pub reply: Option<crate::WireJson>,
+}
+
+/// `oneiron::engine_executor::checkpoint_read::CheckpointView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CheckpointView {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "completed_steps")]
+    pub completed_steps: u64,
+    #[serde(rename = "steps")]
+    pub steps: Vec<CheckpointStepView>,
+    #[serde(rename = "resumed")]
+    pub resumed: Vec<CheckpointResumeView>,
+    #[serde(rename = "next_step", default, skip_serializing_if = "Option::is_none")]
+    pub next_step: Option<u64>,
+}
+
 /// `oneiron::dreamer_promotion::admission::EvidenceKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum EvidenceKind {
@@ -33784,6 +33870,34 @@ pub struct SignalExtractionResultRequest {
     pub job_ref: String,
 }
 
+/// `oneiron::memory::dreamer::DreamerParkCauseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DreamerParkCauseView {
+    #[serde(rename = "provider_unavailable")]
+    ProviderUnavailable,
+    #[serde(rename = "executor_error")]
+    ExecutorError,
+    #[serde(rename = "checkpoint")]
+    Checkpoint,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "signal")]
+    Signal,
+    #[serde(rename = "other")]
+    Other,
+}
+
+/// `oneiron::memory::dreamer::DreamerParkedAttemptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DreamerParkedAttemptView {
+    #[serde(rename = "job_ref")]
+    pub job_ref: String,
+    #[serde(rename = "cause")]
+    pub cause: DreamerParkCauseView,
+    #[serde(rename = "parked_at")]
+    pub parked_at: u64,
+}
+
 /// `oneiron::memory::dreamer::DreamerAttemptView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DreamerAttemptView {
@@ -33813,6 +33927,8 @@ pub struct DreamerAttemptView {
     pub created_at: u64,
     #[serde(rename = "updated_at")]
     pub updated_at: u64,
+    #[serde(rename = "parked", default, skip_serializing_if = "Option::is_none")]
+    pub parked: Option<DreamerParkedAttemptView>,
 }
 
 /// `oneiron::memory::signal_extraction::SignalExtractionMessage`.
