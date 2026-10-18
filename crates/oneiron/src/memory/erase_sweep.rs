@@ -1,0 +1,93 @@
+//! Owner-bound historical erasure timing from the immutable redaction receipt.
+
+use serde::{Deserialize, Serialize};
+
+use super::support::verify_deletion_authority_in_txn;
+use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::EntityId;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::consent::AuthenticatedOwner;
+use crate::deletion::{
+    decode_redaction_audit_receipt, redaction_sweep_completion_id,
+    redaction_sweep_completion_in_txn, validate_redaction_receipt_body,
+};
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
+
+/// The `redaction:<hex>` receipt ref returned by an erase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecordEraseSweepRequest {
+    pub receipt_ref: String,
+}
+
+/// Recorded times only: the deadline survives removal of the completed job.
+/// No erased body, queued scope, retry error text or inferred deadline is released.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RecordEraseSweep {
+    pub receipt_ref: String,
+    pub request_id: String,
+    pub requested_at: u64,
+    pub sweep_queued_at: Option<u64>,
+    pub deadline_at: Option<u64>,
+    pub sweep_complete_at: Option<u64>,
+}
+
+impl Memory<'_> {
+    /// Reads the receipt and its linked completion in one owner-checked snapshot.
+    pub fn record_erase_sweep_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: RecordEraseSweepRequest,
+    ) -> MemoryResult<Option<RecordEraseSweep>> {
+        let txn = self.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let actor = owner.revalidate_in_txn(self.vault, &txn)?;
+        if actor != self.actor {
+            return Err(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the erase sweep is read under the caller's own owner proof",
+                &["Present the owner's own verified, unattenuated credential."],
+            ));
+        }
+        verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        let receipt_id = input
+            .receipt_ref
+            .strip_prefix("redaction:")
+            .and_then(|id| EntityId::from_hex(id).ok())
+            .ok_or_else(|| MemoryError::bad_request("expected a redaction:<hex> receipt ref"))?;
+        let Some(raw) = self.vault.store.port_entity_raw(&txn, &receipt_id)? else {
+            return Ok(None);
+        };
+        if raw.first() != Some(&ENTITY_TYPE_REDACTION_AUDIT) {
+            return Ok(None);
+        }
+        self.produced_from([receipt_id]);
+        let body = raw
+            .get(ENTITY_METADATA_HEADER_LEN..)
+            .ok_or(crate::Error::CorruptedIndex("redaction audit receipt body"))?;
+        validate_redaction_receipt_body(body)?;
+        let receipt = decode_redaction_audit_receipt(body)?;
+        let sweep_complete_at = if receipt.sweep_complete_at.is_some() {
+            receipt.sweep_complete_at
+        } else {
+            let completed = redaction_sweep_completion_in_txn(
+                &self.vault.store,
+                &txn,
+                &receipt_id,
+                &receipt,
+            )?;
+            if completed.is_some() {
+                self.produced_from([redaction_sweep_completion_id(&receipt_id)?]);
+            }
+            completed
+        };
+        Ok(Some(RecordEraseSweep {
+            receipt_ref: format!("redaction:{}", receipt_id.to_hex()),
+            request_id: receipt.request_id,
+            requested_at: receipt.requested_at,
+            sweep_queued_at: receipt.sweep_queued_at,
+            deadline_at: receipt.sweep_deadline_at,
+            sweep_complete_at,
+        }))
+    }
+}

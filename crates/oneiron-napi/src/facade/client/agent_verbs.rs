@@ -2388,6 +2388,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_records_erase_sweep(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.records.erase_sweep", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_create_child(
         &self,
         input: serde_json::Value,

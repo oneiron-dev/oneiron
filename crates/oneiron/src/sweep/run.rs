@@ -229,7 +229,7 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
     run.jobs_deferred += withdrawn_not_due.len() as u64;
 
     // Deadline surveillance covers EVERY decodable row, due or not — a
-    // breach of the queued_at + 30 d SLA (GDPR Art. 12(3)) is loud each run.
+    // breach of the request + 30 d SLA (GDPR Art. 12(3)) is loud each run.
     for (key, job) in &jobs {
         if job.retry_state.deadline_at < now {
             run.deadline_breaches += 1;

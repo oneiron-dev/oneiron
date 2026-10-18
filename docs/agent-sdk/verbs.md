@@ -281,6 +281,7 @@ both bindings and their export-census tests in one change.
 - `self.off_record.execute`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.records.erase_sweep`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`

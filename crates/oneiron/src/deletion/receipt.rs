@@ -7,7 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
 
 use super::erase::take_staged_sweep_refs_in_txn;
-use super::sweep_queue::HardEraseSweepExtras;
+use super::sweep_queue::{HardEraseSweepExtras, hard_erase_sweep_deadline_at};
 use super::tombstone::DeleteReason;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -38,6 +38,7 @@ pub(crate) struct RedactionAuditReceipt {
     pub(crate) soft_complete_at: u64,
     pub(crate) hard_purge_complete_at: u64,
     pub(crate) sweep_queued_at: Option<u64>,
+    pub(crate) sweep_deadline_at: Option<u64>,
     pub(crate) sweep_complete_at: Option<u64>,
     pub(crate) affected_revision_ids: Vec<String>,
     /// Optional room-specific authority, never content from the erased record.
@@ -145,6 +146,9 @@ pub(crate) fn encode_redaction_audit_receipt(
         soft_complete_at: input.soft_complete_at,
         hard_purge_complete_at: input.hard_purge_complete_at,
         sweep_queued_at: input.sweep_queued_at,
+        sweep_deadline_at: input
+            .sweep_queued_at
+            .map(|_| hard_erase_sweep_deadline_at(input.requested_at)),
         sweep_complete_at: None,
         affected_revision_ids: Vec::new(),
         actor_ref: input
@@ -251,7 +255,7 @@ pub(crate) fn redaction_receipt_is_stale_finalization_echo(local: &[u8], incomin
 ///
 /// Un-cfg'd since ONE-1087: the sweep executor validates every receipt body
 /// it reads, and the completion row it appends, on EVERY build.
-const RECEIPT_BODY_KEYS: [&str; 13] = [
+const RECEIPT_BODY_KEYS: [&str; 14] = [
     "request_id",
     "scope",
     "reason",
@@ -259,6 +263,7 @@ const RECEIPT_BODY_KEYS: [&str; 13] = [
     "soft_complete_at",
     "hard_purge_complete_at",
     "sweep_queued_at",
+    "sweep_deadline_at",
     "sweep_complete_at",
     "affected_revision_ids",
     "actor_ref",
@@ -276,8 +281,8 @@ const RECEIPT_BODY_KEYS: [&str; 13] = [
 /// * keys must be drawn from [`RECEIPT_BODY_KEYS`], no duplicates, no
 ///   unknown fields (a field outside the pinned set is a divergence from
 ///   the minimization contract — "opaque identifiers + timestamps only");
-/// * required: every field except `sweep_queued_at` / `sweep_complete_at`
-///   (the two contract-optional timestamps, which may also be nil);
+/// * required: every field except the optional sweep timestamps and room
+///   authority fields; sweep timestamps may also be nil;
 /// * `request_id`, `scope.entity_ids[]`, `scope.revision_ids[]`, and
 ///   `affected_revision_ids[]` must parse as opaque UUIDs (GDPR Art. 5(2)
 ///   minimization: free text here would smuggle names/content into an
@@ -368,7 +373,7 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
                     )));
                 }
             }
-            "sweep_queued_at" | "sweep_complete_at" => {
+            "sweep_queued_at" | "sweep_deadline_at" | "sweep_complete_at" => {
                 if !value.is_nil() && value.as_u64().is_none() {
                     return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
                         "optional sweep timestamps must be nil or non-negative integers",
@@ -406,7 +411,7 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
         }
     }
 
-    let room_fields = &seen[9..12];
+    let room_fields = &seen[10..13];
     if room_fields.iter().any(|present| *present) && !room_fields.iter().all(|present| *present) {
         return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
             "room authority fields must appear together",
@@ -415,7 +420,12 @@ pub(crate) fn validate_redaction_receipt_body(body: &[u8]) -> Result<()> {
     for (index, key) in RECEIPT_BODY_KEYS.iter().enumerate() {
         let optional = matches!(
             *key,
-            "sweep_queued_at" | "sweep_complete_at" | "actor_ref" | "room_ref" | "room_role"
+            "sweep_queued_at"
+                | "sweep_deadline_at"
+                | "sweep_complete_at"
+                | "actor_ref"
+                | "room_ref"
+                | "room_role"
         );
         if !optional && !seen[index] {
             return Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
@@ -749,6 +759,7 @@ impl Vault {
                 input.scope.clone(),
                 sweep_extras,
                 queued_at,
+                input.requested_at,
             )?
         } else {
             Vec::new()

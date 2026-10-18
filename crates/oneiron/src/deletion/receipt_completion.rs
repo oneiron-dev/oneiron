@@ -25,7 +25,7 @@ const REDACTION_SWEEP_COMPLETION_DOMAIN: &[u8] = b"oneiron:redaction-sweep-compl
 
 /// The id of receipt `receipt_id`'s completion row: the first 16 bytes of a
 /// domain-separated BLAKE3 of the receipt's id.
-fn redaction_sweep_completion_id(receipt_id: &EntityId) -> Result<EntityId> {
+pub(crate) fn redaction_sweep_completion_id(receipt_id: &EntityId) -> Result<EntityId> {
     let mut seed = REDACTION_SWEEP_COMPLETION_DOMAIN.to_vec();
     seed.extend_from_slice(receipt_id.as_bytes());
     let digest = blake3::hash(&seed);

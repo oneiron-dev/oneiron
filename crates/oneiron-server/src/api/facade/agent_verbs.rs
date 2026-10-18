@@ -304,6 +304,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.off_record.execute", post(facade_route))
         .route("/vault.records.erase_preview", post(facade_route))
         .route("/vault.records.erase_confirm", post(facade_route))
+        .route("/vault.records.erase_sweep", post(facade_route))
         .route("/vault.research.create_child", post(facade_route))
         .route("/vault.research.archive", post(facade_route))
         .route("/vault.research.archive.install", post(facade_route))

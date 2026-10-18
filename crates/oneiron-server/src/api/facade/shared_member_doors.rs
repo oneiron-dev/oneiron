@@ -21,6 +21,7 @@ use oneiron::federation::{
     PendingActMatured, PendingActStarted, PendingAuthorityAct, SharedActExecutionReceipt,
     SharedEraseAsk, SharedInvitation,
 };
+use oneiron::memory::erase_sweep::{RecordEraseSweep, RecordEraseSweepRequest};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, GuestSlipMintRequest, GuestSlipMinted, InvitationSlip, InvitationSlipRequest,
@@ -29,7 +30,9 @@ use oneiron::task_verb::sdk::{
     SharedInvitationWithdrawRequest, SharedVaultRequest,
 };
 
-use super::host_doors::{Listed, MaybeListed, internal, off_runtime_listing, refused};
+use super::host_doors::{
+    Listed, MaybeListed, credential_listing, internal, off_runtime_listing, owner_proof, refused,
+};
 use super::shared_act_doors::{as_person_naming, person, receipt_rows};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -105,6 +108,31 @@ pub(crate) async fn vault_records_erase_confirm(
             .listing_producers(producers);
         sdk::confirm_record_erase(&memory, &caller, input)
     })
+    .await
+}
+
+/// The owner's historical erasure timing, without starting or polling a sweep.
+pub(crate) async fn vault_records_erase_sweep(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: RecordEraseSweepRequest,
+) -> Listed<Option<RecordEraseSweep>> {
+    const VERB: &str = "vault.records.erase_sweep";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return refused(refusal),
+    };
+    let actor = match owner.revalidate(server.vault()) {
+        Ok(actor) => actor,
+        Err(error) => return refused(error.into()),
+    };
+    credential_listing(
+        server,
+        auth,
+        (actor, EdgeActorClass::Human),
+        VERB,
+        move |_, _, memory| memory.record_erase_sweep_as(&owner, input),
+    )
     .await
 }
 
