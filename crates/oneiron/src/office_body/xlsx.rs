@@ -1193,28 +1193,18 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
     Ok(changes)
 }
 
-/// `base` as `current`'s structural edits leave it: moved by the row and
-/// column edits `entries`, each matched by the sheet's name in `base` (an
-/// added sheet's in `current`), then retargeted to `current`'s sheet layout.
-/// What differs from `current` after that is cell and name writes.
+/// `base` as `current`'s structural edits leave it, in the order the export
+/// applies them: each base sheet's fate by its key (kept, renamed or
+/// deleted) first, then every row and column edit in `entries` under its
+/// sheet's final name. A sheet added since reuses no base sheet's edits,
+/// even under a name a base sheet had. What differs from `current` after
+/// that is cell and name writes.
 fn moved(
     base: &XlsxBody,
     current: &XlsxBody,
     entries: &[(String, XlsxAxisEdit)],
 ) -> Result<XlsxBody> {
     let mut moved = base.clone();
-    for (key, edit) in entries {
-        let name = base
-            .sheets
-            .iter()
-            .chain(&current.sheets)
-            .find(|sheet| sheet.key == *key)
-            .map(|sheet| sheet.name.clone());
-        if let Some(name) = name {
-            // The live body checked each edit as it made it.
-            axis(&mut moved, key, &name, edit, false)?;
-        }
-    }
     let fates: HashMap<String, SheetFate> = base
         .sheets
         .iter()
@@ -1235,6 +1225,22 @@ fn moved(
                 .cloned()
                 .unwrap_or(SheetFate::Keep)
         });
+    }
+    moved.sheets.retain_mut(|sheet| {
+        match current.sheets.iter().find(|held| held.key == sheet.key) {
+            Some(held) => {
+                sheet.name.clone_from(&held.name);
+                true
+            }
+            None => false,
+        }
+    });
+    // An edit to a sheet the body later deleted leaves with the sheet.
+    for (key, edit) in entries {
+        if let Some(sheet) = current.sheets.iter().find(|sheet| sheet.key == *key) {
+            // The live body checked each edit as it made it.
+            axis(&mut moved, key, &sheet.name, edit, false)?;
+        }
     }
     Ok(moved)
 }

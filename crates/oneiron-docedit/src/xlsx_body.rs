@@ -27,7 +27,7 @@ pub use crate::xlsx_styles::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Excel's ceiling on one cell's text.
 pub const MAX_TEXT_CHARS: usize = 32_767;
@@ -501,10 +501,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
         }
         relaid = true;
     }
-    let unshared = unshare_written_anchors(&book, changes)?;
+    unshare_written_anchors(&mut book, changes)?;
     let mut by_sheet: BTreeMap<&str, BTreeMap<u32, BTreeMap<u32, &XlsxChange>>> = BTreeMap::new();
     let mut names = Vec::new();
-    for change in changes.iter().chain(&unshared) {
+    for change in changes {
         let XlsxChange::Cell {
             sheet,
             col,
@@ -552,6 +552,9 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             .iter()
             .map(|cell| ((cell.col, cell.row), cell))
             .collect();
+        // A format-only write patches the stored cell's s= alone, so a rich
+        // shared string or a shared formula member keeps its markup.
+        let mut restyled = BTreeSet::new();
         for (row, line) in rows {
             for (col, change) in line {
                 let held = stored.get(&(*col, *row));
@@ -569,9 +572,12 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
                 );
                 dropped_formula |=
                     held.is_some_and(|cell| cell.formula.is_some()) && !writes_formula;
+                if format_only(change, held.copied()) {
+                    restyled.insert((*col, *row));
+                }
             }
         }
-        let bytes = rewrite_rows(&book.package, &part, rows)?;
+        let bytes = rewrite_rows(&book.package, &part, rows, &restyled)?;
         book.package.replace_xml_part(&part, bytes)?;
     }
     if !names.is_empty() {
@@ -596,13 +602,21 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
     Ok(book.package.export()?)
 }
 
-/// The cells a write to a shared formula's anchor must also write: every
-/// other member of its group not already written, as its own formula with
-/// its format kept. The anchor holds the group's only text, so once it is
-/// rewritten the members carry theirs. A group with a member whose text
-/// could not be read refuses.
-fn unshare_written_anchors(book: &Book, changes: &[XlsxChange]) -> Result<Vec<XlsxChange>> {
-    let mut written: BTreeMap<&str, HashSet<(u32, u32)>> = BTreeMap::new();
+/// Whether `change` keeps `held`'s stored value and formula: a write of its
+/// format alone.
+fn format_only(change: &XlsxChange, held: Option<&XlsxCell>) -> bool {
+    matches!(
+        (change, held),
+        (XlsxChange::Cell { value, formula, .. }, Some(held))
+            if held.value == *value && held.formula == *formula
+    )
+}
+
+/// A content write to a shared formula's anchor first writes every member
+/// of its group out as its own formula, in place, since the anchor holds
+/// the group's only text; a format-only write leaves the group shared.
+fn unshare_written_anchors(book: &mut Book, changes: &[XlsxChange]) -> Result<()> {
+    let mut written: BTreeMap<&str, HashMap<(u32, u32), &XlsxChange>> = BTreeMap::new();
     for change in changes {
         if let XlsxChange::Cell {
             sheet, col, row, ..
@@ -611,47 +625,25 @@ fn unshare_written_anchors(book: &Book, changes: &[XlsxChange]) -> Result<Vec<Xl
             written
                 .entry(sheet.as_str())
                 .or_default()
-                .insert((*col, *row));
+                .insert((*col, *row), change);
         }
     }
-    let mut out = Vec::new();
     for (sheet, cells_written) in &written {
-        let Some(part) = book.worksheets.get(*sheet) else {
+        let Some(part) = book.worksheets.get(*sheet).cloned() else {
             continue;
         };
-        let (cells, _, groups) = book.sheet(part)?;
+        let (cells, _, _) = book.sheet(&part)?;
         let stored: HashMap<(u32, u32), &XlsxCell> = cells
             .iter()
             .map(|cell| ((cell.col, cell.row), cell))
             .collect();
-        for group in groups.values() {
-            if !cells_written.contains(&group.anchor) {
-                continue;
-            }
-            if !group.complete {
-                return Err(refused(
-                    "a shared formula's anchor whose members cannot all be written out",
-                ));
-            }
-            for at in &group.cells {
-                if *at == group.anchor || cells_written.contains(at) {
-                    continue;
-                }
-                let cell = stored
-                    .get(at)
-                    .ok_or(refused("a shared formula member is missing"))?;
-                out.push(XlsxChange::Cell {
-                    sheet: (*sheet).to_owned(),
-                    col: at.0,
-                    row: at.1,
-                    value: cell.value.clone(),
-                    formula: cell.formula.clone(),
-                    style: cell.style,
-                });
-            }
-        }
+        book.unshare(&part, &|group: &SharedGroup| {
+            cells_written
+                .get(&group.anchor)
+                .is_some_and(|change| !format_only(change, stored.get(&group.anchor).copied()))
+        })?;
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Have the opening application recalculate every formula on load: the
@@ -994,8 +986,13 @@ impl Book {
                     formula = text;
                     locked = lock;
                 }
-                if node.attr("vm").is_some() {
-                    locked = Some(XlsxLock::RichValue);
+                // A rich value's cell is read-only; a shared one still reads
+                // its formula from its group first.
+                let rich = node.attr("vm").is_some();
+                if rich {
+                    if shared.is_none() {
+                        locked = Some(XlsxLock::RichValue);
+                    }
                 } else if node.attr("cm").is_some() {
                     locked.get_or_insert(XlsxLock::ArrayFormula);
                 }
@@ -1041,7 +1038,7 @@ impl Book {
                     })
                     .transpose()?;
                 if let Some(si) = shared {
-                    sharing.push((cells.len(), si));
+                    sharing.push((cells.len(), si, rich));
                 }
                 cells.push(XlsxCell {
                     col,
@@ -1054,7 +1051,7 @@ impl Book {
             }
         }
         let mut groups = SharedGroups::new();
-        for (index, si) in sharing {
+        for (index, si, rich) in sharing {
             let cell = &mut cells[index];
             let Some(((col, row), text)) = anchors.get(&si) else {
                 continue;
@@ -1081,7 +1078,7 @@ impl Book {
             match own {
                 Some(own) => {
                     cell.formula = Some(own);
-                    cell.locked = None;
+                    cell.locked = rich.then_some(XlsxLock::RichValue);
                 }
                 None => group.complete = false,
             }
@@ -1531,60 +1528,86 @@ impl Book {
     }
 
     /// Write every shared formula out cell by cell, each member with its own
-    /// text, so a row or column edit moves each cell's references alone. A
-    /// group whose members cannot all be read refuses.
+    /// text in place (a rich value's metadata stays with its cell), so a row
+    /// or column edit moves each cell's references alone. A group whose
+    /// members cannot all be read refuses.
     fn unshare_all(&mut self) -> Result<()> {
         let parts: Vec<String> = self.worksheets.values().cloned().collect();
         for part in parts {
-            let (cells, _, groups) = self.sheet(&part)?;
+            let (cells, _, _) = self.sheet(&part)?;
             if cells
                 .iter()
                 .any(|cell| cell.locked == Some(XlsxLock::SharedFormula))
-                || groups.values().any(|group| !group.complete)
             {
                 return Err(refused(
                     "a shared formula whose members cannot all be written out",
                 ));
             }
-            if groups.is_empty() {
+            self.unshare(&part, &|_: &SharedGroup| true)?;
+        }
+        Ok(())
+    }
+
+    /// Write each `chosen` shared formula group of one worksheet out as its
+    /// members' own formulas, in place: every other byte of each cell (its
+    /// cached value, rich value metadata and format) stays. A chosen group
+    /// whose members cannot all be written out refuses.
+    fn unshare(&mut self, part: &str, pick: &dyn Fn(&SharedGroup) -> bool) -> Result<()> {
+        let (cells, _, groups) = self.sheet(part)?;
+        let chosen: HashSet<u32> = groups
+            .iter()
+            .filter(|(_, group)| pick(group))
+            .map(|(si, _)| *si)
+            .collect();
+        if chosen.is_empty() {
+            return Ok(());
+        }
+        if chosen.iter().any(|si| !groups[si].complete) {
+            return Err(refused(
+                "a shared formula whose members cannot all be written out",
+            ));
+        }
+        let own: HashMap<(u32, u32), &str> = cells
+            .iter()
+            .filter_map(|cell| Some(((cell.col, cell.row), cell.formula.as_deref()?)))
+            .collect();
+        let bytes = self
+            .package
+            .part(part)?
+            .ok_or(refused("a worksheet part is missing"))?;
+        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let mut edits = Vec::new();
+        for node in &tree.nodes {
+            if !node.is(SML, "f")
+                || node.attr("t") != Some("shared")
+                || !node
+                    .attr("si")
+                    .and_then(|si| si.trim().parse::<u32>().ok())
+                    .is_some_and(|si| chosen.contains(&si))
+            {
                 continue;
             }
-            let own: HashMap<(u32, u32), &str> = cells
-                .iter()
-                .filter_map(|cell| Some(((cell.col, cell.row), cell.formula.as_deref()?)))
-                .collect();
-            let bytes = self
-                .package
-                .part(&part)?
-                .ok_or(refused("a worksheet part is missing"))?;
-            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
-            let mut edits = Vec::new();
-            for node in &tree.nodes {
-                if !node.is(SML, "f") || node.attr("t") != Some("shared") {
-                    continue;
-                }
-                let at = node
-                    .parent
-                    .and_then(|cell| tree.nodes[cell].attr("r"))
-                    .and_then(cell_ref)
-                    .ok_or(refused("a worksheet cell has no reference"))?;
-                let text = own
-                    .get(&at)
-                    .ok_or(refused("a shared formula member is missing"))?;
-                edits.push((
-                    node.span.clone(),
-                    format!(
-                        "<{0}>{1}</{0}>",
-                        node.qualified,
-                        escape_text(&storage_form(text))
-                    )
-                    .into_bytes(),
-                ));
-            }
-            let value =
-                splice(&bytes, edits).map_err(|_| refused("a worksheet could not be rewritten"))?;
-            self.package.replace_xml_part(&part, value)?;
+            let at = node
+                .parent
+                .and_then(|cell| tree.nodes[cell].attr("r"))
+                .and_then(cell_ref)
+                .ok_or(refused("a worksheet cell has no reference"))?;
+            let text = own
+                .get(&at)
+                .ok_or(refused("a shared formula member is missing"))?;
+            edits.push((
+                node.span.clone(),
+                format!(
+                    "<{0}>{1}</{0}>",
+                    node.qualified,
+                    escape_text(&storage_form(text))
+                )
+                .into_bytes(),
+            ));
         }
+        let value =
+            splice(&bytes, edits).map_err(|_| refused("a worksheet could not be rewritten"))?;
+        self.package.replace_xml_part(part, value)?;
         Ok(())
     }
 
@@ -1658,7 +1681,7 @@ impl Book {
                     rows.entry(*row).or_default().insert(*col, header);
                 }
             }
-            let bytes = rewrite_rows(&self.package, &part, &rows)?;
+            let bytes = rewrite_rows(&self.package, &part, &rows, &BTreeSet::new())?;
             self.package.replace_xml_part(&part, bytes)?;
         }
         // Each part with formulas, and the sheet its unprefixed references
@@ -2155,10 +2178,12 @@ impl Book {
 
 /// Rebuild `sheetData` with the touched rows rewritten in column order and new
 /// rows inserted in row order; untouched rows and cells keep their bytes.
+/// `restyled` (column, row) cells are written as their format alone.
 fn rewrite_rows(
     package: &Package,
     part: &str,
     rows: &BTreeMap<u32, BTreeMap<u32, &XlsxChange>>,
+    restyled: &BTreeSet<(u32, u32)>,
 ) -> Result<Vec<u8>> {
     let bytes = package
         .part(part)?
@@ -2183,6 +2208,7 @@ fn rewrite_rows(
             continue;
         };
         let mut line: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+        let mut held = BTreeMap::new();
         for (_, cell) in tree.children(index).filter(|(_, node)| node.is(SML, "c")) {
             let col = cell
                 .attr("r")
@@ -2190,9 +2216,17 @@ fn rewrite_rows(
                 .ok_or(refused("a worksheet cell has no reference"))?
                 .0;
             line.insert(col, bytes[cell.span.clone()].to_vec());
+            held.insert(col, cell);
         }
         let cell_name = row.child_name("c");
         for (col, change) in changes {
+            if restyled.contains(&(*col, number))
+                && let Some(cell) = held.get(col)
+                && let XlsxChange::Cell { style, .. } = change
+            {
+                line.insert(*col, restyle(&bytes, cell, *style));
+                continue;
+            }
             match cell_xml(&cell_name, *col, number, change)? {
                 Some(cell) => line.insert(*col, cell.into_bytes()),
                 None => line.remove(col),
@@ -2238,6 +2272,27 @@ fn rewrite_rows(
     out.extend_from_slice(format!("</{}>", data_node.qualified).as_bytes());
     out.extend_from_slice(&bytes[data_node.span.end..]);
     Ok(out)
+}
+
+/// A stored cell element with only its format changed: its `s` set, or
+/// removed for none, and every other byte kept.
+fn restyle(bytes: &[u8], cell: &crate::ooxml::Node, style: Option<u32>) -> Vec<u8> {
+    let (range, value) = match (style, cell.attr_spans.get("s")) {
+        (Some(style), _) => set_attribute(bytes, cell, "s", &style.to_string()),
+        (None, Some(span)) => {
+            let start = if span.start > 0 && bytes[span.start - 1].is_ascii_whitespace() {
+                span.start - 1
+            } else {
+                span.start
+            };
+            (start..span.end, Vec::new())
+        }
+        (None, None) => return bytes[cell.span.clone()].to_vec(),
+    };
+    let mut out = bytes[cell.span.start..range.start].to_vec();
+    out.extend(value);
+    out.extend_from_slice(&bytes[range.end..cell.span.end]);
+    out
 }
 
 /// One cell element as the body writes it; `None` removes a blank cell
