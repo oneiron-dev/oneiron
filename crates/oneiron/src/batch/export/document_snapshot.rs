@@ -1,8 +1,8 @@
 //! Snapshot enumeration for whole-vault export. No raw bytes leave this module
 //! except as input to the serializer's mandatory credential-nulling transform,
-//! and a stored file the whole-vault archive carries as it is (OF-222). Each
-//! row goes to the serializer as it is read (FIX 2766): the snapshot holds
-//! ids and indexes, never the vault's bodies.
+//! and a stored file an archive carries as it is (OF-222). Each row goes to the
+//! serializer as it is read (FIX 2766): the snapshot holds ids and indexes,
+//! never the vault's bodies.
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 
@@ -96,7 +96,9 @@ impl Vault {
     /// reader off this device: an export-first removal's export (OF-163),
     /// in the same shape as a whole-vault archive and re-importable alike.
     /// No run's results go with it; a run names no world to scope it by.
-    /// Its diary reads are `reader`'s, the owner who receives it.
+    /// Each record's side rows and stored files go with it as they do in the
+    /// whole-vault archive, never past `records`, and no vault-wide row does
+    /// (FIX 3681). Its diary reads are `reader`'s, the owner who receives it.
     pub(crate) fn export_records_archive(
         &self,
         records: &BTreeSet<EntityId>,
@@ -226,13 +228,8 @@ impl Vault {
             None,
         )?
         .collect::<Result<BTreeSet<_>>>()?;
-        let mut writer = DocumentWriter::new(
-            self,
-            cut,
-            scope == ExportScope::WholeVault,
-            adapters,
-            agent_ids,
-        )?;
+        let mut writer =
+            DocumentWriter::new(self, cut, cut == ExportCut::Archive, adapters, agent_ids)?;
         // Every row read past the locality filter below: a row the archive
         // carries, a custody record it carries as a value or a handle, a
         // diary it carries or counts as held, and a receipt source, pack
@@ -491,16 +488,24 @@ impl Vault {
                     turn_end,
                 })?;
             }
-            // FIX 2768: each carried record's side rows go with it, read in
-            // this snapshot; a vault-wide row only to a caller on this device.
-            for row in super::archive_side_rows_in_txn(
+        }
+        // FIX 2768, 3681: each carried record's side rows go with it, in a
+        // records archive as in the whole-vault one, read in this snapshot
+        // against the rows it carries and never past them: a removed owner's
+        // archive holds no row its scope did not read. A vault-wide row goes
+        // only to a caller on this device. A carried record whose family names
+        // a carrier left out is named in the manifest instead.
+        if cut == ExportCut::Archive {
+            let (rows, withheld) = super::archive_side_rows_in_txn(
                 &self.store,
                 &rtxn,
                 &included,
                 locality == CallerLocality::OnDevice,
-            )? {
+            )?;
+            for row in rows {
                 writer.side_row(row)?;
             }
+            writer.side_rows_withheld(withheld);
         }
         drop(rtxn);
         // The gate logs the reads after the snapshot. An entry whose read

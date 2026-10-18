@@ -54,6 +54,7 @@ pub(crate) use self::holders::{
 };
 pub(crate) use self::lifecycle::delete_blob_artifact_lifecycle_in_txn;
 pub use self::provenance::BlobVersionProvenance;
+pub(crate) use self::references::archive_version_claim_tables;
 pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, record_version_claim,
 };

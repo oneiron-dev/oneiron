@@ -78,6 +78,13 @@ const ALWAYS_ON: SideTable<Vec<u8>, AlwaysOnCodeMemoryContract, Raw> =
 const TRANSFER: SideTable<Vec<u8>, AnchorTransferRecord, Raw> =
     SideTable::new(&side_table::CODE_MEMORY_TRANSFER);
 
+/// OF-222 (FIX 3681) archive seam: the code-memory tables an archive carries beside each
+/// CODE_SYMBOL (slots, attachments, always-on contracts, transfer receipts), lent with their
+/// own key types and codec.
+pub(crate) fn archive_code_memory_tables() -> [crate::batch::export::LentSideTable; 4] {
+    [&SLOT, &ATTACHMENT, &ALWAYS_ON, &TRANSFER]
+}
+
 impl RawValue for CodeMemorySlot {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
         Ok(encode_slot(self))

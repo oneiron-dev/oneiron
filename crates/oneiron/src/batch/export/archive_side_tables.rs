@@ -1,18 +1,24 @@
-//! OF-222 (FIX 2768): the side tables a whole-vault archive carries beside the
-//! records they index. The binary carriers travel as files; without these rows
-//! an import holds the bytes and no index resolves them: an LFS object, a blob
-//! version, a codebase snapshot, a code revision or a code document's history.
-//! One explicit allowlist names each table, its key layout and its value form.
-//! No other row travels: the recovery classes grant nothing here, and the LFS
-//! upload journal and GC queue are in-flight work that never leaves.
+//! OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the
+//! records they index, in the whole-vault archive and in a records archive (an
+//! export-first removal's) alike. The binary carriers travel as files; without
+//! these rows an import holds the bytes and no index resolves them: an LFS
+//! object, a blob version, a codebase snapshot, a code revision, a code
+//! document's history or a code symbol's memory. One explicit allowlist names
+//! each table, its key layout and its value form. No other row travels: the
+//! recovery classes grant nothing here; the LFS upload journal and GC queue and
+//! an edit settlement's live work are in-flight work that never leaves; and a
+//! code view is a host directory, its id no record.
 //!
 //! A row goes out with the record it belongs to and every carrier it names, read
 //! in the export's snapshot, and a record's rows of one family go together or
-//! not at all. A vault-wide row (an LFS tombstone or boundary seed, a code
-//! document's history) goes only to a caller on this device: no world scopes it.
+//! not at all: a carried record whose family names a carrier the export lacks is
+//! named in the manifest instead. A vault-wide row (an LFS tombstone or boundary
+//! seed, a code document's history, whose id hashes a repo path and names no
+//! record) goes only to a caller on this device: no world scopes it.
 //! Each value goes in its table's own codec, typed: ids and hashes as hex, text
-//! as text for the document's credential pass, and a long binary value as an
-//! archive file, byte for byte. An import reads each row back through its
+//! as text for the document's credential pass, a long binary value as an
+//! archive file, byte for byte, and a table's own binary codec as its bytes,
+//! which the release scan reads whole. An import reads each row back through its
 //! table's own key type and codec, checks the record and carriers it names, and
 //! restores it in the import's write transaction once the entities are in:
 //! records first, then indexes, then heads. An identical live row is unchanged;
@@ -90,12 +96,16 @@ fn lent_tables() -> Vec<LentSideTable> {
     let mut tables: Vec<LentSideTable> = Vec::new();
     tables.extend(crate::blob_artifact::archive_version_tables());
     tables.push(crate::blob_artifact::archive_born_from_table());
+    tables.extend(crate::blob_artifact::archive_version_claim_tables());
+    tables.push(crate::edit_roundtrip::archive_deck_marks_table());
+    tables.push(crate::edit_settle::archive_settlement_table());
     tables.extend(crate::origin::lfs::archive_lfs_tables());
     tables.extend(crate::codebase::archive_codebase_tables());
     tables.extend(crate::code_revision::archive_revision_tables());
     tables.push(crate::code_revision::archive_promotion_table());
     tables.push(crate::code_revision::archive_proposal_table());
     tables.extend(crate::code_document::archive_document_tables());
+    tables.extend(crate::code_memory::archive_code_memory_tables());
     tables
 }
 
@@ -120,6 +130,15 @@ pub enum ArchiveSideFamily {
     BlobAssetRef,
     /// The born-from projection of a version's trigger.
     BlobBornFrom,
+    /// A deck artifact's managed native-id history.
+    BlobDeckMarks,
+    /// An artifact's consume-once edit settlement of one proposal.
+    BlobSettlement,
+    /// An artifact holding the bytes under a content hash, as a `blob.version`
+    /// claim named them.
+    BlobVersionClaim,
+    /// The same pair, keyed by the artifact.
+    BlobClaimedHash,
     /// An artifact's last issued version.
     BlobHighwater,
     /// An artifact's head version.
@@ -180,6 +199,14 @@ pub enum ArchiveSideFamily {
     CodeDocumentGeneration,
     /// A code document's head and receipt history.
     CodeDocumentHead,
+    /// A code symbol's named memory slot and its values.
+    CodeMemorySlot,
+    /// A code symbol's slot value bound to its NOTE or CLAIM payload.
+    CodeMemoryAttachment,
+    /// A code symbol's always-on memory contract over one payload.
+    CodeMemoryAlwaysOn,
+    /// An anchor-transfer receipt from one code symbol to another.
+    CodeMemoryTransfer,
 }
 
 /// One part of a stored key, in the order the key holds them.
@@ -191,7 +218,7 @@ enum Part {
     U64,
     /// A 32-byte hash or object id.
     Hash,
-    /// A born-from source: a kind byte and 16 bytes.
+    /// A kind byte and 16 bytes: a born-from source or a code-memory payload.
     Source,
     /// The NUL that frames a text part.
     Nul,
@@ -223,6 +250,8 @@ enum Form {
     LfsObject,
     /// One MessagePack value: the table's Named, LegacyCompact or own codec.
     MessagePack,
+    /// The table's own binary codec, carried byte for byte.
+    Opaque,
 }
 
 /// The families a record's rows go out together within.
@@ -233,6 +262,10 @@ enum Group {
     Codebase,
     CodeRevision,
     CodeDocument,
+    CodeMemory,
+    /// A transfer receipt goes apart from its symbol's slots: it names a
+    /// second symbol, whose absence leaves the first's memory whole.
+    CodeMemoryTransfer,
 }
 
 #[derive(Clone, Copy)]
@@ -244,10 +277,14 @@ struct Spec {
 }
 
 impl ArchiveSideFamily {
-    const ALL: [Self; 33] = [
+    const ALL: [Self; 41] = [
         Self::BlobVersion,
         Self::BlobAssetRef,
         Self::BlobBornFrom,
+        Self::BlobDeckMarks,
+        Self::BlobSettlement,
+        Self::BlobVersionClaim,
+        Self::BlobClaimedHash,
         Self::BlobHighwater,
         Self::BlobHead,
         Self::LfsChunkMark,
@@ -278,11 +315,17 @@ impl ArchiveSideFamily {
         Self::CodeDocumentPath,
         Self::CodeDocumentGeneration,
         Self::CodeDocumentHead,
+        Self::CodeMemorySlot,
+        Self::CodeMemoryAttachment,
+        Self::CodeMemoryAlwaysOn,
+        Self::CodeMemoryTransfer,
     ];
 
     fn spec(self) -> Spec {
-        use Form::{Empty, Hash, LfsObject, MessagePack, U64Be, U64Le};
-        use Group::{Blob, CodeDocument, CodeRevision, Codebase, Lfs};
+        use Form::{Empty, Hash, LfsObject, MessagePack, Opaque, U64Be, U64Le};
+        use Group::{
+            Blob, CodeDocument, CodeMemory, CodeMemoryTransfer, CodeRevision, Codebase, Lfs,
+        };
         use Part::{Hash as H, Id, Nul, Source, Text, U64};
         use side_table as t;
         match self {
@@ -294,6 +337,10 @@ impl ArchiveSideFamily {
                 MessagePack,
                 Blob,
             ),
+            Self::BlobDeckMarks => spec(&t::BLOB_ARTIFACT_DECK_ID_MARKS, &[Id], MessagePack, Blob),
+            Self::BlobSettlement => spec(&t::EDIT_SETTLE_RECORD, &[Id, H], MessagePack, Blob),
+            Self::BlobVersionClaim => spec(&t::BLOB_ARTIFACT_VERSION_CLAIM, &[H, Id], Empty, Blob),
+            Self::BlobClaimedHash => spec(&t::BLOB_ARTIFACT_CLAIMED_HASH, &[Id, H], Empty, Blob),
             Self::BlobHighwater => spec(&t::BLOB_ARTIFACT_HIGHWATER, &[Id], U64Be, Blob),
             Self::BlobHead => spec(&t::BLOB_ARTIFACT_HEAD, &[Id], MessagePack, Blob),
             Self::LfsChunkMark => spec(&t::ORIGIN_LFS_CHUNK_MARK, &[Id], Hash, Lfs),
@@ -376,6 +423,27 @@ impl ArchiveSideFamily {
                 spec(&t::CODE_DOCUMENT_GENERATION, &[H], U64Be, CodeDocument)
             }
             Self::CodeDocumentHead => spec(&t::CODE_DOCUMENT_HEAD, &[H], MessagePack, CodeDocument),
+            Self::CodeMemorySlot => {
+                spec(&t::CODE_MEMORY_SLOT, &[Id, Nul, Text], Opaque, CodeMemory)
+            }
+            Self::CodeMemoryAttachment => spec(
+                &t::CODE_MEMORY_ATTACHMENT,
+                &[Id, Nul, Text, Nul, Source],
+                Opaque,
+                CodeMemory,
+            ),
+            Self::CodeMemoryAlwaysOn => spec(
+                &t::CODE_MEMORY_ALWAYS_ON,
+                &[Id, Nul, Text, Nul, Source],
+                Opaque,
+                CodeMemory,
+            ),
+            Self::CodeMemoryTransfer => spec(
+                &t::CODE_MEMORY_TRANSFER,
+                &[Id, Id, U64, H],
+                Opaque,
+                CodeMemoryTransfer,
+            ),
         }
     }
 }
@@ -400,7 +468,7 @@ fn spec(decl: &'static SideTableDecl, key: &'static [Part], value: Form, group: 
 pub enum ArchiveSideKeyPart {
     Id(String),
     Hash(String),
-    /// A born-from source: its kind byte and 16 bytes.
+    /// A kind byte and 16 bytes: a born-from source or a code-memory payload.
     Source(String),
     U64(u64),
     Text(String),
@@ -424,6 +492,10 @@ pub enum ArchiveSideValue {
     LfsObject(ArchiveLfsObject),
     /// One MessagePack value.
     MessagePack(ArchiveSideTree),
+    /// A value in its table's own binary codec, lowercase hex.
+    Binary(String),
+    /// A value in its table's own binary codec, stored as an archive file.
+    BinaryFile(ExportBodyFile),
 }
 
 /// An LFS object record: its manifest ASSET, size, creation time and ref owner.
@@ -495,6 +567,10 @@ pub enum ArchiveSideWithheldReason {
     Credential,
     /// The stored row does not read back through its table's key type and codec.
     NotPortable,
+    /// FIX 3681: a carried record's rows of this family do not all travel (one
+    /// names a carrier the export does not hold, or does not read), and they go
+    /// together, so none go. Named once per record and family.
+    Incomplete,
 }
 
 /// One stored row the archive carries: its table, its key after the table's
@@ -548,6 +624,11 @@ impl SideRowBytes {
                     .and_then(|value| tree(&value, &mut files))
                     .map(ArchiveSideValue::MessagePack)
             }
+            (Form::Opaque, bytes) if bytes.len() > SIDE_INLINE_BYTES => {
+                let file = attach(&mut files, bytes.to_vec());
+                Some(ArchiveSideValue::BinaryFile(file))
+            }
+            (Form::Opaque, bytes) => Some(ArchiveSideValue::Binary(bytes_to_hex_lower(bytes))),
             _ => None,
         };
         Ok(value.map(|value| {
@@ -561,6 +642,13 @@ impl SideRowBytes {
                 files,
             )
         }))
+    }
+
+    /// Whether the release scan reads a credential in a value carried in its
+    /// table's own binary codec, which the document's pass sees only as hex.
+    pub(crate) fn opaque_credential(&self) -> bool {
+        self.family.spec().value == Form::Opaque
+            && crate::batch::secret_scan::scan_file_content("", &self.value).is_some()
     }
 
     /// The manifest entry of this row held out of the archive.
@@ -605,6 +693,8 @@ impl ArchiveSideRow {
                     .map_err(|_| invalid("side row value"))?;
                 bytes
             }
+            (Form::Opaque, ArchiveSideValue::Binary(hex)) => hex_any(hex)?,
+            (Form::Opaque, ArchiveSideValue::BinaryFile(file)) => files(file)?,
             _ => return Err(invalid("side row value is not its table's form")),
         };
         Ok(SideRowBytes {
@@ -631,23 +721,28 @@ impl ArchiveSideRow {
             }
         }
         let mut out = Vec::new();
-        if let ArchiveSideValue::MessagePack(tree) = &self.value {
-            walk(tree, &mut out);
+        match &self.value {
+            ArchiveSideValue::MessagePack(tree) => walk(tree, &mut out),
+            ArchiveSideValue::BinaryFile(file) => out.push(file),
+            _ => {}
         }
         out
     }
 }
 
 /// The rows of the allowlisted tables this export carries, read in its snapshot
-/// `rtxn`. A record's rows of one family go when the record and every carrier
-/// they name are in `included`; a vault-wide row goes only to a caller on this
-/// device; an index row no carried record owns stays.
+/// `rtxn`, and the families it holds out. A record's rows of one family go when
+/// the record and every carrier they name are in `included`; otherwise none go,
+/// and a record in `included` has that family named once. A vault-wide row goes
+/// only to a caller on this device; a row of a record the export does not carry,
+/// and an index row no record owns, stay unnamed (FIX 3681: a records archive
+/// never names what its reader could not read).
 pub(crate) fn archive_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
     included: &BTreeSet<EntityId>,
     on_device: bool,
-) -> Result<Vec<SideRowBytes>> {
+) -> Result<(Vec<SideRowBytes>, Vec<ArchiveSideWithheld>)> {
     let mut stored = Vec::new();
     for family in ArchiveSideFamily::ALL {
         for (key, value) in lent(family)?.stored_rows(store, rtxn)? {
@@ -677,18 +772,25 @@ pub(crate) fn archive_side_rows_in_txn(
         }
         travels.push(travel);
     }
-    Ok(stored
+    let mut held_out = BTreeSet::new();
+    let rows: Vec<SideRowBytes> = stored
         .into_iter()
         .zip(travels)
         .filter_map(|((family, key, value), travel)| {
             let owner = match travel {
-                Travel::With(owner, _)
+                Travel::With(owner, _) | Travel::Broken(owner)
                     if groups.get(&(family.spec().group, owner)) == Some(&true) =>
                 {
                     Some(owner)
                 }
+                Travel::With(owner, _) | Travel::Broken(owner) => {
+                    if included.contains(&owner) {
+                        held_out.insert((family, owner));
+                    }
+                    return None;
+                }
                 Travel::Vault if on_device => None,
-                _ => return None,
+                Travel::Vault | Travel::Orphan => return None,
             };
             Some(SideRowBytes {
                 family,
@@ -697,7 +799,16 @@ pub(crate) fn archive_side_rows_in_txn(
                 owner,
             })
         })
-        .collect())
+        .collect();
+    let withheld: Vec<ArchiveSideWithheld> = held_out
+        .into_iter()
+        .map(|(family, owner)| ArchiveSideWithheld {
+            family,
+            owner: Some(owner.to_hex()),
+            reason: ArchiveSideWithheldReason::Incomplete,
+        })
+        .collect();
+    Ok((rows, withheld))
 }
 
 /// Validates an archive's side rows: each reads back through its table's key
@@ -881,7 +992,13 @@ impl SideContext {
             owner.map_or(Travel::Orphan, |owner| Travel::With(owner, carriers))
         };
         Ok(match family {
-            F::BlobVersion | F::BlobHighwater | F::BlobHead => with(id_at(key, 0), Vec::new()),
+            F::BlobVersion
+            | F::BlobHighwater
+            | F::BlobHead
+            | F::BlobDeckMarks
+            | F::BlobSettlement
+            | F::BlobClaimedHash => with(id_at(key, 0), Vec::new()),
+            F::BlobVersionClaim => with(id_at(key, 32), Vec::new()),
             F::BlobBornFrom => with(id_at(key, ENTITY_ID_LEN + 1), Vec::new()),
             F::BlobAssetRef => {
                 let Some(content) = array_at::<32>(key, 0) else {
@@ -962,11 +1079,23 @@ impl SideContext {
                 id_at(key, ENTITY_ID_LEN),
                 id_at(key, 0).into_iter().collect(),
             ),
+            // A code document is no record: its id hashes its repo path, and
+            // an ingress key is an operation id, so no key names an owner.
             F::CodeDocumentIngress
             | F::CodeDocumentFrontier
             | F::CodeDocumentPath
             | F::CodeDocumentGeneration
             | F::CodeDocumentHead => Travel::Vault,
+            // A symbol's memory goes with its CODE_SYMBOL, and a binding with
+            // the NOTE or CLAIM payload its key ends in.
+            F::CodeMemorySlot => with(id_at(key, 0), Vec::new()),
+            F::CodeMemoryAttachment | F::CodeMemoryAlwaysOn => {
+                with(id_at(key, 0), tail(ENTITY_ID_LEN).into_iter().collect())
+            }
+            F::CodeMemoryTransfer => with(
+                id_at(key, 0),
+                id_at(key, ENTITY_ID_LEN).into_iter().collect(),
+            ),
         })
     }
 }
