@@ -108,10 +108,9 @@ impl crate::memory::Memory<'_> {
         scope: &super::RecallScope,
     ) -> MemoryResult<super::MemoryPack> {
         let worlds = self.recall_worlds(scope)?;
-        let receipt = self
-            .read_lane(crate::claim::ClaimReadStatus::Surfaceable)?
-            .within_worlds(worlds)
-            .read_receipt(None, 0)?;
+        let lane = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+        let lane = match worlds { Some(worlds) => lane.within_worlds(worlds), None => lane };
+        let receipt = lane.read_receipt(None, 0)?;
         Ok(super::cut_pack(&receipt))
     }
 }
