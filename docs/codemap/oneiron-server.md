@@ -209,7 +209,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/merge_queue_doors.rs` | src | s | 7 crate-vis | — | Credential-bound host projections of the typed speculative merge queue doors (DOOR-132) |
 | `src/api/facade/model_step_doors.rs` | src | s | 2 crate-vis | — | Owner-proof model steps; HTTP, SDK and MCP reach the same typed door |
 | `src/api/facade/note_doors.rs` | src | s | 5 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
-| `src/api/facade/off_record_doors.rs` | src | m | 8 crate-vis | — | The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06) |
+| `src/api/facade/off_record_doors.rs` | src | m | 9 crate-vis | — | The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06) |
 | `src/api/facade/origin_doors.rs` | src | s | 5 crate-vis | — | Credential-bound host projections of the typed origin and checkout doors (DOOR-139) |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
@@ -684,7 +684,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/mcp/endpoint_args.rs` | src | m | 9 struct · 1 enum · 4 fn · 3 crate-vis | McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest, McpReadResultToolArgs, McpResultFacet, McpSetupToolArgs, McpVerbArguments +2 | Endpoint tool argument envelopes: setup, execute-code, paging, and verbs |
 | `src/mcp/endpoint_schema.rs` | src | m | 5 const · 8 crate-vis | — | JSON schemas for endpoint tools: setup, execute-code, paging, and verbs |
 | `src/mcp/exec_host.rs` | src | L | 3 struct · 1 enum · 2 trait · 7 fn · 2 type · 14 crate-vis | CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider, McpEngineNativeCodeHost | MCP code-execution host seam and the engine-native host binding |
-| `src/mcp/exec_host/off_record_run.rs` | src | s | 2 crate-vis | — | Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays… |
+| `src/mcp/exec_host/off_record_run.rs` | src | s | 3 crate-vis | — | Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays… |
 | `src/mcp/mod.rs` | src | s | 2 mod · 12 re-export · 8 crate-vis | — | MCP connector actor registry |
 | `src/mcp/oauth_client.rs` | src | s | 3 struct · 2 enum · 5 fn · 1 const | AuthorizationResponse, ClientApplication, OAuthClientError, OAuthTokenCache, TokenCacheKey | Issuer-bound OAuth client state and pinned client metadata (ARCH-0028) |
 | `src/mcp/oauth_client/tests.rs` | test | s | — | — | — |
