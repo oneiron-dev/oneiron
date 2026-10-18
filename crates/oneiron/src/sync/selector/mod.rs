@@ -47,7 +47,9 @@ pub(in crate::sync) use self::admission::{
 };
 pub use self::authorize::authorize_sync_selector;
 pub use self::born_with::GrantTravel;
-pub(crate) use self::born_with::carried_born_with;
+pub(crate) use self::born_with::{
+    carried_born_with, carried_born_with_in_txn, erase_carried_born_with_in_txn,
+};
 pub(in crate::sync) use self::codec::granted_window_doc;
 pub use self::codec::{
     RequestedAxis, SYNC_SELECTOR_SCHEMA_VERSION, SelectorVvRequest, SyncSelector,

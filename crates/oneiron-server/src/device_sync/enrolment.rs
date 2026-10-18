@@ -187,6 +187,7 @@ pub(crate) fn enrol(
             "vault_id": hex(&request.vault_id),
             "machine": request.machine.to_hex(),
             "machine_key": hex(&request.machine_key),
+            "device_class": request.device_class,
             "encryption_suite": request.encryption_key.suite,
             "encryption_key": base64::engine::general_purpose::STANDARD
                 .encode(&request.encryption_key.key),

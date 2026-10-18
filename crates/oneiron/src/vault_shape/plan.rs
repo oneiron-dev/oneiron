@@ -392,9 +392,16 @@ impl Vault {
         let after = live
             .reach
             .with_plan(&items, sends.as_ref(), &mut unresolved);
+        // Both sides named in one read, so a name reads the same on each.
+        let txn = self.store.env.read_txn()?;
+        let mut name = |reference: &str| self.reach_name_in(&txn, reference);
         let reach = ShapePlanReach::of(
-            reach_projection(&live.reach).visible(visible)?,
-            reach_projection(&after).visible(visible)?,
+            reach_projection(&live.reach)
+                .visible(visible)?
+                .named(&mut name)?,
+            reach_projection(&after)
+                .visible(visible)?
+                .named(&mut name)?,
             unresolved,
         );
         Ok(ShapePlan {

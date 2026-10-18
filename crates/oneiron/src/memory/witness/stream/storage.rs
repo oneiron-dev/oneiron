@@ -53,6 +53,11 @@ pub(super) struct Seed {
     /// The reply's typed assertions (OF-063), witnessed with its final text.
     /// A continuation's are empty.
     pub assertions: WitnessAssertions,
+    /// The MESSAGE's own quote (one quote per MESSAGE, FIX 2028), proven and
+    /// pinned by the terminal witness that births the MESSAGE, so a quote
+    /// whose source stopped being readable mid-stream is refused there.
+    /// `None` on a continuation, which keeps its MESSAGE's birth quote.
+    pub quote: Option<crate::conversation_dag::QuoteSpan>,
 }
 impl Seed {
     pub(super) fn class(&self) -> Result<EdgeActorClass> {
@@ -68,7 +73,7 @@ impl Seed {
             metadata: self.metadata.clone(),
             is_visible: self.is_visible,
             order: self.order,
-            quote: None,
+            quote: self.quote.clone(),
         }
     }
     pub(super) fn turn(&self, content: String) -> WitnessTurn {

@@ -9,6 +9,9 @@ mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs -o mode=0755 run /run
 mkdir -p /run/oneiron /vault
+# The voice loop's socket directory: [models.voice].socket lies in it, and it
+# must be owner-only (FIX 2391).
+mkdir -p -m 0700 /run/oneiron/voice
 mount -t ext4 -o noatime /dev/vdb /vault
 
 vault=""
@@ -47,6 +50,9 @@ if [ "$config" = "1" ]; then
   mount -t ext4 -o ro,noatime /dev/vdc /config
   if [ -f /config/models.toml ]; then
     set -- "$@" --models-file /config/models.toml
+  fi
+  if [ -f /config/embedder.toml ]; then
+    set -- "$@" --embedder-file /config/embedder.toml
   fi
   for pair in key:--seal-key-file chain:--seal-chain-file trust:--seal-trust-file; do
     if [ -f "/config/seal/${pair%%:*}.pem" ]; then

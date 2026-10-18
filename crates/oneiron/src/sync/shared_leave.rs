@@ -7,8 +7,9 @@
 //! never read as a leave. The notices are the ones the home's left-notices
 //! door answers (`Vault::removed_member_notices_signed`), each signed by the
 //! home root. A deletion counts only from a notice this device verified
-//! against the home root it already trusts ([`VerifiedLeaveNotice`],
-//! FIX 2053).
+//! against the home root it already trusts, or the successor that root
+//! handed on to in a signed handoff the home sends beside the notices
+//! ([`VerifiedLeaveNotice`], FIX 2053).
 //!
 //! What goes is only what is provably that vault's: the queued window
 //! updates (`q:`, with their `d:` sidecars), the unacknowledged text frames
@@ -56,9 +57,10 @@ pub enum SharedLeaveKind {
 
 /// A home-signed outcome notice (FIX 2053) this device verified against the
 /// home root it already trusts: its signer is a live root in the authority
-/// log this env folded, never just the key the notice carries, and it names
-/// this env's authority vault, its local vault id and this member. Only such
-/// a notice confirms a deleted vault.
+/// log this env folded, or the successor a signed handoff from such a root
+/// names, never just the key the notice carries, and it names this env's
+/// authority vault, its local vault id and this member. Only such a notice
+/// confirms a deleted vault.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedLeaveNotice {
     outcome: SharedActOutcome,
@@ -66,8 +68,12 @@ pub struct VerifiedLeaveNotice {
 
 impl VerifiedLeaveNotice {
     /// Verifies `signed` in `vault`, the env that holds shared vault
-    /// `vault_id`, as `member`'s own notice. `None` when it does not verify:
-    /// such a notice changes nothing.
+    /// `vault_id`, as `member`'s own notice. `handoff` is the signed ReRoot
+    /// chain the home sent beside it: a home that re-rooted since this env
+    /// last folded signs with a key only that chain names. It extends this
+    /// env's folded roster in memory, never replaces it, and a handoff that
+    /// does not chain from that roster verifies nothing. `None` when the
+    /// notice does not verify: such a notice changes nothing.
     ///
     /// # Errors
     ///
@@ -77,16 +83,17 @@ impl VerifiedLeaveNotice {
         vault_id: u64,
         member: &str,
         signed: &SignedSharedActOutcome,
+        handoff: &[Vec<u8>],
     ) -> Result<Option<Self>> {
         let outcome = &signed.outcome;
         if outcome.vault_id != vault_id || outcome.recipient != member {
             return Ok(None);
         }
-        let txn = vault.store.env.read_txn()?;
-        let fold = vault.authority_view_readonly_in_txn(&txn)?;
-        if fold.vault_id != Some(signed.authority_vault_id)
-            || fold.vault_root_is_conflicted()
-            || !crate::authority::roster_has_live_owner(&fold.roster, &signed.signature.public_key)
+        let Some((authority_vault_id, roster)) = vault.roster_through_handoff(handoff)? else {
+            return Ok(None);
+        };
+        if authority_vault_id != signed.authority_vault_id
+            || !crate::authority::roster_has_live_owner(&roster, &signed.signature.public_key)
         {
             return Ok(None);
         }
@@ -201,33 +208,15 @@ pub fn has_left(vault: &Vault) -> Result<bool> {
         .is_some())
 }
 
-/// Confirms, in `vault` (the env that holds shared vault `vault_id`), that
-/// `member` left it: discards every queued window update, text frame and NOTE
-/// command, records the counts and runs the first purge pass of the env's
-/// replica rows in one transaction, then purges the rest a pass at a time
-/// and records what went and what stayed. Idempotent: a notice already
-/// confirmed finishes any purge an interrupted call left and answers its
-/// receipt. Stop the env's sync lane first
-/// (`SyncConnection::confirm_shared_leave` does), so no buffered update lands
-/// after the discard and nothing refills the env.
-///
-/// # Errors
-///
-/// A notice that is not `member`'s own leave of `vault_id`; storage errors.
-pub fn confirm_shared_leave(
-    vault: &Vault,
-    vault_id: u64,
-    member: &str,
-    notice: &SharedActOutcome,
-) -> Result<SharedLeaveReceipt> {
-    let Some(kind) = left_change(notice, vault_id, member) else {
-        return Err(not_a_leave());
-    };
-    confirm_leave(vault, (vault_id, member), notice, kind)
-}
-
-/// [`confirm_shared_leave`] for a home-signed notice this device verified
-/// (FIX 2053), which may also confirm the vault's deletion.
+/// Confirms, in `vault` (the env that holds the shared vault), the leave or
+/// deletion a home-signed notice this device verified says (FIX 2053):
+/// discards every queued window update, text frame and NOTE command, records
+/// the counts and runs the first purge pass of the env's replica rows in one
+/// transaction, then purges the rest a pass at a time and records what went
+/// and what stayed. Idempotent: a notice already confirmed finishes any purge
+/// an interrupted call left and answers its receipt. Stop the env's sync
+/// lane first (`SyncConnection::check_shared_leave` does), so no buffered
+/// update lands after the discard and nothing refills the env.
 ///
 /// # Errors
 ///
@@ -247,8 +236,8 @@ fn not_a_leave() -> Error {
     Error::InvalidConfig("the notice is not this member's leave of this shared vault".into())
 }
 
-/// The discard, record and purge [`confirm_shared_leave`] runs for `notice`,
-/// which ends `member`'s membership in `vault_id` as `kind`.
+/// The discard, record and purge [`confirm_verified_shared_leave`] runs for
+/// `notice`, which ends `member`'s membership in `vault_id` as `kind`.
 fn confirm_leave(
     vault: &Vault,
     (vault_id, member): (u64, &str),
