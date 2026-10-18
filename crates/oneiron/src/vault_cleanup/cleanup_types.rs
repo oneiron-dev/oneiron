@@ -1,5 +1,7 @@
 //! Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs.
 
+use serde::{Deserialize, Serialize};
+
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 
@@ -92,7 +94,11 @@ pub(crate) const MAX_CLEANUP_SCAN_ROWS: usize = 50_000;
 // ---------------------------------------------------------------------------
 
 /// Which ratified emptiness arm matched a row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CleanupKind {
     /// An extraction-minted PERSON row with no live claim about it.
@@ -135,7 +141,7 @@ impl CleanupKind {
 }
 
 /// One row the tripwire tripped on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CleanupCandidate {
     pub entity: EntityId,
     pub kind: CleanupKind,
@@ -145,7 +151,10 @@ pub struct CleanupCandidate {
 ///
 /// Engine config (`vault_meta`), flipped only by owner action. Default
 /// [`Self::ProposeFirst`] while ARCH-0066 teeth #5/#9 are open.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CleanupPosture {
     /// Emit a proposal; archive nothing until the owner accepts.

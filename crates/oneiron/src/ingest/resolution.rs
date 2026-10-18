@@ -1,5 +1,7 @@
 //! ARCH-0024 entity-resolution waterfall: candidate scoring, routing, and canonical subject.
 
+use serde::{Deserialize, Serialize};
+
 use crate::claim::ClaimSubject;
 use crate::entity_id::EntityId;
 
@@ -13,15 +15,15 @@ use crate::entity_id::EntityId;
 // `ClaimBody::confidence` directly here would silently restore the old,
 // provider-blind ordering.
 //
-// The five ARCH-0024 signal producers and the mention-side wiring are NOT in
-// this wave, so this function has NO production call site yet. It is complete
-// and testable on its own terms: candidates in, a routed decision out, no
-// writes of any kind.
+// Signal producers supply stored evidence claims. Mention resolution and the
+// typed owner mention door share this waterfall; selecting an archived subject
+// restores that same record in the scoring transaction and mints nothing.
 // ===========================================================================
 
 /// One entity-resolution candidate: a subject, plus the provider-attributed
 /// confidence CLAIM that argues for it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct EntityResolutionCandidate {
     /// The entity this candidate proposes the mention resolves to.
     pub subject: EntityId,
@@ -30,7 +32,8 @@ pub struct EntityResolutionCandidate {
 }
 
 /// The ARCH-0024 routing bands.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum EntityResolutionRoute {
     /// `>= 0.90` — link outright.
     HardLink,
@@ -43,7 +46,7 @@ pub enum EntityResolutionRoute {
 }
 
 /// A candidate with the effective confidence the waterfall scored it at.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScoredEntityResolutionCandidate {
     /// The candidate with its subject projected to the canonical Active head.
     pub candidate: EntityResolutionCandidate,
@@ -52,7 +55,7 @@ pub struct ScoredEntityResolutionCandidate {
 }
 
 /// The waterfall's verdict for one mention.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EntityResolutionWaterfallDecision {
     /// Every authority-admissible candidate, scored and ranked best-first.
     pub ranked: Vec<ScoredEntityResolutionCandidate>,
@@ -96,6 +99,40 @@ pub fn evaluate_entity_resolution_waterfall(
 ) -> crate::Result<EntityResolutionWaterfallDecision> {
     vault.with_write_txn_grouped(|txn| {
         evaluate_entity_resolution_waterfall_in_txn(vault, txn, candidates, high_collision_mention)
+    })
+}
+
+/// A mention's already-produced evidence, not a manual archive restore.
+/// The waterfall validates every confidence claim against its subject and
+/// provider. An empty or provisional result mints no entity.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityMentionRequest {
+    pub candidates: Vec<EntityResolutionCandidate>,
+    #[serde(default)]
+    pub high_collision_mention: bool,
+}
+
+/// Resolves one evidence-backed mention as the owner, restoring the selected
+/// archived subject through the same waterfall the ingest resolver uses.
+/// No identity is minted and no delete or erase is attempted.
+///
+/// # Errors
+///
+/// A lapsed owner proof, or [`evaluate_entity_resolution_waterfall`]'s errors.
+pub fn mention_as_owner(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: &EntityMentionRequest,
+) -> crate::Result<EntityResolutionWaterfallDecision> {
+    vault.with_write_txn_grouped(|txn| {
+        owner.revalidate_in_txn(vault, txn)?;
+        evaluate_entity_resolution_waterfall_in_txn(
+            vault,
+            txn,
+            &input.candidates,
+            input.high_collision_mention,
+        )
     })
 }
 

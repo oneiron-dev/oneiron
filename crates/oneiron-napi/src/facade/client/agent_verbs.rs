@@ -1951,6 +1951,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_cleanup_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cleanup.run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_entities_mention(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.entities.mention", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_legal_holds_place(
         &self,
         input: serde_json::Value,

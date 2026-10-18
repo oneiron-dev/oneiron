@@ -918,6 +918,14 @@ export class Oneiron {
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
       },
     },
+    cleanup: {
+      /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
+      run: (input: Facade.CleanupRunRequest): Facade.CleanupRunView => this.#call(() => this.#client.vaultCleanupRun(input) as Facade.CleanupRunView),
+    },
+    entities: {
+      /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
+      mention: (input: Facade.EntityMentionRequest): Facade.EntityResolutionWaterfallDecision => this.#call(() => this.#client.vaultEntitiesMention(input) as Facade.EntityResolutionWaterfallDecision),
+    },
     legal_holds: {
       /** The owner places a customer legal hold on the named records or gate partitions. */
       place: (input: Facade.LegalHoldPlaceRequest): Facade.LegalHold => this.#call(() => this.#client.vaultLegalHoldsPlace(input) as Facade.LegalHold),
