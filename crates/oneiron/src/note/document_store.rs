@@ -12,7 +12,7 @@ use crate::batch::secret_scan::{
     secret_scan_mode_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::entity_doc::PurgeReceipt;
+use crate::entity_doc::{DocActor, PurgeReceipt};
 use crate::error::Result;
 use crate::memory::{EntityRefReceipt, Memory, MemoryError, MemoryResult};
 use crate::ports::{DocumentRowStore, DocumentSlot};
@@ -440,7 +440,7 @@ impl Memory<'_> {
                     receipt: receipt_id.to_hex(),
                     entity: note.to_hex(),
                     document: slot.to_hex(),
-                    actor: self.actor().to_hex(),
+                    actor: DocActor::Actor(self.actor()),
                     requested: requested.map_or_else(|| applied.clone(), <[u8]>::to_vec),
                     applied,
                     at: self.vault().now_recorded_at(),

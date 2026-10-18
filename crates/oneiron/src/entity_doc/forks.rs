@@ -1,5 +1,6 @@
 //! Durable divergences, entity-bound grant admission and atomic fork-set settlement.
 
+use super::doc_actor::{DocActor, names_no_actor};
 use super::document::decode_frontier;
 use super::side_keys::HexPair;
 use super::{AnchoredEdit, EntityDoc, invalid, storage};
@@ -65,7 +66,7 @@ pub struct ForkRecord {
     pub entity: String,
     pub parent_document: String,
     pub base: Vec<u8>,
-    pub actor: String,
+    pub actor: DocActor,
     pub opened_at: u64,
     pub rewrite: bool,
     pub status: ForkStatus,
@@ -76,7 +77,7 @@ pub struct ForkRecord {
 #[serde(deny_unknown_fields)]
 pub struct ProposalBundle {
     pub proposal: String,
-    pub author: String,
+    pub author: DocActor,
     pub forks: Vec<ForkRecord>,
     pub settled: bool,
 }
@@ -97,7 +98,7 @@ pub struct TextReceipt {
     pub proposal: String,
     pub fork: String,
     pub entity: String,
-    pub actor: String,
+    pub actor: DocActor,
     pub verb: SettleVerb,
     pub at: u64,
     pub before: Vec<u8>,
@@ -117,6 +118,127 @@ pub(super) const ENTITY_DOC_PROPOSAL_BUNDLE: SideTable<String, ProposalBundle, N
 /// keyed by entity then receipt id.
 pub(super) const ENTITY_DOC_RECEIPT: SideTable<HexPair, TextReceipt, Named> =
     SideTable::new(&side_table::ENTITY_DOC_RECEIPT);
+
+/// What an actor's erase does with a fork it opened that is still pending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingDocForkErase {
+    /// The fork goes, with its snapshot and its place in its bundle.
+    Delete,
+    /// The fork stays and names no one, as a settled fork does.
+    Keep,
+}
+
+/// A pending fork is still review work a reviewer could land, so an erase of
+/// the actor who opened it deletes it (FIX 3520).
+pub const ACTOR_ERASE_PENDING_ENTITY_DOC_FORK: PendingDocForkErase = PendingDocForkErase::Delete;
+
+/// Erasing `actor` from the forks it opened (FIX 3520): a settled fork keeps
+/// its row and names no one. A pending fork goes with its snapshot when
+/// [`ACTOR_ERASE_PENDING_ENTITY_DOC_FORK`] says so. One-way, in the erase's
+/// own transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a fork row that cannot be read.
+pub(crate) fn erase_fork_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut forks = Vec::new();
+    for (key, mut fork) in ENTITY_DOC_FORK.scan(&vault.store, wtxn)? {
+        if fork.actor.forget(*actor) {
+            forks.push((key, fork));
+        }
+    }
+    for (key, fork) in forks {
+        if fork.status == ForkStatus::Pending
+            && ACTOR_ERASE_PENDING_ENTITY_DOC_FORK == PendingDocForkErase::Delete
+        {
+            ENTITY_DOC_FORK.delete(&vault.store, wtxn, &key)?;
+            ENTITY_DOC_FORK_SNAPSHOT.delete(&vault.store, wtxn, &key)?;
+        } else {
+            ENTITY_DOC_FORK.put(&vault.store, wtxn, &key, &fork)?;
+        }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the review bundles (FIX 3520): a settled member keeps
+/// its place and its times and names no one, and a pending member it opened
+/// leaves the bundle as its fork row does. A bundle left with no member goes.
+/// An erased author matches no actor, so no fork joins its bundle again.
+/// One-way, in the erase's own transaction. An id whose entity is no actor
+/// scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a bundle row that cannot be read.
+pub(crate) fn erase_proposal_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut bundles = Vec::new();
+    for (key, mut bundle) in ENTITY_DOC_PROPOSAL_BUNDLE.scan(&vault.store, wtxn)? {
+        let members = bundle.forks.len();
+        if ACTOR_ERASE_PENDING_ENTITY_DOC_FORK == PendingDocForkErase::Delete {
+            bundle
+                .forks
+                .retain(|fork| fork.status != ForkStatus::Pending || !fork.actor.is(*actor));
+        }
+        let mut erased = bundle.forks.len() != members;
+        erased |= bundle.author.forget(*actor);
+        for fork in &mut bundle.forks {
+            erased |= fork.actor.forget(*actor);
+        }
+        if erased {
+            bundles.push((key, bundle));
+        }
+    }
+    for (key, bundle) in bundles {
+        if bundle.forks.is_empty() {
+            ENTITY_DOC_PROPOSAL_BUNDLE.delete(&vault.store, wtxn, &key)?;
+        } else {
+            ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, wtxn, &key, &bundle)?;
+        }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the settlement receipts (FIX 3520): each verdict it
+/// gave keeps its receipt, its versions and its time, and names no one.
+/// One-way, in the erase's own transaction. An id whose entity is no actor
+/// scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn erase_receipt_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut receipts = Vec::new();
+    for (key, mut receipt) in ENTITY_DOC_RECEIPT.scan(&vault.store, wtxn)? {
+        if receipt.actor.forget(*actor) {
+            receipts.push((key, receipt));
+        }
+    }
+    for (key, receipt) in receipts {
+        ENTITY_DOC_RECEIPT.put(&vault.store, wtxn, &key, &receipt)?;
+    }
+    Ok(())
+}
 
 pub(super) fn validate_actor(vault: &Vault, txn: &RoTxn<'_>, actor: WriteActor) -> Result<()> {
     storage::require_live(&vault.store, txn, &actor.entity_ref())?;
@@ -395,12 +517,12 @@ pub(super) fn retain_fork(
         Some(bundle) => bundle,
         None => ProposalBundle {
             proposal: proposal.to_hex(),
-            author: req.actor.entity_ref().to_hex(),
+            author: DocActor::Actor(req.actor.entity_ref()),
             forks: Vec::new(),
             settled: false,
         },
     };
-    if bundle.settled || bundle.author != req.actor.entity_ref().to_hex() {
+    if bundle.settled || !bundle.author.is(req.actor.entity_ref()) {
         return Err(invalid("proposal is closed or belongs to another actor"));
     }
     if bundle.forks.len() >= 256 {
@@ -412,7 +534,7 @@ pub(super) fn retain_fork(
         entity: req.entity.to_hex(),
         parent_document: h.document.clone(),
         base: req.base.clone(),
-        actor: req.actor.entity_ref().to_hex(),
+        actor: DocActor::Actor(req.actor.entity_ref()),
         opened_at: at,
         rewrite: req.rewrite.is_some(),
         status,
@@ -558,7 +680,7 @@ pub(super) fn write_receipt(
         proposal: proposal.to_hex(),
         fork: fork.to_hex(),
         entity: entity.to_hex(),
-        actor: actor.entity_ref().to_hex(),
+        actor: DocActor::Actor(actor.entity_ref()),
         verb,
         at,
         before: before.to_vec(),
