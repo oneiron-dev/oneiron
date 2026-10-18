@@ -149,12 +149,19 @@ impl SyncServer {
     }
 
     /// Finishes the dependent walks an erase, a purge or a changed source
-    /// left past its first batch; reads honour them until then.
-    async fn finish_dependent_walks_once(&self) {
+    /// left past its first batch; reads honour them until then. First the
+    /// sealed bundle uploads' disk claims follow their stages, so a stage that
+    /// idled out gives its room back without a bundle call (FIX 4273).
+    async fn finish_dependent_walks_once(self: &Arc<Self>) {
         #[cfg(test)]
         self.housekeeping_passes.note_tick_step("dependent walks");
-        let vault = std::sync::Arc::clone(self.vault());
-        match tokio::task::spawn_blocking(move || vault.finish_dependent_walks()).await {
+        let server = Arc::clone(self);
+        match tokio::task::spawn_blocking(move || {
+            server.transfers.reconcile_sealed_stages(server.vault());
+            server.vault().finish_dependent_walks()
+        })
+        .await
+        {
             Ok(Ok(())) => {}
             Ok(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "dependent walk pass failed");
