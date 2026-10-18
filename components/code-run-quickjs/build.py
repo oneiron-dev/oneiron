@@ -125,6 +125,9 @@ def main():
             # Same package/world and export types. This is the tier's import
             # projection, not a new world or a second protocol.
             stage_wit = re.sub(r"    // @js (?:self\.[^\n]*|vault\.[^\n]*|ask)\n    import [^;]+;\n", "", wit)
+        else:
+            # A first-party write is its own import; it streams no proposals.
+            stage_wit = re.sub(r"    // @js oneiron\.propose\.[^\n]*\n    import [^;]+;\n", "", wit)
 
         (stage / "code-run.wit").write_text(stage_wit)
         run(["wit-bindgen", "c", "--world", "guest", "--out-dir", stage, stage / "code-run.wit"])
