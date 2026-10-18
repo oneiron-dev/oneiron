@@ -5633,6 +5633,102 @@ async fn vault_code_checkout_bind(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_code_snapshots_ingest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.snapshots.ingest")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.snapshots.ingest", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.snapshots.ingest", value).await?;
+    let (output, listed) = super::host_doors::vault_code_snapshots_ingest(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_snapshots_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.snapshots.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.snapshots.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.snapshots.get", value).await?;
+    let (output, listed) = super::host_doors::vault_code_snapshots_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_snapshots_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.snapshots.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.snapshots.read", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.snapshots.read", value).await?;
+    let (output, listed) = super::host_doors::vault_code_snapshots_read(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_symbols_definitions(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.symbols.definitions")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.symbols.definitions", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.code.symbols.definitions", value).await?;
+    let (output, listed) = super::host_doors::vault_code_symbols_definitions(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_artifacts_export(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10674,6 +10770,12 @@ pub(crate) async fn call_verb(
             vault_code_origin_publications(server, call, input).await
         }
         "vault.code.checkout.bind" => vault_code_checkout_bind(server, call, input).await,
+        "vault.code.snapshots.ingest" => vault_code_snapshots_ingest(server, call, input).await,
+        "vault.code.snapshots.get" => vault_code_snapshots_get(server, call, input).await,
+        "vault.code.snapshots.read" => vault_code_snapshots_read(server, call, input).await,
+        "vault.code.symbols.definitions" => {
+            vault_code_symbols_definitions(server, call, input).await
+        }
         "vault.artifacts.export" => vault_artifacts_export(server, call, input).await,
         "vault.agents.create" => vault_agents_create(server, call, input).await,
         "vault.agents.get" => vault_agents_get(server, call, input).await,

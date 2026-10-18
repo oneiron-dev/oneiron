@@ -791,6 +791,18 @@ impl OneironClient {
                 "vault.code.checkout.bind" => remote_agent_verb_output::<
                     oneiron::memory::origin_doors::CheckoutDoorBinding,
                 >(client, verb, &input),
+                "vault.code.snapshots.ingest" => remote_agent_verb_output::<
+                    oneiron::memory::codebase_doors::CodeSnapshotView,
+                >(client, verb, &input),
+                "vault.code.snapshots.get" => remote_agent_verb_output::<
+                    Option<oneiron::memory::codebase_doors::CodeSnapshotView>,
+                >(client, verb, &input),
+                "vault.code.snapshots.read" => remote_agent_verb_output::<
+                    Option<oneiron::memory::codebase_doors::CodeSnapshotPinnedFile>,
+                >(client, verb, &input),
+                "vault.code.symbols.definitions" => remote_agent_verb_output::<
+                    oneiron::memory::codebase_doors::CodeSnapshotDefinitionsView,
+                >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
@@ -4459,6 +4471,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.checkout.bind", value)
+    }
+    pub fn vault_code_snapshots_ingest(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotIngestRequest,
+    ) -> Result<oneiron::memory::codebase_doors::CodeSnapshotView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.snapshots.ingest", value)
+    }
+    pub fn vault_code_snapshots_get(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotRequest,
+    ) -> Result<Option<oneiron::memory::codebase_doors::CodeSnapshotView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.snapshots.get", value)
+    }
+    pub fn vault_code_snapshots_read(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotReadRequest,
+    ) -> Result<Option<oneiron::memory::codebase_doors::CodeSnapshotPinnedFile>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.snapshots.read", value)
+    }
+    pub fn vault_code_symbols_definitions(
+        &self,
+        input: &oneiron::memory::codebase_doors::CodeSnapshotDefinitionsRequest,
+    ) -> Result<oneiron::memory::codebase_doors::CodeSnapshotDefinitionsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.definitions", value)
     }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(
