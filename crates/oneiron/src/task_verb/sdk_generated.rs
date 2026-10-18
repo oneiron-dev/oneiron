@@ -774,6 +774,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.research.create_child",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchChildWire,
+                >(),
+            ),
+            (
+                "vault.research.archive",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchArchiveWire,
+                >(),
+            ),
+            (
+                "vault.evals.inventory",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::EvalInventoryWire,
+                >(),
+            ),
+            (
+                "vault.evals.cohorts.setup",
+                crate::code_run::vault_read::request_schema::<crate::skill_optimize::EvalCohortSetup>(
+                ),
+            ),
+            (
                 "vault.research.bind",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchBindWire,
@@ -1286,6 +1309,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.snapshots.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotIngestRequest,
+                >(),
+            ),
+            (
+                "vault.code.snapshots.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotRequest,
+                >(),
+            ),
+            (
+                "vault.code.snapshots.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotReadRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.definitions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.export",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactExportRequest,
@@ -1626,6 +1673,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "self.skills.callables",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "ai.steps.submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::ModelStepSubmit,
+                >(),
+            ),
+            (
+                "ai.steps.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::ModelStepReceiptRequest,
+                >(),
             ),
             (
                 "ai.reply",
@@ -2564,6 +2623,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
+    "ai.steps.submit",
+    "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
     "vault.decisions.bands.read",
@@ -2612,6 +2673,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
+        "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_step::ModelStepReceipt,
+        >(),
+        "ai.steps.receipt" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_step::ModelStepReceipt,
+        >(),
         "ai.reply" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
         }
@@ -3753,6 +3820,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.research.create_child" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.archive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.inventory" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.evals.cohorts.setup" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.research.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4342,6 +4437,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.snapshots.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.snapshots.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.snapshots.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.definitions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.export" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4843,6 +4966,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "ai.steps.submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.steps.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.reply" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6276,6 +6413,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.records.erase_confirm" => {
             let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
         }
+        "vault.research.create_child" => {
+            let _input: crate::task_verb::sdk::ResearchChildWire = decode(value.clone())?;
+        }
+        "vault.research.archive" => {
+            let _input: crate::task_verb::sdk::ResearchArchiveWire = decode(value.clone())?;
+        }
+        "vault.evals.inventory" => {
+            let _input: crate::task_verb::sdk::EvalInventoryWire = decode(value.clone())?;
+        }
+        "vault.evals.cohorts.setup" => {
+            let _input: crate::skill_optimize::EvalCohortSetup = decode(value.clone())?;
+        }
         "vault.research.bind" => {
             let _input: crate::task_verb::sdk::ResearchBindWire = decode(value.clone())?;
         }
@@ -6572,6 +6721,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::origin_doors::CheckoutDoorBindRequest =
                 decode(value.clone())?;
         }
+        "vault.code.snapshots.ingest" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotIngestRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.snapshots.get" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotRequest = decode(value.clone())?;
+        }
+        "vault.code.snapshots.read" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.symbols.definitions" => {
+            let _input: crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
@@ -6775,6 +6939,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "ai.steps.submit" => {
+            let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
+        }
+        "ai.steps.receipt" => {
+            let _input: crate::llm::model_step::ModelStepReceiptRequest = decode(value.clone())?;
         }
         "ai.reply" => {
             let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
@@ -7575,6 +7745,12 @@ pub fn invoke(
         "vault.records.erase_confirm" => {
             encode(vault_records_erase_confirm(memory, decode(value)?)?)
         }
+        "vault.research.create_child" => {
+            encode(vault_research_create_child(memory, decode(value)?)?)
+        }
+        "vault.research.archive" => encode(vault_research_archive(memory, decode(value)?)?),
+        "vault.evals.inventory" => encode(vault_evals_inventory(memory, decode(value)?)?),
+        "vault.evals.cohorts.setup" => encode(vault_evals_cohorts_setup(memory, decode(value)?)?),
         "vault.research.bind" => encode(vault_research_bind(memory, decode(value)?)?),
         "vault.research.fork" => encode(vault_research_fork(memory, decode(value)?)?),
         "vault.research.weave" => encode(vault_research_weave(memory, decode(value)?)?),
@@ -7755,6 +7931,14 @@ pub fn invoke(
             encode(vault_code_origin_publications(memory, decode(value)?)?)
         }
         "vault.code.checkout.bind" => encode(vault_code_checkout_bind(memory, decode(value)?)?),
+        "vault.code.snapshots.ingest" => {
+            encode(vault_code_snapshots_ingest(memory, decode(value)?)?)
+        }
+        "vault.code.snapshots.get" => encode(vault_code_snapshots_get(memory, decode(value)?)?),
+        "vault.code.snapshots.read" => encode(vault_code_snapshots_read(memory, decode(value)?)?),
+        "vault.code.symbols.definitions" => {
+            encode(vault_code_symbols_definitions(memory, decode(value)?)?)
+        }
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
@@ -7854,6 +8038,8 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
+        "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
@@ -9488,6 +9674,30 @@ pub fn vault_records_erase_confirm(
 ) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
     crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
 }
+pub fn vault_research_create_child(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchChildWire,
+) -> MemoryResult<crate::task_verb::sdk::ResearchChildReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.research.create_child", &input)
+}
+pub fn vault_research_archive(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchArchiveWire,
+) -> MemoryResult<crate::task_verb::sdk::ResearchArchive> {
+    crate::task_verb::sdk::research_archive(memory, input)
+}
+pub fn vault_evals_inventory(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EvalInventoryWire,
+) -> MemoryResult<crate::skill_optimize::EvalAuthoringInventory> {
+    crate::task_verb::sdk::host_only(memory, "vault.evals.inventory", &input)
+}
+pub fn vault_evals_cohorts_setup(
+    memory: &Memory<'_>,
+    input: crate::skill_optimize::EvalCohortSetup,
+) -> MemoryResult<crate::skill_optimize::EvalAuthoringReport> {
+    crate::task_verb::sdk::host_only(memory, "vault.evals.cohorts.setup", &input)
+}
 pub fn vault_research_bind(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResearchBindWire,
@@ -10251,6 +10461,36 @@ pub fn vault_code_checkout_bind(
 ) -> MemoryResult<crate::memory::origin_doors::CheckoutDoorBinding> {
     memory.checkout_door_bind_as(&memory.embedded_owner("vault.code.checkout.bind")?, input)
 }
+pub fn vault_code_snapshots_ingest(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotIngestRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotView> {
+    memory.code_snapshot_ingest_as(
+        &memory.embedded_owner("vault.code.snapshots.ingest")?,
+        input,
+    )
+}
+pub fn vault_code_snapshots_get(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotRequest,
+) -> MemoryResult<Option<crate::memory::codebase_doors::CodeSnapshotView>> {
+    memory.code_snapshot_get_as(&memory.embedded_owner("vault.code.snapshots.get")?, input)
+}
+pub fn vault_code_snapshots_read(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotReadRequest,
+) -> MemoryResult<Option<crate::memory::codebase_doors::CodeSnapshotPinnedFile>> {
+    memory.code_snapshot_read_as(&memory.embedded_owner("vault.code.snapshots.read")?, input)
+}
+pub fn vault_code_symbols_definitions(
+    memory: &Memory<'_>,
+    input: crate::memory::codebase_doors::CodeSnapshotDefinitionsRequest,
+) -> MemoryResult<crate::memory::codebase_doors::CodeSnapshotDefinitionsView> {
+    memory.code_snapshot_definitions_as(
+        &memory.embedded_owner("vault.code.symbols.definitions")?,
+        input,
+    )
+}
 pub fn vault_artifacts_export(
     memory: &Memory<'_>,
     input: crate::blob_artifact::ArtifactExportRequest,
@@ -10804,6 +11044,18 @@ pub fn self_skills_callables(
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
+}
+pub fn ai_steps_submit(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::ModelStepSubmit,
+) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
+    crate::task_verb::sdk::host_only(memory, "ai.steps.submit", &input)
+}
+pub fn ai_steps_receipt(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::ModelStepReceiptRequest,
+) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
+    crate::task_verb::sdk::host_only(memory, "ai.steps.receipt", &input)
 }
 pub fn ai_reply(
     memory: &Memory<'_>,

@@ -5,6 +5,8 @@
 //! publisher named the kit's root for. The bytes are checked as a machine's
 //! read checks them (`bundle::fetch_generation`).
 
+use std::time::Duration;
+
 use ed25519_dalek::SigningKey;
 use serde_json::{Value, json};
 
@@ -17,6 +19,12 @@ use crate::sync::transport::TransportError;
 use crate::world_keys::{
     RecoveryRootId, RecoveryRootSeed, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
 };
+
+/// How long a restore waits to reach the home's kit door.
+const KIT_BUNDLE_CONNECT_TIMEOUT_SECS: u64 = 12;
+/// How long one slice request may take, its answer's body included, before
+/// the restore gives up on a home that stopped answering.
+const KIT_BUNDLE_PART_TIMEOUT_SECS: u64 = 300;
 
 /// The home's kit door, and what each request to it is signed with.
 pub(super) struct KitHome {
@@ -78,10 +86,14 @@ impl KitHome {
                 "the home refused the kit fetch",
             ));
         }
-        response
-            .json()
-            .await
-            .map_err(|_| TransportError::InvalidPayload("the kit fetch answer does not decode"))
+        // A slice whose body outlasts the deadline failed; it is not missing.
+        response.json().await.map_err(|e| {
+            if e.is_timeout() {
+                TransportError::Storage(format!("kit fetch request failed: {e}"))
+            } else {
+                TransportError::InvalidPayload("the kit fetch answer does not decode")
+            }
+        })
     }
 }
 
@@ -120,8 +132,15 @@ pub async fn fetch_sealed_bundle_with_kit(
         .public(vault_id)
         .map_err(|error| TransportError::Storage(error.to_string()))?
         .id;
+    // Each slice is bounded, body included, so a home that stops answering
+    // fails the restore instead of hanging it.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(KIT_BUNDLE_CONNECT_TIMEOUT_SECS))
+        .timeout(Duration::from_secs(KIT_BUNDLE_PART_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| TransportError::Storage(format!("kit fetch client failed: {e}")))?;
     let home = KitHome {
-        client: reqwest::Client::new(),
+        client,
         url,
         origin,
         vault_id: *vault_id,

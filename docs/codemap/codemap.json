@@ -4003,7 +4003,7 @@
       "crate-vis": 9,
       "enum": 6,
       "fn": 15,
-      "re-export": 4,
+      "re-export": 5,
       "struct": 16
      }
     },
@@ -4022,6 +4022,16 @@
       "enum": 1,
       "fn": 6,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/autoreason_campaign/research/children.rs",
+     "purpose": "Owner-requested experiment work, through the ordinary attenuating dispatcher",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -13207,7 +13217,7 @@
      "path": "src/codebase/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "re-export": 4
      }
     },
@@ -29716,7 +29726,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 9,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -30243,7 +30253,7 @@
      "path": "src/llm/step/execute.rs",
      "purpose": "Durable step execution: memo/admission/deadline orchestration with retry and lease settlement",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -30255,6 +30265,7 @@
      "purpose": "LLM-5 durable-step layer: `call_as_step` BLAKE3 memoization plus the unified Budget/Consent trap record…",
      "surface": {
       "crate-vis": 8,
+      "mod": 1,
       "re-export": 5
      }
     },
@@ -30270,6 +30281,27 @@
       "crate-vis": 6,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ModelStepFailure",
+      "ModelStepFailureClass",
+      "ModelStepReceipt",
+      "ModelStepReceiptRequest",
+      "ModelStepResult",
+      "ModelStepRetryPolicy",
+      "ModelStepSubmit"
+     ],
+     "path": "src/llm/step/public.rs",
+     "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 2,
+      "struct": 5
      }
     },
     {
@@ -30871,6 +30903,57 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/codebase_doors/mod.rs",
+     "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/codebase_doors/snapshots.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/codebase_doors/symbols.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRepoPointer",
+      "CodeSnapshotDefinition",
+      "CodeSnapshotDefinitionsRequest",
+      "CodeSnapshotDefinitionsView",
+      "CodeSnapshotFile",
+      "CodeSnapshotIngestRequest",
+      "CodeSnapshotPinnedFile",
+      "CodeSnapshotReadRequest",
+      "CodeSnapshotRequest",
+      "CodeSnapshotView"
+     ],
+     "path": "src/memory/codebase_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -31213,7 +31296,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 4,
+      "mod": 5,
       "re-export": 40
      }
     },
@@ -43892,13 +43975,14 @@
       "EvalAuthoringReport",
       "EvalAuthoringSkip",
       "EvalCohortDecision",
+      "EvalCohortSetup",
       "FamilyDecision"
      ],
      "path": "src/skill_optimize/eval_set/authoring/apply.rs",
      "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
      "surface": {
-      "fn": 1,
-      "struct": 7
+      "fn": 2,
+      "struct": 8
      }
     },
     {
@@ -43941,12 +44025,14 @@
       "CoverageGap",
       "EvalCutAudit",
       "EvalCutAuditDraft",
+      "EvalCutAuthor",
       "NearCopyFlag"
      ],
      "path": "src/skill_optimize/eval_set/cut_audit.rs",
      "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
      "surface": {
       "crate-vis": 7,
+      "enum": 1,
       "fn": 1,
       "struct": 7
      }
@@ -49077,7 +49163,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 36,
+      "re-export": 37,
       "struct": 36
      }
     },
@@ -49301,6 +49387,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "EvalInventoryWire"
+     ],
+     "path": "src/task_verb/sdk_eval_cohort.rs",
+     "purpose": "Owner setup of sealed cohorts through the eval-authoring mechanism",
+     "surface": {
+      "fn": 2,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "ExplainGateNotice",
       "ExplainGateReply",
       "ExplainGateRequest",
@@ -49341,7 +49440,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 490
+      "fn": 500
      }
     },
     {
@@ -49581,10 +49680,14 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ResearchArchive",
+      "ResearchArchiveWire",
       "ResearchBasisWire",
       "ResearchBenchmarkWire",
       "ResearchBindWire",
       "ResearchCandidateWire",
+      "ResearchChildReceipt",
+      "ResearchChildWire",
       "ResearchForkWire",
       "ResearchHeldOutWire",
       "ResearchInvalidWire",
@@ -49603,8 +49706,8 @@
      "purpose": "`vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record…",
      "surface": {
       "enum": 1,
-      "fn": 15,
-      "struct": 16
+      "fn": 17,
+      "struct": 20
      }
     },
     {
@@ -54718,7 +54821,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 18,
+     "files": 19,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -55467,7 +55570,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 98,
+     "files": 99,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55488,7 +55591,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 148,
+     "files": 152,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55999,7 +56102,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 148,
+     "files": 149,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56169,7 +56272,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3421,
+   "source_files": 3428,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64582,7 +64685,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 440
+      "fn": 450
      }
     },
     {
@@ -65630,7 +65733,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 441
+      "fn": 451
      }
     },
     {
@@ -68590,6 +68693,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/codebase_doors.rs",
+     "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/connector_call_doors.rs",
      "purpose": "The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's…",
      "surface": {
@@ -68753,7 +68866,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 87
+      "crate-vis": 90
      }
     },
     {
@@ -68792,6 +68905,16 @@
      "notable": [],
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/model_step_doors.rs",
+     "purpose": "Owner-proof model steps; HTTP, SDK and MCP reach the same typed door",
      "surface": {
       "crate-vis": 2
      }
@@ -68864,6 +68987,16 @@
      "purpose": "The generated context-bearing reply door, under the existing owner's inference authority",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/research_doors.rs",
+     "purpose": "Owner-authenticated child admission and sealed-cohort setup",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -70143,7 +70276,7 @@
      "path": "src/api/recovery_bundle.rs",
      "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 4
      }
     },
     {
@@ -74132,6 +74265,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/models/ladder/step_attempt.rs",
+     "purpose": "The durable step executor owns retries; this door sends one gated attempt",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/models/launch_price.rs",
      "purpose": "The launch statement's USD quote (OF-532)",
      "surface": {
@@ -76108,7 +76251,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 343,
+     "files": 346,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76381,7 +76524,7 @@
      "purpose": "MCP connector actor registry"
     },
     "models": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76523,7 +76666,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 667,
+   "source_files": 671,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76888,7 +77031,10 @@
       "CalendarSearchRequest",
       "CalendarSel",
       "CalibrationPair",
+      "CallClass",
+      "CallEnvelope",
       "CallOutcome",
+      "CallPurpose",
       "CallReceipt",
       "CallReceiptRequest",
       "CallTransport",
@@ -76917,9 +77063,11 @@
       "CampaignTaste",
       "CancelRejectionPathology",
       "CancelStanding",
+      "CandidateLabel",
       "CandidateRef",
       "Care",
       "CareLevel",
+      "CaseDecision",
       "CellTypeRef",
       "ChangeKind",
       "ChannelCeiling",
@@ -76985,12 +77133,23 @@
       "CodeProposedStamp",
       "CodeRepoDiffRequest",
       "CodeRepoDiffView",
+      "CodeRepoPointer",
+      "CodeSnapshotDefinition",
+      "CodeSnapshotDefinitionsRequest",
+      "CodeSnapshotDefinitionsView",
+      "CodeSnapshotFile",
+      "CodeSnapshotIngestRequest",
+      "CodeSnapshotPinnedFile",
+      "CodeSnapshotReadRequest",
+      "CodeSnapshotRequest",
+      "CodeSnapshotView",
       "CodeSpanView",
       "CodeStateRequest",
       "CodeStateView",
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CohortSummary",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
       "CommReach",
@@ -77053,6 +77212,7 @@
       "ConsentStateRosterActor",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
+      "ContentPart",
       "ContextDefault",
       "ContextEmitReceipt",
       "ContextPackBudgetControls",
@@ -77099,6 +77259,7 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
+      "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
       "DataClass",
@@ -77154,6 +77315,7 @@
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
       "DerivationKind",
+      "DeterministicFallback",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
       "DiaryQueryEntry",
@@ -77219,13 +77381,21 @@
       "EsignNoticeSwitches",
       "EsignRecipient",
       "EsignVoidRequest",
+      "EvalAuthoringInventory",
+      "EvalAuthoringReport",
+      "EvalAuthoringSkip",
+      "EvalCandidate",
       "EvalCase",
+      "EvalCohortSetup",
       "EvalExposure",
+      "EvalExposureCounts",
       "EvalExposureKind",
+      "EvalInventoryWire",
       "EvalLabel",
       "EvalLabelKind",
       "EvalRelease",
       "EvalSeat",
+      "EvalSourceGroup",
       "EvidenceFloors",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
@@ -77243,6 +77413,8 @@
       "ExtractionDefault",
       "FactKind",
       "FactSource",
+      "FamilyDecision",
+      "FamilyPurpose",
       "FanoutAckRequest",
       "FanoutCheckChoice",
       "FanoutLaunchHold",
@@ -77257,6 +77429,7 @@
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
+      "FinishReason",
       "FoldCompactAsked",
       "FoldCompactRequest",
       "FoldDescription",
@@ -77368,6 +77541,7 @@
       "IdentityEffect",
       "IdentitySettled",
       "ImageBox",
+      "ImageContent",
       "ImagePin",
       "ImagePoint",
       "ImageViewRequest",
@@ -77485,6 +77659,14 @@
       "LiveRunRequestLeaderSplitInput",
       "LlmCapability",
       "LlmError",
+      "LlmInputUsage",
+      "LlmMessage",
+      "LlmMessageRole",
+      "LlmOutputUsage",
+      "LlmRequest",
+      "LlmResponse",
+      "LlmToolSpec",
+      "LlmUsage",
       "LocalRunnerBudgetCounter",
       "LocalRunnerBudgetRequest",
       "LocalRunnerBudgetView",
@@ -77520,7 +77702,15 @@
       "MetricDirection",
       "MetricRole",
       "MetricSet",
+      "ModelLocality",
       "ModelSlot",
+      "ModelStepFailure",
+      "ModelStepFailureClass",
+      "ModelStepReceipt",
+      "ModelStepReceiptRequest",
+      "ModelStepResult",
+      "ModelStepRetryPolicy",
+      "ModelStepSubmit",
       "MutationIntent",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
@@ -77761,6 +77951,7 @@
       "PruneReason",
       "PruneReceipt",
       "PulledImage",
+      "PurposeCounts",
       "QualificationCase",
       "QualificationInjection",
       "QualificationInjectionSurface",
@@ -77823,12 +78014,16 @@
       "ReportRoute",
       "ReportStatus",
       "RequiredParty",
+      "ResearchArchive",
+      "ResearchArchiveWire",
       "ResearchBasisWire",
       "ResearchBenchmarkWire",
       "ResearchBindWire",
       "ResearchBinding",
       "ResearchBudgetRead",
       "ResearchCandidateWire",
+      "ResearchChildReceipt",
+      "ResearchChildWire",
       "ResearchConfirmationSeat",
       "ResearchExecution",
       "ResearchForkWire",
@@ -77862,6 +78057,7 @@
       "ResidencePruned",
       "ResolveRecordRefRequest",
       "ResolvedRole",
+      "ResponseFormat",
       "RetentionDefault",
       "RetrievalScoreComponent",
       "RetrievalSignal",
@@ -77960,6 +78156,7 @@
       "SealLevel",
       "SearchAxis",
       "SearchEvidence",
+      "SeatInventory",
       "SecretLiftClose",
       "SecretLiftHistoryProposal",
       "SecretLiftProgress",
@@ -78132,6 +78329,7 @@
       "SteerRequest",
       "StepAssetKind",
       "StepOutcome",
+      "StepProgression",
       "StopCause",
       "StoredShapeSeed",
       "SufficiencyCard",
@@ -78218,6 +78416,7 @@
       "ThreadPassportsRequest",
       "ThreadPassportsView",
       "ThrobberAtom",
+      "TierPrecedence",
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
@@ -78230,6 +78429,7 @@
       "TwoClocksAtom",
       "TypeRef",
       "TypedDecision",
+      "UncutFamily",
       "UndoneKeep",
       "UnitAbstention",
       "UnitRefusal",
@@ -78316,8 +78516,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 438,
-      "struct": 1158
+      "enum": 450,
+      "struct": 1203
      }
     },
     {

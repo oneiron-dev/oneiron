@@ -584,3 +584,84 @@ pub fn research_record_benchmark(
         },
     )?)
 }
+
+/// Enqueue real child work; record its candidate afterward with `fork` or
+/// `weave`. The host binds the campaign's run and ordinary parent attenuation.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchChildWire {
+    pub root: EntityId,
+    pub parent: EntityId,
+    pub agent: EntityId,
+    pub intent_key: String,
+    pub briefing: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchChildReceipt {
+    pub root: EntityId,
+    pub parent: EntityId,
+    pub child: EntityId,
+}
+
+/// The complete retained campaign record, not just its active search frontier.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchArchiveWire {
+    pub root: EntityId,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchArchive {
+    pub binding: ResearchBinding,
+    pub experiments: Vec<ExperimentNode>,
+    pub rounds: Vec<SelectionReceipt>,
+    pub promotions: Vec<PromotionBasis>,
+    pub incumbent: EntityId,
+}
+
+/// Owner-authorized work still goes through the existing dispatch gate. A
+/// candidate is not recorded until the caller has the actual result to pin.
+pub fn research_create_child_as_owner(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    input: ResearchChildWire,
+) -> MemoryResult<ResearchChildReceipt> {
+    owner.revalidate_person(vault)?;
+    let child = research::create_research_child(
+        vault,
+        attempt(input.root)?,
+        attempt(input.parent)?,
+        input.agent,
+        &input.intent_key,
+        input.briefing,
+        vault.now_recorded_at(),
+    )?;
+    Ok(ResearchChildReceipt {
+        root: input.root,
+        parent: input.parent,
+        child: EntityId::from_bytes(*child.as_bytes())?,
+    })
+}
+
+/// Read every retained candidate and its original evidence, including buggy,
+/// woven and pruned nodes. Reads use the same controller gate as mutations.
+pub fn research_archive(
+    memory: &Memory<'_>,
+    input: ResearchArchiveWire,
+) -> MemoryResult<ResearchArchive> {
+    let root = attempt(input.root)?;
+    controller(memory, Some(root))?;
+    let vault = memory.vault();
+    let binding = research::research_binding(vault, root)?
+        .ok_or(crate::Error::EntityNotFound)?;
+    Ok(ResearchArchive {
+        binding,
+        experiments: research::research_nodes(vault, root)?,
+        rounds: research::research_rounds(vault, root)?,
+        promotions: research::research_promotions(vault, root)?,
+        incumbent: EntityId::from_bytes(*research::research_incumbent(vault, root)?.as_bytes())?,
+    })
+}

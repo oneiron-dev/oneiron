@@ -49,6 +49,7 @@ use crate::{
 };
 
 mod budget;
+mod children;
 mod continuation;
 mod estimator;
 mod promotion;
@@ -58,6 +59,7 @@ pub use budget::{
     research_budget, research_reservations, reserve_research_exploration, reserve_research_work,
     settle_research_work,
 };
+pub use children::create_research_child;
 pub use continuation::{
     ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
     ResearchWork, advance_research_continuations, ensure_research_continuations,

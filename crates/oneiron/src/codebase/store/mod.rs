@@ -694,7 +694,7 @@ pub(super) fn codebase_ids_by_fork_hash_in_txn(
     codebase_ids_by_index(FORK_INDEX, store, rtxn, &hash_index_scan_prefix(fork_hash))
 }
 
-pub(super) fn codebase_asset_entity_id(
+pub(crate) fn codebase_asset_entity_id(
     content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
 ) -> Result<EntityId> {
     entity_id_from_hash_material(CODEBASE_ASSET_ID_DOMAIN, &[content_hash])

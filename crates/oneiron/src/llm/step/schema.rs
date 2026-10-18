@@ -62,9 +62,10 @@ pub(super) async fn generate(
     guard: &BudgetGuard,
     deadline: Option<&WakePassDeadline>,
     check: Option<&ReplyCheck>,
+    max_retries: usize,
 ) -> DurableStepResult<LlmResponse> {
     let ResponseFormat::Json { schema } = &request.envelope.response_format else {
-        let response = super::execute::generate_with_retry(backend, request, lease).await?;
+        let response = super::execute::generate_with_retry(backend, request, lease, max_retries).await?;
         let Some(Err(error)) = check.map(|check| check(&response)) else {
             return Ok(response);
         };
@@ -146,7 +147,7 @@ pub(super) async fn generate(
             &correction.lease
         };
         let mut response =
-            match super::execute::generate_with_retry(backend, &wire, active_lease).await {
+            match super::execute::generate_with_retry(backend, &wire, active_lease, max_retries).await {
                 Ok(response) => response,
                 // The first call failed: nothing was answered, nothing spent.
                 Err(source) if attempt == 1 => return Err(DurableStepError::Llm(source)),
