@@ -1702,6 +1702,32 @@
       "section": false
     },
     {
+      "name": "self.admission.status",
+      "description": "Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work.",
+      "input": "crate::receipt::admission::AdmissionStatusRequest",
+      "output": "Option<crate::receipt::admission::AdmissionReceipt>",
+      "call": "memory.admission_status(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.admission.receipts",
+      "description": "Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay.",
+      "input": "crate::receipt::admission::AdmissionReceiptsRequest",
+      "output": "Vec<crate::receipt::admission::AdmissionReceipt>",
+      "call": "memory.admission_receipts(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.explain.memory",
       "description": "Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it.",
       "input": "crate::task_verb::sdk::ExplainMemoryRequest",
@@ -13574,6 +13600,70 @@
       },
       "section": false,
       "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.review",
+      "description": "The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer.",
+      "input": "crate::memory::run_review::RunReviewRequest",
+      "output": "crate::memory::run_review::RunReview",
+      "call": "memory.review_run_as_owner(&memory.embedded_owner(\"vault.runs.review\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.settle",
+      "description": "The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle.",
+      "input": "crate::memory::run_review::RunSettleRequest",
+      "output": "crate::memory::run_review::RunSettlement",
+      "call": "memory.settle_run_as_owner(&memory.embedded_owner(\"vault.runs.settle\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.settlement",
+      "description": "The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle.",
+      "input": "crate::memory::run_review::RunSettlementRequest",
+      "output": "crate::memory::run_review::RunSettlement",
+      "call": "memory.run_settlement_as_owner(&memory.embedded_owner(\"vault.runs.settlement\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.revert_run",
+      "description": "The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why.",
+      "input": "crate::memory::run_review::RevertRunRequest",
+      "output": "crate::memory::run_review::RevertRunOutcome",
+      "call": "memory.revert_run_as_owner(&memory.embedded_owner(\"vault.revert_run\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
       "openapi": true
     }
   ]

@@ -102,6 +102,8 @@ pub enum AgentVerb {
     VaultReceipts,
     VaultImagesView,
     VaultReceiptsGet,
+    SelfAdmissionStatus,
+    SelfAdmissionReceipts,
     VaultExplainMemory,
     VaultExplainGate,
     VaultKvGet,
@@ -787,6 +789,10 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    VaultRunsReview,
+    VaultRunsSettle,
+    VaultRunsSettlement,
+    VaultRevertRun,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -921,6 +927,8 @@ impl AgentVerb {
         Self::VaultReceipts,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
+        Self::SelfAdmissionStatus,
+        Self::SelfAdmissionReceipts,
         Self::VaultExplainMemory,
         Self::VaultExplainGate,
         Self::VaultKvGet,
@@ -1606,6 +1614,10 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::VaultRunsReview,
+        Self::VaultRunsSettle,
+        Self::VaultRunsSettlement,
+        Self::VaultRevertRun,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -1743,6 +1755,8 @@ impl AgentVerb {
             Self::VaultReceipts => "vault.receipts",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
+            Self::SelfAdmissionStatus => "self.admission.status",
+            Self::SelfAdmissionReceipts => "self.admission.receipts",
             Self::VaultExplainMemory => "vault.explain.memory",
             Self::VaultExplainGate => "vault.explain.gate",
             Self::VaultKvGet => "vault.kv.get",
@@ -2450,6 +2464,10 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::VaultRunsReview => "vault.runs.review",
+            Self::VaultRunsSettle => "vault.runs.settle",
+            Self::VaultRunsSettlement => "vault.runs.settlement",
+            Self::VaultRevertRun => "vault.revert_run",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -2583,6 +2601,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::SelfAdmissionStatus
+                | Self::SelfAdmissionReceipts
                 | Self::VaultExplainMemory
                 | Self::VaultExplainGate
                 | Self::VaultKvGet
@@ -3248,6 +3268,10 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultRunsReview
+                | Self::VaultRunsSettle
+                | Self::VaultRunsSettlement
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -3429,6 +3453,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::SelfAdmissionStatus
+                | Self::SelfAdmissionReceipts
                 | Self::VaultExplainMemory
                 | Self::VaultExplainGate
                 | Self::VaultKvGet
@@ -4094,6 +4120,10 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultRunsReview
+                | Self::VaultRunsSettle
+                | Self::VaultRunsSettlement
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -4154,6 +4184,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultReceipts
+                | Self::SelfAdmissionReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveSchedulesList
@@ -4345,6 +4376,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::SelfAdmissionStatus
+                | Self::SelfAdmissionReceipts
                 | Self::VaultExplainMemory
                 | Self::VaultExplainGate
                 | Self::VaultKvGet
@@ -5002,6 +5035,10 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultRunsReview
+                | Self::VaultRunsSettle
+                | Self::VaultRunsSettlement
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5505,6 +5542,8 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::VaultRunsSettle
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -5668,6 +5707,8 @@ impl AgentVerb {
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
+            Self::SelfAdmissionStatus => &["spec"],
+            Self::SelfAdmissionReceipts => &["spec"],
             Self::VaultExplainMemory => &["spec"],
             Self::VaultExplainGate => &["spec"],
             Self::VaultKvGet => &["spec"],
@@ -6353,6 +6394,10 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultRunsReview => &["spec"],
+            Self::VaultRunsSettle => &["spec"],
+            Self::VaultRunsSettlement => &["spec"],
+            Self::VaultRevertRun => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -6488,6 +6533,8 @@ impl AgentVerb {
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
+            Self::SelfAdmissionStatus => &["spec"],
+            Self::SelfAdmissionReceipts => &["spec"],
             Self::VaultExplainMemory => &["spec"],
             Self::VaultExplainGate => &["spec"],
             Self::VaultKvGet => &["spec"],
@@ -7173,6 +7220,10 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultRunsReview => &["spec"],
+            Self::VaultRunsSettle => &["spec"],
+            Self::VaultRunsSettlement => &["spec"],
+            Self::VaultRevertRun => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -7498,6 +7549,12 @@ impl AgentVerb {
             }
             Self::VaultReceiptsGet => {
                 "One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."
+            }
+            Self::SelfAdmissionStatus => {
+                "Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."
+            }
+            Self::SelfAdmissionReceipts => {
+                "Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."
             }
             Self::VaultExplainMemory => {
                 "Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it."
@@ -9469,6 +9526,18 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::VaultRunsReview => {
+                "The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."
+            }
+            Self::VaultRunsSettle => {
+                "The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle."
+            }
+            Self::VaultRunsSettlement => {
+                "The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."
+            }
+            Self::VaultRevertRun => {
+                "The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."

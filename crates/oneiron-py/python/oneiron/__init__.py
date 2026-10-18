@@ -685,6 +685,9 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
+        def revert_run(self, spec):
+            """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
+            return json.loads(_translate(lambda: self._client.vault_revert_run(json.dumps(spec))))
     class _VaultReportsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2884,6 +2887,15 @@ class Oneiron:
         def checkpoint(self, spec):
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
             return json.loads(_translate(lambda: self._client.vault_runs_checkpoint(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
+            return json.loads(_translate(lambda: self._client.vault_runs_review(json.dumps(spec))))
+        def settle(self, spec):
+            """The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle."""
+            return json.loads(_translate(lambda: self._client.vault_runs_settle(json.dumps(spec))))
+        def settlement(self, spec):
+            """The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."""
+            return json.loads(_translate(lambda: self._client.vault_runs_settlement(json.dumps(spec))))
     class _VaultRunsBranchesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3656,6 +3668,9 @@ class Oneiron:
         def credential(self) -> "Oneiron._SelfCredentialVerbs":
             return Oneiron._SelfCredentialVerbs(self._client)
         @property
+        def admission(self) -> "Oneiron._SelfAdmissionVerbs":
+            return Oneiron._SelfAdmissionVerbs(self._client)
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
         @property
@@ -3808,6 +3823,15 @@ class Oneiron:
         def attenuate(self, spec):
             """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
             return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
+    class _SelfAdmissionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
+            return json.loads(_translate(lambda: self._client.self_admission_status(json.dumps(spec))))
+        def receipts(self, spec):
+            """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
+            return json.loads(_translate(lambda: self._client.self_admission_receipts(json.dumps(spec))))
     class _SelfOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
