@@ -546,6 +546,8 @@ pub(crate) async fn start_desktop_workers(
     let voice = crate::voice_host::VoiceBoot::start(
         &sync_server,
         config.models.as_ref().map(|models| &models.voice),
+        None,
+        crate::server::admit_every_pass(),
     );
     Ok(StartedWorkers {
         server: sync_server,

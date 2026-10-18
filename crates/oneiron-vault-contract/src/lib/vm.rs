@@ -34,6 +34,11 @@ pub const VM_LEDGER_PORT: u32 = 1027;
 /// Host to guest: the vault's artifact origin, when the supervisor gave the
 /// vault one (`--artifact-http-socket`).
 pub const VM_ARTIFACT_PORT: u32 = 1028;
+/// Host to guest: the vault's voice loop, when its `[models.voice]` names a
+/// socket (FIX 2391). The socket's directory is [`VM_VOICE_DIR`].
+pub const VM_VOICE_PORT: u32 = 1029;
+/// The owner-only directory a vault VM's `[models.voice]` socket lies in.
+pub const VM_VOICE_DIR: &str = "/run/oneiron/voice";
 /// One boot-channel frame, newline included.
 pub const MAX_VM_FRAME: usize = 1024;
 

@@ -9,6 +9,9 @@ mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev
 mount -t tmpfs -o mode=0755 run /run
 mkdir -p /run/oneiron /vault
+# The voice loop's socket directory: [models.voice].socket lies in it, and it
+# must be owner-only (FIX 2391).
+mkdir -p -m 0700 /run/oneiron/voice
 mount -t ext4 -o noatime /dev/vdb /vault
 
 vault=""

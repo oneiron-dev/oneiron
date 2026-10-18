@@ -84,6 +84,33 @@ pub struct ManagedOwnerRequest<'a> {
     pub body: &'a [u8],
 }
 
+/// The method a managed voice hello's [`ManagedOwnerAction`] signs; no HTTP
+/// request is attested under it (FIX 2391).
+pub const MANAGED_VOICE_METHOD: &str = "VOICE";
+
+/// The path a managed voice hello's action signs: a namespace, not a route.
+pub const MANAGED_VOICE_PATH: &str = "/voice";
+
+/// How far a managed voice hello's `issued_at` may sit from the vault's
+/// clock, either way, in seconds. The vault takes each hello's action once.
+pub const MANAGED_VOICE_MAX_SKEW_SECS: u64 = 60;
+
+impl<'a> ManagedOwnerRequest<'a> {
+    /// A managed voice hello as its action signs it: the room and the voice
+    /// roster the hello names in the first two bound slots (empty when
+    /// absent), and its `issued_at`, in Unix seconds, as eight big-endian
+    /// bytes of body.
+    #[must_use]
+    pub fn voice(room: &'a str, roster: &'a str, issued_at: &'a [u8; 8]) -> Self {
+        Self {
+            method: MANAGED_VOICE_METHOD,
+            path: MANAGED_VOICE_PATH,
+            headers: [room, roster, ""],
+            body: issued_at,
+        }
+    }
+}
+
 /// A host assertion that one facade request is the vault owner's own: tied
 /// to one vault, the authenticated holder, the method and path, the headers
 /// that place the call, and the exact body. The vault names the holder as

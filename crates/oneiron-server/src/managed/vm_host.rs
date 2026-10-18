@@ -20,7 +20,7 @@ use super::vault_gates::read_managed_credentials;
 use super::vm_schedule::VmWakeSchedule;
 use oneiron_vault_contract::vm::{
     MAX_VM_FRAME, VM_ARTIFACT_PORT, VM_BOOT_PORT, VM_CTL_PORT, VM_GUEST_CID, VM_HTTP_PORT,
-    VM_LEDGER_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
+    VM_LEDGER_PORT, VM_VOICE_PORT, VmGuestFrame, VmHostFrame, decode_vm_frame, encode_vm_frame,
     guest_initiated_socket, host_connect_line,
 };
 use oneiron_vault_contract::{
@@ -416,6 +416,12 @@ impl VaultVm {
     /// The vault's artifact origin, when its profile serves one.
     pub async fn artifacts(&self) -> anyhow::Result<UnixStream> {
         self.connect(VM_ARTIFACT_PORT).await
+    }
+
+    /// The vault's voice loop, when its `[models.voice]` names a socket in
+    /// `VM_VOICE_DIR` (FIX 2391): a call's audio sibling dials this.
+    pub async fn voice(&self) -> anyhow::Result<UnixStream> {
+        self.connect(VM_VOICE_PORT).await
     }
 
     /// One ctl verb, exactly as a node's supervisor sends it.

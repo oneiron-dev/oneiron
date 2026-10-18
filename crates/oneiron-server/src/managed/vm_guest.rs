@@ -16,7 +16,9 @@ use oneiron_vault_contract::host::{Host, HostFuture, HostLimits};
 use oneiron_vault_contract::host_adapters::{
     FirecrackerGuest, GuestLink, MicroVmHost, VsockListener, VsockStream,
 };
-use oneiron_vault_contract::vm::{VM_ARTIFACT_PORT, VM_CTL_PORT, VM_HOST_CID, VM_LEDGER_PORT};
+use oneiron_vault_contract::vm::{
+    VM_ARTIFACT_PORT, VM_CTL_PORT, VM_HOST_CID, VM_LEDGER_PORT, VM_VOICE_PORT,
+};
 use oneiron_vault_contract::{Schedule, WakeEntry};
 use std::{
     path::PathBuf,
@@ -53,6 +55,11 @@ impl VmGuestHost {
     }
     pub(super) fn link(&self) -> Option<GuestLink> {
         self.inner.0.link()
+    }
+    /// Bridges the voice port to the voice loop's socket (FIX 2391).
+    pub(super) fn bridge_voice(&self, socket: PathBuf) -> anyhow::Result<()> {
+        spawn_inbound(VsockListener::bind(VM_VOICE_PORT)?, socket);
+        Ok(())
     }
 }
 

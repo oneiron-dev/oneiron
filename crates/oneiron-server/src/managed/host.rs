@@ -42,6 +42,19 @@ impl ManagedHost {
             ProcessHost::new(args, limits, shutdown)?,
         )?))
     }
+    /// Lets the supervisor reach the voice loop's `socket` (FIX 2391): a
+    /// vault VM bridges its voice port to it, and a node's process vault is
+    /// dialled on the socket itself.
+    pub(super) fn bridge_voice(&mut self, socket: std::path::PathBuf) -> anyhow::Result<()> {
+        match self {
+            Self::Process(_) => {
+                drop(socket);
+                Ok(())
+            }
+            #[cfg(target_os = "linux")]
+            Self::Vm(host) => host.adapter_mut().bridge_voice(socket),
+        }
+    }
     pub(super) fn clear_secrets(&mut self) {
         match self {
             Self::Process(host) => host.adapter_mut().clear_secrets(),
