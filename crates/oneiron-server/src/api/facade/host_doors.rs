@@ -60,6 +60,7 @@ pub(crate) use super::live_run_doors::*;
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
+pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::note_doors::*;
 pub(crate) use super::residence_doors::*;
@@ -1001,6 +1002,22 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
     match verb {
         "vault.packs.put"
         | "vault.packs.remove"
+        | "vault.skill_hubs.put"
+        | "vault.skill_hubs.get"
+        | "vault.skill_hubs.publishers.admit"
+        | "vault.skill_hubs.publishers.revoke"
+        | "vault.skill_hubs.refs.get"
+        | "vault.skill_hubs.refs.set"
+        | "vault.packs.install"
+        | "vault.packs.sync"
+        | "vault.packs.get"
+        | "vault.skills.import"
+        | "vault.skills.sync"
+        | "vault.skills.receipts"
+        | "vault.skills.permissions.approve"
+        | "vault.packs.hooks.bind"
+        | "vault.packs.hooks.list"
+        | "vault.packs.hooks.qualify"
         | "vault.connectors.subscriptions.put"
         | "vault.connectors.subscriptions.list"
         | "vault.connectors.subscriptions.revoke"

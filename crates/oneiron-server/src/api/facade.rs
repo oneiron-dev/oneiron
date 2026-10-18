@@ -43,6 +43,7 @@ mod fanout_doors;
 mod gate_policy_doors;
 mod graph_ask_doors;
 mod guest_doors;
+mod hub_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
 mod live_run_doors;

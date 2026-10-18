@@ -62,6 +62,22 @@ pub enum AgentVerb {
     VaultWeaveOwnerLinkWrong,
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
+    VaultSkillHubsPut,
+    VaultSkillHubsGet,
+    VaultSkillHubsPublishersAdmit,
+    VaultSkillHubsPublishersRevoke,
+    VaultSkillHubsRefsGet,
+    VaultSkillHubsRefsSet,
+    VaultPacksInstall,
+    VaultPacksSync,
+    VaultPacksGet,
+    VaultSkillsImport,
+    VaultSkillsSync,
+    VaultSkillsReceipts,
+    VaultSkillsPermissionsApprove,
+    VaultPacksHooksBind,
+    VaultPacksHooksList,
+    VaultPacksHooksQualify,
     VaultPacksPut,
     VaultPacksRemove,
     VaultConnectorsSubscriptionsPut,
@@ -461,6 +477,22 @@ impl AgentVerb {
         Self::VaultWeaveOwnerLinkWrong,
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
+        Self::VaultSkillHubsPut,
+        Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsPublishersAdmit,
+        Self::VaultSkillHubsPublishersRevoke,
+        Self::VaultSkillHubsRefsGet,
+        Self::VaultSkillHubsRefsSet,
+        Self::VaultPacksInstall,
+        Self::VaultPacksSync,
+        Self::VaultPacksGet,
+        Self::VaultSkillsImport,
+        Self::VaultSkillsSync,
+        Self::VaultSkillsReceipts,
+        Self::VaultSkillsPermissionsApprove,
+        Self::VaultPacksHooksBind,
+        Self::VaultPacksHooksList,
+        Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
         Self::VaultPacksRemove,
         Self::VaultConnectorsSubscriptionsPut,
@@ -863,6 +895,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
+            Self::VaultSkillHubsPut => "vault.skill_hubs.put",
+            Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
+            Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
+            Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
+            Self::VaultSkillHubsRefsSet => "vault.skill_hubs.refs.set",
+            Self::VaultPacksInstall => "vault.packs.install",
+            Self::VaultPacksSync => "vault.packs.sync",
+            Self::VaultPacksGet => "vault.packs.get",
+            Self::VaultSkillsImport => "vault.skills.import",
+            Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsReceipts => "vault.skills.receipts",
+            Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
+            Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
+            Self::VaultPacksHooksList => "vault.packs.hooks.list",
+            Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksRemove => "vault.packs.remove",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
@@ -1269,6 +1317,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -1675,6 +1739,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -1997,6 +2077,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
                 | Self::VaultMeshPathReceipts
                 | Self::VaultSharedOutcomes
                 | Self::VaultMembersInvitations
@@ -2112,6 +2194,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -2475,6 +2573,17 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -2774,6 +2883,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultSkillHubsPut => &["spec"],
+            Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsPublishersAdmit => &["spec"],
+            Self::VaultSkillHubsPublishersRevoke => &["spec"],
+            Self::VaultSkillHubsRefsGet => &["spec"],
+            Self::VaultSkillHubsRefsSet => &["spec"],
+            Self::VaultPacksInstall => &["spec"],
+            Self::VaultPacksSync => &["spec"],
+            Self::VaultPacksGet => &["spec"],
+            Self::VaultSkillsImport => &["spec"],
+            Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultPacksHooksBind => &["spec"],
+            Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
@@ -3174,6 +3299,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultSkillHubsPut => &["spec"],
+            Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsPublishersAdmit => &["spec"],
+            Self::VaultSkillHubsPublishersRevoke => &["spec"],
+            Self::VaultSkillHubsRefsGet => &["spec"],
+            Self::VaultSkillHubsRefsSet => &["spec"],
+            Self::VaultPacksInstall => &["spec"],
+            Self::VaultPacksSync => &["spec"],
+            Self::VaultPacksGet => &["spec"],
+            Self::VaultSkillsImport => &["spec"],
+            Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultPacksHooksBind => &["spec"],
+            Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
@@ -3684,6 +3825,52 @@ impl AgentVerb {
             }
             Self::VaultWeaveOwnerItemWrong => {
                 "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
+            Self::VaultSkillHubsPut => {
+                "The owner registers or revises a hub source; hub trust never grants activation authority."
+            }
+            Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsPublishersAdmit => {
+                "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
+            }
+            Self::VaultSkillHubsPublishersRevoke => {
+                "The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running."
+            }
+            Self::VaultSkillHubsRefsGet => {
+                "Reads one hub ref policy, pin and separate seen and trusted revisions as the owner."
+            }
+            Self::VaultSkillHubsRefsSet => {
+                "The owner changes one hub ref policy and pin without fetching or trusting new bytes."
+            }
+            Self::VaultPacksInstall => {
+                "The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent."
+            }
+            Self::VaultPacksSync => {
+                "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent."
+            }
+            Self::VaultPacksGet => {
+                "Reads an installed pack and its exact source, pin, publisher and requested powers as the owner."
+            }
+            Self::VaultSkillsImport => {
+                "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."
+            }
+            Self::VaultSkillsSync => {
+                "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsReceipts => {
+                "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
+            }
+            Self::VaultSkillsPermissionsApprove => {
+                "The owner answers one imported skill permission ask at its exact hub source."
+            }
+            Self::VaultPacksHooksBind => {
+                "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
+            }
+            Self::VaultPacksHooksList => {
+                "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."
+            }
+            Self::VaultPacksHooksQualify => {
+                "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."
             }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."

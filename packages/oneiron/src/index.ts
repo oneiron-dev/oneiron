@@ -438,7 +438,39 @@ export class Oneiron {
         wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
     },
+    skill_hubs: {
+      /** The owner registers or revises a hub source; hub trust never grants activation authority. */
+      put: (input: Facade.SkillHubPutRequest): Facade.SkillHubConfigured => this.#call(() => this.#client.vaultSkillHubsPut(input) as Facade.SkillHubConfigured),
+      /** Reads one configured hub as the owner. */
+      get: (input: Facade.SkillHubRequest): Facade.SkillHubRecord => this.#call(() => this.#client.vaultSkillHubsGet(input) as Facade.SkillHubRecord),
+      publishers: {
+        /** The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else. */
+        admit: (input: Facade.SkillPublisherRequest): Facade.SkillPublisherAdmission => this.#call(() => this.#client.vaultSkillHubsPublishersAdmit(input) as Facade.SkillPublisherAdmission),
+        /** The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running. */
+        revoke: (input: Facade.SkillPublisherRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillHubsPublishersRevoke(input) as Facade.HubConsentReceipt),
+      },
+      refs: {
+        /** Reads one hub ref policy, pin and separate seen and trusted revisions as the owner. */
+        get: (input: Facade.HubRefRequest): Facade.TrackedHubRef | null => this.#call(() => this.#client.vaultSkillHubsRefsGet(input) as Facade.TrackedHubRef | null),
+        /** The owner changes one hub ref policy and pin without fetching or trusting new bytes. */
+        set: (input: Facade.HubRefSetRequest): Facade.TrackedHubRef => this.#call(() => this.#client.vaultSkillHubsRefsSet(input) as Facade.TrackedHubRef),
+      },
+    },
     packs: {
+      /** The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent. */
+      install: (input: Facade.HubImportRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksInstall(input) as Facade.PackPutReceipt),
+      /** The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent. */
+      sync: (input: Facade.HubPackRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksSync(input) as Facade.PackPutReceipt),
+      /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
+      get: (input: Facade.HubPackRequest): Facade.PackInstallReceipt | null => this.#call(() => this.#client.vaultPacksGet(input) as Facade.PackInstallReceipt | null),
+      hooks: {
+        /** The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign. */
+        bind: (input: Facade.HubHookBindRequest): Facade.EntityId[] => this.#call(() => this.#client.vaultPacksHooksBind(input) as Facade.EntityId[]),
+        /** Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants. */
+        list: (input: Facade.EmptyRequest = {}): Facade.HubHookBindingRow[] => this.#call(() => this.#client.vaultPacksHooksList(input) as Facade.HubHookBindingRow[]),
+        /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
+        qualify: (input: Facade.HubHookQualifyRequest): Facade.HubHookQualificationReceipt => this.#call(() => this.#client.vaultPacksHooksQualify(input) as Facade.HubHookQualificationReceipt),
+      },
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
@@ -452,6 +484,18 @@ export class Oneiron {
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
+      },
+    },
+    skills: {
+      /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
+      import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
+      /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
+      sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
+      /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
+      receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
+      permissions: {
+        /** The owner answers one imported skill permission ask at its exact hub source. */
+        approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
       },
     },
     connectors: {
