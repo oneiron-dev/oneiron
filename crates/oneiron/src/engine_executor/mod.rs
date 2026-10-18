@@ -12,6 +12,7 @@ mod capture;
 mod code_check;
 mod compaction;
 mod compaction_host;
+pub mod continuation;
 mod driver;
 mod host;
 mod record;

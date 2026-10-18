@@ -12,9 +12,9 @@
 //! [`crate::receipt::project_guest_revoke`] over the outcome.
 //!
 //! The outcome names each ended pact the grant governed (FIX 1634), the
-//! courtesy-delete courier's typed input; asking the guest's host to drop its
-//! copy stays the owner's separate send, since no grant or pact records that
-//! host's origin.
+//! courtesy-delete courier's typed input. Asking the guest's host to drop its
+//! copy is the server's, after this writer returns, and only when the owner
+//! names that host's origin (`peer`), since no grant or pact records it.
 
 use std::collections::BTreeSet;
 
