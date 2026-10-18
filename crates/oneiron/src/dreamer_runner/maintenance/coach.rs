@@ -126,7 +126,7 @@ pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 10] = [
+const HOST_FACETS: [&str; 11] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
