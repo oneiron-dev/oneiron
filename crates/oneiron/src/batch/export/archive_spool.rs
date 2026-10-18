@@ -16,9 +16,19 @@ impl Vault {
     /// An anonymous owner-only spool file under this vault's staging
     /// directory (created 0700, opened no-follow and held while the file is
     /// made), for an archive a door writes before it sends it on (FIX 2766).
-    /// It is never a path the caller names, and it is gone once dropped.
+    /// It is never a path the caller names, and it is gone once dropped. A
+    /// host with no descriptor-bound vault root (not unix) spools to an
+    /// anonymous temporary file the system deletes on close, so its export
+    /// still works.
     pub fn archive_spool_file(&self) -> Result<File> {
-        self.store.lfs_staging_file()
+        #[cfg(unix)]
+        {
+            self.store.lfs_staging_file()
+        }
+        #[cfg(not(unix))]
+        {
+            Ok(tempfile::tempfile()?)
+        }
     }
 }
 
