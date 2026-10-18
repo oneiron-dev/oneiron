@@ -412,6 +412,13 @@ vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
 vaultNotesSetOverrides(requestJson: string): string
 vaultNotesDefaults(requestJson: string): string
+selfRunAttach(input: unknown): unknown
+selfFoldsDescribe(input: unknown): unknown
+selfHistory(input: unknown): unknown
+selfFold(input: unknown): unknown
+selfCompact(input: unknown): unknown
+selfUnfold(input: unknown): unknown
+selfFolds(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 // END GENERATED AGENT VERBS

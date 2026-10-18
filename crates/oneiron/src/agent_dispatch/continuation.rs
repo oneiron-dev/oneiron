@@ -5,6 +5,7 @@
 //! The Coach drafts a prompt on an agent-health card; only the owner
 //! applies it, through the card's apply door (`agent_health/apply.rs`),
 //! which calls [`apply_prompt_inject_in_txn`] in its one write transaction.
+//! The owner may edit the draft first: their own text is their approval.
 //! The approval binds the failed attempt, the card, the Coach's ask, the
 //! evidence it answered, the checkpoint the run continues from and the exact
 //! approved bytes. In that transaction:
@@ -18,7 +19,8 @@
 //!   or soft policy; an unmetered launch stays unmetered (ruling 2);
 //! - the engine executor's continuation row binds the successor to the
 //!   checkpoint, the approval and the prompt;
-//! - the application is kept, keyed by the failed attempt (ruling 5).
+//! - the application is kept, keyed by the failed attempt (ruling 5), with
+//!   the digest of the Coach draft it approved or edited.
 //!
 //! The same approval applied again answers the successor it made, whatever
 //! has become of it; another approval for that attempt refuses. Each
@@ -67,7 +69,8 @@ pub struct ConcernPromptInjectRequest {
     pub card: String,
     /// The Coach ask the owner read: its `attempt`, as 32 hex.
     pub ask: String,
-    /// The approved prompt: exactly the Coach's proposal on that ask.
+    /// The approved prompt: the Coach's proposal on that ask, or the
+    /// owner's own edit of it.
     pub prompt: String,
     /// The checkpoint the run continues from, as 32 hex: the healer case's
     /// or the failure card's `pre_fail_checkpoint_ref`. Absent, the failed
@@ -102,6 +105,11 @@ struct PromptInjectApplication {
     ask: String,
     /// The card's newest DIAGNOSTIC the ask answered.
     diagnostic: Option<EntityId>,
+    /// BLAKE3 of the Coach draft's proposal the owner read: the evidence
+    /// beside the approved prompt, which the continuation row keeps.
+    proposal: [u8; 32],
+    /// The approved prompt is the owner's edit, not the Coach's bytes.
+    edited: bool,
     /// The owner who approved it.
     by: EntityId,
     at: u64,
@@ -121,6 +129,8 @@ pub(crate) struct PromptInjectApproval<'a> {
     pub(crate) card: &'a str,
     /// The standing Coach ask, as 32 hex.
     pub(crate) ask: &'a str,
+    /// The ask's `prompt_inject` draft: the Coach's proposal.
+    pub(crate) proposal: &'a str,
     /// The card's newest DIAGNOSTIC, which the ask answered.
     pub(crate) diagnostic: Option<EntityId>,
     /// The card's subject: the failed run's agent.
@@ -131,7 +141,7 @@ pub(crate) struct PromptInjectApproval<'a> {
     pub(crate) predecessor: AttemptId,
     /// Resolved before the transaction ([`continuation_checkpoint`]).
     pub(crate) checkpoint: ExecutorCheckpointRef,
-    /// The approved bytes.
+    /// The approved bytes: the proposal, or the owner's edit of it.
     pub(crate) prompt: &'a str,
     /// The approving owner, revalidated in the transaction.
     pub(crate) by: EntityId,
@@ -275,6 +285,8 @@ pub(crate) fn apply_prompt_inject_in_txn(
         card: approval.card.to_owned(),
         ask: approval.ask.to_owned(),
         diagnostic: approval.diagnostic,
+        proposal: *blake3::hash(approval.proposal.as_bytes()).as_bytes(),
+        edited: approval.prompt != approval.proposal,
         by: approval.by,
         at: approval.now,
         fingerprint,

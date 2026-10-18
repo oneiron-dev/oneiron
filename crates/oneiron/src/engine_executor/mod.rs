@@ -14,6 +14,7 @@ mod compaction;
 mod compaction_host;
 pub mod continuation;
 mod driver;
+pub mod history;
 mod host;
 mod record;
 mod repl;
@@ -35,12 +36,12 @@ pub(crate) use self::store::{
 };
 pub use self::types::{
     ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
-    ENGINE_EXECUTOR_HARD_STEP_LIMIT, ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
-    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
-    EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
-    JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse,
-    StoreReceiptInput, StoreReceiptTree, guest_response_with_budget,
+    ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig,
+    EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult,
+    EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost,
+    JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
+    JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
+    StoreReceiptTree, guest_response_with_budget,
 };
 
 #[cfg(test)]
