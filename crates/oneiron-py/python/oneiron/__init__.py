@@ -304,6 +304,9 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs":
         return Oneiron._TasksVerbs(self._client)
     @property
+    def ai(self) -> "Oneiron._AiVerbs":
+        return Oneiron._AiVerbs(self._client)
+    @property
     def reveal(self) -> "Oneiron._RevealVerbs":
         return Oneiron._RevealVerbs(self._client)
     def can(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -323,9 +326,6 @@ class Oneiron:
     def wait(self, handle, step_key="sdk.wait"):
         """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
         return json.loads(_translate(lambda: self._client.wait(json.dumps({"handle": handle, "step_key": step_key}))))
-    @property
-    def ai(self) -> "Oneiron._AiVerbs":
-        return Oneiron._AiVerbs(self._client)
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs":
         return Oneiron._ConnectorVerbs(self._client)
@@ -1463,8 +1463,20 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def proxy(self) -> "Oneiron._VaultConnectorsProxyVerbs":
+            return Oneiron._VaultConnectorsProxyVerbs(self._client)
+        @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs":
             return Oneiron._VaultConnectorsSubscriptionsVerbs(self._client)
+    class _VaultConnectorsProxyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def admit(self, spec):
+            """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_proxy_admit(json.dumps(spec))))
+        def revoke_write(self, spec):
+            """The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."""
+            return json.loads(_translate(lambda: self._client.vault_connectors_proxy_revoke_write(json.dumps(spec))))
     class _VaultConnectorsSubscriptionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3924,21 +3936,12 @@ class Oneiron:
         def refuse(self, spec):
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
             return json.loads(_translate(lambda: self._client.tasks_refuse(json.dumps(spec))))
-    class _RevealVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
-            return json.loads(_translate(lambda: self._client.reveal(json.dumps(spec))))
-        def wait(self, spec):
-            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
-            return json.loads(_translate(lambda: self._client.reveal_wait(json.dumps(spec))))
-        def describe(self, spec):
-            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
-            return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def chat(self) -> "Oneiron._AiChatVerbs":
+            return Oneiron._AiChatVerbs(self._client)
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs":
             return Oneiron._AiStepsVerbs(self._client)
@@ -3972,6 +3975,12 @@ class Oneiron:
         def verdict(self, spec):
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
+    class _AiChatVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def completions(self, spec):
+            """Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."""
+            return json.loads(_translate(lambda: self._client.ai_chat_completions(json.dumps(spec))))
     class _AiStepsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -4038,6 +4047,18 @@ class Oneiron:
         def cancel(self, spec):
             """Stops a video job at its provider."""
             return json.loads(_translate(lambda: self._client.ai_video_cancel(json.dumps(spec))))
+    class _RevealVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+            return json.loads(_translate(lambda: self._client.reveal(json.dumps(spec))))
+        def wait(self, spec):
+            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
+            return json.loads(_translate(lambda: self._client.reveal_wait(json.dumps(spec))))
+        def describe(self, spec):
+            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+            return json.loads(_translate(lambda: self._client.reveal_describe(json.dumps(spec))))
     class _ConnectorVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

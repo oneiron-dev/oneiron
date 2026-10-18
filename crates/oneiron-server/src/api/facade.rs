@@ -92,6 +92,7 @@ mod owner_binding;
 mod persona_doors;
 mod policy_doors;
 mod project_card_doors;
+mod proxy_doors;
 mod reaction_doors;
 mod reply_doors;
 mod research_doors;

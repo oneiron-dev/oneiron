@@ -168,6 +168,9 @@ pub enum AgentVerb {
     VaultPacksConnectorGrantsGet,
     VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
+    AiChatCompletions,
+    VaultConnectorsProxyAdmit,
+    VaultConnectorsProxyRevokeWrite,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
     VaultConnectorsSubscriptionsRevoke,
@@ -974,6 +977,9 @@ impl AgentVerb {
         Self::VaultPacksConnectorGrantsGet,
         Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
+        Self::AiChatCompletions,
+        Self::VaultConnectorsProxyAdmit,
+        Self::VaultConnectorsProxyRevokeWrite,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
         Self::VaultConnectorsSubscriptionsRevoke,
@@ -1783,6 +1789,9 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
             Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
+            Self::AiChatCompletions => "ai.chat.completions",
+            Self::VaultConnectorsProxyAdmit => "vault.connectors.proxy.admit",
+            Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
             Self::VaultConnectorsSubscriptionsRevoke => "vault.connectors.subscriptions.revoke",
@@ -2610,6 +2619,9 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::AiChatCompletions
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -3443,6 +3455,9 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::AiChatCompletions
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -4167,6 +4182,7 @@ impl AgentVerb {
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
+                | Self::AiChatCompletions
                 | Self::VaultCommit
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
@@ -4346,6 +4362,8 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -5052,6 +5070,9 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorUpdate
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::AiChatCompletions
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
@@ -5447,6 +5468,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
+                | Self::AiChatCompletions
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -5647,6 +5669,9 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::AiChatCompletions => &["spec"],
+            Self::VaultConnectorsProxyAdmit => &["spec"],
+            Self::VaultConnectorsProxyRevokeWrite => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -6454,6 +6479,9 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::AiChatCompletions => &["spec"],
+            Self::VaultConnectorsProxyAdmit => &["spec"],
+            Self::VaultConnectorsProxyRevokeWrite => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -7581,6 +7609,15 @@ impl AgentVerb {
             }
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
+            }
+            Self::AiChatCompletions => {
+                "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."
+            }
+            Self::VaultConnectorsProxyAdmit => {
+                "The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."
+            }
+            Self::VaultConnectorsProxyRevokeWrite => {
+                "The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."
             }
             Self::VaultConnectorsSubscriptionsPut => {
                 "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."

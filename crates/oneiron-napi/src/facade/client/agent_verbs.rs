@@ -1420,6 +1420,30 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_chat_completions(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.chat.completions", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_proxy_admit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.proxy.admit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_proxy_revoke_write(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.proxy.revoke_write", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_connectors_subscriptions_put(
         &self,
         input: serde_json::Value,

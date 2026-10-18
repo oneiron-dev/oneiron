@@ -1286,7 +1286,10 @@ def facade_dispatch(facade_rows):
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let output = facade_output({door}?)?;{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
-            dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
+            scope_guard = ("auth.require_granted(CoreScope::Write).or_else(|_| auth.require_granted(CoreScope::Propose))?;"
+                           if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
+                           else f'auth.require(CoreScope::{r["scope"]})?;')
+            dispatch += head + f'''{scope_guard}
                 {record_scope_guard(r)}
                 facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(server, auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(server, auth)?;" if lands else ""}
                 let value = input?;

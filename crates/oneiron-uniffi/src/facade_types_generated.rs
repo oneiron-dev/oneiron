@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 780 facade rows, 2686 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 736.
+// UniFFI census: 783 facade rows, 2707 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 739.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -11661,6 +11661,324 @@ pub struct ConnectorPackGrantsPutRequest {
 pub struct PackRemoveRequest {
     #[serde(rename = "pack")]
     pub pack: String,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ChatRole {
+    #[serde(rename = "system")]
+    System,
+    #[serde(rename = "developer")]
+    Developer,
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    Assistant,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatPart`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "type")]
+pub enum ChatPart {
+    #[serde(rename = "text")]
+    Text {
+        #[serde(rename = "text")]
+        text: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatContent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ChatContent {
+    Text(String),
+    Parts(Vec<ChatPart>),
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatMessage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ChatMessage {
+    #[serde(rename = "role")]
+    pub role: ChatRole,
+    #[serde(rename = "content")]
+    pub content: ChatContent,
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatStop`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ChatStop {
+    One(String),
+    Many(Vec<String>),
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ChatCompletionRequest {
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "messages")]
+    pub messages: Vec<ChatMessage>,
+    #[serde(rename = "stream", default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<bool>,
+    #[serde(rename = "n", default, skip_serializing_if = "Option::is_none")]
+    pub n: Option<u32>,
+    #[serde(
+        rename = "temperature",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub temperature: Option<f64>,
+    #[serde(rename = "top_p", default, skip_serializing_if = "Option::is_none")]
+    pub top_p: Option<f64>,
+    #[serde(
+        rename = "max_tokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_tokens: Option<u64>,
+    #[serde(
+        rename = "max_completion_tokens",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_completion_tokens: Option<u64>,
+    #[serde(rename = "stop", default, skip_serializing_if = "Option::is_none")]
+    pub stop: Option<ChatStop>,
+    #[serde(
+        rename = "presence_penalty",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub presence_penalty: Option<f64>,
+    #[serde(
+        rename = "frequency_penalty",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub frequency_penalty: Option<f64>,
+    #[serde(rename = "seed", default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<i64>,
+    #[serde(rename = "user", default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionObject`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ChatCompletionObject {
+    #[serde(rename = "chat.completion")]
+    ChatCompletion,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ChatCompletionRole {
+    #[serde(rename = "assistant")]
+    Assistant,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionMessage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChatCompletionMessage {
+    #[serde(rename = "role")]
+    pub role: ChatCompletionRole,
+    #[serde(rename = "content")]
+    pub content: String,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionChoice`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChatCompletionChoice {
+    #[serde(rename = "index")]
+    pub index: u32,
+    #[serde(rename = "message")]
+    pub message: ChatCompletionMessage,
+    #[serde(rename = "finish_reason")]
+    pub finish_reason: String,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionUsage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChatCompletionUsage {
+    #[serde(rename = "prompt_tokens")]
+    pub prompt_tokens: u64,
+    #[serde(rename = "completion_tokens")]
+    pub completion_tokens: u64,
+    #[serde(rename = "total_tokens")]
+    pub total_tokens: u64,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionRememberError`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChatCompletionRememberError {
+    #[serde(rename = "code")]
+    pub code: String,
+    #[serde(rename = "message")]
+    pub message: String,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionRemembered`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum ChatCompletionRemembered {
+    Saved {
+        #[serde(rename = "claim")]
+        claim: String,
+        #[serde(rename = "approval")]
+        approval: String,
+    },
+    Refused {
+        #[serde(rename = "error")]
+        error: ChatCompletionRememberError,
+    },
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionMemory`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChatCompletionMemory {
+    #[serde(rename = "injected")]
+    pub injected: bool,
+    #[serde(rename = "remembered")]
+    pub remembered: ChatCompletionRemembered,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ChatCompletionResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ChatCompletionResponse {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "object")]
+    pub object: ChatCompletionObject,
+    #[serde(rename = "created")]
+    pub created: u64,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "choices")]
+    pub choices: Vec<ChatCompletionChoice>,
+    #[serde(rename = "usage")]
+    pub usage: ChatCompletionUsage,
+    #[serde(rename = "oneiron")]
+    pub oneiron: ChatCompletionMemory,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ProxyConnectorAdmitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyConnectorAdmitRequest {
+    #[serde(rename = "actor")]
+    pub actor: String,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ConnectorPendingManifestView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorPendingManifestView {
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "protocol_revision")]
+    pub protocol_revision: String,
+    #[serde(
+        rename = "report_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub report_hash: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ConnectorKeyView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorKeyView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "status")]
+    pub status: String,
+    #[serde(
+        rename = "secret_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_ref: Option<String>,
+    #[serde(
+        rename = "protocol_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub protocol_revision: Option<String>,
+    #[serde(
+        rename = "accepted_slate_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub accepted_slate_revision: Option<u64>,
+    #[serde(rename = "consent_required")]
+    pub consent_required: bool,
+    #[serde(
+        rename = "qualification",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub qualification: Option<ConnectorQualificationReceipt>,
+    #[serde(
+        rename = "manifest_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub manifest_hash: Option<String>,
+    #[serde(
+        rename = "pending_manifest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pending_manifest: Option<ConnectorPendingManifestView>,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ConnectorSlateView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorSlateView {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(rename = "stamped")]
+    pub stamped: bool,
+    #[serde(
+        rename = "facet_limit",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub facet_limit: Option<Vec<String>>,
+    #[serde(rename = "manifest")]
+    pub manifest: Vec<SlateToolManifest>,
+    #[serde(rename = "rows")]
+    pub rows: Vec<SlateRow>,
+    #[serde(rename = "reach")]
+    pub reach: ShapePlanReach,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ProxyConnectorRegistration`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProxyConnectorRegistration {
+    #[serde(rename = "connector")]
+    pub connector: String,
+    #[serde(rename = "key")]
+    pub key: ConnectorKeyView,
+    #[serde(rename = "slate")]
+    pub slate: ConnectorSlateView,
+}
+
+/// `oneiron::task_verb::sdk_proxy::ProxyConnectorRevokeWriteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProxyConnectorRevokeWriteRequest {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "revision")]
+    pub revision: u64,
 }
 
 /// `oneiron::task_verb::sdk_host::ChannelSubscriptionRequest`.

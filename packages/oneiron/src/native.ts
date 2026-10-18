@@ -194,6 +194,9 @@ vaultPacksConnectorUpdate(input: unknown): unknown
 vaultPacksConnectorGrantsGet(input: unknown): unknown
 vaultPacksConnectorGrantsPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
+aiChatCompletions(input: unknown): unknown
+vaultConnectorsProxyAdmit(input: unknown): unknown
+vaultConnectorsProxyRevokeWrite(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
 vaultConnectorsSubscriptionsList(input: unknown): unknown
 vaultConnectorsSubscriptionsRevoke(input: unknown): unknown

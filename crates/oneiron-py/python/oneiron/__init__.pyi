@@ -379,6 +379,8 @@ class Oneiron:
     @property
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
+    def ai(self) -> "Oneiron._AiVerbs": ...
+    @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
@@ -388,8 +390,6 @@ class Oneiron:
     def ask(self, spec_or_who: str | list[str] | set[str] | tuple[str, ...] | dict[str, Any] | None, what: dict[str, Any], until: int | None = None, default: str = "ask_me") -> Facade.TaskAskReceipt: ...
     def wait(self, handle: Facade.TaskAskHandle, step_key: str = "sdk.wait") -> Facade.TaskAskWait:
         """Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode."""
-    @property
-    def ai(self) -> "Oneiron._AiVerbs": ...
     @property
     def connector(self) -> "Oneiron._ConnectorVerbs": ...
     @property
@@ -1061,7 +1061,14 @@ class Oneiron:
             """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
     class _VaultConnectorsVerbs:
         @property
+        def proxy(self) -> "Oneiron._VaultConnectorsProxyVerbs": ...
+        @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
+    class _VaultConnectorsProxyVerbs:
+        def admit(self, spec: Facade.ProxyConnectorAdmitRequest) -> Facade.ProxyConnectorRegistration:
+            """The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."""
+        def revoke_write(self, spec: Facade.ProxyConnectorRevokeWriteRequest) -> Facade.ProxyConnectorRegistration:
+            """The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."""
     class _VaultConnectorsSubscriptionsVerbs:
         def put(self, spec: Facade.ChannelSubscriptionRequest) -> Facade.ChannelMessageSubscription:
             """The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."""
@@ -2484,14 +2491,9 @@ class Oneiron:
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
         def refuse(self, spec: Facade.LiveRunRequest[Facade.TaskRefuseInput]) -> Facade.TaskRefuseOutput:
             """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
-    class _RevealVerbs:
-        def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
-            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
-        def wait(self, spec: Facade.RevealWaitRequest) -> Facade.RevealWaitAnswer:
-            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
-        def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
-            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
+        @property
+        def chat(self) -> "Oneiron._AiChatVerbs": ...
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
         def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
@@ -2514,6 +2516,9 @@ class Oneiron:
         def video(self) -> "Oneiron._AiVideoVerbs": ...
         def verdict(self, spec: Facade.AiVerdictRequest) -> Facade.AiVerdict:
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
+    class _AiChatVerbs:
+        def completions(self, spec: Facade.ChatCompletionRequest) -> Facade.ChatCompletionResponse:
+            """Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."""
     class _AiStepsVerbs:
         def submit(self, spec: Facade.ModelStepSubmit) -> Facade.ModelStepReceipt:
             """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
@@ -2554,6 +2559,13 @@ class Oneiron:
             """Where a video job stands; a finished one answers with its clip on every poll until ai.video.cancel deletes it."""
         def cancel(self, spec: Facade.AiVideoJobRequest) -> Facade.AiVideoCancelled:
             """Stops a video job at its provider."""
+    class _RevealVerbs:
+        def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
+            """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""
+        def wait(self, spec: Facade.RevealWaitRequest) -> Facade.RevealWaitAnswer:
+            """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
+        def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
+            """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _ConnectorVerbs:
         def list(self, spec: Facade.ConnectorListRequest) -> list[Facade.ConnectorEntry]:
             """Every live catalogued connector whose name or summary matches the query."""
