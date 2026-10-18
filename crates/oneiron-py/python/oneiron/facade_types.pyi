@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 436 facade rows, 1663 declarations.
-Inputs: 388 of 436 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 386 of 436 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 440 facade rows, 1671 declarations.
+Inputs: 392 of 440 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 390 of 440 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -3195,6 +3195,47 @@ class SharedEraseAskCloseRequest(TypedDict):
     ask_id: str
     erased: bool
     act_id: NotRequired[str | None]
+SharedActPrecedence = Literal["vault_only", "holder_may_narrow"]
+class SharedActPolicy(TypedDict):
+    wait_secs: int
+    objector_roles: list[FederationGrantRole]
+    initiator_roles: list[FederationGrantRole]
+    policy_editor_roles: list[FederationGrantRole]
+    required_verb: str
+    starter_may_object: bool
+    max_act_name_bytes: int
+    max_payload_bytes: int
+    precedence: SharedActPrecedence
+class SharedActPoliciesView(TypedDict):
+    vault_id: str
+    shipped: dict[str, SharedActPolicy]
+    overrides: dict[str, SharedActPolicy]
+    effective: dict[str, SharedActPolicy]
+    policy_hash: str
+class SharedActPolicyProposeRequest(TypedDict):
+    vault_id: str
+    act: str
+    policy: NotRequired[SharedActPolicy | None]
+    expected_policy_hash: str
+SharedActPolicyChangeState = Literal["pending", "applied", "vetoed", "stale"]
+class SharedActPolicyChange(TypedDict):
+    id: str
+    vault_id: str
+    act: str
+    policy: NotRequired[SharedActPolicy | None]
+    base_policy_hash: str
+    proposer: str
+    proposed_at: int
+    approvals: list[str]
+    vetoed_by: NotRequired[str | None]
+    state: SharedActPolicyChangeState
+    settled_at: NotRequired[int | None]
+    awaiting: NotRequired[list[str]]
+class SharedActPolicyAnswerRequest(TypedDict):
+    change_id: str
+    approve: bool
+class SharedActPolicyChangeRequest(TypedDict):
+    change_id: str
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]

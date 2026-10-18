@@ -646,6 +646,26 @@ export_facade! {
     let output = client.vault_shared_close_erase_ask(&input)?;
     crate::codec::lift_record("vault.shared.close_erase_ask", &output)
 };
+"vault.shared.policy.get" => fn vault_shared_policy_get(&self, input: SharedVaultRequest) -> SharedActPoliciesView = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.policy.get", input)?;
+    let output = client.vault_shared_policy_get(&input)?;
+    crate::codec::lift_record("vault.shared.policy.get", &output)
+};
+"vault.shared.policy.propose" => fn vault_shared_policy_propose(&self, input: SharedActPolicyProposeRequest) -> SharedActPolicyChange = |client| {
+    let input: oneiron::task_verb::sdk::SharedActPolicyProposeRequest = crate::codec::lower_record("vault.shared.policy.propose", input)?;
+    let output = client.vault_shared_policy_propose(&input)?;
+    crate::codec::lift_record("vault.shared.policy.propose", &output)
+};
+"vault.shared.policy.answer" => fn vault_shared_policy_answer(&self, input: SharedActPolicyAnswerRequest) -> SharedActPolicyChange = |client| {
+    let input: oneiron::task_verb::sdk::SharedActPolicyAnswerRequest = crate::codec::lower_record("vault.shared.policy.answer", input)?;
+    let output = client.vault_shared_policy_answer(&input)?;
+    crate::codec::lift_record("vault.shared.policy.answer", &output)
+};
+"vault.shared.policy.change" => fn vault_shared_policy_change(&self, input: SharedActPolicyChangeRequest) -> SharedActPolicyChange = |client| {
+    let input: oneiron::task_verb::sdk::SharedActPolicyChangeRequest = crate::codec::lower_record("vault.shared.policy.change", input)?;
+    let output = client.vault_shared_policy_change(&input)?;
+    crate::codec::lift_record("vault.shared.policy.change", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;

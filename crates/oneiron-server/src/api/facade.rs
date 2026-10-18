@@ -71,6 +71,7 @@ mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
+mod shared_policy_doors;
 #[cfg(test)]
 pub(super) mod tests;
 pub(super) mod ui_action_routes;

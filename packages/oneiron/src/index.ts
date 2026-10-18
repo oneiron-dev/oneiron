@@ -635,6 +635,16 @@ export class Oneiron {
       erase_asks: (input: Facade.SharedVaultRequest): Facade.SharedEraseAsk[] => this.#call(() => this.#client.vaultSharedEraseAsks(input) as Facade.SharedEraseAsk[]),
       /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
       close_erase_ask: (input: Facade.SharedEraseAskCloseRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedCloseEraseAsk(input) as Facade.SharedEraseAsk),
+      policy: {
+        /** A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds. */
+        get: (input: Facade.SharedVaultRequest): Facade.SharedActPoliciesView => this.#call(() => this.#client.vaultSharedPolicyGet(input) as Facade.SharedActPoliciesView),
+        /** A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it. */
+        propose: (input: Facade.SharedActPolicyProposeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyPropose(input) as Facade.SharedActPolicyChange),
+        /** A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row. */
+        answer: (input: Facade.SharedActPolicyAnswerRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyAnswer(input) as Facade.SharedActPolicyChange),
+        /** A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on. */
+        change: (input: Facade.SharedActPolicyChangeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyChange(input) as Facade.SharedActPolicyChange),
+      },
     },
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
