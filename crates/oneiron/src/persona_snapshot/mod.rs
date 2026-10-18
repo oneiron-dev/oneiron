@@ -24,9 +24,13 @@
 
 mod codec;
 mod compile;
+mod copy;
 mod export;
 mod types;
 
+pub use self::copy::{
+    PersonaSnapshotCopyEditRequest, PersonaSnapshotCopyRequest, PersonaSnapshotTextEdit,
+};
 pub use self::codec::{decode_persona_snapshot_export_body, encode_persona_snapshot_export_body};
 pub use self::types::{
     DEFAULT_PERSONA_SNAPSHOT_MAX_CLAIM_ROWS, DEFAULT_PERSONA_SNAPSHOT_MAX_THIRD_PARTY_ROWS,

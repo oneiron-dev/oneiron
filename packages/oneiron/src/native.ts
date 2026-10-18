@@ -59,6 +59,10 @@ vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
+vaultPersonasPreview(input: unknown): unknown
+vaultPersonasExport(input: unknown): unknown
+vaultPersonasEdit(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
@@ -391,6 +395,12 @@ vaultCodeSymbolsDeclare(input: unknown): unknown
 vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeConflictRecord(input: unknown): unknown
+vaultCodeConflictView(input: unknown): unknown
+vaultCodeProposalResolve(input: unknown): unknown
+vaultCodeProposalReview(input: unknown): unknown
+vaultCodeProposalSettle(input: unknown): unknown
+vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
