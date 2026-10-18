@@ -1081,6 +1081,14 @@ fn mcp_agent_verb_input(
             }
             Ok(input)
         }
+        "vault.rooms.invite" => {
+            let mut input = a.spec.clone().ok_or_else(invalid)?;
+            let map = input.as_object_mut().ok_or_else(invalid)?;
+            if a.room_ref.as_deref() != map.get("room").and_then(Value::as_str) {
+                return Err(invalid());
+            }
+            Ok(input)
+        }
         "vault.rooms.consent" => a.spec.clone().ok_or_else(invalid),
         "vault.rooms.offer" => {
             let mut input = a.spec.clone().ok_or_else(invalid)?;
@@ -1915,6 +1923,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.rooms.join" => {
+            arguments.insert("spec".to_owned(), input.clone());
+            if let Some(value) = input.get("room") {
+                arguments.insert("room_ref".to_owned(), value.clone());
+            }
+        }
+        "vault.rooms.invite" => {
             arguments.insert("spec".to_owned(), input.clone());
             if let Some(value) = input.get("room") {
                 arguments.insert("room_ref".to_owned(), value.clone());
@@ -4880,6 +4894,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::workspace_roster::JoinRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_rooms_join(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.rooms.invite" => {
+            let input: oneiron::workspace_roster::JoinRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_rooms_invite(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

@@ -409,12 +409,15 @@ impl Memory<'_> {
         }
         claims.sort_by(|a, b| a.claim_ref.cmp(&b.claim_ref));
         // FIX 1163: whom this reader may bring in by a roster write it could
-        // sign, among the PERSONs it reads.
+        // sign, among the PERSONs it reads; in an ordinary room, by the
+        // invitation it may file there (OF-529).
         let mut invitable = std::collections::BTreeSet::new();
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         let reader = crate::WriteActor::new(self.actor(), self.actor_class());
-        if crate::workspace_roster::files_roster_joins_in_txn(vault, &txn, room, reader)? {
+        if crate::workspace_roster::files_roster_joins_in_txn(vault, &txn, room, reader)?
+            || crate::workspace_roster::invites_into_room_in_txn(vault, &txn, room, reader)?
+        {
             let persons = vault
                 .store
                 .port_entity_ids_by_type(&txn, crate::registry::ENTITY_TYPE_PERSON, None)?
