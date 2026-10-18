@@ -24,8 +24,6 @@
 //! unchanged from the flat-file era.
 
 pub mod affect;
-pub mod coping_doors;
-pub mod wellness_doors;
 mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;
@@ -38,11 +36,14 @@ mod claim_conflict;
 mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
+pub mod coping_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
+pub mod run_review;
 mod people_verbs;
 mod skill_authoring;
+pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
@@ -65,6 +66,7 @@ mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
+pub mod foreign_code;
 pub mod hook_regen_doors;
 mod inspection;
 mod key_value;
@@ -97,6 +99,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+mod web_fetch;
 mod witness;
 
 #[cfg(test)]

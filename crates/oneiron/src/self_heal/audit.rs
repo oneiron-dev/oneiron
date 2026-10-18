@@ -394,8 +394,7 @@ impl Vault {
                 .filter_map(|check| check.outcome.as_ref())
             {
                 if prior.findings.iter().any(|old| {
-                    old.objective == finding.objective
-                        && old.flaw_present != finding.flaw_present
+                    old.objective == finding.objective && old.flaw_present != finding.flaw_present
                 }) {
                     return Err(invalid("seal checks disagree on an objective's finding"));
                 }
@@ -408,9 +407,7 @@ impl Vault {
         }
         receipt.checks[index].outcome = Some(outcome.clone());
         crate::learning::honesty::project_seal_check_in_txn(self, txn, &receipt, index, now)?;
-        crate::skill_optimize::audit_rate::fit_audit_rate_in_txn(
-            self, txn, &receipt, index, now,
-        )?;
+        crate::skill_optimize::audit_rate::fit_audit_rate_in_txn(self, txn, &receipt, index, now)?;
         SEALS.put(&self.store, txn, attempt.as_bytes(), &receipt)?;
         Ok(receipt)
     }
@@ -439,7 +436,9 @@ pub(crate) fn draw_audits_in_txn(
 fn audit_rate_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<f64> {
     let rate = setting_value_in_txn(&vault.store, txn, &AUDIT_RATE)?;
     if !rate.is_finite() || !(AUDIT_RATE.min..=AUDIT_RATE.max).contains(&rate) {
-        return Err(invalid("the seal audit rate is bounded and strictly positive"));
+        return Err(invalid(
+            "the seal audit rate is bounded and strictly positive",
+        ));
     }
     Ok(rate)
 }

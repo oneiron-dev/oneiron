@@ -97,6 +97,8 @@ class MemoryProvenance(TypedDict):
     source_revision_ids: list[str]
     evidence_turn_ids: list[str]
 
+MemoryStaleStamp = Facade.MemoryStaleStamp
+
 class MemoryItem(TypedDict):
     short_id: str
     source_revision_ref: NotRequired[str]
@@ -106,6 +108,7 @@ class MemoryItem(TypedDict):
     confidence: float
     hedge_bucket: str
     provenance: MemoryProvenance
+    stale: NotRequired[MemoryStaleStamp]
     world: str | None
     facet: str | None
     salience: float | None
@@ -364,6 +367,10 @@ class Oneiron:
     def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
         """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
+    def fetch(self, spec: Facade.WebFetchRequest) -> Facade.FetchResult:
+        """Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links."""
+    def crawl(self, spec: Facade.WebCrawlRequest) -> Facade.CrawlResult:
+        """Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion."""
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
     @property
@@ -380,6 +387,8 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
+    def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
+        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -608,6 +617,8 @@ class Oneiron:
         def summaries(self) -> "Oneiron._VaultSummariesVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
+        def revert_run(self, spec: Facade.RevertRunRequest) -> Facade.RevertRunOutcome:
+            """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
@@ -1361,9 +1372,45 @@ class Oneiron:
             """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
         @property
         def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs": ...
+        def author_now(self, spec: Facade.EvalAuthorNowRequest) -> Facade.EvalAuthoringRef:
+            """Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease."""
+        @property
+        def authoring(self) -> "Oneiron._VaultEvalsAuthoringVerbs": ...
+        @property
+        def families(self) -> "Oneiron._VaultEvalsFamiliesVerbs": ...
+        @property
+        def cases(self) -> "Oneiron._VaultEvalsCasesVerbs": ...
+        def exposure(self, spec: Facade.EvalCohortRef) -> Facade.EvalExposureLedger:
+            """Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse."""
+        def sufficiency(self, spec: Facade.SufficiencyInput) -> Facade.SufficiencyCard:
+            """Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys."""
+        @property
+        def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs": ...
     class _VaultEvalsCohortsVerbs:
+        def __call__(self, spec: Facade.EvalSeatRequest) -> list[Facade.EvalCohortView]:
+            """Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only."""
         def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+        def open(self, spec: Facade.EvalCohortOpenRequest) -> Facade.EvalRelease:
+            """Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse."""
+    class _VaultEvalsAuthoringVerbs:
+        def result(self, spec: Facade.EvalAuthoringRef) -> Facade.EvalAuthoringResult | None:
+            """Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing."""
+    class _VaultEvalsFamiliesVerbs:
+        def __call__(self, spec: Facade.EvalSeatRequest) -> list[Facade.EvalFamilyView]:
+            """Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels."""
+        def assign(self, spec: Facade.EvalFamilyAssignRequest) -> Facade.SourceFamily:
+            """Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse."""
+    class _VaultEvalsCasesVerbs:
+        def __call__(self, spec: Facade.EvalCasesRequest) -> list[Facade.EvalCase]:
+            """Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training."""
+        def record(self, spec: Facade.EvalCaseDraft) -> Facade.EvalCase:
+            """Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented."""
+    class _VaultEvalsLabelsVerbs:
+        def blocked(self, spec: Facade.EvalBlockedLabelsRequest) -> list[Facade.EvalLabelAsk]:
+            """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
+        def pick(self, spec: Facade.EvalLabelPickRequest) -> Facade.EvalCase:
+            """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
     class _VaultCleanupVerbs:
         def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
             """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
@@ -1874,6 +1921,12 @@ class Oneiron:
             """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
         def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+        def review(self, spec: Facade.RunReviewRequest) -> Facade.RunReview:
+            """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
+        def settle(self, spec: Facade.RunSettleRequest) -> Facade.RunSettlement:
+            """The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle."""
+        def settlement(self, spec: Facade.RunSettlementRequest) -> Facade.RunSettlement:
+            """The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."""
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
@@ -2324,6 +2377,8 @@ class Oneiron:
         @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs": ...
         @property
+        def admission(self) -> "Oneiron._SelfAdmissionVerbs": ...
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         @property
         def consent(self) -> "Oneiron._SelfConsentVerbs": ...
@@ -2413,6 +2468,11 @@ class Oneiron:
     class _SelfCredentialVerbs:
         def attenuate(self, spec: Facade.CredentialAttenuationRequest) -> Facade.CredentialAttenuated:
             """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
+    class _SelfAdmissionVerbs:
+        def status(self, spec: Facade.AdmissionStatusRequest) -> Facade.AdmissionReceipt | None:
+            """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
+        def receipts(self, spec: Facade.AdmissionReceiptsRequest) -> list[Facade.AdmissionReceipt]:
+            """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""

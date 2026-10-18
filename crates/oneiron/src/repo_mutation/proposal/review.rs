@@ -19,7 +19,10 @@ impl Vault {
         critique: CritiqueArtifact,
     ) -> Result<RepoProposal> {
         let critic = owner.revalidate(self)?;
-        let sources = critique.evidence_refs.iter().map(|reference| EntityId::from_hex(reference))
+        let sources = critique
+            .evidence_refs
+            .iter()
+            .map(|reference| EntityId::from_hex(reference))
             .collect::<Result<Vec<_>>>()?;
         let calibration_subject = critique.calibration.subject;
         self.review_repo_proposal_checked(id, critic, critique, |txn, row| {
