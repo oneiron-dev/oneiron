@@ -308,6 +308,7 @@ mod sdk_shared;
 mod sdk_shared_members;
 mod sdk_shared_policy;
 mod sdk_trusted_contact;
+mod sdk_workflows;
 mod sdk_workspace;
 pub mod verb_hook_boundary;
 

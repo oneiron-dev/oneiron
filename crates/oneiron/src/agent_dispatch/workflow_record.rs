@@ -50,6 +50,10 @@ pub struct WorkflowDispatchStatus {
     pub attempt: AttemptRecord,
     pub workflow_ref: crate::EntityId,
     pub definition: WorkflowDefinition,
+    /// Each step's dispatch input as admission froze it, in step order: the
+    /// definition revision, scope and ceiling the run captured. Release
+    /// rechecks live authority; this snapshot is not a grant.
+    pub captured_steps: Vec<super::AgentDispatchInput>,
     pub active_step: AttemptId,
     pub results: Vec<WorkflowStepResult>,
     /// The whole workflow's launch statement (OF-532): one agent per leaf,
@@ -308,6 +312,15 @@ impl super::AgentDispatcher<'_> {
             attempt,
             workflow_ref: crate::EntityId::from_hex(&record.intent.workflow_ref)?,
             definition: crate::agent_def::workflow::decode_workflow(&record.intent.definition)?,
+            captured_steps: record
+                .steps
+                .iter()
+                .map(|bytes| {
+                    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(bytes))
+                        .map_err(|_| invalid("workflow step is malformed"))?;
+                    super::decode_agent_dispatch_input(&value)
+                })
+                .collect::<Result<_>>()?,
             active_step: record.active,
             results: record.results.clone(),
             launch: record.launch.clone(),

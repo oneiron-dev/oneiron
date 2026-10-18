@@ -1411,6 +1411,31 @@ export_facade! {
     let output = client.vault_agents_update(&input)?;
     crate::codec::lift_record("vault.agents.update", &output)
 };
+"vault.workflows.save" => fn vault_workflows_save(&self, input: WorkflowSaveRequest) -> WorkflowView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowSaveRequest = crate::codec::lower_record("vault.workflows.save", input)?;
+    let output = client.vault_workflows_save(&input)?;
+    crate::codec::lift_record("vault.workflows.save", &output)
+};
+"vault.workflows.get" => fn vault_workflows_get(&self, input: WorkflowRequest) -> WorkflowView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowRequest = crate::codec::lower_record("vault.workflows.get", input)?;
+    let output = client.vault_workflows_get(&input)?;
+    crate::codec::lift_record("vault.workflows.get", &output)
+};
+"vault.workflows.update" => fn vault_workflows_update(&self, input: WorkflowUpdateRequest) -> WorkflowView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowUpdateRequest = crate::codec::lower_record("vault.workflows.update", input)?;
+    let output = client.vault_workflows_update(&input)?;
+    crate::codec::lift_record("vault.workflows.update", &output)
+};
+"vault.workflows.dispatch" => fn vault_workflows_dispatch(&self, input: WorkflowDispatchRequest) -> WorkflowRunView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowDispatchRequest = crate::codec::lower_record("vault.workflows.dispatch", input)?;
+    let output = client.vault_workflows_dispatch(&input)?;
+    crate::codec::lift_record("vault.workflows.dispatch", &output)
+};
+"vault.workflows.status" => fn vault_workflows_status(&self, input: WorkflowRunRequest) -> WorkflowRunView = |client| {
+    let input: oneiron::task_verb::sdk::WorkflowRunRequest = crate::codec::lower_record("vault.workflows.status", input)?;
+    let output = client.vault_workflows_status(&input)?;
+    crate::codec::lift_record("vault.workflows.status", &output)
+};
 "vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
     let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;
     let output = client.vault_workspace_establish(&input)?;
