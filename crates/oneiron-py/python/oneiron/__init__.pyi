@@ -2222,8 +2222,21 @@ class Oneiron:
             """Zooms into a rectangle of a held image."""
         def batch(self, spec: Facade.LiveRunRequest[Facade.BatchInput]) -> Facade.BatchOutput:
             """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
+        @property
+        def library(self) -> "Oneiron._SelfBrowserLibraryVerbs": ...
         def handover(self, spec: Facade.LiveRunRequest[Facade.HandoverInput]) -> Facade.HandoverOutput:
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
+    class _SelfBrowserLibraryVerbs:
+        def find(self, spec: Facade.LiveRunRequest[Facade.LibraryFindInput]) -> Facade.LibraryFindOutput:
+            """The replay library's programs for a site, or for the attached run's open page's site."""
+        def propose(self, spec: Facade.LiveRunRequest[Facade.ProposeInput]) -> Facade.ProposeOutput:
+            """Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition."""
+        def retire(self, spec: Facade.LiveRunRequest[Facade.LibraryRetireInput]) -> Facade.LibraryRetireOutput:
+            """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
+        def retired(self, spec: Facade.LiveRunRequest[Facade.LibraryRetiredInput]) -> Facade.LibraryRetiredOutput:
+            """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
+        def run(self, spec: Facade.LiveRunRequest[Facade.LibraryRunInput]) -> Facade.LibraryRunOutput:
+            """Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner."""
     class _SelfAgentsVerbs:
         def spawn(self, spec: Facade.LiveRunRequest[Facade.AgentSpawnInput]) -> Facade.AgentSpawnOutput:
             """Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."""

@@ -230,6 +230,61 @@ pub(crate) async fn self_browser_batch(
     on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserBatch, input).await
 }
 
+pub(crate) async fn self_browser_library_find(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserLibraryFindInput>,
+) -> Listed<sdk::BrowserLibraryFindOutput> {
+    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryFind, input).await
+}
+
+pub(crate) async fn self_browser_library_propose(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserLibraryProposeInput>,
+) -> Listed<sdk::BrowserLibraryProposeOutput> {
+    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryPropose, input).await
+}
+
+pub(crate) async fn self_browser_library_retire(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserLibraryRetireInput>,
+) -> Listed<sdk::BrowserLibraryRetireOutput> {
+    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryRetire, input).await
+}
+
+pub(crate) async fn self_browser_library_retired(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserLibraryRetiredInput>,
+) -> Listed<sdk::BrowserLibraryRetiredOutput> {
+    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryRetired, input).await
+}
+
+pub(crate) async fn self_browser_library_run(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<EntityId>,
+    _caller: (EntityId, EdgeActorClass),
+    invocation: Option<InvocationId>,
+    input: LiveRunRequest<sdk::BrowserLibraryRunInput>,
+) -> Listed<sdk::BrowserLibraryRunOutput> {
+    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserLibraryRun, input).await
+}
+
 pub(crate) async fn self_browser_handover(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

@@ -2876,28 +2876,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
-                "self.browser.library.find",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryFindInput>(),
-            ),
-            (
-                "self.browser.library.propose",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::ProposeInput>(),
-            ),
-            (
-                "self.browser.library.retire",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetireInput>(
-                ),
-            ),
-            (
-                "self.browser.library.retired",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetiredInput>(
-                ),
-            ),
-            (
-                "self.browser.library.run",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
-            ),
-            (
                 "self.desktop.open",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
             ),
@@ -3787,6 +3765,46 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.browser.library.find",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryFindInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryProposeInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.retire",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryRetireInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.retired",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryRetiredInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryRunInput,
+                    >,
+                >(),
+            ),
+            (
                 "self.browser.handover",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -4241,6 +4259,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.crop",
     "self.browser.zoom",
     "self.browser.batch",
+    "self.browser.library.find",
+    "self.browser.library.propose",
+    "self.browser.library.retire",
+    "self.browser.library.retired",
+    "self.browser.library.run",
     "self.browser.handover",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
@@ -5259,6 +5282,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.browser.batch" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserBatchOutput,
+        >(),
+        "self.browser.library.find" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryFindOutput,
+        >(),
+        "self.browser.library.propose" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryProposeOutput,
+        >(),
+        "self.browser.library.retire" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryRetireOutput,
+        >(),
+        "self.browser.library.retired" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryRetiredOutput,
+        >(),
+        "self.browser.library.run" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryRunOutput,
         >(),
         "self.browser.handover" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserHandoverOutput,
@@ -10096,6 +10134,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.browser.library.find" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.retire" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.retired" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.handover" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11910,21 +11983,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "connector.call_status" => {
             let _input: crate::task_verb::sdk::ConnectorCallStatusRequest = decode(value.clone())?;
         }
-        "self.browser.library.find" => {
-            let _input: oneiron_browser::LibraryFindInput = decode(value.clone())?;
-        }
-        "self.browser.library.propose" => {
-            let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
-        }
-        "self.browser.library.retire" => {
-            let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
-        }
-        "self.browser.library.retired" => {
-            let _input: oneiron_browser::LibraryRetiredInput = decode(value.clone())?;
-        }
-        "self.browser.library.run" => {
-            let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
-        }
         "self.desktop.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -12509,6 +12567,31 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserBatchInput,
             > = decode(value.clone())?;
         }
+        "self.browser.library.find" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryFindInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.propose" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryProposeInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.retire" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryRetireInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.retired" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryRetiredInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.run" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryRunInput,
+            > = decode(value.clone())?;
+        }
         "self.browser.handover" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserHandoverInput,
@@ -12599,19 +12682,19 @@ pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryRe
             let _input: crate::task_verb::sdk::BrowserBatchInput = decode(value.clone())?;
         }
         "self.browser.library.find" => {
-            let _input: oneiron_browser::LibraryFindInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryFindInput = decode(value.clone())?;
         }
         "self.browser.library.propose" => {
-            let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryProposeInput = decode(value.clone())?;
         }
         "self.browser.library.retire" => {
-            let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryRetireInput = decode(value.clone())?;
         }
         "self.browser.library.retired" => {
-            let _input: oneiron_browser::LibraryRetiredInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryRetiredInput = decode(value.clone())?;
         }
         "self.browser.library.run" => {
-            let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryRunInput = decode(value.clone())?;
         }
         "self.browser.handover" => {
             let _input: crate::task_verb::sdk::BrowserHandoverInput = decode(value.clone())?;
@@ -13850,6 +13933,17 @@ pub fn invoke(
         "self.browser.crop" => encode(self_browser_crop(memory, decode(value)?)?),
         "self.browser.zoom" => encode(self_browser_zoom(memory, decode(value)?)?),
         "self.browser.batch" => encode(self_browser_batch(memory, decode(value)?)?),
+        "self.browser.library.find" => encode(self_browser_library_find(memory, decode(value)?)?),
+        "self.browser.library.propose" => {
+            encode(self_browser_library_propose(memory, decode(value)?)?)
+        }
+        "self.browser.library.retire" => {
+            encode(self_browser_library_retire(memory, decode(value)?)?)
+        }
+        "self.browser.library.retired" => {
+            encode(self_browser_library_retired(memory, decode(value)?)?)
+        }
+        "self.browser.library.run" => encode(self_browser_library_run(memory, decode(value)?)?),
         "self.browser.handover" => encode(self_browser_handover(memory, decode(value)?)?),
         "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
@@ -13956,31 +14050,31 @@ pub fn invoke_browser(
             serde_json::to_value(output)
         }
         "self.browser.library.find" => {
-            let input: oneiron_browser::LibraryFindInput =
+            let input: crate::task_verb::sdk::BrowserLibraryFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_find(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.propose" => {
-            let input: oneiron_browser::ProposeInput =
+            let input: crate::task_verb::sdk::BrowserLibraryProposeInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_propose(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.retire" => {
-            let input: oneiron_browser::LibraryRetireInput =
+            let input: crate::task_verb::sdk::BrowserLibraryRetireInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_retire(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.retired" => {
-            let input: oneiron_browser::LibraryRetiredInput =
+            let input: crate::task_verb::sdk::BrowserLibraryRetiredInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_retired(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.run" => {
-            let input: oneiron_browser::LibraryRunInput =
+            let input: crate::task_verb::sdk::BrowserLibraryRunInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_run(input)?;
             serde_json::to_value(output)
@@ -18410,36 +18504,6 @@ pub fn connector_call_status(
 ) -> MemoryResult<crate::task_verb::sdk::ConnectorCallStatus> {
     crate::task_verb::sdk::connector_call_status_read(memory, input)
 }
-pub fn self_browser_library_find(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryFindInput,
-) -> Result<oneiron_browser::LibraryFindOutput, oneiron_browser::BrowserError> {
-    driver.library_find(input)
-}
-pub fn self_browser_library_propose(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::ProposeInput,
-) -> Result<oneiron_browser::ProposeOutput, oneiron_browser::BrowserError> {
-    driver.library_propose(input)
-}
-pub fn self_browser_library_retire(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryRetireInput,
-) -> Result<oneiron_browser::LibraryRetireOutput, oneiron_browser::BrowserError> {
-    driver.library_retire(input)
-}
-pub fn self_browser_library_retired(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryRetiredInput,
-) -> Result<oneiron_browser::LibraryRetiredOutput, oneiron_browser::BrowserError> {
-    driver.library_retired(input)
-}
-pub fn self_browser_library_run(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryRunInput,
-) -> Result<oneiron_browser::LibraryRunOutput, oneiron_browser::BrowserError> {
-    driver.library_run(input)
-}
 pub fn self_desktop_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
@@ -19879,6 +19943,36 @@ pub fn self_browser_batch(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserBatchOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.batch", &input)
+}
+pub fn self_browser_library_find(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryFindOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.find", &input)
+}
+pub fn self_browser_library_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryProposeOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.propose", &input)
+}
+pub fn self_browser_library_retire(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetireInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryRetireOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.retire", &input)
+}
+pub fn self_browser_library_retired(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetiredInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryRetiredOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.retired", &input)
+}
+pub fn self_browser_library_run(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryRunOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.run", &input)
 }
 pub fn self_browser_handover(
     memory: &Memory<'_>,

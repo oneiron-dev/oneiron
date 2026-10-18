@@ -711,6 +711,11 @@ selfBrowserView(input: unknown): unknown
 selfBrowserCrop(input: unknown): unknown
 selfBrowserZoom(input: unknown): unknown
 selfBrowserBatch(input: unknown): unknown
+selfBrowserLibraryFind(input: unknown): unknown
+selfBrowserLibraryPropose(input: unknown): unknown
+selfBrowserLibraryRetire(input: unknown): unknown
+selfBrowserLibraryRetired(input: unknown): unknown
+selfBrowserLibraryRun(input: unknown): unknown
 selfBrowserHandover(input: unknown): unknown
 vaultClaimsSupersede(input: unknown): unknown
 selfFold(input: unknown): unknown

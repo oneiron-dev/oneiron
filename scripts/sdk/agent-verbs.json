@@ -8679,57 +8679,87 @@
     {
       "name": "self.browser.library.find",
       "description": "The replay library's programs for a site, or for the open page's site.",
-      "input": "oneiron_browser::LibraryFindInput",
-      "output": "oneiron_browser::LibraryFindOutput",
+      "input": "crate::task_verb::sdk::BrowserLibraryFindInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryFindOutput",
       "call": "driver.library_find(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>",
+        "description": "The replay library's programs for a site, or for the attached run's open page's site.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.library.propose",
       "description": "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition.",
-      "input": "oneiron_browser::ProposeInput",
-      "output": "oneiron_browser::ProposeOutput",
+      "input": "crate::task_verb::sdk::BrowserLibraryProposeInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryProposeOutput",
       "call": "driver.library_propose(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>",
+        "description": "Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.library.retire",
       "description": "Takes a program out of the replay library for every later run, and returns the card it had.",
-      "input": "oneiron_browser::LibraryRetireInput",
-      "output": "oneiron_browser::LibraryRetireOutput",
+      "input": "crate::task_verb::sdk::BrowserLibraryRetireInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryRetireOutput",
       "call": "driver.library_retire(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetireInput>",
+        "description": "Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.library.retired",
       "description": "The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why.",
-      "input": "oneiron_browser::LibraryRetiredInput",
-      "output": "oneiron_browser::LibraryRetiredOutput",
+      "input": "crate::task_verb::sdk::BrowserLibraryRetiredInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryRetiredOutput",
       "call": "driver.library_retired(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetiredInput>",
+        "description": "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.library.run",
       "description": "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner.",
-      "input": "oneiron_browser::LibraryRunInput",
-      "output": "oneiron_browser::LibraryRunOutput",
+      "input": "crate::task_verb::sdk::BrowserLibraryRunInput",
+      "output": "crate::task_verb::sdk::BrowserLibraryRunOutput",
       "call": "driver.library_run(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
-      "section": false
+      "section": false,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>",
+        "description": "Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner.",
+        "host_door_caller": true,
+        "openapi": true
+      }
     },
     {
       "name": "self.browser.handover",

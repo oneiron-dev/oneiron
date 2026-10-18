@@ -3406,6 +3406,31 @@ export_facade! {
     let output = client.self_browser_batch(&input)?;
     crate::codec::lift_record("self.browser.batch", &output)
 };
+"self.browser.library.find" => fn self_browser_library_find(&self, input: LiveRunRequestLibraryFindInput) -> LibraryFindOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryFindInput> = crate::codec::lower_record("self.browser.library.find", input)?;
+    let output = client.self_browser_library_find(&input)?;
+    crate::codec::lift_record("self.browser.library.find", &output)
+};
+"self.browser.library.propose" => fn self_browser_library_propose(&self, input: LiveRunRequestProposeInput) -> ProposeOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryProposeInput> = crate::codec::lower_record("self.browser.library.propose", input)?;
+    let output = client.self_browser_library_propose(&input)?;
+    crate::codec::lift_record("self.browser.library.propose", &output)
+};
+"self.browser.library.retire" => fn self_browser_library_retire(&self, input: LiveRunRequestLibraryRetireInput) -> LibraryRetireOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryRetireInput> = crate::codec::lower_record("self.browser.library.retire", input)?;
+    let output = client.self_browser_library_retire(&input)?;
+    crate::codec::lift_record("self.browser.library.retire", &output)
+};
+"self.browser.library.retired" => fn self_browser_library_retired(&self, input: LiveRunRequestLibraryRetiredInput) -> LibraryRetiredOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryRetiredInput> = crate::codec::lower_record("self.browser.library.retired", input)?;
+    let output = client.self_browser_library_retired(&input)?;
+    crate::codec::lift_record("self.browser.library.retired", &output)
+};
+"self.browser.library.run" => fn self_browser_library_run(&self, input: LiveRunRequestLibraryRunInput) -> LibraryRunOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserLibraryRunInput> = crate::codec::lower_record("self.browser.library.run", input)?;
+    let output = client.self_browser_library_run(&input)?;
+    crate::codec::lift_record("self.browser.library.run", &output)
+};
 "self.browser.handover" => fn self_browser_handover(&self, input: LiveRunRequestHandoverInput) -> HandoverOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserHandoverInput> = crate::codec::lower_record("self.browser.handover", input)?;
     let output = client.self_browser_handover(&input)?;
