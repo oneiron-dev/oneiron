@@ -93,6 +93,7 @@ pub(crate) use super::feedback_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 pub(crate) use super::skill_doors::*;
+pub(crate) use super::goal_optimize_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
@@ -192,6 +193,7 @@ pub(crate) use super::hook_regen_doors::*;
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
+pub(crate) use super::lens_selection_doors::*;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
 pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_memory};
 
@@ -1155,6 +1157,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.permissions.approve"
         | "vault.skills.optimize.start"
         | "vault.skills.optimize.result"
+        | "vault.projects.goal.intake.complete"
+        | "vault.projects.goal.get"
+        | "vault.skills.optimize.propose"
+        | "vault.skills.optimize.measure"
+        | "vault.skills.optimize.score"
+        | "vault.skills.optimize.admit"
+        | "vault.skills.optimize.goal.get"
+        | "vault.skills.optimize.goal.bind"
+        | "vault.skills.optimize.preferences.get"
+        | "vault.skills.optimize.preferences.set"
+        | "vault.skills.optimize.tradeoff_asks"
+        | "vault.skills.optimize.tradeoff_asks.pick"
         | "vault.skills.governance.get"
         | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
