@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 318 facade rows, 1183 generated types.
+// UniFFI census: 318 facade rows, 1184 generated types.
 // Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 286.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -12997,6 +12997,8 @@ pub enum SelfEffect {
     WakePolicyWrite,
     #[serde(rename = "AgentVerb")]
     AgentVerb,
+    #[serde(rename = "ConnectorAnswer")]
+    ConnectorAnswer,
     #[serde(rename = "Fold")]
     Fold,
     #[serde(rename = "ReaderSpawn")]
@@ -16078,6 +16080,17 @@ pub struct ConnectorToolResult {
     pub rpc_error: Option<crate::WireJson>,
 }
 
+/// `oneiron::outbound_consent::connector_call::ConnectorQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorQuestion {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "message")]
+    pub message: String,
+    #[serde(rename = "requested_schema")]
+    pub requested_schema: crate::WireJson,
+}
+
 /// `oneiron::task_verb::sdk_connector_call::ConnectorCallReply`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 #[serde(tag = "outcome")]
@@ -16119,6 +16132,21 @@ pub enum ConnectorCallReply {
         call_ref: Option<String>,
         #[serde(rename = "reasons")]
         reasons: Vec<String>,
+    },
+    #[serde(rename = "awaiting_input")]
+    AwaitingInput {
+        #[serde(rename = "handle")]
+        handle: String,
+        #[serde(rename = "source")]
+        source: String,
+        #[serde(rename = "foreign")]
+        foreign: bool,
+        #[serde(rename = "questions")]
+        questions: Vec<ConnectorQuestion>,
+        #[serde(rename = "expires_at_ms")]
+        expires_at_ms: u64,
+        #[serde(rename = "reasons", default, skip_serializing_if = "Option::is_none")]
+        reasons: Option<Vec<String>>,
     },
 }
 

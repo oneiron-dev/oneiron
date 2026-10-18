@@ -41,7 +41,7 @@ use super::super::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
 use super::super::slate::{
-    ConnectorGrantSlate, SlateDataClass, SlateDisposition, read_connector_slate_in_txn,
+    ConnectorGrantSlate, SlateDataClass, SlateDisposition, SlateRow, read_connector_slate_in_txn,
 };
 use super::super::txn::{
     CATALOG_NAME_INDEX, CONNECTOR_INDEX, append_connector_key_op_record, read_connector_key_in_txn,
@@ -122,6 +122,10 @@ pub struct ConnectorConsentView {
     /// Active, qualified and owner-stamped: a consent can be written now.
     pub ready: bool,
     pub rows: Vec<ConnectorConsentRowView>,
+    /// The slate's elicitation row setting, apart from the tool rows: the
+    /// owner sets it on the slate, and no consent mints a tool grant for it.
+    /// `None`: the slate holds no such row.
+    pub elicitation: Option<SlateDisposition>,
 }
 
 /// A catalog connector a consent can derive from.
@@ -305,6 +309,10 @@ impl Vault {
                 }
             })
             .collect();
+        let elicitation = slate
+            .as_ref()
+            .and_then(ConnectorGrantSlate::elicitation_row)
+            .map(SlateRow::effective_disposition);
         Ok(Some(ConnectorConsentView {
             connector: record.connector,
             actor: principal_ref,
@@ -312,6 +320,7 @@ impl Vault {
             protocol_revision: record.protocol_revision,
             ready,
             rows,
+            elicitation,
         }))
     }
 

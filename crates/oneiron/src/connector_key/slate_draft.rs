@@ -5,8 +5,10 @@
 //! them, and never widens. The model answers one typed choice per row, never
 //! prose, and the slate is always shown before anything is granted.
 use super::slate::{
-    ConnectorGrantSlate, SlateDisposition, SlateDraftRow, SlateOwnerOverride, SlateRow,
-    SlateToolManifest, declaration_expands, new_slate, read_slate_in_store_txn, scan_slates_in_txn,
+    ConnectorGrantSlate, ELICITATION_ROW_DATA_CLASS, ELICITATION_ROW_KEY, SlateCapability,
+    SlateDisposition, SlateDraftRow, SlateElicitationManifest, SlateManifest, SlateOwnerOverride,
+    SlateRow, SlateToolManifest, declaration_expands, elicitation_expands, new_slate,
+    read_slate_in_store_txn, scan_slates_in_txn,
 };
 use crate::error::{Error, Result};
 use crate::llm::decision::catalogue::CONNECTOR_SLATE_DRAFT;
@@ -38,6 +40,8 @@ pub enum SlateTrait {
     Secret,
 }
 impl SlateTrait {
+    /// A tool row's traits. `Elicitation` belongs to the elicitation row
+    /// alone: a tool's legacy ask counts there, never as a second permission.
     pub fn of(tool: &SlateToolManifest) -> BTreeSet<Self> {
         let mut traits = BTreeSet::new();
         for (on, trait_) in [
@@ -48,7 +52,6 @@ impl SlateTrait {
                 tool.row_data_class() == super::SlateDataClass::Header,
                 Self::Header,
             ),
-            (tool.legacy_ask, Self::Elicitation),
         ] {
             if on {
                 traits.insert(trait_);
@@ -95,8 +98,15 @@ impl SlatePastRulings {
     /// The tightest setting the rulings show the owner wants for this tool,
     /// with the line that says why.
     pub fn recommend(&self, tool: &SlateToolManifest) -> Option<(SlateDisposition, String)> {
+        self.recommend_for(SlateTrait::of(tool))
+    }
+    /// The same reading for a row with these traits.
+    fn recommend_for(
+        &self,
+        traits: impl IntoIterator<Item = SlateTrait>,
+    ) -> Option<(SlateDisposition, String)> {
         let mut best: Option<(SlateDisposition, String)> = None;
-        for trait_ in SlateTrait::of(tool) {
+        for trait_ in traits {
             let Some(counts) = self.by_trait.get(&trait_) else {
                 continue;
             };
@@ -159,10 +169,14 @@ pub(super) fn past_rulings_in_txn(
         let slate = &slates[&id];
         let mut seen = BTreeSet::new();
         for row in slate.rows() {
-            let Some(tool) = slate.tool(&row.draft.tool) else {
-                continue;
+            let traits = match row.draft.capability() {
+                SlateCapability::Elicitation => BTreeSet::from([SlateTrait::Elicitation]),
+                SlateCapability::Tool(name) => match slate.tool(name) {
+                    Some(tool) => SlateTrait::of(tool),
+                    None => continue,
+                },
             };
-            for trait_ in SlateTrait::of(tool) {
+            for trait_ in traits {
                 seen.insert((trait_, row.stamped_disposition()));
             }
         }
@@ -197,6 +211,35 @@ pub fn rule_draft_row(tool: &SlateToolManifest, rulings: &SlatePastRulings) -> S
         tool: tool.name.clone(),
         disposition,
         data_class: tool.row_data_class(),
+        rationale,
+    }
+}
+
+/// The elicitation row's rule draft (ARCH-0072: "Elicitation starts at
+/// auto, including the legacy ask form"): `auto`, or the owner's evident
+/// tighter choice for elicitation. The engine writes it and its rationale;
+/// the model never drafts this row.
+pub(super) fn rule_draft_elicitation_row(
+    declaration: &SlateElicitationManifest,
+    rulings: &SlatePastRulings,
+) -> SlateDraftRow {
+    let (disposition, rationale) = rulings
+        .recommend_for([SlateTrait::Elicitation])
+        .unwrap_or_else(|| {
+            (
+                SlateDisposition::Auto,
+                if declaration.legacy_ask_tools.is_empty() {
+                    "auto: each answer to a connector's ask meets the per-call verdict"
+                } else {
+                    "auto: each answer, a legacy ask's too, meets the per-call verdict"
+                }
+                .to_owned(),
+            )
+        });
+    SlateDraftRow {
+        tool: SlateCapability::Elicitation.key().to_owned(),
+        disposition,
+        data_class: ELICITATION_ROW_DATA_CLASS,
         rationale,
     }
 }
@@ -289,7 +332,8 @@ impl ConnectorSlateDrafter<'_> {
     }
 }
 
-/// What a drift delta changed against its prior slate.
+/// What a drift delta changed against its prior slate, by row key (a tool
+/// name, or [`ELICITATION_ROW_KEY`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectorSlateDelta {
     pub slate_id: EntityId,
@@ -297,7 +341,7 @@ pub struct ConnectorSlateDelta {
     pub reask: BTreeSet<String>,
     /// Unchanged or narrowed rows, carried with their settings.
     pub carried: BTreeSet<String>,
-    /// Tools the declaration dropped; they drop without an ask.
+    /// Rows the declaration dropped; they drop without an ask.
     pub dropped: BTreeSet<String>,
 }
 
@@ -355,16 +399,22 @@ impl Vault {
 
     /// Connector add: draft the slate from the resolved manifest and the
     /// owner's past rulings, and store it unstamped for the one-tap accept.
-    /// Without a model drafter the rule rung drafts every row.
+    /// Without a model drafter the rule rung drafts every row; the rule rung
+    /// always drafts the elicitation row.
     pub fn draft_connector_admission_slate(
         &self,
-        manifest: &[SlateToolManifest],
+        manifest: &SlateManifest,
         drafter: Option<&ConnectorSlateDrafter<'_>>,
     ) -> Result<EntityId> {
         let rulings = self.connector_slate_past_rulings()?;
-        let tools: Vec<_> = manifest.iter().collect();
+        let tools: Vec<_> = manifest.tools.iter().collect();
+        let elicitation = manifest
+            .elicitation
+            .as_ref()
+            .map(|declaration| rule_draft_elicitation_row(declaration, &rulings));
         let rows = draft_rows("admission", &tools, &rulings, drafter)
             .into_iter()
+            .chain(elicitation)
             .map(fresh)
             .collect();
         self.put_new_slate(new_slate(manifest, rows, None, None, BTreeSet::new())?)
@@ -372,14 +422,16 @@ impl Vault {
 
     /// Drift: a delta slate against `prior`. Unchanged and narrowed rows
     /// carry their settings and overrides; new and expanded rows are drafted
-    /// fresh and are the only rows that re-ask; removed tools drop. Bind it
-    /// with `revise_connector_protocol`, which re-asks only on expansion.
+    /// fresh and are the only rows that re-ask; removed rows drop. The
+    /// elicitation row moves the same way. Bind it with
+    /// `revise_connector_protocol`, which re-asks only on expansion.
     pub fn draft_connector_delta_slate(
         &self,
         prior_id: EntityId,
-        manifest: &[SlateToolManifest],
+        slate_manifest: &SlateManifest,
         drafter: Option<&ConnectorSlateDrafter<'_>>,
     ) -> Result<ConnectorSlateDelta> {
+        let manifest = &slate_manifest.tools;
         let (prior, rulings, carry) = {
             let txn = self.store.env.read_txn()?;
             let prior = read_slate_in_store_txn(&self.store, &txn, prior_id)?
@@ -421,14 +473,39 @@ impl Vault {
             carried.insert(tool.name.clone());
             rows.push(row);
         }
+        if let Some(declaration) = &slate_manifest.elicitation {
+            let unchanged = prior
+                .elicitation_manifest()
+                .filter(|old| !elicitation_expands(old, declaration))
+                .and_then(|_| prior.elicitation_row().cloned());
+            match unchanged {
+                Some(row) => {
+                    carried.insert(ELICITATION_ROW_KEY.to_owned());
+                    rows.push(row);
+                }
+                None => {
+                    reask.insert(ELICITATION_ROW_KEY.to_owned());
+                    rows.push(fresh(rule_draft_elicitation_row(declaration, &rulings)));
+                }
+            }
+        }
         let names: BTreeSet<&str> = manifest.iter().map(|t| t.name.as_str()).collect();
-        let dropped = prior
+        let mut dropped: BTreeSet<String> = prior
             .tool_names()
             .into_iter()
             .filter(|name| !names.contains(name))
             .map(str::to_owned)
             .collect();
-        let slate = new_slate(manifest, rows, Some(&prior), Some(prior_id), reask.clone())?;
+        if prior.elicitation_manifest().is_some() && slate_manifest.elicitation.is_none() {
+            dropped.insert(ELICITATION_ROW_KEY.to_owned());
+        }
+        let slate = new_slate(
+            slate_manifest,
+            rows,
+            Some(&prior),
+            Some(prior_id),
+            reask.clone(),
+        )?;
         Ok(ConnectorSlateDelta {
             slate_id: self.put_new_slate(slate)?,
             reask,
@@ -460,7 +537,12 @@ impl Vault {
         let mut proposed = BTreeMap::new();
         let mut rationale = BTreeMap::new();
         for row in slate.rows() {
-            let Some(tool) = slate.tool(&row.draft.tool) else {
+            // The elicitation row is the rule's, not the model's: it carries,
+            // and the owner sets it with his own tap.
+            let SlateCapability::Tool(name) = row.draft.capability() else {
+                continue;
+            };
+            let Some(tool) = slate.tool(name) else {
                 continue;
             };
             let current = row.stamped_disposition();
