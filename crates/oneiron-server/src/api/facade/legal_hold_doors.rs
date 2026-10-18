@@ -8,8 +8,9 @@
 //! transaction. Oneiron's host-order doors are never routed here.
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::{LegalHold, LegalHoldEvent};
+use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult, ProducerRows};
 use oneiron::task_verb::sdk::{
     self, EmptyRequest, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased,
@@ -70,73 +71,121 @@ pub(super) async fn as_owner_listing<T: Send + 'static>(
     off_runtime_listing(verb, move |producers| act(&*server, &owner, producers)).await
 }
 
-/// `vault.legal_holds.place`: the owner's customer hold.
+/// [`as_owner`] for a door whose answer derives from no row but those it
+/// names (`host_door_lists`): its proof, its input, side tables and the
+/// authority log, which hold no row. Beside its answer come the rows
+/// `named` reads off it; a refusal lists none.
+pub(super) async fn as_owner_naming<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
+    named: impl FnOnce(&T) -> Vec<EntityId>,
+) -> Listed<T> {
+    let answer = as_owner(server, auth, verb, act).await;
+    let rows = answer.as_ref().map_or_else(|_| Vec::new(), named);
+    (answer, rows)
+}
+
+/// The records a hold's targets name: a claim's partition names its claim,
+/// the claim-free partition none.
+fn hold_targets(targets: &[LegalHoldTarget]) -> impl Iterator<Item = EntityId> + '_ {
+    targets.iter().filter_map(LegalHoldTarget::id)
+}
+
+/// `vault.legal_holds.place`: the owner's customer hold. It reads no row:
+/// it lists the records it holds.
 pub(crate) async fn vault_legal_holds_place(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LegalHoldPlaceRequest,
-) -> MemoryResult<LegalHold> {
-    as_owner(
+) -> Listed<LegalHold> {
+    as_owner_naming(
         server,
         auth,
         "vault.legal_holds.place",
         move |server, owner| sdk::place_legal_hold_as(server.vault(), owner, input),
+        |hold| hold_targets(&hold.targets).collect(),
     )
     .await
 }
 
-/// `vault.legal_holds.widen`: more targets for a standing customer hold.
+/// `vault.legal_holds.widen`: more targets for a standing customer hold,
+/// listing every record it now holds.
 pub(crate) async fn vault_legal_holds_widen(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LegalHoldWidenRequest,
-) -> MemoryResult<LegalHold> {
-    as_owner(
+) -> Listed<LegalHold> {
+    as_owner_naming(
         server,
         auth,
         "vault.legal_holds.widen",
         move |server, owner| sdk::widen_legal_hold_as(server.vault(), owner, input),
+        |hold| hold_targets(&hold.targets).collect(),
     )
     .await
 }
 
-/// `vault.legal_holds.list`: every hold the owner may see.
+/// `vault.legal_holds.list`: every hold the owner may see, from the hold
+/// tables, listing every record they hold.
 pub(crate) async fn vault_legal_holds_list(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<Vec<LegalHold>> {
-    as_owner(server, auth, "vault.legal_holds.list", |server, owner| {
-        sdk::read_legal_holds(server.vault(), owner)
-    })
+) -> Listed<Vec<LegalHold>> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.legal_holds.list",
+        |server, owner| sdk::read_legal_holds(server.vault(), owner),
+        |holds| {
+            holds
+                .iter()
+                .flat_map(|hold| hold_targets(&hold.targets))
+                .collect()
+        },
+    )
     .await
 }
 
-/// `vault.legal_holds.log`: the owner-visible hold log, oldest first.
+/// `vault.legal_holds.log`: the owner-visible hold log, oldest first,
+/// listing every record its events name.
 pub(crate) async fn vault_legal_holds_log(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<Vec<LegalHoldEvent>> {
-    as_owner(server, auth, "vault.legal_holds.log", |server, owner| {
-        sdk::read_legal_hold_log(server.vault(), owner)
-    })
+) -> Listed<Vec<LegalHoldEvent>> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.legal_holds.log",
+        |server, owner| sdk::read_legal_hold_log(server.vault(), owner),
+        |events| {
+            events
+                .iter()
+                .flat_map(|event| hold_targets(&event.targets))
+                .collect()
+        },
+    )
     .await
 }
 
 /// `vault.legal_holds.lift_and_erase`: the owner's one "Lift the hold and
 /// erase?" confirm. It erases; the engine takes the owner's proof and the
-/// records, and nothing here adds a token of its own.
+/// records, and nothing here adds a token of its own. It lists the records
+/// its receipt names.
 pub(crate) async fn vault_legal_holds_lift_and_erase(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LegalHoldLiftAndEraseRequest,
-) -> MemoryResult<LegalHoldLiftAndErased> {
-    as_owner(
+) -> Listed<LegalHoldLiftAndErased> {
+    as_owner_naming(
         server,
         auth,
         "vault.legal_holds.lift_and_erase",
         move |server, owner| sdk::lift_legal_hold_and_erase_as(server.vault(), owner, input),
+        |erased| erased.records.iter().map(|erased| erased.record).collect(),
     )
     .await
 }

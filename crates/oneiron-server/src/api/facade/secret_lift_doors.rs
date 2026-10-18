@@ -6,10 +6,11 @@
 //! transaction.
 use std::sync::Arc;
 
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::EntityId;
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -17,23 +18,44 @@ const VERB: &str = "vault.secrets.lift_history";
 
 /// `vault.secrets.lift_history`: the sweep's run in progress, its last
 /// receipt and the lift proposals still open, after queueing a run when the
-/// input's `start` asks for one.
+/// input's `start` asks for one. It lists each record a proposal it shows
+/// was filed from (`record:<id>`): the proposal's reason and suggested name
+/// come from that record. The run, its receipt, its counts and the proposals
+/// live in the sweep's side tables, which hold no row.
 pub(crate) async fn vault_secrets_lift_history(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SecretLiftRequest,
-) -> MemoryResult<SecretLiftStatus> {
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+) -> Listed<SecretLiftStatus> {
+    let owner = match crate::api::owner_routes::owner(auth, server) {
+        Ok(owner) => owner,
+        Err(_) => {
+            return refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!("{VERB} is the vault owner's"),
+                &["Present the owner's own verified, unattenuated credential."],
+            ));
+        }
+    };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    let answer = tokio::task::spawn_blocking(move || {
         secret_lift_as_owner(server.vault(), &owner, &input).map_err(MemoryError::from)
     })
     .await
-    .map_err(|_| internal(VERB))?
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    let rows = answer
+        .as_ref()
+        .map_or_else(|_| Vec::new(), proposal_records);
+    (answer, rows)
+}
+
+/// The record each proposal `status` shows was filed from; a side-table or
+/// carrier proposal names none.
+fn proposal_records(status: &SecretLiftStatus) -> Vec<EntityId> {
+    status
+        .proposals
+        .iter()
+        .filter_map(|shown| shown.proposal.path.strip_prefix("record:"))
+        .filter_map(|hex| EntityId::from_hex(hex).ok())
+        .collect()
 }

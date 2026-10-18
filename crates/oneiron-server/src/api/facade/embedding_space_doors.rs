@@ -7,9 +7,16 @@
 //! check runs this server's own probe towers through
 //! `SyncServer::check_space_move`, as the route does, with no deadline: it
 //! can take minutes.
+//!
+//! Every door but the check lists its rows (`host_door_lists`): a space, a
+//! slot binding, a move and a probe live in the embedding setup's side
+//! tables, which hold no row, so a change and the view it answers list
+//! none, and a probe lists the documents it names. A check's reading is a
+//! rank over every vector its probes reach, and goes unlisted.
 use std::sync::Arc;
 
-use oneiron::embed::SpaceMove;
+use oneiron::EntityId;
+use oneiron::embed::{SpaceMove, SpaceProbe};
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, EmbeddingSpaceBindRequest, EmbeddingSpaceCandidateRequest, EmbeddingSpaceDeclareRequest,
@@ -18,21 +25,28 @@ use oneiron::task_verb::sdk::{
     EmbeddingSpaceProbes, EmbeddingSpaceRequest, EmbeddingSpacesView, EmptyRequest,
 };
 
-use super::legal_hold_doors::as_owner;
+use super::host_doors::Listed;
+use super::legal_hold_doors::{as_owner, as_owner_naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+
+/// The documents a probe names: its source family and every target.
+fn probe_rows(probe: &SpaceProbe) -> impl Iterator<Item = EntityId> + '_ {
+    std::iter::once(probe.family).chain(probe.targets.iter().copied())
+}
 
 /// `vault.embedding_spaces.list`: every space, slot, move and probe count.
 pub(crate) async fn vault_embedding_spaces_list(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.list",
         |server, owner| sdk::read_embedding_spaces(server.vault(), owner),
+        |_| Vec::new(),
     )
     .await
 }
@@ -42,12 +56,13 @@ pub(crate) async fn vault_embedding_spaces_declare(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceDeclareRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.declare",
         move |server, owner| sdk::declare_embedding_space_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -58,12 +73,13 @@ pub(crate) async fn vault_embedding_spaces_bind(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceBindRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.bind",
         move |server, owner| sdk::bind_embedding_slot_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -73,12 +89,13 @@ pub(crate) async fn vault_embedding_spaces_one_space(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.one_space",
         move |server, owner| sdk::bind_one_embedding_space_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -89,12 +106,13 @@ pub(crate) async fn vault_embedding_spaces_retire(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.retire",
         move |server, owner| sdk::retire_embedding_space_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -104,12 +122,13 @@ pub(crate) async fn vault_embedding_spaces_move(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceMoveRequest,
-) -> MemoryResult<SpaceMove> {
-    as_owner(
+) -> Listed<SpaceMove> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.move",
         move |server, owner| sdk::begin_embedding_space_move_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -143,12 +162,13 @@ pub(crate) async fn vault_embedding_spaces_move_approve(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceCandidateRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.move_approve",
         move |server, owner| sdk::approve_embedding_space_move_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -159,12 +179,13 @@ pub(crate) async fn vault_embedding_spaces_move_undo(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceCandidateRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.move_undo",
         move |server, owner| sdk::undo_embedding_space_move_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -174,12 +195,13 @@ pub(crate) async fn vault_embedding_spaces_move_abandon(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceCandidateRequest,
-) -> MemoryResult<EmbeddingSpacesView> {
-    as_owner(
+) -> Listed<EmbeddingSpacesView> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.move_abandon",
         move |server, owner| sdk::abandon_embedding_space_move_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }
@@ -189,12 +211,19 @@ pub(crate) async fn vault_embedding_spaces_probes_list(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<EmbeddingSpaceProbes> {
-    as_owner(
+) -> Listed<EmbeddingSpaceProbes> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.probes.list",
         |server, owner| sdk::read_embedding_space_probes(server.vault(), owner),
+        |probes| {
+            probes
+                .probes
+                .iter()
+                .flat_map(|probe| probe_rows(&probe.probe))
+                .collect()
+        },
     )
     .await
 }
@@ -204,12 +233,13 @@ pub(crate) async fn vault_embedding_spaces_probes_put(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceProbePutRequest,
-) -> MemoryResult<EmbeddingSpaceProbe> {
-    as_owner(
+) -> Listed<EmbeddingSpaceProbe> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.probes.put",
         move |server, owner| sdk::put_embedding_space_probe_as(server.vault(), owner, input),
+        |probe| probe_rows(&probe.probe).collect(),
     )
     .await
 }
@@ -219,12 +249,13 @@ pub(crate) async fn vault_embedding_spaces_probes_delete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: EmbeddingSpaceProbeDeleteRequest,
-) -> MemoryResult<EmbeddingSpaceProbeDeleted> {
-    as_owner(
+) -> Listed<EmbeddingSpaceProbeDeleted> {
+    as_owner_naming(
         server,
         auth,
         "vault.embedding_spaces.probes.delete",
         move |server, owner| sdk::delete_embedding_space_probe_as(server.vault(), owner, input),
+        |_| Vec::new(),
     )
     .await
 }

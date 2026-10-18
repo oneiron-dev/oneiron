@@ -6,13 +6,18 @@
 //! (`owner_routes::owner`). The engine rechecks that proof in its own
 //! writer. It signs each pact disconnect with the host's slip issuer, the one
 //! `api/pairing.rs` builds for its own slip doors.
+//!
+//! It lists its rows (`host_door_lists`): the grant it withdrew and the
+//! guest it conferred on. The pact standing its answer reports is the
+//! authority log's fold of the pact the grant binds, which holds no row,
+//! and the withdrawal and the slips it tombstoned live in side tables.
 use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::GuestRevokeResponse;
 use oneiron::task_verb::sdk::{self, GuestRevokeRequest};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -22,22 +27,30 @@ pub(crate) async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: GuestRevokeRequest,
-) -> MemoryResult<GuestRevokeResponse> {
+) -> Listed<GuestRevokeResponse> {
     const VERB: &str = "vault.guests.revoke";
-    let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{VERB} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })?;
+    let owner = match crate::api::owner_routes::owner(auth, server) {
+        Ok(owner) => owner,
+        Err(_) => {
+            return refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!("{VERB} is the vault owner's"),
+                &["Present the owner's own verified, unattenuated credential."],
+            ));
+        }
+    };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<GuestRevokeResponse> {
+    let answer = tokio::task::spawn_blocking(move || -> MemoryResult<GuestRevokeResponse> {
         crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(sdk::revoke_guest_as(server.vault(), &owner, issuer, input))
         })
         .map_err(|_| internal(VERB))?
     })
     .await
-    .map_err(|_| internal(VERB))?
+    .unwrap_or_else(|_| Err(internal(VERB)));
+    let rows = answer.as_ref().map_or_else(
+        |_| Vec::new(),
+        |revoked| vec![revoked.grant_ref, revoked.guest_ref],
+    );
+    (answer, rows)
 }

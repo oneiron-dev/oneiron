@@ -18,6 +18,14 @@
 //! - nothing, for the deletion marker the engine reads for anyone;
 //! - nothing but the host's slip issuer, for proof-of-control owner recovery,
 //!   whose operator route (`api/operator_routes.rs`) checks the host's root.
+//!
+//! Each row lists its rows (`host_door_lists`). An act, its objections and
+//! receipt, a notice, an invitation, an erase ask and a fork alarm live in
+//! the authority log and the shared-act tables, which hold no row, and an
+//! act's effect reads the act, the roster and the grants its receipt names:
+//! so beside its answer each lists the records it names, and none past
+//! them. A receipt with a removal's export goes unlisted: no list covers the
+//! records its export counted, after the first execution.
 use std::sync::Arc;
 
 use oneiron::authority::{AuthorityHandoffAlarm, HostSlipIssuer};
@@ -33,7 +41,7 @@ use oneiron::task_verb::sdk::{
     SharedReceiptRequest, SharedRemoveOwnerRequest, SharedTransferRequest, SharedVaultRequest,
 };
 
-use super::host_doors::internal;
+use super::host_doors::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -118,17 +126,45 @@ async fn off_runtime<T: Send + 'static>(
         .map_err(|_| internal(verb))?
 }
 
+/// [`off_runtime`] under `proof` for a door that lists its rows: beside its
+/// answer, the rows `named` reads off it. A refused proof lists none.
+pub(super) async fn as_person_naming<P: Send + 'static, T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    verb: &'static str,
+    proof: MemoryResult<P>,
+    act: impl FnOnce(&Arc<SyncServer>, P) -> MemoryResult<T> + Send + 'static,
+    named: impl FnOnce(&T) -> Option<Vec<oneiron::EntityId>>,
+) -> MaybeListed<T> {
+    let proof = match proof {
+        Ok(proof) => proof,
+        Err(refusal) => return (Err(refusal), Some(Vec::new())),
+    };
+    let answer = off_runtime(server, verb, move |server| act(server, proof)).await;
+    let rows = answer.as_ref().map_or_else(|_| Some(Vec::new()), named);
+    (answer, rows)
+}
+
+/// A receipt's rows: none past those it names, or `None` for one with a
+/// removal's export, whose counted records no list names after the first
+/// execution (`sdk::execute_shared_act_listing`).
+pub(super) fn receipt_rows(receipt: &SharedActExecutionReceipt) -> Option<Vec<oneiron::EntityId>> {
+    receipt.export.is_none().then(Vec::new)
+}
+
 /// `vault.shared.propose_delete`: start the vault's `delete_vault` act.
 pub(crate) async fn vault_shared_propose_delete(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedVaultRequest,
-) -> MemoryResult<PendingAuthorityAct> {
+) -> MaybeListed<PendingAuthorityAct> {
     const VERB: &str = "vault.shared.propose_delete";
-    let starter = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::propose_shared_delete(server.vault(), &starter, input)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, starter| sdk::propose_shared_delete(server.vault(), &starter, input),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
@@ -137,12 +173,15 @@ pub(crate) async fn vault_shared_propose_transfer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedTransferRequest,
-) -> MemoryResult<PendingAuthorityAct> {
+) -> MaybeListed<PendingAuthorityAct> {
     const VERB: &str = "vault.shared.propose_transfer";
-    let starter = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::propose_shared_transfer(server.vault(), &starter, input)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, starter| sdk::propose_shared_transfer(server.vault(), &starter, input),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
@@ -152,12 +191,15 @@ pub(crate) async fn vault_shared_propose_remove_owner(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedRemoveOwnerRequest,
-) -> MemoryResult<PendingAuthorityAct> {
+) -> MaybeListed<PendingAuthorityAct> {
     const VERB: &str = "vault.shared.propose_remove_owner";
-    let starter = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::propose_shared_remove_owner(server.vault(), &starter, input)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, starter| sdk::propose_shared_remove_owner(server.vault(), &starter, input),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
@@ -198,12 +240,15 @@ pub(crate) async fn vault_shared_receipt(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedReceiptRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.shared.receipt";
-    let reader = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::read_shared_receipt(server.vault(), &reader, input)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, reader| sdk::read_shared_receipt(server.vault(), &reader, input),
+        receipt_rows,
+    )
     .await
 }
 
@@ -212,12 +257,15 @@ pub(crate) async fn vault_shared_outcomes(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedVaultRequest,
-) -> MemoryResult<Vec<SharedActOutcome>> {
+) -> MaybeListed<Vec<SharedActOutcome>> {
     const VERB: &str = "vault.shared.outcomes";
-    let reader = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::read_shared_outcomes(server.vault(), &reader, input)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, reader| sdk::read_shared_outcomes(server.vault(), &reader, input),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
@@ -227,10 +275,14 @@ pub(crate) async fn vault_shared_deletion(
     server: &Arc<SyncServer>,
     _auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<Option<SharedVaultDeletion>> {
-    off_runtime(server, "vault.shared.deletion", |server| {
-        sdk::read_shared_deletion(server.vault())
-    })
+) -> MaybeListed<Option<SharedVaultDeletion>> {
+    as_person_naming(
+        server,
+        "vault.shared.deletion",
+        Ok(()),
+        |server, ()| sdk::read_shared_deletion(server.vault()),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
@@ -241,17 +293,22 @@ pub(crate) async fn vault_members_add(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberAddRequest,
-) -> MemoryResult<SharedMemberInvited> {
+) -> MaybeListed<SharedMemberInvited> {
     const VERB: &str = "vault.members.add";
-    let admin = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        if input.holder_key.is_none() {
-            return sdk::add_shared_member_as(server.vault(), &admin, None, input);
-        }
-        with_slips(server, VERB, |slips| {
-            sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
-        })
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, admin| {
+            if input.holder_key.is_none() {
+                return sdk::add_shared_member_as(server.vault(), &admin, None, input);
+            }
+            with_slips(server, VERB, |slips| {
+                sdk::add_shared_member_as(server.vault(), &admin, Some(slips), input)
+            })
+        },
+        |invited| receipt_rows(&invited.receipt),
+    )
     .await
 }
 
@@ -261,14 +318,19 @@ pub(crate) async fn vault_members_change(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberRoleRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.change";
-    let admin = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        with_slips(server, VERB, |slips| {
-            sdk::change_shared_member_as(server.vault(), &admin, Some(slips), input)
-        })
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, admin| {
+            with_slips(server, VERB, |slips| {
+                sdk::change_shared_member_as(server.vault(), &admin, Some(slips), input)
+            })
+        },
+        receipt_rows,
+    )
     .await
 }
 
@@ -278,14 +340,19 @@ pub(crate) async fn vault_members_remove(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedMemberRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.remove";
-    let admin = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        with_slips(server, VERB, |slips| {
-            sdk::remove_shared_member_as(server.vault(), &admin, Some(slips), input)
-        })
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, admin| {
+            with_slips(server, VERB, |slips| {
+                sdk::remove_shared_member_as(server.vault(), &admin, Some(slips), input)
+            })
+        },
+        receipt_rows,
+    )
     .await
 }
 
@@ -295,14 +362,19 @@ pub(crate) async fn vault_members_leave(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SharedVaultRequest,
-) -> MemoryResult<SharedActExecutionReceipt> {
+) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.leave";
-    let member = person(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        with_slips(server, VERB, |slips| {
-            sdk::leave_shared_vault_as(server.vault(), &member, Some(slips), input)
-        })
-    })
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, member| {
+            with_slips(server, VERB, |slips| {
+                sdk::leave_shared_vault_as(server.vault(), &member, Some(slips), input)
+            })
+        },
+        receipt_rows,
+    )
     .await
 }
 
@@ -311,12 +383,15 @@ pub(crate) async fn vault_authority_handoff_alarms(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<Vec<AuthorityHandoffAlarm>> {
+) -> MaybeListed<Vec<AuthorityHandoffAlarm>> {
     const VERB: &str = "vault.authority.handoff_alarms";
-    let owner = owner_proof(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::read_handoff_alarms(server.vault(), &owner)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(server, auth, VERB),
+        move |server, owner| sdk::read_handoff_alarms(server.vault(), &owner),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
@@ -325,12 +400,15 @@ pub(crate) async fn vault_authority_handoff_alarms_acknowledge(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HandoffAlarmRequest,
-) -> MemoryResult<AuthorityHandoffAlarm> {
+) -> MaybeListed<AuthorityHandoffAlarm> {
     const VERB: &str = "vault.authority.handoff_alarms.acknowledge";
-    let owner = owner_proof(server, auth, VERB)?;
-    off_runtime(server, VERB, move |server| {
-        sdk::acknowledge_handoff_alarm(server.vault(), &owner, input)
-    })
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(server, auth, VERB),
+        move |server, owner| sdk::acknowledge_handoff_alarm(server.vault(), &owner, input),
+        |_| Some(Vec::new()),
+    )
     .await
 }
 
