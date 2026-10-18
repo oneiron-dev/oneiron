@@ -43,7 +43,7 @@ async fn as_owner<T: Send + 'static>(
 }
 
 /// The rows hex ids name; a value that is no id names none.
-fn rows<'a>(ids: impl IntoIterator<Item = &'a String>) -> Vec<EntityId> {
+fn rows(ids: impl IntoIterator<Item = &String>) -> Vec<EntityId> {
     ids.into_iter()
         .filter_map(|hex| EntityId::from_hex(hex).ok())
         .collect()
