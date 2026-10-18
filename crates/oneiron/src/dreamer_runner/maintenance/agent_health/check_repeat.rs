@@ -9,6 +9,11 @@
 //! digest and starts the count again; a run whose inputs were not captured
 //! is never a repeat. Other calls may come between, unlike `loop`; a success
 //! of that check, or a different failure, starts the count again.
+//!
+//! A run's shadow type checks count too: each step's stored report states
+//! its action digest over the program, each declaration file and the checker
+//! at its pin, so the digest is the logical check. A streak holds while the
+//! check reports the same error diagnostics, as recorded, on that digest.
 
 use std::collections::BTreeMap;
 
@@ -32,8 +37,41 @@ struct Streak<T> {
     evidence: Vec<EntityId>,
 }
 
-/// Each attempt's run, then each agent's call receipts, held against the
-/// `health.check.fails` dial.
+/// Where the executor stores a step's shadow check report:
+/// `executor/repl/{seq:06}.code-check.json` (`code_check_output_path`).
+const CHECK_REPORT_DIR: &str = "executor/repl/";
+const CHECK_REPORT_SUFFIX: &str = ".code-check.json";
+
+/// The step a stored output reports the shadow check of, if it is one.
+fn check_report_seq(path: &str) -> Option<u64> {
+    path.strip_prefix(CHECK_REPORT_DIR)?
+        .strip_suffix(CHECK_REPORT_SUFFIX)?
+        .parse()
+        .ok()
+}
+
+/// A shadow check's action digest and, when it found an error, its
+/// failure: the diagnostics as recorded and how many were left out. `None`
+/// when the checker crashed or its inputs were not captured.
+fn check_report_failure(
+    report: &serde_json::Value,
+) -> Option<(&str, Option<(&serde_json::Value, &serde_json::Value)>)> {
+    let digest = report.get("action_digest")?.as_str()?;
+    let diagnostics = report.get("diagnostics")?;
+    let failed = diagnostics.as_array()?.iter().any(|diagnostic| {
+        diagnostic
+            .get("category")
+            .and_then(serde_json::Value::as_str)
+            == Some("error")
+    });
+    let omitted = report
+        .get("diagnostics_omitted")
+        .unwrap_or(&serde_json::Value::Null);
+    Some((digest, failed.then_some((diagnostics, omitted))))
+}
+
+/// Each attempt's run, its tool runs and its shadow checks, then each
+/// agent's call receipts, held against the `health.check.fails` dial.
 pub(super) fn check_repeat_findings(
     vault: &Vault,
     calls: &BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>,
@@ -93,6 +131,70 @@ pub(super) fn check_repeat_findings(
                         failure,
                         from,
                         to,
+                        count: 1,
+                        evidence: Vec::new(),
+                    },
+                );
+            }
+        }
+        done.extend(streaks.into_values());
+        for streak in done.into_iter().filter(|streak| streak.count >= fails) {
+            out.push(finding(
+                dispatch.actor,
+                task_of(record),
+                Some(record.id),
+                vec![attempt],
+                (streak.from, streak.to),
+                streak.count,
+                fails,
+            ));
+        }
+        // The shadow checks, in step order. An unreadable or unfinished
+        // report is no evidence either way.
+        let reports: Vec<(u64, serde_json::Value)> = run
+            .outputs
+            .iter()
+            .filter(|output| output.complete)
+            .filter_map(|output| {
+                let seq = check_report_seq(&output.path)?;
+                let body = vault.get_code_run_raw_output(output).ok().flatten()?;
+                let at = run
+                    .step_checkpoints
+                    .iter()
+                    .find(|checkpoint| checkpoint.seq == seq)
+                    .map_or(record.updated_at, |checkpoint| {
+                        checkpoint.created_at_ms / 1000
+                    });
+                Some((at, serde_json::from_slice::<serde_json::Value>(&body).ok()?))
+            })
+            .collect();
+        let mut streaks: BTreeMap<&str, Streak<(&serde_json::Value, &serde_json::Value)>> =
+            BTreeMap::new();
+        let mut done = Vec::new();
+        for (at, report) in &reports {
+            let Some((digest, failure)) = check_report_failure(report) else {
+                continue;
+            };
+            let again = failure.is_some_and(|failure| {
+                streaks
+                    .get(digest)
+                    .is_some_and(|streak| streak.failure == failure)
+            });
+            if again {
+                if let Some(streak) = streaks.get_mut(digest) {
+                    streak.to = *at;
+                    streak.count += 1;
+                }
+                continue;
+            }
+            done.extend(streaks.remove(digest));
+            if let Some(failure) = failure {
+                streaks.insert(
+                    digest,
+                    Streak {
+                        failure,
+                        from: *at,
+                        to: *at,
                         count: 1,
                         evidence: Vec::new(),
                     },
