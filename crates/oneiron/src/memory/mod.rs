@@ -23,6 +23,7 @@
 //! module re-exports the whole surface, so `crate::memory::X` paths are
 //! unchanged from the flat-file era.
 
+mod answer_boundary;
 mod archive_purge;
 mod asset_resolve;
 mod authorship;
@@ -76,6 +77,7 @@ mod tests;
 #[cfg(test)]
 mod tests_regressions;
 
+pub use answer_boundary::AnswerAdmission;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
 pub use asset_resolve::{
     AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,

@@ -572,7 +572,7 @@ impl McpRowSurface {
         actor: &McpCallContext,
         producers: &'a oneiron::memory::ProducerRows,
     ) -> oneiron::Memory<'a> {
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &server.vault,
             actor.auth.as_ref(),
             actor.actor_ref,
