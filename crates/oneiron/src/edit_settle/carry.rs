@@ -571,6 +571,7 @@ impl Vault {
         let carried = if carry && !kept.is_empty() {
             let mut carried =
                 carry_slide_judgments(&current, head.version, kept, &proposal.run_ref, limits)?;
+            self.measure_pptx_comment_patches(&carried);
             carried.manifest.slide_question = Some(question.clone());
             Some(carried)
         } else {
