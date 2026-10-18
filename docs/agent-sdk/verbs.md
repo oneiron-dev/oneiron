@@ -653,6 +653,9 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.merge`
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
+- `vault.notes.bless_brief_kind`
+- `vault.notes.author_brief`
+- `vault.notes.follow_citation`
 - `vault.notes.create`
 - `vault.notes.author_take`
 - `vault.notes.from_entity`

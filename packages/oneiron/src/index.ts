@@ -1729,6 +1729,12 @@ export class Oneiron {
       },
     },
     notes: {
+      /** A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority. */
+      bless_brief_kind: (input: Facade.EmptyRequest = {}): Facade.BriefKindStamp => this.#call(() => this.#client.vaultNotesBlessBriefKind(input) as Facade.BriefKindStamp),
+      /** Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction. */
+      author_brief: (input: Facade.AuthorBriefRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorBrief(input) as Facade.EntityRefReceipt),
+      /** Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle. */
+      follow_citation: (input: Facade.BriefCitationFollowRequest): Facade.ScopedReadResult<Facade.SharedBriefCitation | null> => this.#call(() => this.#client.vaultNotesFollowCitation(input) as Facade.ScopedReadResult<Facade.SharedBriefCitation | null>),
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
       /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */

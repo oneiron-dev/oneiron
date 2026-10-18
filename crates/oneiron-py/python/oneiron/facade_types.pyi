@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 700 facade rows, 2527 declarations.
-Inputs: 648 of 700 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 625 of 700 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 703 facade rows, 2534 declarations.
+Inputs: 651 of 703 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 628 of 703 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -12407,6 +12407,26 @@ class SummaryRegenerateRequest(TypedDict):
     read_refs: list[str]
 class SummaryProposalRequest(TypedDict):
     proposal_ref: str
+NoteExtractionDefault = Literal["disabled"]
+NoteContextDefault = Literal["relationship_scoped"]
+NoteRetentionDefault = Literal["durable"]
+class BriefKindStamp(TypedDict):
+    person_ref: str
+    extraction: NoteExtractionDefault
+    context: NoteContextDefault
+    retention: NoteRetentionDefault
+class BriefClaimCitation(TypedDict):
+    claim_ref: str
+    document_ref: str
+    start: int
+    end: int
+class AuthorBriefRequest(TypedDict):
+    markdown: str
+    citations: list[BriefClaimCitation]
+class BriefCitationFollowRequest(TypedDict):
+    share_ref: str
+    claim_ref: str
+    narrowing: NotRequired[ShareViewNarrowing | None]
 class AuthorTakeTargetSubject(TypedDict):
     subject: str
 class AuthorTakeTargetClaim(TypedDict):

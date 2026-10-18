@@ -676,6 +676,9 @@ pub enum AgentVerb {
     VaultSummariesProposalsMerge,
     VaultSummariesProposalsSwitch,
     VaultSummariesProposalsReject,
+    VaultNotesBlessBriefKind,
+    VaultNotesAuthorBrief,
+    VaultNotesFollowCitation,
     VaultNotesCreate,
     VaultNotesAuthorTake,
     VaultNotesFromEntity,
@@ -1407,6 +1410,9 @@ impl AgentVerb {
         Self::VaultSummariesProposalsMerge,
         Self::VaultSummariesProposalsSwitch,
         Self::VaultSummariesProposalsReject,
+        Self::VaultNotesBlessBriefKind,
+        Self::VaultNotesAuthorBrief,
+        Self::VaultNotesFollowCitation,
         Self::VaultNotesCreate,
         Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
@@ -2157,6 +2163,9 @@ impl AgentVerb {
             Self::VaultSummariesProposalsMerge => "vault.summaries.proposals.merge",
             Self::VaultSummariesProposalsSwitch => "vault.summaries.proposals.switch",
             Self::VaultSummariesProposalsReject => "vault.summaries.proposals.reject",
+            Self::VaultNotesBlessBriefKind => "vault.notes.bless_brief_kind",
+            Self::VaultNotesAuthorBrief => "vault.notes.author_brief",
+            Self::VaultNotesFollowCitation => "vault.notes.follow_citation",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
@@ -2862,6 +2871,9 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsMerge
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
+                | Self::VaultNotesBlessBriefKind
+                | Self::VaultNotesAuthorBrief
+                | Self::VaultNotesFollowCitation
                 | Self::VaultNotesCreate
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
@@ -3615,6 +3627,9 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsMerge
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
+                | Self::VaultNotesBlessBriefKind
+                | Self::VaultNotesAuthorBrief
+                | Self::VaultNotesFollowCitation
                 | Self::VaultNotesCreate
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
@@ -4432,6 +4447,9 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsMerge
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
+                | Self::VaultNotesBlessBriefKind
+                | Self::VaultNotesAuthorBrief
+                | Self::VaultNotesFollowCitation
                 | Self::VaultNotesCreate
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
@@ -4889,6 +4907,8 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsMerge
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
+                | Self::VaultNotesBlessBriefKind
+                | Self::VaultNotesAuthorBrief
                 | Self::VaultNotesCreate
                 | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
@@ -5637,6 +5657,9 @@ impl AgentVerb {
             Self::VaultSummariesProposalsMerge => &["spec"],
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
+            Self::VaultNotesBlessBriefKind => &["spec"],
+            Self::VaultNotesAuthorBrief => &["spec"],
+            Self::VaultNotesFollowCitation => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -6369,6 +6392,9 @@ impl AgentVerb {
             Self::VaultSummariesProposalsMerge => &["spec"],
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
+            Self::VaultNotesBlessBriefKind => &["spec"],
+            Self::VaultNotesAuthorBrief => &["spec"],
+            Self::VaultNotesFollowCitation => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -8355,6 +8381,15 @@ impl AgentVerb {
             }
             Self::VaultSummariesProposalsReject => {
                 "Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."
+            }
+            Self::VaultNotesBlessBriefKind => {
+                "A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority."
+            }
+            Self::VaultNotesAuthorBrief => {
+                "Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction."
+            }
+            Self::VaultNotesFollowCitation => {
+                "Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle."
             }
             Self::VaultNotesCreate => {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."

@@ -3236,6 +3236,21 @@ export_facade! {
     let output = client.vault_summaries_proposals_reject(&input)?;
     crate::codec::lift_record("vault.summaries.proposals.reject", &output)
 };
+"vault.notes.bless_brief_kind" => fn vault_notes_bless_brief_kind(&self) -> BriefKindStamp = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.notes.bless_brief_kind")?;
+    let output = client.vault_notes_bless_brief_kind(&input)?;
+    crate::codec::lift_record("vault.notes.bless_brief_kind", &output)
+};
+"vault.notes.author_brief" => fn vault_notes_author_brief(&self, input: AuthorBriefRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::note::AuthorBriefRequest = crate::codec::lower_record("vault.notes.author_brief", input)?;
+    let output = client.vault_notes_author_brief(&input)?;
+    Lift::lift(output)
+};
+"vault.notes.follow_citation" => fn vault_notes_follow_citation(&self, input: BriefCitationFollowRequest) -> ScopedReadResultOptionalSharedBriefCitation = |client| {
+    let input: oneiron::task_verb::sdk::BriefCitationFollowRequest = crate::codec::lower_record("vault.notes.follow_citation", input)?;
+    let output = client.vault_notes_follow_citation(&input)?;
+    crate::codec::lift_record("vault.notes.follow_citation", &output)
+};
 "vault.notes.create" => fn vault_notes_create(&self, input: CreateNoteRequest) -> EntityRefReceipt = |client| {
     let input: oneiron::task_verb::sdk::CreateNoteRequest = crate::codec::lower_record("vault.notes.create", input)?;
     let output = client.vault_notes_create(&input)?;

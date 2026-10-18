@@ -22,7 +22,7 @@ use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
 use crate::error::RecordError;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::receipt::{ShareRevokeReceipt, SharedBriefView};
+use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
 use crate::{EntityId, Error, WriteActor};
@@ -159,6 +159,18 @@ pub struct ShareViewRequest {
     pub narrowing: Option<ShareViewNarrowing>,
 }
 
+/// A citation handle is the pair returned by a shared view: its `share_ref`
+/// and one citation's `claim_ref`. It carries no authority and stores no quote.
+/// Each follow reopens that share under this caller's live read scope.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BriefCitationFollowRequest {
+    pub share_ref: String,
+    pub claim_ref: String,
+    #[serde(default)]
+    pub narrowing: Option<ShareViewNarrowing>,
+}
+
 /// The engine's refusal of a revoker who is neither the issuer nor the live
 /// owner ([`crate::Vault::revoke_share`]).
 const SHARE_REVOKE_REFUSAL: &str = "share revocation requires issuer or owner";
@@ -206,15 +218,77 @@ pub fn view_shared_brief_as_caller(
     let narrowing = input
         .narrowing
         .as_ref()
-        .map(|narrowing| -> MemoryResult<ShareViewerScope> {
-            Ok(ShareViewerScope {
-                world_refs: entity_refs("narrowing.world_refs", &narrowing.world_refs)?,
-                facet_refs: entity_refs("narrowing.facet_refs", &narrowing.facet_refs)?,
-                include_unscoped: narrowing.include_unscoped,
-            })
-        })
+        .map(viewer_narrowing)
         .transpose()?;
     render_shared_brief(memory, &share_id, narrowing.as_ref())
+}
+
+/// Follow a stored brief citation, never a caller-supplied pin or quote.
+/// Reopening the share is essential: revocation, expiry and source permission
+/// changes must apply to a saved handle exactly as they apply to its view.
+pub fn follow_brief_citation_as_caller(
+    memory: &Memory<'_>,
+    input: BriefCitationFollowRequest,
+) -> MemoryResult<ScopedReadResult<Option<SharedBriefCitation>>> {
+    let claim = EntityId::from_hex(&input.claim_ref)
+        .map_err(|_| MemoryError::bad_request("claim_ref must be a 32-hex entity id"))?;
+    let share = share_ref(&input.share_ref)?;
+    let narrowing = input.narrowing.as_ref().map(viewer_narrowing).transpose()?;
+    follow_shared_citation(memory, share, claim, narrowing.as_ref())
+}
+
+#[cfg(feature = "sync")]
+fn follow_shared_citation(
+    memory: &Memory<'_>,
+    share: EntityId,
+    claim: EntityId,
+    narrowing: Option<&ShareViewerScope>,
+) -> MemoryResult<ScopedReadResult<Option<SharedBriefCitation>>> {
+    let read = memory.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
+    let frame = viewer_frame(&read)?;
+    let citation = memory.vault().follow_shared_brief_citation(
+        share,
+        memory.actor(),
+        claim,
+        narrowing,
+        &frame,
+        &read,
+    )?;
+    Ok(citation.map(|citation| {
+        citation.map(|citation| SharedBriefCitation {
+            claim_ref: citation.claim.to_hex(),
+            stale: citation.stale,
+            drifted: citation.drifted,
+            redacted: citation.redacted,
+            confidence: citation.confidence,
+            lifecycle: citation
+                .lifecycle
+                .map(|lifecycle| lifecycle.as_str().to_owned()),
+            quote: citation.quote,
+        })
+    }))
+}
+
+#[cfg(not(feature = "sync"))]
+fn follow_shared_citation(
+    _memory: &Memory<'_>,
+    _share: EntityId,
+    _claim: EntityId,
+    _narrowing: Option<&ShareViewerScope>,
+) -> MemoryResult<ScopedReadResult<Option<SharedBriefCitation>>> {
+    Err(MemoryError::new(
+        crate::memory::MEMORY_CODE_INVALID_STATE,
+        "vault.notes.follow_citation requires a build with the sync feature",
+        &[],
+    ))
+}
+
+fn viewer_narrowing(narrowing: &ShareViewNarrowing) -> MemoryResult<ShareViewerScope> {
+    Ok(ShareViewerScope {
+        world_refs: entity_refs("narrowing.world_refs", &narrowing.world_refs)?,
+        facet_refs: entity_refs("narrowing.facet_refs", &narrowing.facet_refs)?,
+        include_unscoped: narrowing.include_unscoped,
+    })
 }
 
 /// The shared brief, rendered under the viewer's own read lane and frame.
@@ -247,8 +321,8 @@ fn render_shared_brief(
     ))
 }
 
-/// The frame of the viewer's own selected key: an agent's task, else a
-/// person's view, as the default projection builds one. Nothing broadens it.
+/// The frame of the viewer's own selected key: a person's view, an agent's
+/// task or a system's job. Each retains exactly the caller's own read key.
 #[cfg(feature = "sync")]
 fn viewer_frame(
     read: &crate::claim::ScopedRead<'_>,
@@ -260,6 +334,8 @@ fn viewer_frame(
     let principal_ref = key.actor_ref().to_owned();
     let principal = if key.actor_class() == Some(EdgeActorClass::Agent.gate_actor_class()) {
         LensPrincipalBinding::agent_task(principal_ref, key.clone(), vec![key])?
+    } else if key.actor_class() == Some(EdgeActorClass::System.gate_actor_class()) {
+        LensPrincipalBinding::system_job(principal_ref, key.clone(), vec![key])?
     } else {
         LensPrincipalBinding::human_view(principal_ref, key.clone(), vec![key])?
     };

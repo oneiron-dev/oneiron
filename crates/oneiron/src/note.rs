@@ -460,6 +460,8 @@ pub(crate) use citation_scrub::scrub_pending_citations;
 mod erasure_tests;
 mod live_body;
 pub(crate) use live_body::live_body_in_txn;
+mod brief_doors;
+pub use brief_doors::{AuthorBriefRequest, BriefClaimCitation, BriefKindStamp};
 mod kind_contract;
 #[cfg(all(test, feature = "sync"))]
 mod live_body_tests;

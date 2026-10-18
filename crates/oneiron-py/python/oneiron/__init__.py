@@ -3133,6 +3133,15 @@ class Oneiron:
     class _VaultNotesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def bless_brief_kind(self, input: dict[str, Any]) -> Any:
+            """A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority."""
+            return json.loads(_translate(lambda: self._client.vault_notes_bless_brief_kind(json.dumps(input, allow_nan=False))))
+        def author_brief(self, input: dict[str, Any]) -> Any:
+            """Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction."""
+            return json.loads(_translate(lambda: self._client.vault_notes_author_brief(json.dumps(input, allow_nan=False))))
+        def follow_citation(self, spec):
+            """Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle."""
+            return json.loads(_translate(lambda: self._client.vault_notes_follow_citation(json.dumps(spec))))
         def create(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
             return json.loads(_translate(lambda: self._client.vault_notes_create(json.dumps(input, allow_nan=False))))

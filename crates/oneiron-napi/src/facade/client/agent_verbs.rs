@@ -5947,6 +5947,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_notes_bless_brief_kind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.bless_brief_kind", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_author_brief(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.author_brief", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_follow_citation(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.follow_citation", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_notes_create(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.notes.create", input)

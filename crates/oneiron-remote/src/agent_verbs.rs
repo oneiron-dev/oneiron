@@ -2026,6 +2026,15 @@ impl OneironClient {
                 "vault.summaries.proposals.reject" => remote_agent_verb_output::<
                     oneiron::scope_summary::SummaryProposalView,
                 >(client, verb, &input),
+                "vault.notes.bless_brief_kind" => {
+                    remote_agent_verb_output::<oneiron::note::BriefKindStamp>(client, verb, &input)
+                }
+                "vault.notes.author_brief" => remote_agent_verb_output::<
+                    oneiron::memory::EntityRefReceipt,
+                >(client, verb, &input),
+                "vault.notes.follow_citation" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::receipt::SharedBriefCitation>>,
+                >(client, verb, &input),
                 "vault.notes.create" => {
                     remote_agent_verb_output::<oneiron::memory::EntityRefReceipt>(
                         client, verb, &input,
@@ -10191,6 +10200,45 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.summaries.proposals.reject", value)
+    }
+    pub fn vault_notes_bless_brief_kind(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::note::BriefKindStamp, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.bless_brief_kind", value)
+    }
+    pub fn vault_notes_author_brief(
+        &self,
+        input: &oneiron::note::AuthorBriefRequest,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.author_brief", value)
+    }
+    pub fn vault_notes_follow_citation(
+        &self,
+        input: &oneiron::task_verb::sdk::BriefCitationFollowRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::receipt::SharedBriefCitation>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.follow_citation", value)
     }
     pub fn vault_notes_create(
         &self,

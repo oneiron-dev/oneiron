@@ -176,11 +176,22 @@ impl Vault {
         end: usize,
     ) -> Result<NotePin> {
         let txn = self.store.env.read_txn()?;
-        if self.get_entity_type_in_txn(&txn, &claim)? != Some(ENTITY_TYPE_CLAIM) {
+        self.pin_note_span_in_txn(&txn, document, claim, start, end)
+    }
+
+    pub(super) fn pin_note_span_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        document: EntityId,
+        claim: EntityId,
+        start: usize,
+        end: usize,
+    ) -> Result<NotePin> {
+        if self.get_entity_type_in_txn(txn, &claim)? != Some(ENTITY_TYPE_CLAIM) {
             return Err(invalid("citation target is not a CLAIM"));
         }
-        let pin = load(self, &txn, document)?.pin(claim, start, end)?;
-        super::citation_erase::validate_pins(self, &txn, std::slice::from_ref(&pin))?;
+        let pin = load(self, txn, document)?.pin(claim, start, end)?;
+        super::citation_erase::validate_pins(self, txn, std::slice::from_ref(&pin))?;
         Ok(pin)
     }
 
@@ -201,8 +212,7 @@ impl Memory<'_> {
     ) -> MemoryResult<EntityRefReceipt> {
         let markdown = markdown.into();
         let kind = NoteKind::Plugin("brief".into());
-        self.vault()
-            .check_auto_note_birth(&kind, self.actor_class(), &markdown)?;
+        let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
         let actor = WriteActor::new(self.actor(), self.actor_class());
         let body = encode_note_body(&NoteBody {
@@ -212,6 +222,28 @@ impl Memory<'_> {
             source_revision_ref: *id.as_bytes(),
         })?;
         self.with_actor_content_write_txn(|content| {
+            self.vault().check_auto_note_birth_in_txn(
+                content.read(),
+                &NoteKind::Plugin("brief".into()),
+                self.actor_class(),
+                &markdown,
+            )?;
+            if pins.is_empty() {
+                return Err(invalid("a brief requires supporting claim citations").into());
+            }
+            let sources: Vec<_> = pins
+                .iter()
+                .flat_map(|pin| [pin.claim, pin.document])
+                .collect();
+            if read
+                .get_entities_parts_in_txn(content.read(), &sources)?
+                .iter()
+                .any(Option::is_none)
+            {
+                return Err(MemoryError::not_found(
+                    "brief citation source does not resolve",
+                ));
+            }
             if self
                 .vault()
                 .brief_kind_contract_in_txn(content.read())?

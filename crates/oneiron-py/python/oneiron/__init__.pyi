@@ -2012,6 +2012,12 @@ class Oneiron:
         def reject(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
             """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
     class _VaultNotesVerbs:
+        def bless_brief_kind(self, input: Facade.EmptyRequest) -> Facade.BriefKindStamp:
+            """A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority."""
+        def author_brief(self, input: Facade.AuthorBriefRequest) -> Facade.EntityRefReceipt:
+            """Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction."""
+        def follow_citation(self, spec: Facade.BriefCitationFollowRequest) -> Facade.ScopedReadResult[Facade.SharedBriefCitation | None]:
+            """Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle."""
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
         def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:

@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use oneiron::claim::ScopedReadResult;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-use oneiron::receipt::{ShareRevokeReceipt, SharedBriefView};
-use oneiron::task_verb::sdk::{ShareRevokeRequest, ShareViewRequest};
+use oneiron::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
+use oneiron::task_verb::sdk::{BriefCitationFollowRequest, ShareRevokeRequest, ShareViewRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::{Listed, credential_listing, refused};
@@ -55,6 +55,25 @@ pub(crate) async fn vault_shares_view(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         oneiron::task_verb::sdk::view_shared_brief_as_caller(&memory, input)
+    })
+    .await
+}
+
+/// `vault.notes.follow_citation`: reopens a saved share/citation pair as
+/// this credential's own principal. A revoked or unavailable share resolves
+/// no citation, even when that principal can read the claim elsewhere.
+pub(crate) async fn vault_notes_follow_citation(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: BriefCitationFollowRequest,
+) -> Listed<ScopedReadResult<Option<SharedBriefCitation>>> {
+    const VERB: &str = "vault.notes.follow_citation";
+    let caller = match principal(server, auth, VERB) {
+        Ok(caller) => caller,
+        Err(refusal) => return refused(refusal),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::follow_brief_citation_as_caller(&memory, input)
     })
     .await
 }
