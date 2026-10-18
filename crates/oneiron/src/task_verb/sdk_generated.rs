@@ -2610,6 +2610,38 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.budgets.lease.open",
+    "vault.budgets.lease",
+    "vault.budgets.lease.top_up",
+    "vault.budgets.local",
+    "vault.budgets.settlements",
+    "vault.scope.ceiling",
+    "vault.export.scoped",
+    "vault.skill_hubs.put",
+    "vault.skill_hubs.get",
+    "vault.skill_hubs.publishers.admit",
+    "vault.skill_hubs.publishers.revoke",
+    "vault.skill_hubs.refs.get",
+    "vault.skill_hubs.refs.set",
+    "vault.packs.install",
+    "vault.packs.sync",
+    "vault.packs.get",
+    "vault.skills.import",
+    "vault.skills.sync",
+    "vault.skills.receipts",
+    "vault.skills.permissions.approve",
+    "vault.packs.hooks.bind",
+    "vault.packs.hooks.list",
+    "vault.packs.hooks.qualify",
+    "vault.packs.connector.prepare",
+    "vault.packs.connector.get",
+    "vault.packs.connector.qualify",
+    "vault.packs.connector.accept",
+    "vault.packs.connector.update",
+    "vault.packs.connector.grants.get",
+    "vault.packs.connector.grants.put",
+    "vault.authority.history.export",
+    "vault.authority.history.import",
     "vault.shared.policy.get",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
@@ -2621,8 +2653,38 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "vault.research.create_child",
+    "vault.evals.cohorts.setup",
+    "vault.gate.policy.get",
+    "vault.gate.policy.put",
+    "vault.gate.policy.propose",
+    "vault.gate.checker.get",
+    "vault.gate.checker.set",
     "vault.claims.review",
     "vault.claims.settle",
+    "vault.artifacts.units",
+    "vault.artifacts.anchors.pin",
+    "vault.artifacts.threads.open",
+    "vault.artifacts.threads.comment",
+    "vault.artifacts.threads.read",
+    "vault.artifacts.threads.list",
+    "vault.artifacts.threads.assign",
+    "vault.artifacts.threads.state",
+    "vault.code.export",
+    "vault.code.origin.authority.get",
+    "vault.code.origin.authority.set",
+    "vault.code.origin.publications",
+    "vault.code.checkout.bind",
+    "vault.code.snapshots.ingest",
+    "vault.code.snapshots.get",
+    "vault.code.snapshots.read",
+    "vault.code.symbols.definitions",
+    "vault.agents.create",
+    "vault.agents.get",
+    "vault.agents.update",
+    "vault.workspace.establish",
+    "vault.workspace.members.onboard",
+    "vault.workspace.roster",
     "ai.steps.submit",
     "ai.steps.receipt",
     "ai.reply",
@@ -2630,10 +2692,140 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.booking.page_token",
+    "vault.calendar.create",
+    "vault.calendar.ics.import",
+    "vault.calendar.occurrences",
+    "vault.calendar.instances.move",
+    "vault.calendar.read",
+    "vault.calendar.search",
+    "vault.calendar.freebusy",
+    "vault.channel_identities.provision",
+    "vault.channel_identities.bind",
+    "vault.channel_identities.fulfill",
+    "vault.channel_identities.rotate",
+    "vault.channel_identities.release",
+    "vault.channel_identities.route_inbound",
+    "vault.channel_identities.get",
+    "vault.channel_identities.selection.rules",
+    "vault.channel_identities.selection.update",
+    "vault.channel_identities.select",
+    "vault.channel_identities.passports.get",
+    "vault.channel_identities.passports.list",
+    "vault.delivery_window.policy.put",
+    "vault.delivery_window.policy.list",
+    "vault.delivery_window.policy.retract",
+    "vault.delivery_window.evaluate",
+    "vault.notes.read",
+    "vault.notes.history",
+    "vault.notes.editor.bind",
+    "vault.notes.editor.close",
+    "vault.tasks.linear.mapping",
+    "vault.tasks.linear.mapping.edit",
+    "vault.tasks.linear.provenance",
+    "self.run.attach",
+    "self.folds.describe",
+    "self.history",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.budgets.lease.open" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::SpendLeaseView,
+        >(),
+        "vault.budgets.lease" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::SpendLeaseView,
+        >(),
+        "vault.budgets.lease.top_up" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::SpendLeaseView,
+        >(),
+        "vault.budgets.local" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::LocalRunnerBudgetView,
+        >(),
+        "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.scope.ceiling" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CredentialCeiling>()
+        }
+        "vault.export.scoped" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
+        }
+        "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillHubConfigured,
+        >(),
+        "vault.skill_hubs.get" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_hub::SkillHubRecord>()
+        }
+        "vault.skill_hubs.publishers.admit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillPublisherAdmission,
+        >(),
+        "vault.skill_hubs.publishers.revoke" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
+        "vault.skill_hubs.refs.get" => {
+            crate::code_run::vault_read::request_schema::<Option<crate::skill_hub::TrackedHubRef>>()
+        }
+        "vault.skill_hubs.refs.set" => {
+            crate::code_run::vault_read::request_schema::<crate::skill_hub::TrackedHubRef>()
+        }
+        "vault.packs.install" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
+        "vault.packs.sync" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
+        "vault.packs.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::skill_hub::pack_catalog::PackInstallReceipt>,
+        >(),
+        "vault.skills.import" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HubSkillImported>()
+        }
+        "vault.skills.sync" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubSkillSyncReceipt,
+        >(),
+        "vault.skills.receipts" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HubSkillReceipts>()
+        }
+        "vault.skills.permissions.approve" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
+        "vault.packs.hooks.bind" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
+        }
+        "vault.packs.hooks.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::HubHookBindingRow>,
+        >(),
+        "vault.packs.hooks.qualify" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubHookQualificationReceipt,
+        >(),
+        "vault.packs.connector.prepare" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackView,
+        >(),
+        "vault.packs.connector.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackView,
+        >(),
+        "vault.packs.connector.qualify" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackView,
+        >(),
+        "vault.packs.connector.accept" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackView,
+        >(),
+        "vault.packs.connector.update" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackDelta,
+        >(),
+        "vault.packs.connector.grants.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackGrants,
+        >(),
+        "vault.packs.connector.grants.put" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectorPackGrants,
+        >(),
+        "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SignedAuthorityHistory,
+        >(),
+        "vault.authority.history.import" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AuthorityHistoryImported,
+        >(),
         "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPoliciesView,
         >(),
@@ -2667,12 +2859,102 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordExecuted,
         >(),
+        "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ResearchChildReceipt,
+        >(),
+        "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalAuthoringReport,
+        >(),
+        "vault.gate.policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::PolicyManifestsView,
+        >(),
+        "vault.gate.policy.put" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::PolicyManifestReceipt,
+        >(),
+        "vault.gate.policy.propose" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::PolicyManifestReceipt,
+        >(),
+        "vault.gate.checker.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::GateCheckerView,
+        >(),
+        "vault.gate.checker.set" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::GateCheckerReceipt,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
+        "vault.artifacts.units" => crate::code_run::vault_read::request_schema::<
+            crate::anchored_annotation::ArtifactUnitsView,
+        >(),
+        "vault.artifacts.anchors.pin" => crate::code_run::vault_read::request_schema::<
+            crate::anchored_annotation::AnnotationAnchorView,
+        >(),
+        "vault.artifacts.threads.open" => crate::code_run::vault_read::request_schema::<
+            crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "vault.artifacts.threads.comment" => crate::code_run::vault_read::request_schema::<
+            crate::anchored_annotation::AnnotationCommentView,
+        >(),
+        "vault.artifacts.threads.read" => crate::code_run::vault_read::request_schema::<
+            Option<crate::anchored_annotation::AnnotationThreadView>,
+        >(),
+        "vault.artifacts.threads.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::anchored_annotation::AnnotationThreadView>,
+        >(),
+        "vault.artifacts.threads.assign" => crate::code_run::vault_read::request_schema::<
+            crate::anchored_annotation::AnnotationBriefView,
+        >(),
+        "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
+            crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "vault.code.export" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CodeExportResult,
+        >(),
+        "vault.code.origin.authority.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginAuthorityView,
+        >(),
+        "vault.code.origin.authority.set" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginAuthorityView,
+        >(),
+        "vault.code.origin.publications" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::OriginPublicationsView,
+        >(),
+        "vault.code.checkout.bind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::origin_doors::CheckoutDoorBinding,
+        >(),
+        "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotView,
+        >(),
+        "vault.code.snapshots.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::codebase_doors::CodeSnapshotView>,
+        >(),
+        "vault.code.snapshots.read" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::codebase_doors::CodeSnapshotPinnedFile>,
+        >(),
+        "vault.code.symbols.definitions" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotDefinitionsView,
+        >(),
+        "vault.agents.create" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentDefinitionView,
+        >(),
+        "vault.agents.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentDefinitionView,
+        >(),
+        "vault.agents.update" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentDefinitionView,
+        >(),
+        "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::WorkspacePresetReceipt,
+        >(),
+        "vault.workspace.members.onboard" => crate::code_run::vault_read::request_schema::<
+            crate::workspace_roster::MemberOnboardingOutcome,
+        >(),
+        "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::workspace_roster::WorkspaceRosterEntry>,
+        >(),
         "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
         >(),
@@ -2694,6 +2976,112 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
+        "vault.booking.page_token" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BookingPageTokenResponse,
+        >(),
+        "vault.calendar.create" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::door::CalendarEventCreated,
+        >(),
+        "vault.calendar.ics.import" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::ingest::door::CalendarIcsImportReceipt,
+        >(),
+        "vault.calendar.occurrences" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>,
+        >(),
+        "vault.calendar.instances.move" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::ingest::door::CalendarIcsImportReceipt,
+        >(),
+        "vault.calendar.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>,
+        >(),
+        "vault.calendar.search" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>,
+        >(),
+        "vault.calendar.freebusy" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>,
+        >(),
+        "vault.channel_identities.provision" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
+        >(),
+        "vault.channel_identities.bind" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
+        >(),
+        "vault.channel_identities.fulfill" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
+        >(),
+        "vault.channel_identities.rotate" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
+        >(),
+        "vault.channel_identities.release" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
+        >(),
+        "vault.channel_identities.route_inbound" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityLifecycleReceipt,
+        >(),
+        "vault.channel_identities.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelIdentityView,
+        >(),
+        "vault.channel_identities.selection.rules" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::channel_identity_selection::ChannelIdentitySelectionRuleSet,
+            >()
+        }
+        "vault.channel_identities.selection.update" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::channel_identity_selection::ChannelIdentitySelectionRuleSet,
+            >()
+        }
+        "vault.channel_identities.select" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ChannelSelectionView,
+        >(),
+        "vault.channel_identities.passports.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ThreadPassportLookup,
+        >(),
+        "vault.channel_identities.passports.list" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::ThreadPassportsView,
+        >(),
+        "vault.delivery_window.policy.put" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "vault.delivery_window.policy.list" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::DeliveryWindowPolicies,
+        >(),
+        "vault.delivery_window.policy.retract" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "vault.delivery_window.evaluate" => crate::code_run::vault_read::request_schema::<
+            crate::memory::channel_doors::DeliveryWindowPreview,
+        >(),
+        "vault.notes.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
+        >(),
+        "vault.notes.history" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>,
+        >(),
+        "vault.notes.editor.bind" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>,
+        >(),
+        "vault.notes.editor.close" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteEditorClosed>()
+        }
+        "vault.tasks.linear.mapping" => {
+            crate::code_run::vault_read::request_schema::<crate::linear_sync::LinearMappingView>()
+        }
+        "vault.tasks.linear.mapping.edit" => crate::code_run::vault_read::request_schema::<
+            crate::linear_sync::LinearMappingEditReceipt,
+        >(),
+        "vault.tasks.linear.provenance" => crate::code_run::vault_read::request_schema::<
+            crate::linear_sync::LinearProvenancePage,
+        >(),
+        "self.run.attach" => {
+            crate::code_run::vault_read::request_schema::<crate::code_run::fold_api::RunAttached>()
+        }
+        "self.folds.describe" => crate::code_run::vault_read::request_schema::<
+            crate::compaction::FoldReply<crate::compaction::FoldDescription>,
+        >(),
+        "self.history" => crate::code_run::vault_read::request_schema::<
+            crate::engine_executor::history::FoldHistory,
+        >(),
         _ => return None,
     })
 }

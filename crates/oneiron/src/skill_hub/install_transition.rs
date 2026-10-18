@@ -10,7 +10,9 @@ use crate::{
 };
 
 /// Lifecycle observed at the end of the install operation, not at source fetch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallLifecycle {
     Candidate,
@@ -43,7 +45,9 @@ impl From<SkillLifecycle> for InstallLifecycle {
 }
 
 /// The locally owned decision that prevented an installation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallHoldReason {
     SourceOnly,
@@ -77,7 +81,9 @@ impl InstallHoldReason {
 }
 
 /// A result may claim installed only when the committed record passes the loader's predicate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum InstallDisposition {
     Installed,

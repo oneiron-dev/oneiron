@@ -112,7 +112,7 @@ pub enum SelfFoldCall {
 
 /// What a fold verb answers under `output`: its typed answer, or the
 /// ledger's refusal, which changes nothing and which the agent can act on.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum FoldReply<T> {
     Answer(T),
@@ -148,7 +148,7 @@ pub struct FoldUnfolded {
 
 /// `self.folds`' answer: the run's folds, its pending marks, and whether a
 /// compact is asked.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldList {
     pub folds: Vec<FoldSpan>,
     pub pending: Vec<FoldPending>,
@@ -156,7 +156,7 @@ pub struct FoldList {
 }
 
 /// One fold in [`FoldList`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldSpan {
     pub fold: String,
     pub from: u64,
@@ -164,7 +164,7 @@ pub struct FoldSpan {
 }
 
 /// One pending mark in [`FoldList`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldPending {
     pub fold: String,
     pub from: u64,
@@ -175,7 +175,7 @@ pub struct FoldPending {
 }
 
 /// `describe({fold})`'s answer: a fold whole, or a mark still pending.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum FoldDescription {
     Folded {
@@ -345,7 +345,7 @@ pub(crate) fn escape_compacted_text(text: &str) -> String {
 
 /// One unfold: the fold's raw turns render just before step `at`, where the
 /// end of the log was when the agent unfolded it, and stay there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldUnfold {
     pub fold: u64,
     pub at: u64,

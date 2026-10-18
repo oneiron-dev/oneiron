@@ -126,7 +126,9 @@ pub(super) const ONBOARDING_STEPS: [MemberOnboardingStep; 6] = [
 ];
 
 /// Stable refs a completed onboarding produced.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct MemberOnboardingOutcome {
     /// Echo of the idempotency key.
     pub onboarding_id: String,
@@ -151,7 +153,9 @@ pub struct MemberOnboardingOutcome {
 }
 
 /// What a roster row is in the workplace.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum WorkspaceRosterRole {
@@ -177,7 +181,9 @@ impl WorkspaceRosterRole {
 /// Memory scope is carried by `actor_ref` / `subject_ref` / `facet_ref` and the
 /// grants around them. `display_name` is presentation only and never selects
 /// what a persona can read.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct WorkspaceRosterEntry {
     /// Workspace this persona appears in.
     pub workspace_ref: String,

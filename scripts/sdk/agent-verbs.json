@@ -530,7 +530,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease",
@@ -544,7 +545,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.lease.top_up",
@@ -558,7 +560,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.hold",
@@ -600,7 +603,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.budgets.settlements",
@@ -614,7 +618,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.fanout.resume",
@@ -878,7 +883,8 @@
         "credential_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.export.scoped",
@@ -891,7 +897,8 @@
         "scoped_export": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.receipts",
@@ -1303,7 +1310,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.get",
@@ -1317,7 +1325,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.publishers.admit",
@@ -1331,7 +1340,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.publishers.revoke",
@@ -1345,7 +1355,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.refs.get",
@@ -1359,7 +1370,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skill_hubs.refs.set",
@@ -1373,7 +1385,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.install",
@@ -1387,7 +1400,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.sync",
@@ -1401,7 +1415,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.get",
@@ -1415,7 +1430,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.import",
@@ -1429,7 +1445,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.sync",
@@ -1443,7 +1460,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.receipts",
@@ -1457,7 +1475,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.skills.permissions.approve",
@@ -1471,7 +1490,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.hooks.bind",
@@ -1485,7 +1505,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.hooks.list",
@@ -1499,7 +1520,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.hooks.qualify",
@@ -1512,7 +1534,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.put",
@@ -1540,7 +1563,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.get",
@@ -1554,7 +1578,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.qualify",
@@ -1568,7 +1593,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.accept",
@@ -1582,7 +1608,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.update",
@@ -1596,7 +1623,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.grants.get",
@@ -1610,7 +1638,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.connector.grants.put",
@@ -1624,7 +1653,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.packs.remove",
@@ -1765,7 +1795,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.authority.history.import",
@@ -1779,7 +1810,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.mesh.path_receipts",
@@ -2439,7 +2471,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.archive",
@@ -2478,7 +2511,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.research.bind",
@@ -3029,7 +3063,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.policy.put",
@@ -3043,7 +3078,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.policy.propose",
@@ -3056,7 +3092,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "proposes": true
+      "proposes": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.checker.get",
@@ -3070,7 +3107,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.gate.checker.set",
@@ -3084,7 +3122,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.settings.learning",
@@ -3511,7 +3550,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.anchors.pin",
@@ -3529,7 +3569,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.open",
@@ -3550,7 +3591,8 @@
       "section": false,
       "prose_links": [
         "/text"
-      ]
+      ],
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.comment",
@@ -3571,7 +3613,8 @@
       "section": false,
       "prose_links": [
         "/text"
-      ]
+      ],
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.read",
@@ -3589,7 +3632,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.list",
@@ -3607,7 +3651,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.assign",
@@ -3627,7 +3672,8 @@
           "assignee_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.threads.state",
@@ -3645,7 +3691,8 @@
           "artifact_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.code.diff",
@@ -3763,7 +3810,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.origin.authority.get",
@@ -3777,7 +3825,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.origin.authority.set",
@@ -3791,7 +3840,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.origin.publications",
@@ -3805,7 +3855,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.checkout.bind",
@@ -3819,7 +3870,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.snapshots.ingest",
@@ -3833,7 +3885,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.snapshots.get",
@@ -3847,7 +3900,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.snapshots.read",
@@ -3861,7 +3915,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.code.symbols.definitions",
@@ -3875,7 +3930,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.artifacts.export",
@@ -3915,7 +3971,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.agents.get",
@@ -3929,7 +3986,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.agents.update",
@@ -3943,7 +4001,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.workspace.establish",
@@ -3957,7 +4016,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.workspace.members.onboard",
@@ -3971,7 +4031,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.workspace.roster",
@@ -3985,7 +4046,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.agents.export_pack",
@@ -6173,7 +6235,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.create",
@@ -6185,7 +6248,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.ics.import",
@@ -6199,7 +6263,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.occurrences",
@@ -6212,7 +6277,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.instances.move",
@@ -6226,7 +6292,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.read",
@@ -6239,7 +6306,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.search",
@@ -6252,7 +6320,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.freebusy",
@@ -6265,7 +6334,8 @@
         "lane_record_scope": true
       },
       "mcp_scope": "filtered",
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.calendar.transcript.ingest",
@@ -7590,7 +7660,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.bind",
@@ -7604,7 +7675,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.fulfill",
@@ -7618,7 +7690,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.rotate",
@@ -7632,7 +7705,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.release",
@@ -7646,7 +7720,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.route_inbound",
@@ -7660,7 +7735,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.get",
@@ -7672,7 +7748,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.selection.rules",
@@ -7684,7 +7761,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.selection.update",
@@ -7698,7 +7776,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.select",
@@ -7710,7 +7789,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.passports.get",
@@ -7722,7 +7802,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.channel_identities.passports.list",
@@ -7734,7 +7815,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.policy.put",
@@ -7748,7 +7830,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.policy.list",
@@ -7760,7 +7843,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.policy.retract",
@@ -7774,7 +7858,8 @@
       },
       "section": false,
       "host_door": true,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "vault.delivery_window.evaluate",
@@ -7786,7 +7871,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "connector.outbound.schedule",
@@ -7897,7 +7983,8 @@
       "binding": {
         "native": "agent_verb",
         "request": true
-      }
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.history",
@@ -7914,7 +8001,8 @@
       "binding": {
         "native": "agent_verb",
         "request": true
-      }
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.editor.bind",
@@ -7930,7 +8018,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.notes.editor.close",
@@ -7946,7 +8035,8 @@
       "host_door": true,
       "host_door_lists": true,
       "host_door_caller": true,
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.notes.edit",
@@ -8115,7 +8205,8 @@
           "task_ref"
         ]
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.tasks.linear.mapping.edit",
@@ -8128,7 +8219,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.tasks.linear.provenance",
@@ -8148,7 +8240,8 @@
         "rows": "events",
         "cursor": "next_cursor"
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.fold",
@@ -8321,7 +8414,8 @@
       "admission": {
         "unrestricted_record_scope": true
       },
-      "section": false
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.folds.describe",
@@ -8336,7 +8430,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     },
     {
       "name": "self.history",
@@ -8351,7 +8446,8 @@
         "unrestricted_record_scope": true
       },
       "section": false,
-      "host_door_lists": true
+      "host_door_lists": true,
+      "openapi": true
     }
   ]
 }
