@@ -7911,7 +7911,7 @@
      "surface": {
       "const": 5,
       "enum": 2,
-      "fn": 25,
+      "fn": 26,
       "re-export": 2,
       "struct": 11,
       "type": 1
@@ -7924,7 +7924,8 @@
      "path": "src/build_cache/account.rs",
      "purpose": "Host-bound account cache: no process-global registry and no implicit cross-tenant lookup",
      "surface": {
-      "fn": 3
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -7950,7 +7951,7 @@
      "path": "src/build_cache/reapi.rs",
      "purpose": "REAPI v2 protobuf digest encoding",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -13901,7 +13902,7 @@
      "path": "src/code_view/mod.rs",
      "purpose": "Per-agent file views over codebase blobs, with one owned shared service set",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 8,
       "fn": 6,
       "re-export": 1,
       "struct": 3
@@ -32454,6 +32455,58 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_view_doors/execution.rs",
+     "purpose": "Native owner build/verify execution; result admission stays in the engine",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_view_doors/mod.rs",
+     "purpose": "Owner-credential working views and account-local build/verify reuse",
+     "surface": {
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeActionDigest",
+      "CodeBuildClass",
+      "CodeBuildEntry",
+      "CodeBuildOutput",
+      "CodeBuildSpec",
+      "CodeCacheOutcome",
+      "CodeCacheReadRequest",
+      "CodeCacheState",
+      "CodeSecretTaintRef",
+      "CodeViewAction",
+      "CodeViewActionRequest",
+      "CodeViewBuildRequest",
+      "CodeViewFile",
+      "CodeViewFileBytes",
+      "CodeViewMaterializeRequest",
+      "CodeViewReadRequest",
+      "CodeViewRequest",
+      "CodeWorkingView"
+     ],
+     "path": "src/memory/code_view_doors/types.rs",
+     "purpose": "Account-local working views and immutable build results (ARCH-0050 / RC7)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/code_wait_doors/mod.rs",
      "purpose": "Typed code consent wait doors (DOOR-079): `vault.code.waits.resolve` answers one exact sealed code consent…",
      "surface": {
@@ -33108,7 +33161,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 21,
+      "mod": 22,
       "re-export": 49
      }
     },
@@ -52564,7 +52617,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 914
+      "fn": 921
      }
     },
     {
@@ -59504,7 +59557,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 204,
+     "files": 207,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60185,7 +60238,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3673,
+   "source_files": 3676,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68760,7 +68813,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 883
+      "fn": 890
      }
     },
     {
@@ -69823,7 +69876,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 884
+      "fn": 891
      }
     },
     {
@@ -72963,6 +73016,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_view_doors.rs",
+     "purpose": "Typed owner projections of linked working views and account-local cache use",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/code_wait_doors.rs",
      "purpose": "Credential-bound host projections of the typed code consent wait doors (DOOR-079): answer one exact sealed…",
      "surface": {
@@ -73316,7 +73379,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 146
+      "crate-vis": 147
      }
     },
     {
@@ -81246,7 +81309,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 410,
+     "files": 411,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81675,7 +81738,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 760,
+   "source_files": 761,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82361,7 +82424,15 @@
       "CoachInspectionView",
       "CoachProposalView",
       "CoachWorkingSetView",
+      "CodeActionDigest",
       "CodeBlameView",
+      "CodeBuildClass",
+      "CodeBuildEntry",
+      "CodeBuildOutput",
+      "CodeBuildSpec",
+      "CodeCacheOutcome",
+      "CodeCacheReadRequest",
+      "CodeCacheState",
       "CodeChangeView",
       "CodeConflictHistory",
       "CodeConflictRecordRequest",
@@ -82370,6 +82441,7 @@
       "CodeConflictViewRequest",
       "CodeDiffRequest",
       "CodeDiffView",
+      "CodeDocumentFrontier",
       "CodeExportRequest",
       "CodeExportResult",
       "CodeFileChange",
@@ -82396,6 +82468,7 @@
       "CodeRepoRequest",
       "CodeRunModelHealCountRequest",
       "CodeRunModelHealCountView",
+      "CodeSecretTaintRef",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -82416,6 +82489,14 @@
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CodeViewAction",
+      "CodeViewActionRequest",
+      "CodeViewBuildRequest",
+      "CodeViewFile",
+      "CodeViewFileBytes",
+      "CodeViewMaterializeRequest",
+      "CodeViewReadRequest",
+      "CodeViewRequest",
       "CodeWaitAnswerView",
       "CodeWaitChoice",
       "CodeWaitConsumptionView",
@@ -82427,6 +82508,7 @@
       "CodeWaitSettlementView",
       "CodeWaitState",
       "CodeWaitTarget",
+      "CodeWorkingView",
       "CohortRetirement",
       "CohortSummary",
       "ColdAuthorityAuditRow",
@@ -84741,6 +84823,7 @@
       "VerdictBinding",
       "VerdictMode",
       "ViewInput",
+      "VisibleFilePolicy",
       "VoiceBankClipInput",
       "VoiceBankInspectRequest",
       "VoiceBankInspection",
@@ -84884,8 +84967,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 742,
-      "struct": 2269
+      "enum": 744,
+      "struct": 2287
      }
     },
     {
