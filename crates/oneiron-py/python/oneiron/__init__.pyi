@@ -553,6 +553,8 @@ class Oneiron:
         @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         @property
+        def models(self) -> "Oneiron._VaultModelsVerbs": ...
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
@@ -1976,6 +1978,28 @@ class Oneiron:
     class _VaultMessagesVerbs:
         def react(self, spec: Facade.MessageReactionRequest) -> Facade.MessageReactionReceipt:
             """Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress."""
+    class _VaultModelsVerbs:
+        @property
+        def manifest(self) -> "Oneiron._VaultModelsManifestVerbs": ...
+        @property
+        def routes(self) -> "Oneiron._VaultModelsRoutesVerbs": ...
+        @property
+        def roles(self) -> "Oneiron._VaultModelsRolesVerbs": ...
+    class _VaultModelsManifestVerbs:
+        def read(self, spec: Facade.EmptyRequest) -> Facade.ModelManifest | None:
+            """Reads the owner-pinned v2 model manifest, or none when no manifest is configured."""
+        def replace(self, spec: Facade.ModelManifestReplace) -> Facade.ModelManifest:
+            """Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides."""
+    class _VaultModelsRoutesVerbs:
+        def read(self, spec: Facade.ModelRouteRead) -> Facade.ModelRouteView:
+            """Reads one independent model slot route with its manifest pin and effective resident narrowing."""
+        def replace(self, spec: Facade.ModelRouteReplace) -> Facade.ModelRouteView:
+            """Replaces one model slot route within its manifest pin without changing any other slot or role binding."""
+    class _VaultModelsRolesVerbs:
+        def read(self, spec: Facade.ModelRoleRead) -> Facade.ModelRoleReceipt:
+            """Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority."""
+        def invoke(self, spec: Facade.ModelRoleInvoke) -> Facade.ModelRoleInvocation:
+            """Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt."""
     class _VaultVoicesVerbs:
         @property
         def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...

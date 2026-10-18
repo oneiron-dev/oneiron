@@ -8629,6 +8629,96 @@
       "section": false
     },
     {
+      "name": "vault.models.manifest.read",
+      "description": "Reads the owner-pinned v2 model manifest, or none when no manifest is configured.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "Option<crate::llm::manifest::ModelManifest>",
+      "call": "crate::task_verb::sdk::read_model_manifest(memory)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.models.manifest.replace",
+      "description": "Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides.",
+      "input": "crate::llm::manifest::doors::ModelManifestReplace",
+      "output": "crate::llm::manifest::ModelManifest",
+      "call": "crate::task_verb::sdk::replace_model_manifest(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.models.routes.read",
+      "description": "Reads one independent model slot route with its manifest pin and effective resident narrowing.",
+      "input": "crate::llm::manifest::doors::ModelRouteRead",
+      "output": "crate::llm::manifest::doors::ModelRouteView",
+      "call": "crate::task_verb::sdk::read_model_route(memory, input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.models.routes.replace",
+      "description": "Replaces one model slot route within its manifest pin without changing any other slot or role binding.",
+      "input": "crate::llm::manifest::doors::ModelRouteReplace",
+      "output": "crate::llm::manifest::doors::ModelRouteView",
+      "call": "crate::task_verb::sdk::replace_model_route(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.models.roles.read",
+      "description": "Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority.",
+      "input": "crate::llm::manifest::doors::ModelRoleRead",
+      "output": "crate::llm::manifest::doors::ModelRoleReceipt",
+      "call": "crate::task_verb::sdk::read_model_role(memory, input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.models.roles.invoke",
+      "description": "Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt.",
+      "input": "crate::llm::manifest::doors::ModelRoleInvoke",
+      "output": "crate::llm::manifest::doors::ModelRoleInvocation",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.roles.invoke\", &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "ai.steps.submit",
       "description": "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.",
       "input": "crate::llm::model_step::ModelStepSubmit",

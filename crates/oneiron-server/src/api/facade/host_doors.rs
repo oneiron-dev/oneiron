@@ -79,6 +79,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_manifest_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::skill_execution_doors::*;
@@ -1091,7 +1092,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
                 .map(drop)
                 .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
         }
-        "ai.steps.submit"
+        "vault.models.manifest.read"
+        | "vault.models.manifest.replace"
+        | "vault.models.routes.read"
+        | "vault.models.routes.replace"
+        | "vault.models.roles.read"
+        | "vault.models.roles.invoke"
+        | "ai.steps.submit"
         | "ai.steps.receipt"
         | "vault.runs.step"
         | "vault.runs.checkpoint"

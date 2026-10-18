@@ -2949,6 +2949,41 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillPackCreditRequest>(),
             ),
             (
+                "vault.models.manifest.read",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.models.manifest.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::ModelManifestReplace,
+                >(),
+            ),
+            (
+                "vault.models.routes.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::ModelRouteRead,
+                >(),
+            ),
+            (
+                "vault.models.routes.replace",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::ModelRouteReplace,
+                >(),
+            ),
+            (
+                "vault.models.roles.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::ModelRoleRead,
+                >(),
+            ),
+            (
+                "vault.models.roles.invoke",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::manifest::doors::ModelRoleInvoke,
+                >(),
+            ),
+            (
                 "ai.steps.submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::llm::model_step::ModelStepSubmit,
@@ -4699,6 +4734,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.roster",
     "vault.artifacts.inspect_deck",
     "vault.artifacts.propose_deck",
+    "vault.models.manifest.read",
+    "vault.models.manifest.replace",
+    "vault.models.routes.read",
+    "vault.models.routes.replace",
+    "vault.models.roles.read",
+    "vault.models.roles.invoke",
     "ai.steps.submit",
     "ai.steps.receipt",
     "ai.reply",
@@ -5732,6 +5773,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.artifacts.propose_deck" => crate::code_run::vault_read::request_schema::<
             crate::blob_artifact::DeckProposeOutcome,
+        >(),
+        "vault.models.manifest.read" => crate::code_run::vault_read::request_schema::<
+            Option<crate::llm::manifest::ModelManifest>,
+        >(),
+        "vault.models.manifest.replace" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelManifest>()
+        }
+        "vault.models.routes.read" => crate::code_run::vault_read::request_schema::<
+            crate::llm::manifest::doors::ModelRouteView,
+        >(),
+        "vault.models.routes.replace" => crate::code_run::vault_read::request_schema::<
+            crate::llm::manifest::doors::ModelRouteView,
+        >(),
+        "vault.models.roles.read" => crate::code_run::vault_read::request_schema::<
+            crate::llm::manifest::doors::ModelRoleReceipt,
+        >(),
+        "vault.models.roles.invoke" => crate::code_run::vault_read::request_schema::<
+            crate::llm::manifest::doors::ModelRoleInvocation,
         >(),
         "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
@@ -10010,6 +10069,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.models.manifest.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.manifest.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.routes.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.routes.replace" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.roles.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.roles.invoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.steps.submit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13488,6 +13589,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.outcomes.get" => {
             let _input: SkillPackCreditRequest = decode(value.clone())?;
         }
+        "vault.models.manifest.read" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.models.manifest.replace" => {
+            let _input: crate::llm::manifest::doors::ModelManifestReplace = decode(value.clone())?;
+        }
+        "vault.models.routes.read" => {
+            let _input: crate::llm::manifest::doors::ModelRouteRead = decode(value.clone())?;
+        }
+        "vault.models.routes.replace" => {
+            let _input: crate::llm::manifest::doors::ModelRouteReplace = decode(value.clone())?;
+        }
+        "vault.models.roles.read" => {
+            let _input: crate::llm::manifest::doors::ModelRoleRead = decode(value.clone())?;
+        }
+        "vault.models.roles.invoke" => {
+            let _input: crate::llm::manifest::doors::ModelRoleInvoke = decode(value.clone())?;
+        }
         "ai.steps.submit" => {
             let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
         }
@@ -15483,6 +15602,16 @@ pub fn invoke(
             encode(vault_skills_outcomes_project(memory, decode(value)?)?)
         }
         "vault.skills.outcomes.get" => encode(vault_skills_outcomes_get(memory, decode(value)?)?),
+        "vault.models.manifest.read" => encode(vault_models_manifest_read(memory, decode(value)?)?),
+        "vault.models.manifest.replace" => {
+            encode(vault_models_manifest_replace(memory, decode(value)?)?)
+        }
+        "vault.models.routes.read" => encode(vault_models_routes_read(memory, decode(value)?)?),
+        "vault.models.routes.replace" => {
+            encode(vault_models_routes_replace(memory, decode(value)?)?)
+        }
+        "vault.models.roles.read" => encode(vault_models_roles_read(memory, decode(value)?)?),
+        "vault.models.roles.invoke" => encode(vault_models_roles_invoke(memory, decode(value)?)?),
         "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
@@ -20628,6 +20757,42 @@ pub fn vault_skills_outcomes_get(
         &memory.embedded_owner("vault.skills.outcomes.get")?,
         &input,
     )
+}
+pub fn vault_models_manifest_read(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<Option<crate::llm::manifest::ModelManifest>> {
+    crate::task_verb::sdk::read_model_manifest(memory)
+}
+pub fn vault_models_manifest_replace(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::ModelManifestReplace,
+) -> MemoryResult<crate::llm::manifest::ModelManifest> {
+    crate::task_verb::sdk::replace_model_manifest(memory, input)
+}
+pub fn vault_models_routes_read(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::ModelRouteRead,
+) -> MemoryResult<crate::llm::manifest::doors::ModelRouteView> {
+    crate::task_verb::sdk::read_model_route(memory, input)
+}
+pub fn vault_models_routes_replace(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::ModelRouteReplace,
+) -> MemoryResult<crate::llm::manifest::doors::ModelRouteView> {
+    crate::task_verb::sdk::replace_model_route(memory, input)
+}
+pub fn vault_models_roles_read(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::ModelRoleRead,
+) -> MemoryResult<crate::llm::manifest::doors::ModelRoleReceipt> {
+    crate::task_verb::sdk::read_model_role(memory, input)
+}
+pub fn vault_models_roles_invoke(
+    memory: &Memory<'_>,
+    input: crate::llm::manifest::doors::ModelRoleInvoke,
+) -> MemoryResult<crate::llm::manifest::doors::ModelRoleInvocation> {
+    crate::task_verb::sdk::host_only(memory, "vault.models.roles.invoke", &input)
 }
 pub fn ai_steps_submit(
     memory: &Memory<'_>,

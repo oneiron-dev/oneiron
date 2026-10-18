@@ -4859,6 +4859,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_models_manifest_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.manifest.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_manifest_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.manifest.replace", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_routes_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.routes.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_routes_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.routes.replace", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_roles_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.roles.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_roles_invoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.roles.invoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_steps_submit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.steps.submit", input)

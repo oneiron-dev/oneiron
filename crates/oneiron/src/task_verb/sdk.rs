@@ -566,6 +566,7 @@ pub use super::sdk_legal_hold::*;
 pub use super::sdk_live_run::*;
 pub use super::sdk_live_voice::*;
 pub use super::sdk_mesh::*;
+pub use super::sdk_model_manifest::*;
 pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
 pub use super::sdk_persona::*;

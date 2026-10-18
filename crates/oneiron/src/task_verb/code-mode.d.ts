@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 822 code-mode rows (799 host rows, 23 run rows), 2791 declarations.
+// Replies: 734 fully typed, 84 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2019,13 +2019,27 @@ declare namespace Sdk {
   type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
   type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
   type SkillPackCreditRequest = { receipt_id: string };
+  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach";
+  type ModelTierRef = string;
+  type ModelLocality = "on_device" | "own_server" | "third_party";
+  type ModelDisposition = "offline" | "served";
+  type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean };
+  type SeatPrecedence = "narrow_only" | "seat_override";
+  type DescriptionSource = "owner" | "measured" | "benchmarks" | "vendor";
+  type SeatPolicy = { default_reasoning_ladder: ReasoningEffort[]; default_plain_ladder: ReasoningEffort[]; gemini_ladder: ReasoningEffort[]; model_ladders?: Record<string, ReasoningEffort[]>; vault_default?: ReasoningEffort | null; purpose_defaults?: Record<string, ReasoningEffort>; global_default?: ReasoningEffort | null; vault_ceiling: ReasoningEffort; precedence: SeatPrecedence; evidence_order: DescriptionSource[]; facet_max_bytes: number; line_max_bytes: number };
+  type ModelManifest = { version: number; roles: Record<string, ModelBinding>; routes: Record<string, ModelLocality>; verdict?: VerdictBinding | null; seat_policy?: SeatPolicy | null };
+  type TeacherProbeApproval = { probe_id: string; model: ModelId; binding_hash: string; f1_millionths: number; policy_hash: string; holder_ref?: string | null };
+  type ModelManifestReplace = { manifest: ModelManifest; teacher_approval?: TeacherProbeApproval | null };
+  type ModelRouteRead = { slot: ModelSlot };
+  type ModelRouteView = { slot: ModelSlot; pin?: ModelLocality | null; route?: ModelLocality | null };
+  type ModelRouteReplace = { slot: ModelSlot; route: ModelLocality };
+  type ModelRoleRead = { role: ModelRole };
+  type ModelRoleReceipt = { role: ModelRole; model: ModelId; revision: string; provider: string; slot: ModelSlot; tier: ModelTierRef; route: ModelLocality; catalog_revision?: string | null };
   type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
-  type ModelTierRef = string;
   type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
   type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
-  type ModelLocality = "on_device" | "own_server" | "third_party";
   type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
   type LlmMessageRole = "system" | "user" | "assistant" | "tool";
   type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
@@ -2033,13 +2047,24 @@ declare namespace Sdk {
   type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
   type LlmToolSpec = { name: string; description: string; input_schema: unknown };
   type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
-  type ModelStepRetryPolicy = { max_attempts: number };
-  type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
+  type ModelRoleInput = { kind: "generate"; request: LlmRequest } | { kind: "embed"; text: string } | { kind: "tag"; text: string };
+  type ModelRoleInvoke = { role: ModelRole; input: ModelRoleInput };
   type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
   type LlmOutputUsage = { total: number; text: number; reasoning: number };
   type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
   type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } };
   type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
+  type NerSpan = { message: number; start: number; end: number; label: string; confidence: number };
+  type CorefLink = { span: number; antecedent: number; confidence?: number | null };
+  type Vad = { valence: number; arousal: number; dominance: number };
+  type ContextLink = { span: number; turn: string; message: string; start: number; end: number; confidence: number };
+  type SpeakerTarget = "speaker" | "addressee";
+  type SpeakerLink = { span: number; target: SpeakerTarget; confidence: number };
+  type EncoderOutput = { spans: NerSpan[]; links?: CorefLink[]; vad?: Vad | null; context_links?: ContextLink[]; speaker_links?: SpeakerLink[]; stack_sha16?: string | null };
+  type ModelRoleOutput = { kind: "generated"; response: LlmResponse } | { kind: "embedded"; vector: number[] } | { kind: "tagged"; output: EncoderOutput };
+  type ModelRoleInvocation = { receipt: ModelRoleReceipt; output: ModelRoleOutput };
+  type ModelStepRetryPolicy = { max_attempts: number };
+  type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
@@ -4018,6 +4043,26 @@ declare const vault: Sdk.VaultHost & {
   messages: {
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
+  };
+  models: {
+    manifest: {
+      /** Reads the owner-pinned v2 model manifest, or none when no manifest is configured. */
+      read(input: Sdk.EmptyRequest): Promise<Sdk.ModelManifest | null | StoredResult>;
+      /** Replaces the v2 model manifest under the owner proof, preserving the teacher-probe guard and atomically clearing resident route overrides. */
+      replace(input: Sdk.ModelManifestReplace): Promise<Sdk.ModelManifest | StoredResult>;
+    };
+    roles: {
+      /** Invokes a pinned model role through the configured generative, retrieval-embedder or extraction-encoder door and returns its typed output and resolved-model receipt. */
+      invoke(input: Sdk.ModelRoleInvoke): Promise<Sdk.ModelRoleInvocation | StoredResult>;
+      /** Reads one resolved role binding with its revision-pinned model, slot, route, provider and registered catalog fingerprint; grants no execution authority. */
+      read(input: Sdk.ModelRoleRead): Promise<Sdk.ModelRoleReceipt | StoredResult>;
+    };
+    routes: {
+      /** Reads one independent model slot route with its manifest pin and effective resident narrowing. */
+      read(input: Sdk.ModelRouteRead): Promise<Sdk.ModelRouteView | StoredResult>;
+      /** Replaces one model slot route within its manifest pin without changing any other slot or role binding. */
+      replace(input: Sdk.ModelRouteReplace): Promise<Sdk.ModelRouteView | StoredResult>;
+    };
   };
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;
