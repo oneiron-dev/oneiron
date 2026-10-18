@@ -30,7 +30,7 @@ const DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.direct-room.v1";
 /// a new room and the old one stops admitting turns (FIX 1380; CALLS C6).
 const LEADER_DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.leader-room.v1";
 
-/// Policy hook (CALLS "FIX 3899 unslipped transport sender", open): the comm
+/// Policy hook (CALLS "FIX 3899 ceiling source", open): the comm
 /// ceiling of a caller whose credential is no capability slip (a host
 /// secret, a managed login, an ask guest's task grant), which carries no
 /// signed reach. None: it reads as before FIX 3899, by its run's reach, or
