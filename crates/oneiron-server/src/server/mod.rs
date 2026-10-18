@@ -1,4 +1,5 @@
 //! Sync server state and maintenance jobs, split by concern.
+mod artifact_previews;
 mod board_publisher;
 mod browser_seats;
 mod connector_events;
@@ -31,6 +32,7 @@ mod tagging;
 mod wave_door;
 mod windows;
 
+pub(crate) use self::artifact_previews::ArtifactPreviews;
 pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats};
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};

@@ -2637,6 +2637,67 @@
       "openapi": true
     },
     {
+      "name": "vault.federation.coreference.link",
+      "description": "The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads.",
+      "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
+      "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
+      "call": "crate::task_verb::sdk::link_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.link\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.coreference.confirm",
+      "description": "The owner atomically confirms cross-vault identity without changing either person or their claims.",
+      "input": "crate::task_verb::sdk::CoreferencePairRequest",
+      "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
+      "call": "crate::task_verb::sdk::confirm_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.confirm\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.coreference.share_consent",
+      "description": "The owner consents to exporting an existing identity link into exactly one named federation pact.",
+      "input": "crate::task_verb::sdk::CoreferenceShareConsentRequest",
+      "output": "crate::task_verb::sdk::CoreferenceShareConsentReceipt",
+      "call": "crate::task_verb::sdk::share_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.share_consent\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "input.pact_id()?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.coreference.unlink",
+      "description": "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims.",
+      "input": "crate::task_verb::sdk::CoreferencePairRequest",
+      "output": "crate::task_verb::sdk::CoreferenceUnlinkReceipt",
+      "call": "crate::task_verb::sdk::unlink_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.unlink\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.federation.connect.identity",
       "description": "The owner reads this vault identity and the host key used for reciprocal Connect consent.",
       "input": "crate::task_verb::sdk::EmptyRequest",
@@ -3069,7 +3130,7 @@
     },
     {
       "name": "vault.off_record.start",
-      "description": "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it.",
+      "description": "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it.",
       "input": "crate::task_verb::sdk::OffRecordStartRequest",
       "output": "crate::task_verb::sdk::OffRecordSessionView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.start\", &input)?",
@@ -3085,7 +3146,7 @@
     },
     {
       "name": "vault.off_record.status",
-      "description": "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing.",
+      "description": "The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows.",
       "input": "crate::task_verb::sdk::OffRecordSessionRequest",
       "output": "crate::task_verb::sdk::OffRecordSessionView",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.status\", &input)?",
@@ -3101,7 +3162,7 @@
     },
     {
       "name": "vault.off_record.witness",
-      "description": "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close.",
+      "description": "The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close.",
       "input": "crate::task_verb::sdk::OffRecordWitnessRequest",
       "output": "crate::memory::WitnessReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.witness\", &input)?",
@@ -3117,7 +3178,7 @@
     },
     {
       "name": "vault.off_record.discard",
-      "description": "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.",
+      "description": "The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.",
       "input": "crate::task_verb::sdk::OffRecordSessionRequest",
       "output": "crate::task_verb::sdk::OffRecordClosed",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.discard\", &input)?",
@@ -3133,7 +3194,7 @@
     },
     {
       "name": "vault.off_record.recall",
-      "description": "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.",
+      "description": "The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.",
       "input": "crate::task_verb::sdk::OffRecordRecallRequest",
       "output": "crate::memory::MemoryPack",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.recall\", &input)?",
@@ -3148,7 +3209,7 @@
     },
     {
       "name": "vault.off_record.notes.create",
-      "description": "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "description": "The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordNoteRequest",
       "output": "crate::memory::EntityRefReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
@@ -3164,7 +3225,7 @@
     },
     {
       "name": "vault.off_record.claims.upsert",
-      "description": "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "description": "The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
       "input": "crate::task_verb::sdk::OffRecordClaimRequest",
       "output": "crate::memory::CommitReceipt",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
@@ -3180,7 +3241,7 @@
     },
     {
       "name": "self.off_record.execute",
-      "description": "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "description": "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
       "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
       "output": "crate::task_verb::sdk::OffRecordExecuted",
       "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
@@ -4192,7 +4253,9 @@
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Read",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "openapi": true
     },
@@ -4206,7 +4269,9 @@
       "host_door_lists": true,
       "host_door_caller": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "openapi": true
     },
@@ -4528,6 +4593,202 @@
       "admission": {
         "unrestricted_record_scope": true,
         "validate": "input.limit()?;"
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.publish_approval",
+      "description": "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPublishApproval",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.publish_approval\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.publish",
+      "description": "Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPublishView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.publish\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.repoint",
+      "description": "Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPublishRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPublishView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.repoint\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.pointer",
+      "description": "Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPointerRequest",
+      "output": "Option<crate::artifact_hosting::ArtifactPointer>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.pointer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.unpublish",
+      "description": "Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPointerRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactUnpublished",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.unpublish\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.link_token",
+      "description": "Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactLinkToken",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.link_token\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.register",
+      "description": "Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRegisterRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.register\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.read",
+      "description": "Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "Option<crate::artifact_hosting::door_types::ArtifactPreviewView>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true
+    },
+    {
+      "name": "vault.artifacts.live_preview.close",
+      "description": "Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewClosed",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.close\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.invite",
+      "description": "Invites one named principal to a private live preview under the lease owner proof; no public audience is created.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewInvitation",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.invite\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.revoke_invite",
+      "description": "Revokes one private preview invitation and its personal credentials, including active streams.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewInviteRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewInvitation",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.revoke_invite\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.share",
+      "description": "Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewShare",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.share\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.live_preview.revoke_share",
+      "description": "Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials.",
+      "input": "crate::artifact_hosting::door_types::ArtifactPreviewRequest",
+      "output": "crate::artifact_hosting::door_types::ArtifactPreviewShare",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.live_preview.revoke_share\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
       },
       "section": false
     },
@@ -5410,6 +5671,21 @@
       "input": "crate::task_verb::run_doors::RunBranchesRequest",
       "output": "crate::task_verb::run_doors::RunBranchesView",
       "call": "crate::task_verb::run_doors::read_branches_as(memory.vault(), &memory.embedded_owner(\"vault.runs.branches.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consults.get",
+      "description": "The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies.",
+      "input": "crate::task_verb::run_doors::ConsultReadRequest",
+      "output": "crate::task_verb::run_doors::ConsultInspection",
+      "call": "crate::task_verb::run_doors::read_consult_as(memory.vault(), &memory.embedded_owner(\"vault.consults.get\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
@@ -10500,7 +10776,9 @@
     {
       "name": "vault.tasks.linear.mapping",
       "description": "One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "crate::linear_sync::LinearMappingRequest",
       "output": "crate::linear_sync::LinearMappingView",
       "call": "memory.linear_mapping(&input)?",
@@ -10524,14 +10802,18 @@
       "host_door_caller": true,
       "host_door_lists": true,
       "scope": "Write",
-      "admission": {"unrestricted_record_scope": true},
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false,
       "openapi": true
     },
     {
       "name": "vault.tasks.linear.provenance",
       "description": "One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts.",
-      "refs": ["/task_ref"],
+      "refs": [
+        "/task_ref"
+      ],
       "input": "crate::linear_sync::LinearProvenanceRequest",
       "output": "crate::linear_sync::LinearProvenancePage",
       "call": "memory.linear_provenance(&input)?",
