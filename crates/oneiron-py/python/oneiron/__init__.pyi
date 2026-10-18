@@ -756,6 +756,10 @@ class Oneiron:
         def apply(self, spec: Facade.ShapeApplyRequest) -> Facade.ShapeApplyReceipt:
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item."""
     class _VaultFanoutVerbs:
+        def spawn(self, spec: Facade.LiveRunRequest[Facade.FanoutBatchInput]) -> Facade.FanoutBatchView:
+            """Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."""
+        def slots(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutBatchView | None:
+            """Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."""
         def launch(self, spec: Facade.FanoutLaunchRequest) -> Facade.FanoutLaunchView | None:
             """One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."""
         def resume(self, spec: Facade.FanoutResumeRequest) -> Facade.FanoutLaunchView:
@@ -1912,6 +1916,8 @@ class Oneiron:
     class _VaultSearchVerbs:
         def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
+        def temporal(self, input: Facade.TemporalSearchRequest) -> Facade.ScopedReadResult[Facade.TemporalSearchResult]:
+            """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
     class _VaultStructuralVerbs:
@@ -2128,6 +2134,8 @@ class Oneiron:
         def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
     class _AiVoiceVerbs:
+        @property
+        def asr(self) -> "Oneiron._AiVoiceAsrVerbs": ...
         def start(self, spec: Facade.LiveVoiceStartRequest) -> Facade.LiveVoiceSession:
             """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
         def audio(self, spec: Facade.LiveVoiceAudioRequest) -> Facade.LiveVoiceProcessed:
@@ -2144,6 +2152,15 @@ class Oneiron:
             """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""
         def close(self, spec: Facade.LiveVoiceSessionRequest) -> Facade.LiveVoiceProcessed:
             """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
+    class _AiVoiceAsrVerbs:
+        def open(self, spec: Facade.AsrOpenRequest) -> Facade.AsrSession:
+            """Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."""
+        def hypothesis(self, spec: Facade.AsrHypothesisRequest) -> Facade.AsrHypothesisReceipt:
+            """Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt."""
+        def finalize(self, spec: Facade.AsrHypothesisRequest) -> Facade.AsrFinalReceipt:
+            """Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting."""
+        def close(self, spec: Facade.AsrCloseRequest) -> Facade.AsrClosed:
+            """Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""

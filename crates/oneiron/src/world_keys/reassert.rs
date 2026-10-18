@@ -153,7 +153,7 @@ impl Vault {
             }
             let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let status = self.world_key_for_edit_in_txn(txn, actor, world, Ok(&secret))?;
-            let receipt = self.settle_world_key_work_in_txn(txn, receipt, status)?;
+            let receipt = self.settle_world_key_work_in_txn(txn, owner, receipt, status)?;
             Ok((release, receipt))
         })?;
         Ok(receipt)

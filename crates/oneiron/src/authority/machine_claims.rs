@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::entity_id::EntityId;
 
 use super::machine_profile::{
-    KeyClaim, in_host_custody, key_is_authority, machine_is_actor, merge_machine,
+    KeyClaim, act_stands, in_host_custody, key_is_authority, machine_is_actor, merge_machine,
 };
 use super::*;
 
@@ -17,7 +17,8 @@ use super::*;
 enum ClaimScope<'a> {
     /// Every roster revision: admission under the roster.
     Roster,
-    /// The roster revisions a key P1 accepts signed: the trusted roster chain.
+    /// The roster revisions a key P1 accepts signed, and the admitted owner
+    /// answers: the trusted roster chain.
     Accepted,
     /// One anchor's revisions.
     Anchor(&'a [u8; 32]),
@@ -59,25 +60,39 @@ impl<'s> ClaimIndex<'s> {
             .or_insert_with(|| state.hosted && in_host_custody(state, signer))
     }
 
+    /// An approved head that still stands: an owner-held roster signer
+    /// custody has not reached, or an admitted owner answer whose carrier
+    /// has not lost the removal race since (mesh PR1b). Custody never
+    /// reaches an answer, and an answer never makes its key owner-held.
+    fn approved_stands(&self, head: &MachineRevision) -> bool {
+        match &head.act {
+            Some(proof) => act_stands(self.state, proof, &head.entry),
+            None => self.accepted(&head.signer),
+        }
+    }
+
     fn in_scope(&self, claim: &KeyClaim, scope: ClaimScope<'_>) -> bool {
         match scope {
             ClaimScope::Roster => claim.admitter == MachineAdmitter::Roster,
             ClaimScope::Accepted => {
                 claim.admitter == MachineAdmitter::Roster
-                    && claim
-                        .owner_held
-                        .as_ref()
-                        .is_some_and(|signer| self.accepted(signer))
+                    && (claim.act_carrier.is_some()
+                        || claim
+                            .owner_held
+                            .as_ref()
+                            .is_some_and(|signer| self.accepted(signer)))
             }
             ClaimScope::Anchor(key) => claim.admitter == MachineAdmitter::Anchor(*key),
         }
     }
 
-    /// The roster revisions a key P1 accepts signed, judged on the merged
-    /// history: the owner-held head while its signer stays accepted, removed
-    /// once any accepted signer removed the machine. A custodian's removal
-    /// never counts, and an accepted one outlives a head whose signer custody
-    /// reached since (Sol code-R1 S1-F5).
+    /// The roster revisions a key P1 accepts signed, and the admitted owner
+    /// answers, judged on the merged history: the approved head while it
+    /// stands ([`Self::approved_stands`]), removed once any accepted signer
+    /// or carrier removed the machine. A custodian's removal never counts,
+    /// and an accepted one outlives a head whose signer custody reached
+    /// since (Sol code-R1 S1-F5). It never falls back to an older owned
+    /// revision.
     fn accepted_roster(&self, chain: &MachineChain) -> Option<MachineRevision> {
         let removal = chain
             .owner_held_removals
@@ -88,7 +103,7 @@ impl<'s> ClaimIndex<'s> {
         match chain
             .owner_held
             .clone()
-            .filter(|held| self.accepted(&held.signer))
+            .filter(|held| self.approved_stands(held))
         {
             Some(held) => Some(MachineRevision {
                 removed: removal.is_some(),
@@ -151,6 +166,11 @@ impl<'s> ClaimIndex<'s> {
             head.floor_held = hold(MachineAdmitter::Roster, chain, &head.entry);
             if state.hosted && in_host_custody(state, &head.signer) {
                 head.signer_class = SignerClass::Custodial;
+            }
+            // An answer whose carrier lost the removal race since stands on
+            // nothing here (FIX 2998, mesh contract §4).
+            if head.act.is_some() && !self.approved_stands(&head) {
+                head.act = None;
             }
             head.conflicted |= self.poisoned(id, &head.profile.machine_key, ClaimScope::Roster);
             head.admitter_unsettled = roster_unsettled;

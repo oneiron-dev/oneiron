@@ -287,9 +287,8 @@ pub trait McpCodeModeProvider: Send + Sync {
 /// binding (its write actor, its caller's place and its proof), the
 /// credential its passes queue under (its registered fingerprint's stream
 /// connection) and the spend scope its calls spend under, if any.
-pub type RunCompactionSeat = Arc<
-    dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync,
->;
+pub type RunCompactionSeat =
+    Arc<dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
 
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.

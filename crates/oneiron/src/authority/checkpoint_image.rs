@@ -73,8 +73,8 @@ pub struct AuthorityCheckpointRow {
     /// The canonical signed body of a row a fold or a store door past the
     /// image reads whole (an approval, a binding, a confirm, a revocation, a
     /// handoff, an enrollment, the genesis, a root record, a machine profile,
-    /// a world edit, a grant travel choice or a world-key record); None for
-    /// every other row.
+    /// a world edit, a grant travel choice, a world-key record or an owner
+    /// work request or result); None for every other row.
     #[serde(with = "body_bytes")]
     pub body: Option<Vec<u8>>,
 }
@@ -82,7 +82,8 @@ pub struct AuthorityCheckpointRow {
 /// Whether an image carries the canonical signed body of a covered row of
 /// `op`'s kind: each row a fold past the image reads whole
 /// ([`super::fold_resume::is_projected`]: an approval, a binding, a confirm,
-/// a device revocation, a handoff, a machine profile, a world-key record),
+/// a device revocation, a handoff, a machine profile, a world-key record, an
+/// owner work request or result),
 /// and each row a store door past it reads whole to judge a new row: the
 /// genesis and each device enrollment the consent structure rests on, the
 /// root records that name owner anchors, the actor revocations a signer's
@@ -134,14 +135,15 @@ pub(super) struct CheckpointSafety {
     /// (actor revocations, slip withdrawals and burns, machine removals),
     /// the retired keys, the closed handoffs, whether a handoff is
     /// unsettled, the settlement's issues, the parents no folded row is, and
-    /// the owner-held roster marks before custody is judged.
+    /// the accepted roster marks before custody is judged: an owner-held
+    /// signer or an admitted owner answer (`MarkProof`).
     pub(super) revoke_facts: RevokeFacts,
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
     pub(super) closed_handoffs: BTreeSet<AuthorityEntryHash>,
     pub(super) unsettled: bool,
     pub(super) issues: Vec<AuthorityFoldIssue>,
     pub(super) missing_parents: BTreeSet<AuthorityEntryHash>,
-    pub(super) marks: Vec<(AuthorityEntryHash, AuthorityKey)>,
+    pub(super) marks: Vec<(AuthorityEntryHash, MarkProof)>,
     /// Actor: the final merge's revocations, every binding any state holds,
     /// and the keys a main state holds a live binding for.
     pub(super) revocations: BTreeMap<AuthorityKey, BTreeSet<AuthorityEntryHash>>,

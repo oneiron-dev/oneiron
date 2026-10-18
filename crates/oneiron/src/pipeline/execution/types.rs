@@ -55,6 +55,7 @@ pub(super) struct RetrievalTxnOutput {
     pub(super) replay_inputs: Option<crate::store::RetrievalReplayInputs>,
     pub(super) ppr_expand_executed: bool,
     pub(super) early_empty_no_telemetry: bool,
+    pub(super) temporal_report: Option<super::super::TemporalSearchReport>,
 }
 
 /// Pending-embedding markers are base rows only (K6: a room keeps no `pe:`

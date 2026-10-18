@@ -4,12 +4,16 @@
 //! [`crate::agent_dispatch::AgentDispatcher::plan_reserved_spawn_as_owner`]
 //! reserves the intent, places its type and plans it at the root, and
 //! launches nothing. A replay of the same key returns what it froze.
+//! [`crate::agent_dispatch::AgentDispatcher::launch_reserved_spawn_as_owner`]
+//! then launches the plan, a team through its pattern skill, and a replay
+//! returns what launched.
 
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
     PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, SpawnSpend,
 };
+use crate::attempt_queue::AttemptId;
 use crate::code_run::SelfSpawnAsk;
 use crate::task_type::{PlacementDecisions, TaskTypeRef};
 
@@ -62,29 +66,48 @@ pub struct PlannedSpawnHost<'a> {
     pub placement_key: Option<&'a str>,
 }
 
-/// Where a planned intent stands when its owner reads it.
+/// Where the owner's spawn stands: a planned intent before or at its
+/// launch, or a spawned agent the queue holds, which the spawn observation
+/// reads as launched. In flight or in doubt is no stand: the owner is
+/// refused and asks again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum PlannedIntentPhase {
+pub enum SpawnPhase {
     /// Placed and planned: the stamp and the plan are frozen, and nothing
-    /// launched.
+    /// launched yet.
     Planned,
-    /// Placement or the planner refused; the refusal is kept.
+    /// Queued: the leader and each member, bound as one team, or a solo's
+    /// one agent.
+    Launched,
+    /// Placement, the planner or the launch refused; the refusal is kept.
     Refused,
 }
 
 /// What one planned intent holds for its owner: its key, its phase, the
-/// type the engine placed and the plan it froze, or the refusal it kept.
+/// type the engine placed and the plan it froze, the refusal it kept, and
+/// once launched, what launched.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PlannedIntentView {
     pub intent_key: String,
-    pub phase: PlannedIntentPhase,
+    pub phase: SpawnPhase,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placed: Option<TaskTypeRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan: Option<SpawnPlanReceipt>,
-    /// Why placement or the planner refused, and what the owner can do next.
+    /// Why placement, the planner or the launch refused, and what the owner
+    /// can do next.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refusal: Option<String>,
+    /// The leader's queued attempt, or a solo's one agent; `None` until
+    /// launched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_attempt: Option<AttemptId>,
+    /// Each member's queued attempt, in launch order; empty for a solo and
+    /// until launched.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub member_attempts: Vec<AttemptId>,
+    /// The team the launch bound; `None` for a solo and until launched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team_ref: Option<String>,
 }

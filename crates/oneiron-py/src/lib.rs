@@ -489,6 +489,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_fanout_spawn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.spawn")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.spawn", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_fanout_slots(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.fanout.slots")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.fanout.slots", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_fanout_launch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.fanout.launch")?;
         let output = py
@@ -4011,6 +4025,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_voice_asr_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_asr_hypothesis(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.hypothesis")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.hypothesis", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_asr_finalize(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.finalize")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.finalize", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn ai_voice_asr_close(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.voice.asr.close")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.voice.asr.close", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_voice_start(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.voice.start")?;
         let output = py
@@ -4472,6 +4514,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.search.hybrid")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.search.hybrid", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_search_temporal(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.search.temporal")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.search.temporal", input))
             .map_err(raise)?;
         encode(&output)
     }

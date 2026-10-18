@@ -13,13 +13,14 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::agent_dispatch::{SpawnNeed, TeamPlan};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::{
     EstimateValue, LearningCell, LearningPredicate, Prior, PriorOrigin, TypeRef, put_cell_prior,
 };
 use crate::side_table::{self, Named, SideTable};
-use crate::skill::SkillRole;
+use crate::skill::{LoadedSkillPack, SkillRole};
 
 /// Pattern skills, by skill entity.
 const PATTERN_SKILL: SideTable<EntityId, PatternSkill, Named> =
@@ -111,6 +112,42 @@ pub struct PatternSkill {
     /// The task-type nodes the line names; each gets the weak prior.
     pub works_well_for_types: Vec<String>,
     pub at: u64,
+}
+
+/// The start a pattern skill writes for one planned team (DOOR-111): the
+/// leader's briefing, one briefing per member the plan launches, and the
+/// axis the team runs. The owner's launch freezes it under the intent, so a
+/// replay launches this start and never asks the runner again.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PatternLaunchSpec {
+    /// What the leader reads after the owner's prompt.
+    pub leader_briefing: String,
+    /// One briefing per member, in launch order: the plan's width less the
+    /// leader.
+    pub member_briefings: Vec<String>,
+    pub axis: TeamAxis,
+}
+
+/// The host's runner for a planned team's pattern skill. It runs that exact
+/// pack's SKILL.md in the host's ordinary runtime, with the asked need, the
+/// owner's prompt and the frozen plan as task data and no effectful tool
+/// call, and returns the start the skill writes. The engine holds no writer
+/// while it runs.
+pub trait PatternLaunchRunner: Send + Sync {
+    /// The start `skill` writes for `plan`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever stops the run. The launch refuses, and the intent stays
+    /// planned for the next ask.
+    fn run(
+        &self,
+        skill: &LoadedSkillPack,
+        asked: &SpawnNeed,
+        prompt: &str,
+        plan: &TeamPlan,
+    ) -> Result<PatternLaunchSpec>;
 }
 
 /// Binds `skill` to `pattern` and seeds a weak `model` prior on each task
