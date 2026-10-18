@@ -7940,6 +7940,7 @@ dependencies = [
  "p256",
  "rmp-serde",
  "rmpv",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
 ]

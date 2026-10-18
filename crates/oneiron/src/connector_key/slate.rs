@@ -220,7 +220,7 @@ impl SlateToolManifest {
 
 /// The only model-output shape admitted. Owner overrides are deliberately not
 /// fields of this type; serde rejects them rather than trusting a model stamp.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateDraftRow {
     /// The row's key: a tool name, or [`ELICITATION_ROW_KEY`].
@@ -235,14 +235,14 @@ impl SlateDraftRow {
         SlateCapability::parse(&self.tool)
     }
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateOwnerOverride {
     pub disposition: SlateDisposition,
 }
 /// An autonomous tightening by the key's holder. It needs no stamp and is
 /// provenance-marked, so it never reads as an owner tap.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateHolderNarrow {
     pub disposition: SlateDisposition,
@@ -257,7 +257,7 @@ pub struct SlateFacetNarrow {
     pub actor: String,
     pub at: u64,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SlateRow {
     pub draft: SlateDraftRow,

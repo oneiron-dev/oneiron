@@ -15,7 +15,7 @@ pub const SETUP_CHECK_QUALIFICATION_SUITE: &str = "oneiron.connector.setup_check
 /// the proxy's fixed slate. Only the proxy connector's key may carry it.
 pub const PROXY_ADMISSION_QUALIFICATION_SUITE: &str = "oneiron.connector.proxy_admission.v1";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectorQualificationReceipt {
     pub suite: String,
