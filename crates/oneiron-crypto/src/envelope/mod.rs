@@ -75,6 +75,8 @@ pub enum Purpose {
     WorldDek = 11,
     /// A slice of one private world's content, sealed under a key derived from the
     /// world's key so a machine that may not read the world can still hold it.
+    /// Reserved and unused (FIX 3535): nothing seals under it now, as the sealed
+    /// bundle uses 13 and 14. 12 keeps this name and is never given to another purpose.
     SealedWorldContent = 12,
     /// The vault's one sealed cloud bundle: its reader capsules, its outer body and
     /// the world sections inside it. Its binding names a generation, never a world.

@@ -43,7 +43,7 @@ pub(crate) use directives::{
 pub use discover::discover_local_window_keys;
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
-    KitBundleFetch, kit_sealed_bundle_part,
+    KitBundleFetch, kit_bundle_fetch_origin, kit_sealed_bundle_part,
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,

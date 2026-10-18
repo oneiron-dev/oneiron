@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::bundle::{PartSource, fetch_generation};
 use crate::sync::residence::{
     KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH, KitBundleFetch, SealedBundleObject,
-    sealed_digest_hex, sealed_generation_hex,
+    kit_bundle_fetch_origin, sealed_digest_hex, sealed_generation_hex,
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
@@ -40,7 +40,8 @@ pub(super) struct KitHome {
 impl KitHome {
     /// One slice of a kept object from `offset`, as the home sends it:
     /// `generation` names one, `None` the newest named for the kit's root. A
-    /// refused or missing slice is `InvalidPayload`.
+    /// refused or missing slice is `InvalidPayload`; a body that fails to
+    /// arrive is `Storage`.
     pub(super) async fn part(
         &self,
         generation: Option<SealedBundleGeneration>,
@@ -86,14 +87,16 @@ impl KitHome {
                 "the home refused the kit fetch",
             ));
         }
-        // A slice whose body outlasts the deadline failed; it is not missing.
-        response.json().await.map_err(|e| {
-            if e.is_timeout() {
-                TransportError::Storage(format!("kit fetch request failed: {e}"))
-            } else {
-                TransportError::InvalidPayload("the kit fetch answer does not decode")
-            }
-        })
+        // A slice whose body fails to arrive, past the deadline or on a dropped
+        // connection, is a failed transport, not a missing slice (FIX 4297;
+        // CALLS: KIT_BUNDLE_BODY_READ_FAILURE, TransportError). A body that
+        // arrived and does not decode stays `InvalidPayload`.
+        let body = response
+            .bytes()
+            .await
+            .map_err(|e| TransportError::Storage(format!("kit fetch request failed: {e}")))?;
+        serde_json::from_slice(&body)
+            .map_err(|_| TransportError::InvalidPayload("the kit fetch answer does not decode"))
     }
 }
 
@@ -118,14 +121,9 @@ pub async fn fetch_sealed_bundle_with_kit(
     };
     let mut url = reqwest::Url::parse(&http)
         .map_err(|_| TransportError::InvalidPayload("the home's address does not parse"))?;
-    let host = url.host_str().ok_or(TransportError::InvalidPayload(
+    let origin = kit_bundle_fetch_origin(&url).ok_or(TransportError::InvalidPayload(
         "the home's address names no host",
     ))?;
-    let origin = match url.port() {
-        Some(port) => format!("{host}:{port}"),
-        None => host.to_owned(),
-    }
-    .to_ascii_lowercase();
     url.set_path(KIT_BUNDLE_FETCH_PATH);
     url.set_query(None);
     let root = seed
