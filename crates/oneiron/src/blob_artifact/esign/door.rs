@@ -12,6 +12,13 @@
 //!   OF-327 gate as the caller ([`Vault::dispatch_esign`]); the gate's grants
 //!   and ceilings rule a person's send, and the signing principal's autonomy
 //!   dial an agent's.
+//! - `vault.esign.signing.act`, `vault.esign.signing.pdf`,
+//!   `vault.esign.signing.image`, `vault.esign.signing.signature`: the
+//!   recipient ceremony, typed twins of the public `/sign/*` doors. The
+//!   capability in the body is the authority; the bound caller only
+//!   classes the act.
+//! - `vault.esign.seal.get`: the seal task's receipts for one document
+//!   and its sealed manifest once sealing lands.
 use super::model::{
     DocumentStatus, EsignAuditActor, EsignDocument, EsignEventRow, RecipientState, SignatureRow,
 };
@@ -204,6 +211,151 @@ pub struct EsignVoidRequest {
     pub idempotency_key: Option<String>,
 }
 
+/// One recipient ceremony act (`vault.esign.signing.act`): the signing
+/// link's capability, in the body only, and the act it asks for. The same
+/// shape the public `POST /sign/action` door takes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningRequest {
+    /// The recipient's Bearer [REDACTED] from their signing link. It is the
+    /// ceremony's authority; a credential the call also presents only
+    /// classes the caller (an agent's Complete is an automated sign act).
+    pub token: String,
+    /// Load, save one field, complete with consent, or reject.
+    pub action: super::SigningAction,
+}
+
+/// One ceremony document item to download (`vault.esign.signing.pdf`):
+/// the pinned original while signing, the sealed output after sealing.
+/// The same capability body the public `POST /sign/pdf` door takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningPdfRequest {
+    /// The recipient's Bearer [REDACTED], in the body only.
+    pub token: String,
+    /// Which of the document's items, by position.
+    pub item: usize,
+}
+
+/// One downloaded ceremony item, as base64 PDF bytes. The public
+/// `POST /sign/pdf` door serves the same bytes as an attachment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningPdfView {
+    pub item: usize,
+    pub pdf_base64: String,
+}
+
+/// One signature image to upload for a signature field
+/// (`vault.esign.signing.image`), bound to the capability's recipient.
+/// The same body the public `POST /sign/image` door takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningImageRequest {
+    /// The recipient's Bearer [REDACTED], in the body only.
+    pub token: String,
+    /// The PNG or JPEG signature image, base64.
+    pub png_or_jpeg_base64: String,
+}
+
+/// The stored signature image's ref, for a signature field's value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningImageView {
+    pub image_ref: String,
+}
+
+/// One stored signature image to read back (`vault.esign.signing.signature`),
+/// under the capability that uploaded it. The same capability body the
+/// public `POST /sign/signature` door takes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningSignatureRequest {
+    /// The recipient's Bearer [REDACTED], in the body only.
+    pub token: String,
+    pub image_ref: String,
+}
+
+/// One stored signature image, as base64 bytes. The public
+/// `POST /sign/signature` door serves the same bytes as an image.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSigningSignatureView {
+    pub image_ref: String,
+    pub image_base64: String,
+}
+
+/// A signing document whose seal task to observe (`vault.esign.seal.get`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSealGetRequest {
+    /// The artifact the signing overlay lives on.
+    pub document_ref: String,
+}
+
+/// One queued or finished seal attempt of a document: the seal task's
+/// receipt row, in creation order beside its siblings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSealAttemptView {
+    /// The attempt's id, hex; a sealed document's manifest names the
+    /// attempt that sealed it by this same ref.
+    pub attempt_ref: String,
+    /// The attempt kind, `esign.seal`.
+    pub kind: String,
+    /// `queued`, `leased`, `completed`, `failed`, or another attempt state.
+    pub state: String,
+    /// The seal generation the attempt was queued for: the document and
+    /// its generation, as the dedupe key spells them, while it is kept.
+    pub dedupe_key: Option<String>,
+    /// The worker holding or last holding the attempt's lease.
+    pub lease_owner: Option<String>,
+    /// Lease generations taken within this one try.
+    pub attempt_count: u32,
+    pub created_at: u64,
+    pub updated_at: u64,
+    /// The failure a failed attempt kept; the backstop queues it again.
+    pub last_error: Option<String>,
+}
+
+/// One sealed item's provenance: the frozen original it came from and the
+/// sealed version that replaced it, with the sealed bytes' SHA-256, hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSealedItemView {
+    pub original_artifact: String,
+    pub original_version: u64,
+    pub sealed_artifact: String,
+    pub sealed_version: u64,
+    pub sha256: String,
+}
+
+/// A sealed document's manifest: which attempt sealed it, over which
+/// audit chain, and what each item became.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSealedView {
+    /// The seal attempt that produced this manifest, by its attempt ref.
+    pub attempt_ref: String,
+    /// SHA-256 of the audit trail the seal covered, hex.
+    pub audit_chain_sha256: String,
+    /// Sealed on a rejection rather than a completion.
+    pub rejected: bool,
+    pub items: Vec<EsignSealedItemView>,
+}
+
+/// Where one document's seal stands: its folded status, every seal
+/// attempt the queue still holds for it, and its sealed manifest once
+/// one attempt sealed it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EsignSealView {
+    pub document_ref: String,
+    pub status: DocumentStatus,
+    pub attempts: Vec<EsignSealAttemptView>,
+    pub sealed: Option<EsignSealedView>,
+}
+
 /// What the gate made of one e-sign dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EsignDispatchView {
@@ -248,6 +400,146 @@ impl Memory<'_> {
                 .map(|digest| crate::entity_id::bytes_to_hex_lower(digest.as_slice()))
                 .collect(),
             audit,
+        })
+    }
+
+    /// `vault.esign.signing.act`: one recipient ceremony act under the
+    /// capability in the request body, the typed twin of the public
+    /// `POST /sign/action` door. The capability is the authority; the
+    /// bound caller only classes the act, as on that door: a human signs
+    /// in person, any other class's Complete is an automated sign act.
+    /// # Errors
+    /// A capability that does not parse or no longer admits its
+    /// recipient, or the ceremony's own refusal. No refusal echoes the
+    /// capability.
+    pub fn esign_signing_act(
+        &self,
+        input: &EsignSigningRequest,
+    ) -> MemoryResult<super::SigningOutcome> {
+        let token = super::EsignCapability::parse(&input.token)?;
+        let caller = match self.actor_class() {
+            crate::edge::EdgeActorClass::Human => super::SigningCaller::Person,
+            _ => super::SigningCaller::Agent,
+        };
+        Ok(self
+            .vault()
+            .execute_signing_action_as(&token, &input.action, caller, None, None)?)
+    }
+
+    /// `vault.esign.signing.pdf`: one ceremony item's bytes under its
+    /// capability, the typed twin of `POST /sign/pdf`: the pinned
+    /// original while signing, the hash-checked sealed output after
+    /// sealing. Loading the item is a ceremony Load, so a first download
+    /// marks the recipient viewed, as on the public door.
+    /// # Errors
+    /// A capability that does not admit the item.
+    pub fn esign_signing_pdf(
+        &self,
+        input: &EsignSigningPdfRequest,
+    ) -> MemoryResult<EsignSigningPdfView> {
+        use base64::Engine;
+        let token = super::EsignCapability::parse(&input.token)?;
+        let bytes = self
+            .vault()
+            .esign_pdf_for_capability(&token, input.item, None, None)?;
+        Ok(EsignSigningPdfView {
+            item: input.item,
+            pdf_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
+    }
+
+    /// `vault.esign.signing.image`: stores one signature image bound to
+    /// the capability's recipient, the typed twin of `POST /sign/image`,
+    /// and answers the ref a signature field's value names.
+    /// # Errors
+    /// A capability that does not admit an upload, image bytes that are
+    /// not base64, or an image the store refuses.
+    pub fn esign_signing_image(
+        &self,
+        input: &EsignSigningImageRequest,
+    ) -> MemoryResult<EsignSigningImageView> {
+        use base64::Engine;
+        let token = super::EsignCapability::parse(&input.token)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(&input.png_or_jpeg_base64)
+            .map_err(|_| MemoryError::bad_request("png_or_jpeg_base64 is not base64"))?;
+        let image_ref = self.vault().upload_esign_signature_image(&token, &bytes)?;
+        Ok(EsignSigningImageView { image_ref })
+    }
+
+    /// `vault.esign.signing.signature`: reads back one stored signature
+    /// image under the capability that uploaded it, the typed twin of
+    /// `POST /sign/signature`.
+    /// # Errors
+    /// A capability that does not own the named image.
+    pub fn esign_signing_signature(
+        &self,
+        input: &EsignSigningSignatureRequest,
+    ) -> MemoryResult<EsignSigningSignatureView> {
+        use base64::Engine;
+        let token = super::EsignCapability::parse(&input.token)?;
+        let bytes = self
+            .vault()
+            .esign_signature_image_for_capability(&token, &input.image_ref)?;
+        Ok(EsignSigningSignatureView {
+            image_ref: input.image_ref.clone(),
+            image_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+        })
+    }
+
+    /// `vault.esign.seal.get`: where the document's seal task stands:
+    /// its folded status, every `esign.seal` attempt the queue holds
+    /// for it in creation order, and the sealed manifest once one
+    /// attempt sealed it. The row's refs admission reads `document_ref`
+    /// under the caller's scope first, as `vault.esign.get` does.
+    /// # Errors
+    /// A `document_ref` that is no id or names no signing document.
+    pub fn esign_seal_get(&self, input: &EsignSealGetRequest) -> MemoryResult<EsignSealView> {
+        let document = document_id(&input.document_ref)?;
+        let vault = self.vault();
+        let attempts = crate::attempt_queue::AttemptQueue::new(vault)
+            .list_kind_bounded(super::ESIGN_SEAL_ATTEMPT_KIND, usize::MAX)?
+            .into_iter()
+            .filter(|record| record.payload.as_slice() == document.as_bytes().as_slice())
+            .map(|record| EsignSealAttemptView {
+                attempt_ref: crate::entity_id::bytes_to_hex_lower(record.id.as_bytes()),
+                kind: record.kind,
+                state: record.state.as_str().to_owned(),
+                dedupe_key: record.dedupe_key,
+                lease_owner: record.lease_owner,
+                attempt_count: record.attempt_count,
+                created_at: record.created_at,
+                updated_at: record.updated_at,
+                last_error: record.last_error,
+            })
+            .collect();
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        let (state, _, _) = super::ledger::read_in(vault, &txn, document)?;
+        let sealed = super::seal::CANONICAL
+            .get(&vault.store, &txn, &document)?
+            .map(|manifest| EsignSealedView {
+                attempt_ref: manifest.attempt_ref,
+                audit_chain_sha256: crate::entity_id::bytes_to_hex_lower(
+                    manifest.audit_chain_sha256.as_slice(),
+                ),
+                rejected: manifest.rejected,
+                items: manifest
+                    .items
+                    .into_iter()
+                    .map(|item| EsignSealedItemView {
+                        original_artifact: item.original_artifact,
+                        original_version: item.original_version,
+                        sealed_artifact: item.sealed_artifact,
+                        sealed_version: item.sealed_version,
+                        sha256: crate::entity_id::bytes_to_hex_lower(item.sha256.as_slice()),
+                    })
+                    .collect(),
+            });
+        Ok(EsignSealView {
+            document_ref: document.to_hex(),
+            status: state.status,
+            attempts,
+            sealed,
         })
     }
 

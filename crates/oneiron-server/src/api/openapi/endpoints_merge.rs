@@ -107,6 +107,7 @@ pub(crate) fn openapi_document() -> Value {
     super::owner_paths::merge_left_slip_paths(&mut spec);
     super::facade_paths::merge_facade_paths(&mut spec);
     super::anonymous_chat_paths::merge_anonymous_chat_paths(&mut spec);
+    super::signing_paths::merge_signing_paths(&mut spec);
     super::voice_bank_paths::merge_voice_bank_paths(&mut spec);
     add_security_scheme(&mut spec);
     mark_entity_response_as_binary(&mut spec);

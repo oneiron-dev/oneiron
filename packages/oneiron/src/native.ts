@@ -636,6 +636,11 @@ vaultEsignLinksIssue(input: unknown): unknown
 vaultEsignSendForSignature(input: unknown): unknown
 vaultEsignRemind(input: unknown): unknown
 vaultEsignVoid(input: unknown): unknown
+vaultEsignSigningAct(input: unknown): unknown
+vaultEsignSigningPdf(input: unknown): unknown
+vaultEsignSigningImage(input: unknown): unknown
+vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown

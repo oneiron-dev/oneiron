@@ -3031,6 +3031,31 @@ export_facade! {
     let output = client.vault_esign_void(&input)?;
     crate::codec::lift_record("vault.esign.void", &output)
 };
+"vault.esign.signing.act" => fn vault_esign_signing_act(&self, input: EsignSigningRequest) -> SigningOutcome = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningRequest = crate::codec::lower_record("vault.esign.signing.act", input)?;
+    let output = client.vault_esign_signing_act(&input)?;
+    crate::codec::lift_record("vault.esign.signing.act", &output)
+};
+"vault.esign.signing.pdf" => fn vault_esign_signing_pdf(&self, input: EsignSigningPdfRequest) -> EsignSigningPdfView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningPdfRequest = crate::codec::lower_record("vault.esign.signing.pdf", input)?;
+    let output = client.vault_esign_signing_pdf(&input)?;
+    crate::codec::lift_record("vault.esign.signing.pdf", &output)
+};
+"vault.esign.signing.image" => fn vault_esign_signing_image(&self, input: EsignSigningImageRequest) -> EsignSigningImageView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningImageRequest = crate::codec::lower_record("vault.esign.signing.image", input)?;
+    let output = client.vault_esign_signing_image(&input)?;
+    crate::codec::lift_record("vault.esign.signing.image", &output)
+};
+"vault.esign.signing.signature" => fn vault_esign_signing_signature(&self, input: EsignSigningSignatureRequest) -> EsignSigningSignatureView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSigningSignatureRequest = crate::codec::lower_record("vault.esign.signing.signature", input)?;
+    let output = client.vault_esign_signing_signature(&input)?;
+    crate::codec::lift_record("vault.esign.signing.signature", &output)
+};
+"vault.esign.seal.get" => fn vault_esign_seal_get(&self, input: EsignSealGetRequest) -> EsignSealView = |client| {
+    let input: oneiron::blob_artifact::esign::EsignSealGetRequest = crate::codec::lower_record("vault.esign.seal.get", input)?;
+    let output = client.vault_esign_seal_get(&input)?;
+    crate::codec::lift_record("vault.esign.seal.get", &output)
+};
 "vault.conversations.create" => fn vault_conversations_create(&self, input: ConversationCreateInput) -> CoreEntityWriteReceipt = |client| {
     let input: oneiron::core_write::ConversationCreateInput = crate::codec::lower_record("vault.conversations.create", input)?;
     let output = client.vault_conversations_create(&input)?;

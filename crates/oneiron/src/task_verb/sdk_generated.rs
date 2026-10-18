@@ -3370,6 +3370,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.esign.signing.act",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.pdf",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningPdfRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.image",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningImageRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.signature",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningSignatureRequest,
+                >(),
+            ),
+            (
+                "vault.esign.seal.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSealGetRequest,
+                >(),
+            ),
+            (
                 "vault.conversations.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::core_write::ConversationCreateInput,
@@ -4418,6 +4448,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
+    "vault.esign.signing.act",
+    "vault.esign.signing.pdf",
+    "vault.esign.signing.image",
+    "vault.esign.signing.signature",
+    "vault.esign.seal.get",
     "vault.consolidation.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
@@ -5419,6 +5454,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.esign.signing.act" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::SigningOutcome,
+        >(),
+        "vault.esign.signing.pdf" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningPdfView,
+        >(),
+        "vault.esign.signing.image" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningImageView,
+        >(),
+        "vault.esign.signing.signature" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningSignatureView,
+        >(),
+        "vault.esign.seal.get" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSealView,
         >(),
         "vault.consolidation.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::DreamerAttemptView>,
@@ -9957,6 +10007,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.esign.signing.act" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.pdf" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.image" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.signature" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.seal.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.conversations.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12893,6 +12978,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.esign.void" => {
             let _input: crate::blob_artifact::esign::EsignVoidRequest = decode(value.clone())?;
         }
+        "vault.esign.signing.act" => {
+            let _input: crate::blob_artifact::esign::EsignSigningRequest = decode(value.clone())?;
+        }
+        "vault.esign.signing.pdf" => {
+            let _input: crate::blob_artifact::esign::EsignSigningPdfRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.signing.image" => {
+            let _input: crate::blob_artifact::esign::EsignSigningImageRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.signing.signature" => {
+            let _input: crate::blob_artifact::esign::EsignSigningSignatureRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.seal.get" => {
+            let _input: crate::blob_artifact::esign::EsignSealGetRequest = decode(value.clone())?;
+        }
         "vault.conversations.create" => {
             let _input: crate::core_write::ConversationCreateInput = decode(value.clone())?;
         }
@@ -14456,6 +14559,13 @@ pub fn invoke(
         }
         "vault.esign.remind" => encode(vault_esign_remind(memory, decode(value)?)?),
         "vault.esign.void" => encode(vault_esign_void(memory, decode(value)?)?),
+        "vault.esign.signing.act" => encode(vault_esign_signing_act(memory, decode(value)?)?),
+        "vault.esign.signing.pdf" => encode(vault_esign_signing_pdf(memory, decode(value)?)?),
+        "vault.esign.signing.image" => encode(vault_esign_signing_image(memory, decode(value)?)?),
+        "vault.esign.signing.signature" => {
+            encode(vault_esign_signing_signature(memory, decode(value)?)?)
+        }
+        "vault.esign.seal.get" => encode(vault_esign_seal_get(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
         "vault.conversations.turns.create" => {
             encode(vault_conversations_turns_create(memory, decode(value)?)?)
@@ -19989,6 +20099,42 @@ pub fn vault_esign_void(
         &["/document_ref"],
     )?;
     memory.esign_void(&input)
+}
+pub fn vault_esign_signing_act(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningRequest,
+) -> MemoryResult<crate::blob_artifact::esign::SigningOutcome> {
+    memory.esign_signing_act(&input)
+}
+pub fn vault_esign_signing_pdf(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningPdfRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningPdfView> {
+    memory.esign_signing_pdf(&input)
+}
+pub fn vault_esign_signing_image(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningImageRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningImageView> {
+    memory.esign_signing_image(&input)
+}
+pub fn vault_esign_signing_signature(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningSignatureRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningSignatureView> {
+    memory.esign_signing_signature(&input)
+}
+pub fn vault_esign_seal_get(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSealGetRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSealView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.seal.get",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_seal_get(&input)
 }
 pub fn vault_conversations_create(
     memory: &Memory<'_>,

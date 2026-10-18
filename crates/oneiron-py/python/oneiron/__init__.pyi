@@ -1994,9 +1994,25 @@ class Oneiron:
             """Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."""
         def void(self, spec: Facade.EsignVoidRequest) -> Facade.EsignDispatchView:
             """Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."""
+        @property
+        def signing(self) -> "Oneiron._VaultEsignSigningVerbs": ...
+        @property
+        def seal(self) -> "Oneiron._VaultEsignSealVerbs": ...
     class _VaultEsignLinksVerbs:
         def issue(self, spec: Facade.EsignLinksIssueRequest) -> Facade.EsignLinksView:
             """The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."""
+    class _VaultEsignSigningVerbs:
+        def act(self, spec: Facade.EsignSigningRequest) -> Facade.SigningOutcome:
+            """One recipient ceremony act under the signing capability in the body: load the page, save a field, complete with consent, or reject; an agent caller makes Complete an automated sign act."""
+        def pdf(self, spec: Facade.EsignSigningPdfRequest) -> Facade.EsignSigningPdfView:
+            """One ceremony item under its signing capability, as base64 PDF bytes: the pinned original while signing, the hash-checked sealed output after sealing."""
+        def image(self, spec: Facade.EsignSigningImageRequest) -> Facade.EsignSigningImageView:
+            """Stores one signature image bound to the signing capability recipient and answers the ref a signature field value names."""
+        def signature(self, spec: Facade.EsignSigningSignatureRequest) -> Facade.EsignSigningSignatureView:
+            """Reads back one stored signature image under the signing capability that uploaded it, as base64 bytes."""
+    class _VaultEsignSealVerbs:
+        def get(self, spec: Facade.EsignSealGetRequest) -> Facade.EsignSealView:
+            """Where one signing document seal task stands: its folded status, every seal attempt receipt the queue holds for it, and its sealed manifest once one attempt sealed it."""
     class _VaultConsolidationVerbs:
         def enqueue(self, spec: Facade.ConsolidationEnqueueRequest) -> Facade.DreamerAttemptRef:
             """Enqueues one consolidation attempt and returns its durable job reference."""

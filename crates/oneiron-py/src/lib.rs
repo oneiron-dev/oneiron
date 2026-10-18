@@ -5292,6 +5292,44 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_esign_signing_act(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.signing.act")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.signing.act", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_signing_pdf(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.signing.pdf")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.signing.pdf", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_signing_image(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.signing.image")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.signing.image", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_signing_signature(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.signing.signature")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.esign.signing.signature", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_seal_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.seal.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.seal.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_conversations_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.conversations.create")?;
         let output = py
