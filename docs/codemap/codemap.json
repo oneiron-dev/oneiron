@@ -31824,10 +31824,10 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 36,
+      "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 2
      }
     },
@@ -31994,7 +31994,7 @@
      "path": "src/note/documents.rs",
      "purpose": "Entity-local text CRDT with stamped birth, stable cursors and isolated rewrites",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -32218,6 +32218,30 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "NoteAccessRequest",
+      "NoteAnchoredSpan",
+      "NoteEditorBinding",
+      "NoteEditorCloseRequest",
+      "NoteEditorClosed",
+      "NoteHistoryView",
+      "NoteReadRequest",
+      "NoteReadSource",
+      "NoteReadSpan",
+      "NoteReadView"
+     ],
+     "path": "src/note/reads.rs",
+     "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 4,
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/note/recovery.rs",
      "purpose": "Host-local history-free recovery of uncited NOTE values",
@@ -32233,6 +32257,16 @@
      "purpose": "Canonical authority-to-replica import and citation-closed NOTE disclosure",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/residence_read.rs",
+     "purpose": "Typed NOTE projection of an already admitted opened-item read cache",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -45551,6 +45585,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/connection/note_reads.rs",
+     "purpose": "Typed reads of a residence open, using the named connection's own vault",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
@@ -48506,7 +48550,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 369
+      "fn": 373
      }
     },
     {
@@ -48702,7 +48746,7 @@
      "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 10
      }
     },
@@ -54526,7 +54570,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 43,
+     "files": 45,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -54988,7 +55032,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 171,
+     "files": 172,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55186,7 +55230,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3361,
+   "source_files": 3364,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63581,7 +63625,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 320
+      "fn": 324
      }
     },
     {
@@ -64629,7 +64673,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 321
+      "fn": 325
      }
     },
     {
@@ -67632,7 +67676,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 66
+      "crate-vis": 67
      }
     },
     {
@@ -67643,6 +67687,16 @@
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/note_doors.rs",
+     "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -73966,8 +74020,18 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "re-export": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/note_editors.rs",
+     "purpose": "Explicit NOTE editor handles, owned by the principal that opened them",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -74857,7 +74921,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 322,
+     "files": 323,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75200,7 +75264,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 34,
+     "files": 35,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -75272,7 +75336,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 642,
+   "source_files": 644,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76036,14 +76100,25 @@
       "NodeMove",
       "NodePayload",
       "NotWorse",
+      "NoteAccessRequest",
       "NoteAnchor",
+      "NoteAnchoredSpan",
+      "NoteAuthorship",
       "NoteDefaultsView",
       "NoteEdit",
       "NoteEditOutcome",
+      "NoteEditorBinding",
+      "NoteEditorCloseRequest",
+      "NoteEditorClosed",
+      "NoteHistoryView",
       "NoteKindDescriptor",
       "NoteLifecycleStatus",
       "NoteLifecycleView",
       "NoteOverrides",
+      "NoteReadRequest",
+      "NoteReadSource",
+      "NoteReadSpan",
+      "NoteReadView",
       "NoteRefRequest",
       "NoteSeal",
       "NoteVersion",
@@ -76370,6 +76445,9 @@
       "ScopeScope",
       "ScopedReadReceipt",
       "ScopedReadResultLensFrameCard",
+      "ScopedReadResultOptionalNoteEditorBinding",
+      "ScopedReadResultOptionalNoteHistoryView",
+      "ScopedReadResultOptionalNoteReadView",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadAppendRequest",
@@ -76659,8 +76737,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 326,
-      "struct": 864
+      "enum": 327,
+      "struct": 877
      }
     },
     {

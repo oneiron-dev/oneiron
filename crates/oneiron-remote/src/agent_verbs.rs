@@ -1006,6 +1006,18 @@ impl OneironClient {
                 "vault.notes.from_entity" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
+                "vault.notes.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>,
+                >(client, verb, &input),
+                "vault.notes.history" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteHistoryView>>,
+                >(client, verb, &input),
+                "vault.notes.editor.bind" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteEditorBinding>>,
+                >(client, verb, &input),
+                "vault.notes.editor.close" => remote_agent_verb_output::<
+                    oneiron::note::NoteEditorClosed,
+                >(client, verb, &input),
                 "vault.notes.edit" => remote_agent_verb_output::<
                     oneiron::note::NoteProgramEditOutcome,
                 >(client, verb, &input),
@@ -4995,6 +5007,59 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.from_entity", value)
+    }
+    pub fn vault_notes_read(
+        &self,
+        input: &oneiron::note::NoteReadRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteReadView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.read", value)
+    }
+    pub fn vault_notes_history(
+        &self,
+        input: &oneiron::note::NoteAccessRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteHistoryView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.history", value)
+    }
+    pub fn vault_notes_editor_bind(
+        &self,
+        input: &oneiron::note::NoteAccessRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteEditorBinding>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.editor.bind", value)
+    }
+    pub fn vault_notes_editor_close(
+        &self,
+        input: &oneiron::note::NoteEditorCloseRequest,
+    ) -> Result<oneiron::note::NoteEditorClosed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.editor.close", value)
     }
     pub fn vault_notes_edit(
         &self,
