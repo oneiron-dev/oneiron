@@ -326,6 +326,30 @@ impl OneironClient {
                 "vault.skills.receipts" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubSkillReceipts,
                 >(client, verb, &input),
+                "vault.skills.convert" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillConvertReceipt,
+                >(client, verb, &input),
+                "vault.skills.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillLibraryView,
+                >(client, verb, &input),
+                "vault.skills.list" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillLibraryPage,
+                >(client, verb, &input),
+                "vault.skills.archive" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillLibraryView,
+                >(client, verb, &input),
+                "vault.skills.restore" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillLibraryRestoreReceipt,
+                >(client, verb, &input),
+                "vault.skills.fork" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillLibraryView,
+                >(client, verb, &input),
+                "vault.skills.rules.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HubConsentReceipt,
+                >(client, verb, &input),
+                "vault.skills.code_auto_install.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::HubConsentReceipt,
+                >(client, verb, &input),
                 "vault.skills.permissions.approve" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
@@ -1013,6 +1037,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.agents.spawn.get" => remote_agent_verb_output::<
                     oneiron::team::doors::PlannedSpawnObservation,
+                >(client, verb, &input),
+                "vault.tasks.cancel_force" => remote_agent_verb_output::<
+                    oneiron::task_verb::run_doors::CancelForceReceipt,
+                >(client, verb, &input),
+                "vault.runs.branches.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::run_doors::RunBranchesView,
                 >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
@@ -2933,6 +2963,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.receipts", value)
+    }
+    pub fn vault_skills_convert(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillConvertRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillConvertReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.convert", value)
+    }
+    pub fn vault_skills_get(
+        &self,
+        input: &oneiron::task_verb::sdk::HubSkillRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillLibraryView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.get", value)
+    }
+    pub fn vault_skills_list(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillLibraryListRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillLibraryPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.list", value)
+    }
+    pub fn vault_skills_archive(
+        &self,
+        input: &oneiron::task_verb::sdk::HubSkillRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillLibraryView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.archive", value)
+    }
+    pub fn vault_skills_restore(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillLibraryRestoreRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillLibraryRestoreReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.restore", value)
+    }
+    pub fn vault_skills_fork(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillLibraryForkRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillLibraryView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.fork", value)
+    }
+    pub fn vault_skills_rules_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillHashRuleRequest,
+    ) -> Result<oneiron::task_verb::sdk::HubConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.rules.set", value)
+    }
+    pub fn vault_skills_code_auto_install_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillCodeAutoInstallRequest,
+    ) -> Result<oneiron::task_verb::sdk::HubConsentReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.code_auto_install.set", value)
     }
     pub fn vault_skills_permissions_approve(
         &self,
@@ -5655,6 +5781,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.spawn.get", value)
+    }
+    pub fn vault_tasks_cancel_force(
+        &self,
+        input: &oneiron::task_verb::run_doors::CancelForceRequest,
+    ) -> Result<oneiron::task_verb::run_doors::CancelForceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.cancel_force", value)
+    }
+    pub fn vault_runs_branches_get(
+        &self,
+        input: &oneiron::task_verb::run_doors::RunBranchesRequest,
+    ) -> Result<oneiron::task_verb::run_doors::RunBranchesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.branches.get", value)
     }
     pub fn vault_workspace_establish(
         &self,

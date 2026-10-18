@@ -1044,6 +1044,10 @@ class Oneiron:
         @property
         def task_types(self) -> "Oneiron._VaultTaskTypesVerbs": ...
         @property
+        def tasks(self) -> "Oneiron._VaultTasksVerbs": ...
+        @property
+        def runs(self) -> "Oneiron._VaultRunsVerbs": ...
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
@@ -1109,8 +1113,6 @@ class Oneiron:
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
-        @property
-        def tasks(self) -> "Oneiron._VaultTasksVerbs": ...
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -1343,8 +1345,30 @@ class Oneiron:
             """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
         def receipts(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillReceipts:
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
+        def convert(self, spec: Facade.SkillConvertRequest) -> Facade.SkillConvertReceipt:
+            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
+            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+        def list(self, spec: Facade.SkillLibraryListRequest) -> Facade.SkillLibraryPage:
+            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+        def archive(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
+            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
+        def restore(self, spec: Facade.SkillLibraryRestoreRequest) -> Facade.SkillLibraryRestoreReceipt:
+            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
+        def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
+            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+        @property
+        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs": ...
+        @property
+        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
+    class _VaultSkillsRulesVerbs:
+        def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
+            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
+    class _VaultSkillsCodeAutoInstallVerbs:
+        def set(self, spec: Facade.SkillCodeAutoInstallRequest) -> Facade.HubConsentReceipt:
+            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""
@@ -1929,6 +1953,27 @@ class Oneiron:
             """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
         def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
             """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
+    class _VaultTasksVerbs:
+        def cancel_force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+        @property
+        def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
+    class _VaultTasksLinearVerbs:
+        @property
+        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
+        def provenance(self, spec: Facade.LinearProvenanceRequest) -> Facade.LinearProvenancePage:
+            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
+    class _VaultTasksLinearMappingVerbs:
+        def __call__(self, spec: Facade.LinearMappingRequest) -> Facade.LinearMappingView:
+            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
+        def edit(self, spec: Facade.LinearMappingEdit) -> Facade.LinearMappingEditReceipt:
+            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
+    class _VaultRunsVerbs:
+        @property
+        def branches(self) -> "Oneiron._VaultRunsBranchesVerbs": ...
+    class _VaultRunsBranchesVerbs:
+        def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
+            """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
@@ -2278,19 +2323,6 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
-    class _VaultTasksVerbs:
-        @property
-        def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
-    class _VaultTasksLinearVerbs:
-        @property
-        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
-        def provenance(self, spec: Facade.LinearProvenanceRequest) -> Facade.LinearProvenancePage:
-            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
-    class _VaultTasksLinearMappingVerbs:
-        def __call__(self, spec: Facade.LinearMappingRequest) -> Facade.LinearMappingView:
-            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
-        def edit(self, spec: Facade.LinearMappingEdit) -> Facade.LinearMappingEditReceipt:
-            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""

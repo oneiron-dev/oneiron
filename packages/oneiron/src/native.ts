@@ -121,6 +121,14 @@ vaultPacksGet(input: unknown): unknown
 vaultSkillsImport(input: unknown): unknown
 vaultSkillsSync(input: unknown): unknown
 vaultSkillsReceipts(input: unknown): unknown
+vaultSkillsConvert(input: unknown): unknown
+vaultSkillsGet(input: unknown): unknown
+vaultSkillsList(input: unknown): unknown
+vaultSkillsArchive(input: unknown): unknown
+vaultSkillsRestore(input: unknown): unknown
+vaultSkillsFork(input: unknown): unknown
+vaultSkillsRulesSet(input: unknown): unknown
+vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
@@ -347,6 +355,8 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultTasksCancelForce(input: unknown): unknown
+vaultRunsBranchesGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown

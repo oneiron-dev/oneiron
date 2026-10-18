@@ -292,22 +292,6 @@ impl Vault {
             .or_else(|error| settle(error, target))
     }
 
-    /// [`Self::advance_own_machine_history_in_txn`] in a write transaction
-    /// of its own.
-    #[expect(
-        dead_code,
-        reason = "L03's FIX 3820 fetch driver is its first caller; drop this then"
-    )]
-    pub(crate) fn advance_own_machine_history(
-        &self,
-        target: EntityId,
-    ) -> Result<PinExchangeOutcome> {
-        let mut txn = self.store.env.write_txn()?;
-        let outcome = self.advance_own_machine_history_in_txn(&mut txn, target)?;
-        txn.commit()?;
-        Ok(outcome)
-    }
-
     fn exchange_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

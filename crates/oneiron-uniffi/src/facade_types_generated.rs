@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 550 facade rows, 2046 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 512.
+// UniFFI census: 560 facade rows, 2083 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 522.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -7685,6 +7685,345 @@ pub struct HubSkillReceipts {
     pub imports: Vec<HubImportReceipt>,
     #[serde(rename = "admission", default, skip_serializing_if = "Option::is_none")]
     pub admission: Option<HubAdmissionReceipt>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillConvertRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillConvertRequest {
+    #[serde(rename = "message_refs")]
+    pub message_refs: Vec<String>,
+    #[serde(rename = "hint", default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillConvertReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum SkillConvertReceipt {
+    #[serde(rename = "created")]
+    Created {
+        #[serde(rename = "entity")]
+        entity: String,
+    },
+    #[serde(rename = "dup_pointer")]
+    DupPointer {
+        #[serde(rename = "entity")]
+        entity: String,
+    },
+    #[serde(rename = "merge_proposed")]
+    MergeProposed {
+        #[serde(rename = "existing")]
+        existing: String,
+        #[serde(rename = "proposal")]
+        proposal: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryLifecycle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SkillLibraryLifecycle {
+    #[serde(rename = "candidate")]
+    Candidate,
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "stale")]
+    Stale,
+    #[serde(rename = "archived")]
+    Archived,
+    #[serde(rename = "superseded")]
+    Superseded,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryCall`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillLibraryCall {
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "arguments")]
+    pub arguments: crate::WireJson,
+    #[serde(rename = "returns")]
+    pub returns: crate::WireJson,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryDependency`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillLibraryDependency {
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+    #[serde(
+        rename = "min_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_version: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillSourceEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillSourceEvidence {
+    #[serde(rename = "message_ref")]
+    pub message_ref: String,
+    #[serde(rename = "available")]
+    pub available: bool,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillStaleView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillStaleView {
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(rename = "deleted_refs")]
+    pub deleted_refs: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillForkLineage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillForkLineage {
+    #[serde(rename = "parent")]
+    pub parent: String,
+    #[serde(
+        rename = "parent_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_version: Option<String>,
+    #[serde(
+        rename = "parent_document",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_document: Option<String>,
+    #[serde(
+        rename = "parent_frontier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub parent_frontier: Option<Vec<u8>>,
+    #[serde(rename = "parent_available")]
+    pub parent_available: bool,
+    #[serde(rename = "hub_sources")]
+    pub hub_sources: Vec<HubRef>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillLibraryFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content")]
+    pub content: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillCapabilityView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillCapabilityView {
+    #[serde(rename = "bins")]
+    pub bins: Vec<String>,
+    #[serde(rename = "env")]
+    pub env: Vec<String>,
+    #[serde(rename = "mcp")]
+    pub mcp: Vec<String>,
+    #[serde(rename = "allowed_tools")]
+    pub allowed_tools: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryScan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillLibraryScan {
+    #[serde(rename = "contentHash")]
+    pub content_hash: String,
+    #[serde(rename = "provider")]
+    pub provider: String,
+    #[serde(rename = "scannedAt")]
+    pub scanned_at: u64,
+    #[serde(rename = "verdict")]
+    pub verdict: String,
+    #[serde(rename = "riskLevel")]
+    pub risk_level: String,
+    #[serde(rename = "completeness")]
+    pub completeness: String,
+    #[serde(rename = "governance")]
+    pub governance: String,
+    #[serde(
+        rename = "scannedAtDeclared",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub scanned_at_declared: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillLibraryView {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+    #[serde(rename = "desc")]
+    pub desc: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(
+        rename = "content_hash",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub content_hash: Option<String>,
+    #[serde(rename = "lifecycle")]
+    pub lifecycle: SkillLibraryLifecycle,
+    #[serde(rename = "approval")]
+    pub approval: ClaimApprovalStatus,
+    #[serde(rename = "loadable")]
+    pub loadable: bool,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "role")]
+    pub role: String,
+    #[serde(rename = "call", default, skip_serializing_if = "Option::is_none")]
+    pub call: Option<SkillLibraryCall>,
+    #[serde(
+        rename = "governance_tier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub governance_tier: Option<String>,
+    #[serde(rename = "generated")]
+    pub generated: bool,
+    #[serde(rename = "human_authored")]
+    pub human_authored: bool,
+    #[serde(rename = "dependencies")]
+    pub dependencies: Vec<SkillLibraryDependency>,
+    #[serde(rename = "provenance")]
+    pub provenance: crate::WireJson,
+    #[serde(rename = "source_messages")]
+    pub source_messages: Vec<SkillSourceEvidence>,
+    #[serde(rename = "stale", default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<SkillStaleView>,
+    #[serde(rename = "lineage")]
+    pub lineage: Vec<SkillForkLineage>,
+    #[serde(rename = "files", default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<Vec<SkillLibraryFile>>,
+    #[serde(
+        rename = "capabilities",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub capabilities: Option<SkillCapabilityView>,
+    #[serde(rename = "scans")]
+    pub scans: Vec<SkillLibraryScan>,
+    #[serde(rename = "receipts")]
+    pub receipts: HubSkillReceipts,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryListRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillLibraryListRequest {
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillLibraryPage {
+    #[serde(rename = "skills")]
+    pub skills: Vec<SkillLibraryView>,
+    #[serde(
+        rename = "next_after",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_after: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillRestoreAdmission`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillRestoreAdmission {
+    #[serde(rename = "source")]
+    pub source: HubRef,
+    #[serde(rename = "publisher")]
+    pub publisher: String,
+    #[serde(rename = "evidence_skill")]
+    pub evidence_skill: String,
+    #[serde(
+        rename = "effect_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub effect_digest: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryRestoreRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillLibraryRestoreRequest {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "admission", default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<SkillRestoreAdmission>,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryRestoreReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum SkillLibraryRestoreReceipt {
+    #[serde(rename = "restored")]
+    Restored {
+        #[serde(rename = "skill")]
+        skill: SkillLibraryView,
+        #[serde(rename = "admission", default, skip_serializing_if = "Option::is_none")]
+        admission: Option<HubAdmissionReceipt>,
+    },
+    #[serde(rename = "pending_admission")]
+    PendingAdmission {
+        #[serde(rename = "entity")]
+        entity: String,
+        #[serde(rename = "content_hash")]
+        content_hash: String,
+        #[serde(rename = "effect_digest")]
+        effect_digest: String,
+    },
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "entity")]
+        entity: String,
+        #[serde(rename = "admission")]
+        admission: HubAdmissionReceipt,
+    },
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillLibraryForkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillLibraryForkRequest {
+    #[serde(rename = "parent")]
+    pub parent: String,
+    #[serde(rename = "entity", default, skip_serializing_if = "Option::is_none")]
+    pub entity: Option<String>,
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillHashRuleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillHashRuleRequest {
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "blocked")]
+    pub blocked: bool,
+}
+
+/// `oneiron::task_verb::sdk_skills::SkillCodeAutoInstallRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCodeAutoInstallRequest {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
 }
 
 /// `oneiron::task_verb::sdk_hub::HubSkillPermissionRequest`.
@@ -20284,6 +20623,287 @@ pub struct PlannedSpawnObservation {
     pub learning: Vec<LearningObservation>,
     #[serde(rename = "issues")]
     pub issues: Vec<ObservationIssue>,
+}
+
+/// `oneiron::task_verb::run_doors::CancelForceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CancelForceRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::attempt_queue::types::AttemptState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AttemptState {
+    #[serde(rename = "Queued")]
+    Queued,
+    #[serde(rename = "Leased")]
+    Leased,
+    #[serde(rename = "Paused")]
+    Paused,
+    #[serde(rename = "Completed")]
+    Completed,
+    #[serde(rename = "Failed")]
+    Failed,
+    #[serde(rename = "Cancelled")]
+    Cancelled,
+    #[serde(rename = "Scheduled")]
+    Scheduled,
+    #[serde(rename = "Landing")]
+    Landing,
+    #[serde(rename = "Abandoned")]
+    Abandoned,
+}
+
+/// `oneiron::agent_run_status::AgentRunStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentRunStatus {
+    #[serde(rename = "spawned")]
+    Spawned,
+    #[serde(rename = "working")]
+    Working,
+    #[serde(rename = "needs_input")]
+    NeedsInput,
+    #[serde(rename = "delivered")]
+    Delivered,
+    #[serde(rename = "archived")]
+    Archived,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "abandoned")]
+    Abandoned,
+}
+
+/// `oneiron::run_tree::signal::RunAskQuestion`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAskQuestion {
+    #[serde(rename = "who")]
+    pub who: String,
+    #[serde(rename = "prompt")]
+    pub prompt: String,
+    #[serde(rename = "options")]
+    pub options: Vec<String>,
+    #[serde(rename = "deadline", default, skip_serializing_if = "Option::is_none")]
+    pub deadline: Option<u64>,
+}
+
+/// `oneiron::run_tree::signal::RunAskAnswerKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunAskAnswerKind {
+    #[serde(rename = "Word")]
+    Word,
+    #[serde(rename = "Companion")]
+    Companion,
+    #[serde(rename = "Default")]
+    Default,
+    #[serde(rename = "Unknown")]
+    Unknown,
+}
+
+/// `oneiron::run_tree::signal::RunAskAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAskAnswer {
+    #[serde(rename = "who")]
+    pub who: String,
+    #[serde(rename = "answer")]
+    pub answer: String,
+    #[serde(rename = "kind")]
+    pub kind: RunAskAnswerKind,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::run_tree::signal::RunAsk`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunAsk {
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "questions")]
+    pub questions: Vec<RunAskQuestion>,
+    #[serde(rename = "answers")]
+    pub answers: Vec<RunAskAnswer>,
+}
+
+/// `oneiron::run_tree::signal::RunSignalKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunSignalKind {
+    #[serde(rename = "Steer")]
+    Steer {
+        #[serde(rename = "instruction")]
+        instruction: String,
+    },
+    #[serde(rename = "Interject")]
+    Interject {
+        #[serde(rename = "content")]
+        content: String,
+    },
+    #[serde(rename = "Cancel")]
+    Cancel {
+        #[serde(rename = "standing")]
+        standing: CancelStanding,
+        #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
+    #[serde(rename = "AskAnswer")]
+    AskAnswer {
+        #[serde(rename = "handle")]
+        handle: String,
+        #[serde(rename = "who")]
+        who: String,
+        #[serde(rename = "answer")]
+        answer: String,
+        #[serde(rename = "kind")]
+        kind: RunAskAnswerKind,
+    },
+}
+
+/// `oneiron::run_tree::signal::RunBranchSignal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunBranchSignal {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "kind")]
+    pub kind: RunSignalKind,
+    #[serde(rename = "state")]
+    pub state: RunSignalState,
+}
+
+/// `oneiron::attempt_queue::cancel::types::CancelMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CancelMode {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "forced")]
+    Forced,
+}
+
+/// `oneiron::attempt_queue::cancel::types::AttemptCancellation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptCancellation {
+    #[serde(rename = "mode")]
+    pub mode: CancelMode,
+    #[serde(rename = "grounds", default, skip_serializing_if = "Option::is_none")]
+    pub grounds: Option<ForceCancelGrounds>,
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<LandingTrigger>,
+    #[serde(rename = "reserve_units")]
+    pub reserve_units: u64,
+    #[serde(rename = "reserve_spent_units")]
+    pub reserve_spent_units: u64,
+}
+
+/// `oneiron::attempt_queue::cancel::types::AttemptCancelPressure`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptCancelPressure {
+    #[serde(rename = "requests", default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<u32>,
+    #[serde(
+        rename = "rejections",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rejections: Option<u32>,
+    #[serde(rename = "pending", default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<u32>,
+}
+
+/// `oneiron::attempt_queue::cancel::types::AttemptCancelState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AttemptCancelState {
+    #[serde(rename = "landing", default, skip_serializing_if = "Option::is_none")]
+    pub landing: Option<AttemptLanding>,
+    #[serde(
+        rename = "resume_point",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resume_point: Option<AttemptResumePoint>,
+    #[serde(
+        rename = "cancellation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cancellation: Option<AttemptCancellation>,
+    #[serde(rename = "pressure", default, skip_serializing_if = "Option::is_none")]
+    pub pressure: Option<AttemptCancelPressure>,
+    #[serde(rename = "receipts", default, skip_serializing_if = "Option::is_none")]
+    pub receipts: Option<Vec<AttemptCancelReceipt>>,
+    #[serde(rename = "reserve", default, skip_serializing_if = "Option::is_none")]
+    pub reserve: Option<AttemptLandingReserve>,
+}
+
+/// `oneiron::task_verb::run_doors::RunBranchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunBranchView {
+    #[serde(rename = "branch")]
+    pub branch: String,
+    #[serde(rename = "run_id", default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(rename = "agent_status")]
+    pub agent_status: AgentRunStatus,
+    #[serde(rename = "attempt_count")]
+    pub attempt_count: u32,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(
+        rename = "last_error",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_error: Option<String>,
+    #[serde(rename = "asks")]
+    pub asks: Vec<RunAsk>,
+    #[serde(rename = "signals")]
+    pub signals: Vec<RunBranchSignal>,
+    #[serde(rename = "cancel_state")]
+    pub cancel_state: AttemptCancelState,
+}
+
+/// `oneiron::task_verb::run_doors::CancelForceReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CancelForceReceipt {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "effected")]
+    pub effected: bool,
+    #[serde(rename = "forced")]
+    pub forced: u32,
+    #[serde(rename = "branches")]
+    pub branches: Vec<RunBranchView>,
+}
+
+/// `oneiron::task_verb::run_doors::RunBranchesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunBranchesRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+}
+
+/// `oneiron::task_verb::run_doors::RunBranchesView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunBranchesView {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "branches")]
+    pub branches: Vec<RunBranchView>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.

@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 607 code-mode rows (586 host rows, 21 run rows), 2199 declarations.
-// Replies: 534 fully typed, 69 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 617 code-mode rows (596 host rows, 21 run rows), 2236 declarations.
+// Replies: 539 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -542,6 +542,26 @@ declare namespace Sdk {
   type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
   type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
   type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
+  type SkillConvertRequest = { message_refs: EntityId[]; hint?: string | null };
+  type SkillConvertReceipt = { outcome: "created"; entity: EntityId } | { outcome: "dup_pointer"; entity: EntityId } | { outcome: "merge_proposed"; existing: EntityId; proposal: EntityId };
+  type SkillLibraryLifecycle = "candidate" | "active" | "stale" | "archived" | "superseded";
+  type SkillLibraryCall = { reference: string; arguments: unknown; returns: unknown };
+  type SkillLibraryDependency = { skill_id: string; min_version?: string | null };
+  type SkillSourceEvidence = { message_ref: EntityId; available: boolean };
+  type SkillStaleView = { reason: string; deleted_refs: EntityId[] };
+  type SkillForkLineage = { parent: EntityId; parent_version?: string | null; parent_document?: EntityId | null; parent_frontier?: number[] | null; parent_available: boolean; hub_sources: HubRef[] };
+  type SkillLibraryFile = { path: string; content: number[] };
+  type SkillCapabilityView = { bins: string[]; env: string[]; mcp: string[]; allowed_tools: string[] };
+  type SkillLibraryScan = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
+  type SkillLibraryView = { entity: EntityId; skill_id: string; desc: string; version: string; content_hash?: string | null; lifecycle: SkillLibraryLifecycle; approval: ClaimApprovalStatus; loadable: boolean; source: string; role: string; call?: SkillLibraryCall | null; governance_tier?: string | null; generated: boolean; human_authored: boolean; dependencies: SkillLibraryDependency[]; provenance: unknown; source_messages: SkillSourceEvidence[]; stale?: SkillStaleView | null; lineage: SkillForkLineage[]; files?: SkillLibraryFile[] | null; capabilities?: SkillCapabilityView | null; scans: SkillLibraryScan[]; receipts: HubSkillReceipts };
+  type SkillLibraryListRequest = { after?: EntityId | null; limit: number };
+  type SkillLibraryPage = { skills: SkillLibraryView[]; next_after?: EntityId | null };
+  type SkillRestoreAdmission = { source: HubRef; publisher: string; evidence_skill: EntityId; effect_digest?: string | null };
+  type SkillLibraryRestoreRequest = { entity: EntityId; admission?: SkillRestoreAdmission | null };
+  type SkillLibraryRestoreReceipt = { outcome: "restored"; skill: SkillLibraryView; admission?: HubAdmissionReceipt | null } | { outcome: "pending_admission"; entity: EntityId; content_hash: string; effect_digest: string } | { outcome: "refused"; entity: EntityId; admission: HubAdmissionReceipt };
+  type SkillLibraryForkRequest = { parent: EntityId; entity?: EntityId | null; skill_id: string };
+  type SkillHashRuleRequest = { content_hash: string; blocked: boolean };
+  type SkillCodeAutoInstallRequest = { enabled: boolean };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
@@ -1355,6 +1375,23 @@ declare namespace Sdk {
   type LearningObservation = { cell: DoorsLearningCellView; mean: number; own: boolean; own_runs: number; prior_origin: string; prior_weight_runs: number; borrowed_from?: BorrowedCellView | null; untested: boolean; window_half_life_secs: number; estimator_version: number; evidence: DoorsLearningEvidenceView[] };
   type ObservationIssue = { kind: "stamp_mismatch"; consumer: string; reference: string; expected: TypeStamp; actual: TypeStamp } | { kind: "missing_binding"; reference: string } | { kind: "several_teams"; team_refs: string[] } | { kind: "team_mismatch"; member_ref: EntityId; expected: string; actual?: string | null } | { kind: "unavailable"; consumer: string; reason: string };
   type PlannedSpawnObservation = { spawn_ref: EntityId; phase: SpawnPhase; type_ref: TypeStamp; plan?: PlanObservation | null; launched: LaunchedMember[]; resolved?: ResolvedTeam | null; binding?: TeamBindingView | null; receipt?: TeamReceiptView | null; routes: RouteObservation[]; critics: CriticObservation[]; learning: LearningObservation[]; issues: ObservationIssue[] };
+  type CancelForceRequest = { task_ref: EntityId; reason?: string | null };
+  type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
+  type AgentRunStatus = "spawned" | "working" | "needs_input" | "delivered" | "archived" | "failed" | "abandoned";
+  type RunAskQuestion = { who: string; prompt: string; options: string[]; deadline?: number | null };
+  type RunAskAnswerKind = "Word" | "Companion" | "Default" | "Unknown";
+  type RunAskAnswer = { who: string; answer: string; kind: RunAskAnswerKind; at: number };
+  type RunAsk = { handle: string; questions: RunAskQuestion[]; answers: RunAskAnswer[] };
+  type RunSignalKind = { Steer: { instruction: string } } | { Interject: { content: string } } | { Cancel: { standing: CancelStanding; reason?: string | null } } | { AskAnswer: { handle: string; who: string; answer: string; kind: RunAskAnswerKind } };
+  type RunBranchSignal = { key: string; actor: string; kind: RunSignalKind; state: RunSignalState };
+  type CancelMode = "landed" | "forced";
+  type AttemptCancellation = { mode: CancelMode; grounds?: ForceCancelGrounds | null; actor: string; at: number; reason?: string | null; trigger?: LandingTrigger | null; reserve_units: number; reserve_spent_units: number };
+  type AttemptCancelPressure = { requests?: number; rejections?: number; pending?: number };
+  type AttemptCancelState = { landing?: AttemptLanding | null; resume_point?: AttemptResumePoint | null; cancellation?: AttemptCancellation | null; pressure?: AttemptCancelPressure; receipts?: AttemptCancelReceipt[]; reserve?: AttemptLandingReserve };
+  type RunBranchView = { branch: string; run_id?: string | null; state: AttemptState; agent_status: AgentRunStatus; attempt_count: number; result_ref?: string | null; last_error?: string | null; asks: RunAsk[]; signals: RunBranchSignal[]; cancel_state: AttemptCancelState };
+  type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
+  type RunBranchesRequest = { task_ref: EntityId };
+  type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -3494,6 +3531,12 @@ declare const vault: Sdk.VaultHost & {
     /** One trunk turn of a room, with the completed TASK result headers that hang under it. */
     trunk(input: Sdk.RoomTurnRequest): Promise<Sdk.RoomTrunk | StoredResult>;
   };
+  runs: {
+    branches: {
+      /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
+      get(input: Sdk.RunBranchesRequest): Promise<Sdk.RunBranchesView | StoredResult>;
+    };
+  };
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
     ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
@@ -3599,14 +3642,34 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   skills: {
+    /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
+    archive(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    code_auto_install: {
+      /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
+      set(input: Sdk.SkillCodeAutoInstallRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
+    convert(input: Sdk.SkillConvertRequest): Promise<Sdk.SkillConvertReceipt | StoredResult>;
+    /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+    fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+    get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
+    /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+    list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
     permissions: {
       /** The owner answers one imported skill permission ask at its exact hub source. */
       approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
     };
     /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
     receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
+    /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
+    restore(input: Sdk.SkillLibraryRestoreRequest): Promise<Sdk.SkillLibraryRestoreReceipt | StoredResult>;
+    rules: {
+      /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
+      set(input: Sdk.SkillHashRuleRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
     /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
     sync(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillSyncReceipt | StoredResult>;
   };
@@ -3629,6 +3692,8 @@ declare const vault: Sdk.VaultHost & {
     pin(input: Sdk.TaskTypeTreePin): Promise<Sdk.TaskTypeTreePinReceipt | StoredResult>;
   };
   tasks: {
+    /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+    cancel_force(input: Sdk.CancelForceRequest): Promise<Sdk.CancelForceReceipt | StoredResult>;
     linear: {
       /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
       mapping: ((input: Sdk.LinearMappingRequest) => Promise<Sdk.LinearMappingView | StoredResult>) & {

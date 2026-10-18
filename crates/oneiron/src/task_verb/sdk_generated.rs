@@ -467,6 +467,38 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
             ),
             (
+                "vault.skills.convert",
+                crate::code_run::vault_read::request_schema::<SkillConvertRequest>(),
+            ),
+            (
+                "vault.skills.get",
+                crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
+            ),
+            (
+                "vault.skills.list",
+                crate::code_run::vault_read::request_schema::<SkillLibraryListRequest>(),
+            ),
+            (
+                "vault.skills.archive",
+                crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
+            ),
+            (
+                "vault.skills.restore",
+                crate::code_run::vault_read::request_schema::<SkillLibraryRestoreRequest>(),
+            ),
+            (
+                "vault.skills.fork",
+                crate::code_run::vault_read::request_schema::<SkillLibraryForkRequest>(),
+            ),
+            (
+                "vault.skills.rules.set",
+                crate::code_run::vault_read::request_schema::<SkillHashRuleRequest>(),
+            ),
+            (
+                "vault.skills.code_auto_install.set",
+                crate::code_run::vault_read::request_schema::<SkillCodeAutoInstallRequest>(),
+            ),
+            (
                 "vault.skills.permissions.approve",
                 crate::code_run::vault_read::request_schema::<HubSkillPermissionRequest>(),
             ),
@@ -1728,6 +1760,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.agents.spawn.get",
                 crate::code_run::vault_read::request_schema::<crate::team::doors::PlannedSpawnRead>(
                 ),
+            ),
+            (
+                "vault.tasks.cancel_force",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::CancelForceRequest,
+                >(),
+            ),
+            (
+                "vault.runs.branches.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::RunBranchesRequest,
+                >(),
             ),
             (
                 "vault.workspace.establish",
@@ -3195,6 +3239,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.import",
     "vault.skills.sync",
     "vault.skills.receipts",
+    "vault.skills.convert",
+    "vault.skills.get",
+    "vault.skills.list",
+    "vault.skills.archive",
+    "vault.skills.restore",
+    "vault.skills.fork",
+    "vault.skills.rules.set",
+    "vault.skills.code_auto_install.set",
     "vault.skills.permissions.approve",
     "vault.packs.hooks.bind",
     "vault.packs.hooks.list",
@@ -3289,6 +3341,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.task_types.pin",
     "vault.task_types.get",
     "vault.agents.spawn.get",
+    "vault.tasks.cancel_force",
+    "vault.runs.branches.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3453,6 +3507,30 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.skills.receipts" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HubSkillReceipts>()
         }
+        "vault.skills.convert" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillConvertReceipt,
+        >(),
+        "vault.skills.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SkillLibraryView>()
+        }
+        "vault.skills.list" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SkillLibraryPage>()
+        }
+        "vault.skills.archive" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SkillLibraryView>()
+        }
+        "vault.skills.restore" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillLibraryRestoreReceipt,
+        >(),
+        "vault.skills.fork" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SkillLibraryView>()
+        }
+        "vault.skills.rules.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
+        "vault.skills.code_auto_install.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::HubConsentReceipt,
+        >(),
         "vault.skills.permissions.approve" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
         >(),
@@ -3736,6 +3814,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.agents.spawn.get" => crate::code_run::vault_read::request_schema::<
             crate::team::doors::PlannedSpawnObservation,
+        >(),
+        "vault.tasks.cancel_force" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::CancelForceReceipt,
+        >(),
+        "vault.runs.branches.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::RunBranchesView,
         >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
@@ -4699,6 +4783,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.convert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.archive" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.restore" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.fork" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.rules.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.code_auto_install.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -6215,6 +6355,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.agents.spawn.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.cancel_force" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.branches.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8209,6 +8363,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.receipts" => {
             let _input: HubSkillRequest = decode(value.clone())?;
         }
+        "vault.skills.convert" => {
+            let _input: SkillConvertRequest = decode(value.clone())?;
+        }
+        "vault.skills.get" => {
+            let _input: HubSkillRequest = decode(value.clone())?;
+        }
+        "vault.skills.list" => {
+            let _input: SkillLibraryListRequest = decode(value.clone())?;
+        }
+        "vault.skills.archive" => {
+            let _input: HubSkillRequest = decode(value.clone())?;
+        }
+        "vault.skills.restore" => {
+            let _input: SkillLibraryRestoreRequest = decode(value.clone())?;
+        }
+        "vault.skills.fork" => {
+            let _input: SkillLibraryForkRequest = decode(value.clone())?;
+        }
+        "vault.skills.rules.set" => {
+            let _input: SkillHashRuleRequest = decode(value.clone())?;
+        }
+        "vault.skills.code_auto_install.set" => {
+            let _input: SkillCodeAutoInstallRequest = decode(value.clone())?;
+        }
         "vault.skills.permissions.approve" => {
             let _input: HubSkillPermissionRequest = decode(value.clone())?;
         }
@@ -8934,6 +9112,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.agents.spawn.get" => {
             let _input: crate::team::doors::PlannedSpawnRead = decode(value.clone())?;
+        }
+        "vault.tasks.cancel_force" => {
+            let _input: crate::task_verb::run_doors::CancelForceRequest = decode(value.clone())?;
+        }
+        "vault.runs.branches.get" => {
+            let _input: crate::task_verb::run_doors::RunBranchesRequest = decode(value.clone())?;
         }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
@@ -9938,6 +10122,16 @@ pub fn invoke(
         "vault.skills.import" => encode(vault_skills_import(memory, decode(value)?)?),
         "vault.skills.sync" => encode(vault_skills_sync(memory, decode(value)?)?),
         "vault.skills.receipts" => encode(vault_skills_receipts(memory, decode(value)?)?),
+        "vault.skills.convert" => encode(vault_skills_convert(memory, decode(value)?)?),
+        "vault.skills.get" => encode(vault_skills_get(memory, decode(value)?)?),
+        "vault.skills.list" => encode(vault_skills_list(memory, decode(value)?)?),
+        "vault.skills.archive" => encode(vault_skills_archive(memory, decode(value)?)?),
+        "vault.skills.restore" => encode(vault_skills_restore(memory, decode(value)?)?),
+        "vault.skills.fork" => encode(vault_skills_fork(memory, decode(value)?)?),
+        "vault.skills.rules.set" => encode(vault_skills_rules_set(memory, decode(value)?)?),
+        "vault.skills.code_auto_install.set" => {
+            encode(vault_skills_code_auto_install_set(memory, decode(value)?)?)
+        }
         "vault.skills.permissions.approve" => {
             encode(vault_skills_permissions_approve(memory, decode(value)?)?)
         }
@@ -10377,6 +10571,8 @@ pub fn invoke(
         "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
+        "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
+        "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -11735,6 +11931,83 @@ pub fn vault_skills_receipts(
     crate::task_verb::sdk::hub_skill_receipts_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.receipts")?,
+        &input,
+    )
+}
+pub fn vault_skills_convert(
+    memory: &Memory<'_>,
+    input: SkillConvertRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillConvertReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.skills.convert", &input)
+}
+pub fn vault_skills_get(
+    memory: &Memory<'_>,
+    input: HubSkillRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
+    crate::task_verb::sdk::skill_library_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.get")?,
+        &input,
+    )
+}
+pub fn vault_skills_list(
+    memory: &Memory<'_>,
+    input: SkillLibraryListRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillLibraryPage> {
+    crate::task_verb::sdk::skill_library_list_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.list")?,
+        &input,
+    )
+}
+pub fn vault_skills_archive(
+    memory: &Memory<'_>,
+    input: HubSkillRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
+    crate::task_verb::sdk::skill_archive_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.archive")?,
+        &input,
+    )
+}
+pub fn vault_skills_restore(
+    memory: &Memory<'_>,
+    input: SkillLibraryRestoreRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillLibraryRestoreReceipt> {
+    crate::task_verb::sdk::skill_restore_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.restore")?,
+        &input,
+        None,
+    )
+}
+pub fn vault_skills_fork(
+    memory: &Memory<'_>,
+    input: SkillLibraryForkRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillLibraryView> {
+    crate::task_verb::sdk::skill_library_fork_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.fork")?,
+        &input,
+    )
+}
+pub fn vault_skills_rules_set(
+    memory: &Memory<'_>,
+    input: SkillHashRuleRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::skill_hash_rule_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.rules.set")?,
+        &input,
+    )
+}
+pub fn vault_skills_code_auto_install_set(
+    memory: &Memory<'_>,
+    input: SkillCodeAutoInstallRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::skill_code_auto_install_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.code_auto_install.set")?,
         &input,
     )
 }
@@ -13580,6 +13853,26 @@ pub fn vault_agents_spawn_get(
     crate::team::doors::observe_spawn_as(
         memory.vault(),
         &memory.embedded_owner("vault.agents.spawn.get")?,
+        input,
+    )
+}
+pub fn vault_tasks_cancel_force(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::CancelForceRequest,
+) -> MemoryResult<crate::task_verb::run_doors::CancelForceReceipt> {
+    crate::task_verb::run_doors::cancel_force_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.tasks.cancel_force")?,
+        input,
+    )
+}
+pub fn vault_runs_branches_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::RunBranchesRequest,
+) -> MemoryResult<crate::task_verb::run_doors::RunBranchesView> {
+    crate::task_verb::run_doors::read_branches_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.runs.branches.get")?,
         input,
     )
 }
