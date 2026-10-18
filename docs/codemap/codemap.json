@@ -10363,7 +10363,7 @@
      "path": "src/claim/history_pin_exchange.rs",
      "purpose": "Own-vault machine-history pin exchange (FIX 3821): a device adopts its vault's machine-claim histories as…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 4
      }
     },
     {
@@ -37946,7 +37946,7 @@
       "const": 1,
       "crate-vis": 11,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 3
      }
     },
