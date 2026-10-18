@@ -1,0 +1,180 @@
+{
+  "scenario": "JUDGMENTS-01",
+  "note": "Authored inputs and invariants, not an engine response or vault seed. Provider bindings are design data until typed band controls exist.",
+  "question": {
+    "text": "Does the unit explicitly say the parcel is ready?",
+    "contract": {
+      "kind": "noul"
+    }
+  },
+  "units": {
+    "ready": "Parcel R17 is ready.",
+    "not-ready": "Parcel R18 is not ready.",
+    "uncertain": "Parcel R19 readiness has not been confirmed."
+  },
+  "dial": {
+    "first": "local",
+    "ceiling": "big",
+    "band": {
+      "low": 0.35,
+      "high": 0.65
+    }
+  },
+  "bandPolicy": {
+    "mode": "enforce",
+    "question_version": 1,
+    "reversibility": "reversible_read"
+  },
+  "pins": [
+    {
+      "rung": "rule",
+      "model": "fixture-rule",
+      "version": "r1"
+    },
+    {
+      "rung": "local",
+      "model": "fixture-head",
+      "version": "h1"
+    },
+    {
+      "rung": "system_one",
+      "model": "fixture-precision",
+      "version": "p1"
+    },
+    {
+      "rung": "escalation",
+      "model": "fixture-escalation",
+      "version": "e1"
+    },
+    {
+      "rung": "big",
+      "model": "fixture-big",
+      "version": "b1"
+    }
+  ],
+  "confidenceCases": [
+    {
+      "id": "below-band",
+      "p": 0.1,
+      "answer": false,
+      "expectedModelRungs": [
+        "local"
+      ]
+    },
+    {
+      "id": "inside-band",
+      "p": 0.5,
+      "higherP": 0.95,
+      "answer": true,
+      "expectedModelRungs": [
+        "local",
+        "system_one"
+      ]
+    },
+    {
+      "id": "above-band",
+      "p": 0.9,
+      "answer": true,
+      "expectedModelRungs": [
+        "local"
+      ]
+    }
+  ],
+  "routingCases": [
+    {
+      "id": "absent-intermediate",
+      "absent": [
+        "system_one"
+      ],
+      "firstP": 0.5,
+      "nextP": 0.95,
+      "ceiling": "escalation",
+      "expectedModelRungs": [
+        "local",
+        "escalation"
+      ],
+      "expected": "answer"
+    },
+    {
+      "id": "ceiling-does-not-widen",
+      "absent": [
+        "system_one",
+        "escalation"
+      ],
+      "firstP": 0.5,
+      "ceiling": "escalation",
+      "expectedModelRungs": [
+        "local"
+      ],
+      "expected": "explicit abstain; big never called"
+    },
+    {
+      "id": "selected-first-absent",
+      "absent": [
+        "local"
+      ],
+      "first": "local",
+      "ceiling": "big",
+      "expectedModelRungs": [],
+      "expected": "explicit failure; no higher model called"
+    },
+    {
+      "id": "present-provider-fails",
+      "presentFailure": {
+        "rung": "local",
+        "status": 503,
+        "body": {
+          "error": {
+            "type": "server_error",
+            "message": "fixture unavailable"
+          }
+        }
+      },
+      "ceiling": "big",
+      "expectedModelRungs": [
+        "local"
+      ],
+      "expected": "explicit failure; no higher model called"
+    },
+    {
+      "id": "all-permitted-higher-absent",
+      "absent": [
+        "system_one",
+        "escalation",
+        "big"
+      ],
+      "firstP": 0.5,
+      "ceiling": "big",
+      "expectedModelRungs": [
+        "local"
+      ],
+      "expected": "explicit abstain; no owner ask above ceiling"
+    },
+    {
+      "id": "authorized-role-only",
+      "absent": [
+        "system_one",
+        "escalation",
+        "big"
+      ],
+      "firstP": 0.5,
+      "ceiling": "human",
+      "expectedModelRungs": [
+        "local"
+      ],
+      "expected": "explicit abstain and queued ask within authorized role chain; request is not a grant"
+    }
+  ],
+  "authority": {
+    "readable": [
+      "ready",
+      "not-ready",
+      "uncertain"
+    ],
+    "withheld": [
+      "other-principal-unit"
+    ],
+    "afterEveryAnswer": "same grants, source trust, principal and egress policy as before"
+  },
+  "optionalRealModel": "Check typed validity, cited fixture units, pins, scope and explicit failures only; do not assert scripted probabilities or exact prose for a real binding."
+}
