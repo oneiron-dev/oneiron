@@ -4,6 +4,7 @@
 //! A local change writes as the credential's principal, who must be the
 //! reacting person. A provider's reaction is connector ingress: only an
 //! owner-grade credential brings it, and the mirror MACHINE writes it.
+//! Beside the receipt, the door lists the rows it names (`host_door_lists`).
 use std::sync::Arc;
 
 use oneiron::WriteActor;
@@ -11,13 +12,41 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::reaction::{MessageReactionReceipt, MessageReactionRequest};
 
 use super::FacadeApiError;
-use super::host_doors::internal;
+use super::host_doors::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// `vault.messages.react`: one reaction change as the credential's
 /// principal, or a provider's reaction on an owner-grade credential.
+/// Beside it, the rows its receipt names: the reaction claim, the message
+/// or turn it is on, the reacting person and, for a provider's echo, the
+/// first-party claim it answers. The room the change lands in admits the
+/// reactor; it is no source of the receipt.
 pub(crate) async fn vault_messages_react(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MessageReactionRequest,
+) -> Listed<MessageReactionReceipt> {
+    let named = [
+        Some(input.message.clone()),
+        Some(input.by.clone()),
+        input
+            .external
+            .as_ref()
+            .and_then(|external| external.origin.clone()),
+    ];
+    naming(
+        vault_messages_react_answer(server, auth, input).await,
+        |receipt| {
+            hex_rows(
+                std::iter::once(receipt.id.as_str())
+                    .chain(named.iter().flatten().map(String::as_str)),
+            )
+        },
+    )
+}
+
+async fn vault_messages_react_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: MessageReactionRequest,

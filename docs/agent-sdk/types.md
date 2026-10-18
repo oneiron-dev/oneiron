@@ -940,6 +940,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def gate(self) -> "Oneiron._VaultGateVerbs": ...
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
         def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
@@ -962,6 +964,8 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
+        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
+        @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs": ...
@@ -973,8 +977,6 @@ class Oneiron:
         def messages(self) -> "Oneiron._VaultMessagesVerbs": ...
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
-        @property
-        def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
         @property
@@ -1203,7 +1205,7 @@ class Oneiron:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeChanged:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
         def open(self, spec: Facade.ResidenceOpenRequest) -> Facade.ResidenceOpened:
-            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
         def index(self, spec: Facade.ResidenceMachineRequest) -> Facade.ResidenceIndex:
             """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
         def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
@@ -1296,6 +1298,23 @@ class Oneiron:
             """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
+    class _VaultGateVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
+        @property
+        def checker(self) -> "Oneiron._VaultGateCheckerVerbs": ...
+    class _VaultGatePolicyVerbs:
+        def get(self, spec: Facade.PolicyManifestRead) -> Facade.PolicyManifestsView:
+            """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
+        def put(self, spec: Facade.PolicyManifestPut) -> Facade.PolicyManifestReceipt:
+            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+        def propose(self, spec: Facade.PolicyManifestPropose) -> Facade.PolicyManifestReceipt:
+            """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
+    class _VaultGateCheckerVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.GateCheckerView:
+            """The owner reads the calibrated checker verdict role from the vault model manifest."""
+        def set(self, spec: Facade.GateCheckerSet) -> Facade.GateCheckerReceipt:
+            """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
@@ -1416,7 +1435,30 @@ class Oneiron:
         def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
     class _VaultAgentsVerbs:
+        def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
+            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+        def get(self, spec: Facade.AgentDefinitionRequest) -> Facade.AgentDefinitionView:
+            """The owner reads one saved agent composition and its version and approval state."""
+        def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
+            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultWorkspaceVerbs:
+        def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
+            """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
+        @property
+        def members(self) -> "Oneiron._VaultWorkspaceMembersVerbs": ...
+        def roster(self, spec: Facade.WorkspaceRosterRequest) -> list[Facade.WorkspaceRosterEntry]:
+            """The owner reads the workspace house and companion roster with their actor, subject and facet refs."""
+        @property
+        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs": ...
+    class _VaultWorkspaceMembersVerbs:
+        def onboard(self, spec: Facade.WorkspaceMemberOnboardRequest) -> Facade.MemberOnboardingOutcome:
+            """A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate."""
+    class _VaultWorkspaceWorkCompanionVerbs:
+        def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
+            """A workspace's work_companion policy, readable by every member it governs."""
+        def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
+            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultCriticVerbs:
         def review(self, spec: Facade.CriticReviewSubmit) -> Facade.CriticReviewOutcome:
             """Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."""
@@ -1527,14 +1569,6 @@ class Oneiron:
             """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
         def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
-    class _VaultWorkspaceVerbs:
-        @property
-        def work_companion(self) -> "Oneiron._VaultWorkspaceWorkCompanionVerbs": ...
-    class _VaultWorkspaceWorkCompanionVerbs:
-        def get(self, spec: Facade.WorkspaceRefRequest) -> Facade.WorkCompanionPolicy:
-            """A workspace's work_companion policy, readable by every member it governs."""
-        def set(self, spec: Facade.WorkCompanionSetRequest) -> Facade.WorkCompanionPolicy:
-            """The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:
@@ -1595,12 +1629,23 @@ class Oneiron:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
         def from_entity(self, input: Facade.CreateNoteFromEntityRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind from an existing entity."""
+        def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:
+            """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
+        def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
+            """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+        @property
+        def editor(self) -> "Oneiron._VaultNotesEditorVerbs": ...
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
         def seal(self, request: Facade.NoteRefRequest) -> Facade.NoteSeal: ...
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
         def set_overrides(self, request: Facade.SetNoteOverridesRequest) -> Facade.NoteDefaultsView: ...
         def defaults(self, request: Facade.NoteRefRequest) -> Facade.NoteDefaultsView: ...
+    class _VaultNotesEditorVerbs:
+        def bind(self, spec: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteEditorBinding | None]:
+            """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
+        def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
+            """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""

@@ -156,6 +156,11 @@ pub struct AgentSpawnInput {
     /// order (OF-544); its confession answers each. Absent, the runner
     /// infers its own.
     pub objectives: Option<Vec<String>>,
+    /// Whom the child may address (FIX 1380): `parent`, `subtree`,
+    /// `project` or `vault`. Absent, the spawn role's default; either is
+    /// clamped to the parent's reach.
+    #[serde(default)]
+    pub comm: Option<crate::agent_dispatch::CommReach>,
 }
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
@@ -248,6 +253,7 @@ impl AgentSpawnInput {
                 .map(crate::EntityId::from_hex)
                 .transpose()?,
             objectives: self.objectives,
+            comm: self.comm,
             ..AgentSpawnContext::default()
         };
         let ask = super::SelfSpawnAsk {

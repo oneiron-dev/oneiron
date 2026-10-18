@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 394 code-mode rows (373 host rows, 21 run rows), 1429 declarations.
-// Replies: 340 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 399 code-mode rows (378 host rows, 21 run rows), 1456 declarations.
+// Replies: 345 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 81; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -683,6 +683,33 @@ declare namespace Sdk {
   type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; family: EntityId; targets?: EntityId[]; author: string };
   type EmbeddingSpaceProbeDeleteRequest = { id: string };
   type EmbeddingSpaceProbeDeleted = { ok: boolean };
+  type PolicyManifestRead = { manifest_ref?: string | null };
+  type PolicyCriticality = "normal" | "critical";
+  type PolicySensitivity = "normal" | "sensitive";
+  type PolicyAxes = { criticality?: PolicyCriticality | null; sensitivity?: PolicySensitivity | null };
+  type PolicyRule = { prefix: string; exact?: boolean; axes: PolicyAxes };
+  type PolicyCeiling = "auto" | "proposed";
+  type ActorCeiling = { actor_class: string; actor_ref?: string | null; ceiling: PolicyCeiling };
+  type PolicySource = "user_stated" | "observed" | "inferred" | "generated" | "imported" | "tool_output";
+  type SensitivityName = "public" | "private" | "internal" | "sensitive" | "restricted";
+  type SensitivityBand = number | SensitivityName;
+  type SourceTrustRow = { actor_ref?: string | null; max_auto_sensitivity?: SensitivityBand | null; auto?: boolean | null; receipted?: boolean; warned?: boolean };
+  type SourceTrust = SourceTrustRow | SourceTrustRow[] | boolean | SensitivityBand;
+  type PolicySignature = { alg: string; key_id?: string | null; sig: string };
+  type PolicyManifest = { schema_version: string; pack_id: string; pack_version: string; min_engine_version: string; defaults: PolicyAxes; rules: PolicyRule[]; actor_ceilings: ActorCeiling[]; source_trust?: Record<string, SourceTrust>; signature?: PolicySignature | null; signatures?: PolicySignature[]; auto_checker?: string | null };
+  type PolicyManifestView = { manifest_ref: string; body_hash: string; trusted: boolean; quarantined: boolean; manifest: PolicyManifest };
+  type PolicyManifestsView = { default_manifest_ref: string; read_frontier_hash: string; manifests: PolicyManifestView[] };
+  type PolicyManifestPut = { manifest_ref?: string | null; expected_body_hash?: string | null; manifest: PolicyManifest };
+  type PolicyManifestReceipt = { manifest: PolicyManifestView; approval: PolicyCeiling; receipt_ref: string; read_frontier_hash: string };
+  type PolicyManifestPropose = { manifest: PolicyManifest };
+  type ModelId = string;
+  type ModelSlot = "llm" | "embedder" | "oneironer";
+  type ConfidenceBand = "low" | "medium" | "high" | "certain";
+  type VerdictMode = "shadow" | "enforce";
+  type VerdictBinding = { model: ModelId; slot: ModelSlot; floor: ConfidenceBand; mode: VerdictMode };
+  type GateCheckerView = { binding?: VerdictBinding | null };
+  type GateCheckerSet = { binding: VerdictBinding };
+  type GateCheckerReceipt = { binding: VerdictBinding; receipt_ref: string };
   type LearningSettingsRequest = { key?: string | null };
   type LearningSettingSpecView = { key: string; min: number; max: number; seed: number; value: number };
   type LearningSettingMode = "seed" | "pin";
@@ -1037,7 +1064,6 @@ declare namespace Sdk {
   type SpentKind = "window" | "credit";
   type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut";
   type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
-  type ModelId = string;
   type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
   type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
   type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure };
@@ -1415,7 +1441,8 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
-  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null };
+  type CommReach = "parent" | "subtree" | "project" | "vault";
+  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
   type AgentSpawnKind = "agent_spawn";
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
@@ -1981,6 +2008,22 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
   forget(input: Sdk.ForgetRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
+  gate: {
+    checker: {
+      /** The owner reads the calibrated checker verdict role from the vault model manifest. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.GateCheckerView | StoredResult>;
+      /** The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings. */
+      set(input: Sdk.GateCheckerSet): Promise<Sdk.GateCheckerReceipt | StoredResult>;
+    };
+    policy: {
+      /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
+      get(input: Sdk.PolicyManifestRead): Promise<Sdk.PolicyManifestsView | StoredResult>;
+      /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
+      propose(input: Sdk.PolicyManifestPropose): Promise<Sdk.PolicyManifestReceipt | StoredResult>;
+      /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+      put(input: Sdk.PolicyManifestPut): Promise<Sdk.PolicyManifestReceipt | StoredResult>;
+    };
+  };
   /** Reads one entity as a typed view, or none when absent or withheld; the receipt says which. */
   get(input: Sdk.EntityRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView | null> | StoredResult>;
   graph: {
