@@ -300,6 +300,23 @@ export class Oneiron {
     decisions: {
       asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
+    /** Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands. */
+    fold: (input: Facade.FoldMarkRequest): Facade.FoldReply<Facade.FoldMarked> => this.#call(() => this.#client.selfFold(input) as Facade.FoldReply<Facade.FoldMarked>),
+    /** Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs. */
+    compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
+    /** Appends a fold of the attached run after its current tail, without replacing the earlier stub. */
+    unfold: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldUnfolded> => this.#call(() => this.#client.selfUnfold(input) as Facade.FoldReply<Facade.FoldUnfolded>),
+    /** Lists the attached run's landed folds, pending marks and outstanding compact ask. */
+    folds: Object.assign((input: Facade.FoldRunRequest): Facade.FoldReply<Facade.FoldList> => this.#call(() => this.#client.selfFolds(input) as Facade.FoldReply<Facade.FoldList>), {
+      /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
+      describe: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldDescription> => this.#call(() => this.#client.selfFoldsDescribe(input) as Facade.FoldReply<Facade.FoldDescription>),
+    }),
+    run: {
+      /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
+      attach: (input: Facade.RunAttachRequest): Facade.RunAttached => this.#call(() => this.#client.selfRunAttach(input) as Facade.RunAttached),
+    },
+    /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
+    history: (input: Facade.FoldHistoryRequest): Facade.FoldHistory => this.#call(() => this.#client.selfHistory(input) as Facade.FoldHistory),
   }
   readonly vault = {
     people: {

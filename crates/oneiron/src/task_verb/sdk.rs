@@ -574,7 +574,9 @@ include!("sdk_generated.rs");
 /// the rows the run answers itself. The guest's method table, the executor
 /// prompt and dispatch all read this list.
 pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> + Clone {
-    let host = AgentVerb::ALL.iter().map(|verb| verb.as_str());
+    let host = AgentVerb::ALL.iter()
+        .filter(|verb| RunVerb::from_name(verb.as_str()).is_none())
+        .map(|verb| verb.as_str());
     host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
 }
 

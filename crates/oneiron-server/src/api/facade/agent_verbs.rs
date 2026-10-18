@@ -368,4 +368,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.lifecycle", post(facade_route))
         .route("/vault.notes.set_overrides", post(facade_route))
         .route("/vault.notes.defaults", post(facade_route))
+        .route("/self.fold", post(facade_route))
+        .route("/self.compact", post(facade_route))
+        .route("/self.unfold", post(facade_route))
+        .route("/self.folds", post(facade_route))
+        .route("/self.run.attach", post(facade_route))
+        .route("/self.folds.describe", post(facade_route))
+        .route("/self.history", post(facade_route))
 }

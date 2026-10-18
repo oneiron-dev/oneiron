@@ -389,6 +389,13 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    SelfFold,
+    SelfCompact,
+    SelfUnfold,
+    SelfFolds,
+    SelfRunAttach,
+    SelfFoldsDescribe,
+    SelfHistory,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -780,6 +787,13 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::SelfFold,
+        Self::SelfCompact,
+        Self::SelfUnfold,
+        Self::SelfFolds,
+        Self::SelfRunAttach,
+        Self::SelfFoldsDescribe,
+        Self::SelfHistory,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -1182,6 +1196,13 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::SelfFold => "self.fold",
+            Self::SelfCompact => "self.compact",
+            Self::SelfUnfold => "self.unfold",
+            Self::SelfFolds => "self.folds",
+            Self::SelfRunAttach => "self.run.attach",
+            Self::SelfFoldsDescribe => "self.folds.describe",
+            Self::SelfHistory => "self.history",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1532,6 +1553,13 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1930,6 +1958,13 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
         )
     }
     pub const fn is_section(self) -> bool {
@@ -2386,6 +2421,13 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfFolds
+                | Self::SelfRunAttach
+                | Self::SelfFoldsDescribe
+                | Self::SelfHistory
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -2625,6 +2667,10 @@ impl AgentVerb {
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::SelfFold
+                | Self::SelfCompact
+                | Self::SelfUnfold
+                | Self::SelfRunAttach
         )
     }
     pub const fn proposes(self) -> bool {
@@ -3046,6 +3092,13 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfFold => &["spec"],
+            Self::SelfCompact => &["spec"],
+            Self::SelfUnfold => &["spec"],
+            Self::SelfFolds => &["spec"],
+            Self::SelfRunAttach => &["spec"],
+            Self::SelfFoldsDescribe => &["spec"],
+            Self::SelfHistory => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -3438,6 +3491,13 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfFold => &["spec"],
+            Self::SelfCompact => &["spec"],
+            Self::SelfUnfold => &["spec"],
+            Self::SelfFolds => &["spec"],
+            Self::SelfRunAttach => &["spec"],
+            Self::SelfFoldsDescribe => &["spec"],
+            Self::SelfHistory => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -4506,6 +4566,27 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::SelfFold => {
+                "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."
+            }
+            Self::SelfCompact => {
+                "Asks the attached run to fold its pending marks in one batch at its next step boundary; read self.history for landed folds and epochs."
+            }
+            Self::SelfUnfold => {
+                "Appends a fold of the attached run after its current tail, without replacing the earlier stub."
+            }
+            Self::SelfFolds => {
+                "Lists the attached run's landed folds, pending marks and outstanding compact ask."
+            }
+            Self::SelfRunAttach => {
+                "Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls."
+            }
+            Self::SelfFoldsDescribe => {
+                "Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles."
+            }
+            Self::SelfHistory => {
+                "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
             }
         }
     }

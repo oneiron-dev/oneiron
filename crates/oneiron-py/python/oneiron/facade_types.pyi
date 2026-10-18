@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 345 facade rows, 1373 declarations.
-Inputs: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 302 of 345 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 352 facade rows, 1392 declarations.
+Inputs: 309 of 352 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 309 of 352 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -7200,6 +7200,56 @@ class NoteKindDescriptor(TypedDict):
 class NoteDefaultsView(TypedDict):
     overrides: NoteOverrides
     defaults: NoteKindDescriptor
+FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None]})
+class FoldReplyRefused(TypedDict):
+    error: str
+FoldReply = T | FoldReplyRefused
+FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool})
+class FoldCompactRequest(TypedDict):
+    live_run: str
+    note: NotRequired[str | None]
+class FoldCompactAsked(TypedDict):
+    pending: list[str]
+    applies: str
+class FoldUnfoldRequest(TypedDict):
+    live_run: str
+    fold: str
+FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
+class FoldRunRequest(TypedDict):
+    live_run: str
+FoldSpan = TypedDict("FoldSpan", {"fold": str, "from": int, "through": int})
+FoldPending = TypedDict("FoldPending", {"fold": str, "from": int, "through": int, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+class FoldList(TypedDict):
+    folds: list[FoldSpan]
+    pending: list[FoldPending]
+    compact_asked: bool
+class RunAttachRequest(TypedDict):
+    run: str
+    rebind: NotRequired[bool]
+class RunAttached(TypedDict):
+    live_run: str
+FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str]})
+FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+FoldDescription = FoldDescriptionFolded | FoldDescriptionPending
+FoldHistoryRequest = TypedDict("FoldHistoryRequest", {"live_run": str, "from": int, "limit": int})
+class FoldUnfold(TypedDict):
+    fold: int
+    at: int
+FoldHistoryEpoch = TypedDict("FoldHistoryEpoch", {"summary_ref": str, "epoch": int, "from": int, "through": int, "text": NotRequired[str | None]})
+class FoldHistoryStep(TypedDict):
+    step: int
+    code: str
+    console: str
+class FoldHistory(TypedDict):
+    run: str
+    completed_steps: int
+    compacted_through: NotRequired[int | None]
+    state: FoldList
+    folds: list[FoldDescription]
+    unfolds: list[FoldUnfold]
+    epochs: list[FoldHistoryEpoch]
+    steps: list[FoldHistoryStep]
+    next: NotRequired[int | None]
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

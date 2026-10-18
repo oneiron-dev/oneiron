@@ -59,6 +59,7 @@ pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
 // The owner's residence doors (OF-534), likewise.
+pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.

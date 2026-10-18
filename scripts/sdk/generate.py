@@ -17,10 +17,22 @@ DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
 # A `context: "run"` row is answered by the code run itself, over its own
 # dispatcher and storage route, as the typed `self.*` call its `effect` names.
-# Code mode serves it beside the host's rows; no host door, tool, route or
-# binding can carry a run, so it projects nowhere else. Its optional `output`
-# is the type its reply carries, which only the catalog fragment reads.
+# A callable host-door row can also carry a `run` input and effect: code mode
+# binds its run implicitly, while the public input names the credential's
+# attached live-run handle. A run-only row projects nowhere else.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
+for row in ROWS:
+    if 'run' not in row: continue
+    run = row['run']
+    if set(run) != {'input', 'effect'} or not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: a public run verb names its run input and effect beside a host door')
+    RUN_ROWS.append({'name': row['name'], 'scope': row['scope'], 'context': 'run',
+                     'input': run['input'], 'effect': run['effect'], 'output': row['output']})
+RUN_NAMES = {row['name'] for row in RUN_ROWS}
+CALL_NAMES = {row['name'] for row in ROWS}
+# Code mode keeps the implicit run and its original input. HTTP, SDK and
+# direct MCP calls take the host door's explicit attached-run input.
+CODE_ROWS = [row for row in ROWS if row['name'] not in RUN_NAMES] + RUN_ROWS
 for row in RUN_ROWS:
     if set(row) - {'output', 'outputs_by_input'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
         raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output and per-input outputs, and nothing else')
@@ -1041,8 +1053,8 @@ def run_catalog():
     'RunVerb: the rows code mode serves that the run answers itself.'
     variants = {r['name']: ''.join(part.title() for part in r['name'].replace('.', '_').split('_')) for r in RUN_ROWS}
     out = HEADER + '/// The verb-table rows a code run answers itself, as the typed `self.*` call\n'
-    out += '/// each names: code mode serves them beside the host\'s rows, and no host door,\n'
-    out += '/// tool, route or binding carries them.\n'
+    out += '/// each names. Public host-door projections bind an attached live run;\n'
+    out += '/// code mode keeps the implicit run and its original input.\n'
     out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum RunVerb { ' + ','.join(variants.values()) + ' }\nimpl RunVerb {\n'
     out += 'pub const ALL: &[Self] = &[' + ','.join('Self::' + variant for variant in variants.values()) + '];\n'
     out += "pub fn from_name(name: &str) -> Option<Self> { Self::ALL.iter().copied().find(|verb| verb.as_str() == name) }\n"
@@ -1283,7 +1295,7 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 match verb {{
 '''
     dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
-    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in ROWS if r.get('context') == 'browser']), ('Run', RUN_ROWS)]:
+    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in ROWS if r.get('context') == 'browser']), ('Run', [r for r in RUN_ROWS if r['name'] not in CALL_NAMES])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
@@ -1303,7 +1315,7 @@ def outputs():
     # Sharing one immutable schema table avoids repeated schemars generation on tool listing.
     core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
-    for r in ROWS + RUN_ROWS:
+    for r in ROWS + [row for row in RUN_ROWS if row['name'] not in CALL_NAMES]:
         core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
@@ -1516,7 +1528,7 @@ def outputs():
     # ONE-2510 S2: the code-mode catalog fragment over every row code mode
     # serves, at catalog_fragment.d.ts and at code-mode.d.ts, with its
     # revision; its own inventory leaves the facade types above as they are.
-    files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
+    files.update(catalog_fragment(ROOT, CODE_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)

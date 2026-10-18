@@ -3221,6 +3221,55 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_fold(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.fold")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.fold", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_compact(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.compact")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.compact", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_unfold(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.unfold")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.unfold", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_folds(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.folds")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.folds", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_run_attach(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.run.attach")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.run.attach", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_folds_describe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.folds.describe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.folds.describe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.history")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
 
     // END GENERATED AGENT VERBS
 }
