@@ -92,7 +92,10 @@ pub use kinds::{
     ContextDefault, DISSENT_NOTE_KIND, ExtractionDefault, NoteKindDescriptor, RetentionDefault,
 };
 pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
+mod overrides;
 pub(crate) use lifecycle::{note_sealed_in_txn, seal_note_in_txn};
+pub(crate) use overrides::note_defaults_in_txn;
+pub use overrides::{NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest};
 pub use proposals::{NoteFork, NoteLandingReceipt, NoteReviewBundle, NoteVerdict};
 pub use tombstone_review::NoteTombstoneProposal;
 pub(crate) use tombstone_review::{
@@ -320,17 +323,18 @@ pub(crate) fn decode_note_body_in_txn(
 }
 
 /// Shared NOTE admission. Ordinary retrieval excludes every owner-only and
-/// explicit-only kind.
+/// explicit-only NOTE, by the context its kind gives it or it overrides.
 pub(crate) fn note_body_readable(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
+    id: &EntityId,
     bytes: &[u8],
     actor: Option<&EntityId>,
 ) -> Result<bool> {
     let Ok(body) = decode_note_body_using(bytes, NoteKind::wire) else {
         return Ok(false);
     };
-    let context = kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?;
+    let context = overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?;
     Ok(match context {
         ContextDefault::OwnerOnly | ContextDefault::ExplicitOnly => match actor {
             Some(actor) => {
@@ -354,15 +358,17 @@ pub(crate) fn reader_imported_note(
     Ok(import::note_importer_in_txn(store, txn, &body.author_ref)? == Some(reader))
 }
 
-/// Whether `body`'s kind is explicit-only: out of default context, and
-/// readable on an explicit read by every reader its policy admits.
+/// Whether NOTE `id` is explicit-only, by its kind or its override: out of
+/// default context, and readable on an explicit read by every reader its
+/// policy admits.
 pub(crate) fn note_explicit_only_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
+    id: &EntityId,
     body: &NoteBody,
 ) -> Result<bool> {
     Ok(
-        kinds::context_in_txn(store, txn, body.kind.as_str().as_ref())?
+        overrides::note_context_in_txn(store, txn, id, body.kind.as_str().as_ref())?
             == ContextDefault::ExplicitOnly,
     )
 }
@@ -403,6 +409,7 @@ pub(crate) fn ordinary_entity_visible(
         || note_body_readable(
             store,
             txn,
+            id,
             &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             None,
         )?)
