@@ -331,6 +331,10 @@ pub struct MediaRow {
     pub outputs: BTreeSet<Modality>,
     pub native_rates: Vec<oneiron::llm::media::NativeRate>,
     pub max_references: usize,
+    /// The machine id of the owner's node that offers the row, when the mesh
+    /// discovered it (FIX 3229): a raw call names it by `model`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer: Option<String>,
 }
 
 /// A media call's job, as its caller polls it.
@@ -553,6 +557,7 @@ impl MediaRuntime {
                     outputs: seat.caps.outputs.clone(),
                     native_rates: seat.caps.native_rates.clone(),
                     max_references: seat.caps.max_references,
+                    peer: None,
                 })
                 .collect();
             runtime.seats.insert(
@@ -1025,7 +1030,7 @@ impl MediaRuntime {
 impl super::ModelRuntime {
     /// Every row of the `ai.*` family that serves `operation` (every one
     /// when `None`) over `inputs`: each available rung of each text seat,
-    /// then each media row. Only a rung that can take a call now is listed
+    /// each model the mesh discovered, then each media row. Only a rung that can take a call now is listed
     /// (FIX 2942): one whose provider is down, whose one probation request
     /// is out, or that a limit holds is left out until it is back.
     #[must_use]
@@ -1083,8 +1088,42 @@ impl super::ModelRuntime {
                         outputs: caps.outputs.clone(),
                         native_rates: Vec::new(),
                         max_references: 0,
+                        peer: None,
                     });
                 }
+            }
+            // Each model the mesh discovered that can take a call now, by
+            // its own id on the raw routes (FIX 3229).
+            for (model, peer, ladder) in self.raw_router.discovered_routes() {
+                let mut caps = MediaCaps::for_operation(AiOperation::Text);
+                for (capability, modality) in [
+                    (oneiron::LlmCapability::ImageInput, Modality::Image),
+                    (oneiron::LlmCapability::AudioInput, Modality::Audio),
+                ] {
+                    if ladder.supports(&model, &capability) {
+                        caps.inputs.insert(modality);
+                    }
+                }
+                let health = ladder.health();
+                if !inputs.is_subset(&caps.inputs)
+                    || health.is_empty()
+                    || !health.iter().all(|(_, rung)| rung.live_now())
+                {
+                    continue;
+                }
+                rows.push(MediaRow {
+                    operation: AiOperation::Text,
+                    model: model.to_string(),
+                    seat_model: model.to_string(),
+                    provider: ladder.first_provider().unwrap_or_default().to_owned(),
+                    wire_model: model.to_string(),
+                    locality: ModelLocality::OwnServer,
+                    inputs: caps.inputs,
+                    outputs: caps.outputs,
+                    native_rates: Vec::new(),
+                    max_references: 0,
+                    peer: Some(peer),
+                });
             }
         }
         rows.extend(
