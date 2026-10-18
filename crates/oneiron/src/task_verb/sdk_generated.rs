@@ -10,6 +10,48 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     > = std::sync::LazyLock::new(|| {
         std::collections::HashMap::from([
             (
+                "vault.commitments.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentCreateRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentRefRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.instances",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentRefRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.proposals",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentRefRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.fulfill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentFulfillRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentCloseRequest,
+                >(),
+            ),
+            (
+                "vault.commitments.supersede",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::commitment_doors::CommitmentCloseRequest,
+                >(),
+            ),
+            (
                 "fetch",
                 crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
             ),
@@ -547,6 +589,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::VaultReceiptsRequest,
                 >(),
+            ),
+            (
+                "vault.assets.ingest",
+                crate::code_run::vault_read::request_schema::<crate::memory::AssetIngestRequest>(),
+            ),
+            (
+                "vault.assets.resolve",
+                crate::code_run::vault_read::request_schema::<crate::memory::AssetResolveRequest>(),
+            ),
+            (
+                "vault.search.vector",
+                crate::code_run::vault_read::request_schema::<crate::memory::VectorSearchRequest>(),
             ),
             (
                 "vault.images.view",
@@ -4080,6 +4134,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.sieve.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.evidence.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.cadence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::WakeCadenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.settlements",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::observation::WakeSettlementsRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.settlements.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::observation::WakeSettlementRequest,
+                >(),
+            ),
+            (
                 "vault.sieve.queue",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_wake::sieve_doors::SievePageRequest,
@@ -4784,6 +4868,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemoryEdgeInput>(),
             ),
             (
+                "tasks.consult.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::ConsultLandRequest,
+                >(),
+            ),
+            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),
@@ -4824,6 +4914,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.commitments.create",
+    "vault.commitments.get",
+    "vault.commitments.instances",
+    "vault.commitments.proposals",
+    "vault.commitments.fulfill",
+    "vault.commitments.release",
+    "vault.commitments.supersede",
     "fetch",
     "crawl",
     "feedback.preview",
@@ -4887,6 +4984,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.assets.ingest",
+    "vault.assets.resolve",
+    "vault.search.vector",
     "self.admission.status",
     "self.admission.receipts",
     "vault.campaign.compliance.install",
@@ -5235,6 +5335,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.step",
     "vault.runs.checkpoint",
     "vault.consolidation.promote",
+    "vault.sieve.evidence",
+    "vault.sieve.evidence.replay",
+    "vault.sieve.cadence",
+    "vault.sieve.settlements",
+    "vault.sieve.settlements.get",
     "vault.sieve.queue",
     "vault.sieve.retained",
     "vault.sieve.receipts",
@@ -5339,6 +5444,27 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.commitments.create" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentCreateReceipt,
+        >(),
+        "vault.commitments.get" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.instances" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::commitment_doors::CommitmentView>,
+        >(),
+        "vault.commitments.proposals" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::commitment_doors::CommitmentWakeProposal>,
+        >(),
+        "vault.commitments.fulfill" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.release" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
+        "vault.commitments.supersede" => crate::code_run::vault_read::request_schema::<
+            crate::memory::commitment_doors::CommitmentView,
+        >(),
         "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
         "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
@@ -5524,6 +5650,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.assets.ingest" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::AssetIngestReceipt>()
+        }
+        "vault.assets.resolve" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::AssetResolved>,
+        >(),
+        "vault.search.vector" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>,
+        >(),
         "self.admission.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::admission::AdmissionReceipt>,
         >(),
@@ -6588,6 +6723,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
         >(),
+        "vault.sieve.evidence" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
+        >(),
+        "vault.sieve.evidence.replay" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
+        >(),
+        "vault.sieve.cadence" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeCadenceView>()
+        }
+        "vault.sieve.settlements" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::observation::WakeSettlementsPage,
+        >(),
+        "vault.sieve.settlements.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::observation::WakeSettlementView>,
+        >(),
         "vault.sieve.queue" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_wake::sieve_doors::SieveQueuePage,
         >(),
@@ -6917,6 +7067,55 @@ pub fn mcp_arguments_schema_from_input(
 ) -> Option<serde_json::Value> {
     let mut properties = serde_json::Map::new();
     let required: &[&str] = match verb {
+        "vault.commitments.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.instances" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.proposals" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.fulfill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.commitments.supersede" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "fetch" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7693,6 +7892,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.assets.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.assets.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.search.vector" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12124,6 +12344,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.sieve.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.evidence.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.cadence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.settlements" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.settlements.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.sieve.queue" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12958,6 +13213,34 @@ pub fn mcp_arguments_schema_from_input(
 }
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
+        "vault.commitments.create" => {
+            let _input: crate::memory::commitment_doors::CommitmentCreateRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.get" => {
+            let _input: crate::memory::commitment_doors::CommitmentRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.instances" => {
+            let _input: crate::memory::commitment_doors::CommitmentRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.proposals" => {
+            let _input: crate::memory::commitment_doors::CommitmentRefRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.fulfill" => {
+            let _input: crate::memory::commitment_doors::CommitmentFulfillRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.release" => {
+            let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
+                decode(value.clone())?;
+        }
+        "vault.commitments.supersede" => {
+            let _input: crate::memory::commitment_doors::CommitmentCloseRequest =
+                decode(value.clone())?;
+        }
         "fetch" => {
             let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
         }
@@ -13323,6 +13606,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
+        }
+        "vault.assets.ingest" => {
+            let _input: crate::memory::AssetIngestRequest = decode(value.clone())?;
+        }
+        "vault.assets.resolve" => {
+            let _input: crate::memory::AssetResolveRequest = decode(value.clone())?;
+        }
+        "vault.search.vector" => {
+            let input: crate::memory::VectorSearchRequest = decode(value.clone())?;
+            input.validate()?;
         }
         "vault.images.view" => {
             let _input: crate::memory::ImageViewRequest = decode(value.clone())?;
@@ -15474,6 +15767,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
                 decode(value.clone())?;
         }
+        "vault.sieve.evidence" => {
+            let _input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.evidence.replay" => {
+            let _input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.cadence" => {
+            let _input: crate::dreamer_wake::WakeCadenceRequest = decode(value.clone())?;
+        }
+        "vault.sieve.settlements" => {
+            let _input: crate::dreamer_runner::observation::WakeSettlementsRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.settlements.get" => {
+            let _input: crate::dreamer_runner::observation::WakeSettlementRequest =
+                decode(value.clone())?;
+        }
         "vault.sieve.queue" => {
             let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
         }
@@ -16048,6 +16360,19 @@ pub fn invoke(
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
+        "vault.commitments.create" => encode(vault_commitments_create(memory, decode(value)?)?),
+        "vault.commitments.get" => encode(vault_commitments_get(memory, decode(value)?)?),
+        "vault.commitments.instances" => {
+            encode(vault_commitments_instances(memory, decode(value)?)?)
+        }
+        "vault.commitments.proposals" => {
+            encode(vault_commitments_proposals(memory, decode(value)?)?)
+        }
+        "vault.commitments.fulfill" => encode(vault_commitments_fulfill(memory, decode(value)?)?),
+        "vault.commitments.release" => encode(vault_commitments_release(memory, decode(value)?)?),
+        "vault.commitments.supersede" => {
+            encode(vault_commitments_supersede(memory, decode(value)?)?)
+        }
         "fetch" => encode(fetch(memory, decode(value)?)?),
         "crawl" => encode(crawl(memory, decode(value)?)?),
         "report" => encode(report(memory, decode(value)?)?),
@@ -16186,6 +16511,9 @@ pub fn invoke(
         "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
         "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.assets.ingest" => encode(vault_assets_ingest(memory, decode(value)?)?),
+        "vault.assets.resolve" => encode(vault_assets_resolve(memory, decode(value)?)?),
+        "vault.search.vector" => encode(vault_search_vector(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "self.admission.status" => encode(self_admission_status(memory, decode(value)?)?),
@@ -17329,6 +17657,15 @@ pub fn invoke(
         "vault.consolidation.evidence" => {
             encode(vault_consolidation_evidence(memory, decode(value)?)?)
         }
+        "vault.sieve.evidence" => encode(vault_sieve_evidence(memory, decode(value)?)?),
+        "vault.sieve.evidence.replay" => {
+            encode(vault_sieve_evidence_replay(memory, decode(value)?)?)
+        }
+        "vault.sieve.cadence" => encode(vault_sieve_cadence(memory, decode(value)?)?),
+        "vault.sieve.settlements" => encode(vault_sieve_settlements(memory, decode(value)?)?),
+        "vault.sieve.settlements.get" => {
+            encode(vault_sieve_settlements_get(memory, decode(value)?)?)
+        }
         "vault.sieve.queue" => encode(vault_sieve_queue(memory, decode(value)?)?),
         "vault.sieve.retained" => encode(vault_sieve_retained(memory, decode(value)?)?),
         "vault.sieve.receipts" => encode(vault_sieve_receipts(memory, decode(value)?)?),
@@ -17787,6 +18124,57 @@ pub fn invoke_browser(
         }
     };
     output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
+}
+pub fn vault_commitments_create(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentCreateRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentCreateReceipt> {
+    memory.commitments_create_as(&memory.embedded_owner("vault.commitments.create")?, input)
+}
+pub fn vault_commitments_get(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentRefRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_get_as(&memory.embedded_owner("vault.commitments.get")?, input)
+}
+pub fn vault_commitments_instances(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentRefRequest,
+) -> MemoryResult<Vec<crate::memory::commitment_doors::CommitmentView>> {
+    memory.commitments_instances_as(
+        &memory.embedded_owner("vault.commitments.instances")?,
+        input,
+    )
+}
+pub fn vault_commitments_proposals(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentRefRequest,
+) -> MemoryResult<Vec<crate::memory::commitment_doors::CommitmentWakeProposal>> {
+    memory.commitments_proposals_as(
+        &memory.embedded_owner("vault.commitments.proposals")?,
+        input,
+    )
+}
+pub fn vault_commitments_fulfill(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentFulfillRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_fulfill_as(&memory.embedded_owner("vault.commitments.fulfill")?, input)
+}
+pub fn vault_commitments_release(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentCloseRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_release_as(&memory.embedded_owner("vault.commitments.release")?, input)
+}
+pub fn vault_commitments_supersede(
+    memory: &Memory<'_>,
+    input: crate::memory::commitment_doors::CommitmentCloseRequest,
+) -> MemoryResult<crate::memory::commitment_doors::CommitmentView> {
+    memory.commitments_supersede_as(
+        &memory.embedded_owner("vault.commitments.supersede")?,
+        input,
+    )
 }
 pub fn fetch(
     memory: &Memory<'_>,
@@ -18659,6 +19047,25 @@ pub fn vault_receipts(
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
         &input.kinds,
     )
+}
+pub fn vault_assets_ingest(
+    memory: &Memory<'_>,
+    input: crate::memory::AssetIngestRequest,
+) -> MemoryResult<crate::memory::AssetIngestReceipt> {
+    memory.ingest_asset(&input)
+}
+pub fn vault_assets_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::AssetResolveRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::AssetResolved>> {
+    memory.resolve_asset_form(&input)
+}
+pub fn vault_search_vector(
+    memory: &Memory<'_>,
+    input: crate::memory::VectorSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>> {
+    input.validate()?;
+    memory.query_vector(&input)
 }
 pub fn vault_images_view(
     memory: &Memory<'_>,
@@ -24000,6 +24407,61 @@ pub fn vault_consolidation_evidence(
         &memory.embedded_owner("vault.consolidation.evidence")?,
         &input,
     )
+}
+pub fn vault_sieve_evidence(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_evidence::SieveEvidenceView> {
+    crate::dreamer_wake::sieve_evidence::evidence_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.evidence")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_evidence_replay(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_evidence::SieveEvidenceView> {
+    crate::dreamer_wake::sieve_evidence::replay_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.evidence.replay")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_cadence(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::WakeCadenceRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeCadenceView> {
+    crate::dreamer_wake::cadence_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.cadence")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_settlements(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::observation::WakeSettlementsRequest,
+) -> MemoryResult<crate::dreamer_runner::observation::WakeSettlementsPage> {
+    crate::dreamer_runner::observation::settlements_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.settlements")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_settlements_get(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::observation::WakeSettlementRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::observation::WakeSettlementView>> {
+    crate::dreamer_runner::observation::settlement_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.settlements.get")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_sieve_queue(
     memory: &Memory<'_>,

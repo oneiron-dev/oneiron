@@ -28,12 +28,14 @@ mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;
 mod asset_resolve;
+mod asset_doors;
 mod authorship;
 mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;
 pub mod coping_doors;
@@ -92,6 +94,7 @@ pub mod result_doors;
 mod room_turn;
 mod scoped_export;
 mod search_hybrid;
+mod search_vector;
 mod search_temporal;
 mod session_writes;
 mod shape_doors;
@@ -110,6 +113,8 @@ mod tests_regressions;
 
 pub use answer_boundary::AnswerAdmission;
 pub use archive_purge::{ArchivePurgeEntry, ArchivePurgePreview};
+pub use search_vector::{VectorSearchRequest, VectorSearchHit};
+pub use asset_doors::{AssetIngestRequest, AssetIngestReceipt, AssetResolveRequest, AssetResolved};
 pub use asset_resolve::{
     AssetConsumer, HydratedAsset, IMAGE_FULL, ImageHandle, ImagePick, ImageViewRequest,
     LandedImage, PixelRegion, PulledImage, ResolvedAsset, ServedAssetForm, hydrated_asset,

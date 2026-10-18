@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 856 facade rows, 2953 declarations.
-Inputs: 804 of 856 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 772 of 856 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 871 facade rows, 3003 declarations.
+Inputs: 819 of 871 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 787 of 871 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -14,6 +14,122 @@ from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
 
 T = TypeVar("T")
 
+CommitmentObligorKind = Literal["owner", "agent", "third_party"]
+class CommitmentObligor(TypedDict):
+    kind: CommitmentObligorKind
+    entity_ref: str
+class CommitmentContent(TypedDict):
+    text: str
+    payload_ref: NotRequired[str | None]
+class CommitmentQuotaWindow(TypedDict):
+    kind: Literal["iso_week"]
+    tz: str
+class CommitmentScheduleOnce(TypedDict):
+    kind: Literal["once"]
+    due: int
+class CommitmentScheduleInterval(TypedDict):
+    kind: Literal["interval"]
+    period: int
+    anchor: int
+class CommitmentScheduleQuota(TypedDict):
+    kind: Literal["quota"]
+    count: int
+    window: CommitmentQuotaWindow
+class CommitmentScheduleRrule(TypedDict):
+    kind: Literal["rrule"]
+    rrule_string: str
+    tz: str
+CommitmentSchedule = CommitmentScheduleOnce | CommitmentScheduleInterval | CommitmentScheduleQuota | CommitmentScheduleRrule
+CommitmentStrength = Literal["stated_intention", "decision", "commitment"]
+CommitmentBirthKind = Literal["run_tree_node", "brief", "surface_action"]
+class CommitmentBirthProvenance(TypedDict):
+    kind: CommitmentBirthKind
+    reference: str
+class CommitmentCreateRequest(TypedDict):
+    id: NotRequired[str | None]
+    obligor: CommitmentObligor
+    beneficiary: str
+    content: CommitmentContent
+    schedule: CommitmentSchedule
+    lead_seconds: NotRequired[int | None]
+    strength: CommitmentStrength
+    birth_provenance: CommitmentBirthProvenance
+    occurred_at: int
+    learned_at: NotRequired[int | None]
+    evidence_turn_refs: list[str]
+CommitmentStatus = Literal["open", "fulfilled", "released", "lapsed", "superseded"]
+class CommitmentOccurrence(TypedDict):
+    due_at: int
+    window_start: int
+    window_end: int
+    ordinal: int
+class CommitmentFulfillmentSourceUserDone(TypedDict):
+    kind: Literal["user_done"]
+class CommitmentFulfillmentSourceBriefCompletion(TypedDict):
+    kind: Literal["brief_completion"]
+    brief_ref: str
+class CommitmentFulfillmentSourceChecklistTick(TypedDict):
+    kind: Literal["checklist_tick"]
+CommitmentFulfillmentSource = CommitmentFulfillmentSourceUserDone | CommitmentFulfillmentSourceBriefCompletion | CommitmentFulfillmentSourceChecklistTick
+class CommitmentLifecycleReceipt(TypedDict):
+    fulfillment_source: NotRequired[CommitmentFulfillmentSource | None]
+    commitment_ref: str
+    status: CommitmentStatus
+    learned_at: int
+    evidence_turn_refs: list[str]
+class CommitmentView(TypedDict):
+    commitment_ref: str
+    obligor: CommitmentObligor
+    beneficiary: str
+    content: CommitmentContent
+    schedule: CommitmentSchedule
+    lead_seconds: NotRequired[int | None]
+    strength: CommitmentStrength
+    status: CommitmentStatus
+    birth_provenance: CommitmentBirthProvenance
+    series_ref: NotRequired[str | None]
+    occurrence: NotRequired[CommitmentOccurrence | None]
+    occurred_at: int
+    learned_at: int
+    evidence_turn_refs: list[str]
+    receipt: CommitmentLifecycleReceipt
+class CommitmentIndexOutcomeIndexed(TypedDict):
+    outcome: Literal["indexed"]
+    project_at: int
+    next_due: int
+class CommitmentIndexOutcomeStoredRrule(TypedDict):
+    outcome: Literal["stored_rrule"]
+    route: str
+CommitmentIndexOutcome = CommitmentIndexOutcomeIndexed | CommitmentIndexOutcomeStoredRrule
+class CommitmentCreateReceipt(TypedDict):
+    commitment: CommitmentView
+    index: CommitmentIndexOutcome
+class CommitmentRefRequest(TypedDict):
+    commitment_ref: str
+CommitmentWakePhase = Literal["lead", "due"]
+class CommitmentWakeProposal(TypedDict):
+    proposal_ref: str
+    instance_ref: str
+    phase: CommitmentWakePhase
+    fire_at: int
+    due_at: int
+    occurred_at: int
+    idempotency_key: str
+    trigger_ref: str
+    verb: str
+    channel: str
+    target: str
+    on_behalf_of: NotRequired[str | None]
+    content_ref: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    approval: str
+class CommitmentFulfillRequest(TypedDict):
+    commitment_ref: str
+    source: CommitmentFulfillmentSource
+    evidence_turn_refs: list[str]
+class CommitmentCloseRequest(TypedDict):
+    commitment_ref: str
+    evidence_turn_refs: list[str]
 class WebFetchRequest(TypedDict):
     url: str
 RendererKind = Literal["readability", "headless", "firecrawl"]
@@ -1854,6 +1970,15 @@ class RecallRequest(TypedDict):
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
     telemetry: NotRequired[RecallTelemetry | None]
+InputKind = Literal["text", "image", "audio"]
+class EmbeddingMatchEvidence(TypedDict):
+    space: str
+    embedding_kind: InputKind
+    query_kind: InputKind
+    score: float
+    floor: float
+    strong: float
+    matched: bool
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -1868,6 +1993,8 @@ class CitedMessage(TypedDict):
     value_text: str
     record: NotRequired[RecordRef | None]
 class MemoryItem(TypedDict):
+    asset_ref: NotRequired[str | None]
+    embedding_matches: NotRequired[list[EmbeddingMatchEvidence]]
     short_id: str
     source_revision_ref: NotRequired[str | None]
     kind: str
@@ -2566,6 +2693,46 @@ class MemoryReceipt(TypedDict):
     claim_ref: NotRequired[str | None]
     claim: NotRequired[RecordRef | None]
     fields: NotRequired[dict[str, str]]
+class AssetIngestRequest(TypedDict):
+    asset_ref: NotRequired[str | None]
+    embedding_kind: InputKind
+    mime_type: str
+    bytes_b64: str
+    text: NotRequired[str | None]
+    occurred_at: int
+class AssetIngestReceipt(TypedDict):
+    asset_ref: str
+    asset_text_ref: NotRequired[str | None]
+    embedding_kind: InputKind
+    mime_type: str
+    blake3: str
+    byte_size: int
+class AssetResolveRequest(TypedDict):
+    asset_ref: str
+    image_input: NotRequired[bool]
+    audio_input: NotRequired[bool]
+    room_bytes: NotRequired[int | None]
+ServedAssetForm = Literal["image", "audio", "thumbnail", "asset_text", "ask"]
+class AssetResolved(TypedDict):
+    asset_ref: str
+    form: ServedAssetForm
+    mime_type: NotRequired[str | None]
+    bytes_b64: NotRequired[str | None]
+    text: NotRequired[str | None]
+    asset_text_ref: NotRequired[str | None]
+    handle: NotRequired[str | None]
+    receipt_refs: list[str]
+class VectorSearchRequest(TypedDict):
+    space: NotRequired[str | None]
+    query_kind: NotRequired[InputKind | None]
+    query: list[float]
+    kinds: NotRequired[list[InputKind]]
+    limit: int
+class VectorSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    embedding_matches: list[EmbeddingMatchEvidence]
 class PixelRegion(TypedDict):
     x: int
     y: int
@@ -5131,10 +5298,12 @@ class GuestRevokeResponse(TypedDict):
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
     courtesy_targets: NotRequired[list[GuestRevokeCourtesyTargetView]]
+CommReach = Literal["parent", "subtree", "project", "vault"]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
     holder_key: str
     expires_at: int
+    comm: NotRequired[CommReach | None]
 class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
@@ -6626,7 +6795,6 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-InputKind = Literal["text", "image", "audio"]
 class EvidenceFloors(TypedDict):
     floor: float
     strong: float
@@ -10103,7 +10271,7 @@ class TaskAskReceipt(TypedDict):
 class TaskWaitRequest(TypedDict):
     handle: TaskAskHandle
     step_key: str
-SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
+SelfEffect = Literal["AgentsSpawn", "TasksAsk", "TasksWait", "TasksRefuse", "ConsultResult", "SkillsCall", "MemorySearch", "MemoryWriteFixture", "MemoryPutClaim", "MemorySupersedeClaim", "MemoryPutEdge", "Ask", "DestructiveFixture", "OutboundFixture", "TaskDelegate", "Context", "Speak", "Think", "Express", "ReportBlocked", "AgentsPut", "InferenceDefaultsRead", "InferenceDefaultsReplace", "WakePolicyWrite", "AgentVerb", "ConnectorAnswer", "WorldPrivacySet", "Fold", "ReaderSpawn", "ReaderReport", "TasksWaitSet", "Summarize", "Leader", "LeaderSplit", "Team"]
 SelfDurableWaitReason = Literal["HumanInput", "DestructiveEffect", "OutboundEffect", "PeerResult"]
 class SelfDurableWait(TypedDict):
     wait_id: EntityId
@@ -13583,6 +13751,109 @@ class ConsolidationPromotion(TypedDict):
     output_evidence: list[ConsolidationEvidenceSource]
 class ConsolidationEvidenceRequest(TypedDict):
     source_refs: list[str]
+class SieveEvidenceRequest(TypedDict):
+    turn: EntityId
+class SieveEvidenceCursor(TypedDict):
+    learned_at: int
+    turn: EntityId
+class SieveEvidenceView(TypedDict):
+    turn: EntityId
+    reading: NotRequired[list[int] | None]
+    cursor: NotRequired[SieveEvidenceCursor | None]
+    owed: bool
+    continuing: bool
+class WakeCadenceRequest(TypedDict):
+    ...
+AgentWakeRole = Literal["companion", "leader", "worker"]
+CadencePrecedence = Literal["vault_floor", "agent_override"]
+class AgentWakeTriggers(TypedDict):
+    cadence: bool
+    surprise: bool
+    agency: bool
+    event: bool
+class AgentWakePolicy(TypedDict):
+    absent_role: AgentWakeRole
+    precedence: CadencePrecedence
+    companion: AgentWakeTriggers
+    leader: AgentWakeTriggers
+    worker: AgentWakeTriggers
+WeaveRecipePriority = Literal["before_connector_event", "after_connector_event"]
+class DreamerWakePolicy(TypedDict):
+    wake_grain_turns: int
+    agent_cadence: AgentWakePolicy
+    new_records: int
+    longest_wait_secs: int
+    nightly_secs: int
+    idle_secs: int
+    quiet_weave_secs: int
+    weave_recipe_priority: WeaveRecipePriority
+    surprise_permille: int
+class WakeIdleState(TypedDict):
+    running_turns: bool
+    live_background_work: bool
+    compute_available: bool
+    last_inbound_at: int
+WakeRecipe = Literal["continuous", "nightly", "weave"]
+class WakePolicyDecisionArmIdleBody(TypedDict):
+    due_at: int
+class WakePolicyDecisionArmIdle(TypedDict):
+    ArmIdle: WakePolicyDecisionArmIdleBody
+class WakePolicyDecisionEnqueueBody(TypedDict):
+    recipe: WakeRecipe
+class WakePolicyDecisionEnqueue(TypedDict):
+    Enqueue: WakePolicyDecisionEnqueueBody
+WakePolicyDecision = Literal["Silent"] | WakePolicyDecisionArmIdle | WakePolicyDecisionEnqueue
+class WakeCadenceReceipt(TypedDict):
+    sequence: int
+    observed_at: int
+    previous_due_at: NotRequired[int | None]
+    boundary_reached: bool
+    last_boundary_at: NotRequired[int | None]
+    idle: WakeIdleState
+    decision: WakePolicyDecision
+    wake: NotRequired[EntityId | None]
+    processed_change_id: NotRequired[list[int] | None]
+class WakeRecipeInputView(TypedDict):
+    recipe: WakeRecipe
+    turn_count: int
+    record_count: int
+    nightly_count: int
+    after_turn: NotRequired[list[int] | None]
+    after_record: NotRequired[list[int] | None]
+    after_nightly: NotRequired[list[int] | None]
+    through: list[int]
+    observed_at: int
+class WakeCadenceView(TypedDict):
+    policy: DreamerWakePolicy
+    receipt: NotRequired[WakeCadenceReceipt | None]
+    pending: list[WakeRecipeInputView]
+class WakeSettlementsRequest(TypedDict):
+    after: NotRequired[EntityId | None]
+    limit: int
+class WakeRecipeJobView(TypedDict):
+    attempt: EntityId
+    parent: NotRequired[EntityId | None]
+    kind: str
+    state: AttemptState
+    created_at: int
+    updated_at: int
+    actor: NotRequired[EntityId | None]
+    facet: NotRequired[str | None]
+    authority_receipt: NotRequired[list[int] | None]
+    park_cause: NotRequired[DreamerParkCauseView | None]
+    parked_at: NotRequired[int | None]
+    result_ref: NotRequired[str | None]
+    conclusions: list[EntityId]
+class WakeSettlementView(TypedDict):
+    wake: EntityId
+    input: NotRequired[WakeRecipeInputView | None]
+    settled: bool
+    jobs: list[WakeRecipeJobView]
+class WakeSettlementsPage(TypedDict):
+    wakes: list[WakeSettlementView]
+    next: NotRequired[EntityId | None]
+class WakeSettlementRequest(TypedDict):
+    wake: EntityId
 class SievePageRequest(TypedDict):
     limit: NotRequired[int | None]
 class SieveSpanView(TypedDict):
@@ -14987,7 +15258,6 @@ class SpawnKnobPin(TypedDict, Generic[T]):
     value: T
 SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
 SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
-CommReach = Literal["parent", "subtree", "project", "vault"]
 class AgentSpawnInput(TypedDict):
     need: str
     prompt: str

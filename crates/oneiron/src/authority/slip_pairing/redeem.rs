@@ -167,6 +167,7 @@ impl Vault {
             grant_ref: grant_ref.map(|id| id.to_hex()),
             invitation_ref: None,
             delegation: None,
+            comm: pending.principal.comm,
         };
         let slip = self.mint_slip_in_txn(&mut txn, issuer, claims)?;
         if let Some(facet) = write_facet {
