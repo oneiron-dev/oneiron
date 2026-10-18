@@ -102,6 +102,8 @@ pub enum AgentVerb {
     VaultReceipts,
     VaultImagesView,
     VaultReceiptsGet,
+    SelfAdmissionStatus,
+    SelfAdmissionReceipts,
     VaultExplainMemory,
     VaultExplainGate,
     VaultKvGet,
@@ -921,6 +923,8 @@ impl AgentVerb {
         Self::VaultReceipts,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
+        Self::SelfAdmissionStatus,
+        Self::SelfAdmissionReceipts,
         Self::VaultExplainMemory,
         Self::VaultExplainGate,
         Self::VaultKvGet,
@@ -1743,6 +1747,8 @@ impl AgentVerb {
             Self::VaultReceipts => "vault.receipts",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
+            Self::SelfAdmissionStatus => "self.admission.status",
+            Self::SelfAdmissionReceipts => "self.admission.receipts",
             Self::VaultExplainMemory => "vault.explain.memory",
             Self::VaultExplainGate => "vault.explain.gate",
             Self::VaultKvGet => "vault.kv.get",
@@ -2583,6 +2589,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::SelfAdmissionStatus
+                | Self::SelfAdmissionReceipts
                 | Self::VaultExplainMemory
                 | Self::VaultExplainGate
                 | Self::VaultKvGet
@@ -3429,6 +3437,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::SelfAdmissionStatus
+                | Self::SelfAdmissionReceipts
                 | Self::VaultExplainMemory
                 | Self::VaultExplainGate
                 | Self::VaultKvGet
@@ -4154,6 +4164,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultReceipts
+                | Self::SelfAdmissionReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
                 | Self::VaultWeaveSchedulesList
@@ -4345,6 +4356,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
+                | Self::SelfAdmissionStatus
+                | Self::SelfAdmissionReceipts
                 | Self::VaultExplainMemory
                 | Self::VaultExplainGate
                 | Self::VaultKvGet
@@ -5668,6 +5681,8 @@ impl AgentVerb {
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
+            Self::SelfAdmissionStatus => &["spec"],
+            Self::SelfAdmissionReceipts => &["spec"],
             Self::VaultExplainMemory => &["spec"],
             Self::VaultExplainGate => &["spec"],
             Self::VaultKvGet => &["spec"],
@@ -6488,6 +6503,8 @@ impl AgentVerb {
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
+            Self::SelfAdmissionStatus => &["spec"],
+            Self::SelfAdmissionReceipts => &["spec"],
             Self::VaultExplainMemory => &["spec"],
             Self::VaultExplainGate => &["spec"],
             Self::VaultKvGet => &["spec"],
@@ -7498,6 +7515,12 @@ impl AgentVerb {
             }
             Self::VaultReceiptsGet => {
                 "One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."
+            }
+            Self::SelfAdmissionStatus => {
+                "Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."
+            }
+            Self::SelfAdmissionReceipts => {
+                "Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."
             }
             Self::VaultExplainMemory => {
                 "Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it."

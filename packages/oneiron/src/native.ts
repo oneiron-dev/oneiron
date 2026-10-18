@@ -128,6 +128,8 @@ vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
+selfAdmissionStatus(input: unknown): unknown
+selfAdmissionReceipts(input: unknown): unknown
 vaultExplainMemory(input: unknown): unknown
 vaultExplainGate(input: unknown): unknown
 vaultKvGet(requestJson: string): string

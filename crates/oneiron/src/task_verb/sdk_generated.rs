@@ -529,6 +529,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
             ),
             (
+                "self.admission.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::admission::AdmissionStatusRequest,
+                >(),
+            ),
+            (
+                "self.admission.receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::receipt::admission::AdmissionReceiptsRequest,
+                >(),
+            ),
+            (
                 "vault.explain.memory",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ExplainMemoryRequest,
@@ -4536,6 +4548,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "self.admission.status",
+    "self.admission.receipts",
     "vault.campaign.compliance.install",
     "vault.campaign.compliance.amend",
     "vault.campaign.compliance.approve",
@@ -5095,6 +5109,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "self.admission.status" => crate::code_run::vault_read::request_schema::<
+            Option<crate::receipt::admission::AdmissionReceipt>,
+        >(),
+        "self.admission.receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::receipt::admission::AdmissionReceipt>,
+        >(),
         "vault.campaign.compliance.install" => crate::code_run::vault_read::request_schema::<
             crate::campaign::compliance::ComplianceReceipt,
         >(),
@@ -7057,6 +7077,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.admission.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.admission.receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12255,6 +12289,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.receipts.get" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
         }
+        "self.admission.status" => {
+            let _input: crate::receipt::admission::AdmissionStatusRequest = decode(value.clone())?;
+        }
+        "self.admission.receipts" => {
+            let _input: crate::receipt::admission::AdmissionReceiptsRequest =
+                decode(value.clone())?;
+        }
         "vault.explain.memory" => {
             let _input: crate::task_verb::sdk::ExplainMemoryRequest = decode(value.clone())?;
         }
@@ -14908,6 +14949,8 @@ pub fn invoke(
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
+        "self.admission.status" => encode(self_admission_status(memory, decode(value)?)?),
+        "self.admission.receipts" => encode(self_admission_receipts(memory, decode(value)?)?),
         "vault.explain.memory" => encode(vault_explain_memory(memory, decode(value)?)?),
         "vault.explain.gate" => encode(vault_explain_gate(memory, decode(value)?)?),
         "vault.kv.get" => encode(vault_kv_get(memory, decode(value)?)?),
@@ -17257,6 +17300,18 @@ pub fn vault_receipts_get(
     input: crate::receipt::CallReceiptRequest,
 ) -> MemoryResult<Option<crate::receipt::CallReceipt>> {
     memory.call_receipt(&input.receipt_ref)
+}
+pub fn self_admission_status(
+    memory: &Memory<'_>,
+    input: crate::receipt::admission::AdmissionStatusRequest,
+) -> MemoryResult<Option<crate::receipt::admission::AdmissionReceipt>> {
+    memory.admission_status(&input)
+}
+pub fn self_admission_receipts(
+    memory: &Memory<'_>,
+    input: crate::receipt::admission::AdmissionReceiptsRequest,
+) -> MemoryResult<Vec<crate::receipt::admission::AdmissionReceipt>> {
+    memory.admission_receipts(&input)
 }
 pub fn vault_explain_memory(
     memory: &Memory<'_>,

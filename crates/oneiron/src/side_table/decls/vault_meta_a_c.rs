@@ -11,6 +11,9 @@ side_tables! {
     /// Rotation cursor (last session id served) for the bounded session-end distill drain pump, so
     /// one budget-limited pass cannot starve later jobs. Key: ().
     ACTOR_CLAIMS_DISTILL_RUNNER_CURSOR: VaultMeta b"actor_claims:distill_runner_cursor:v1" Raw;
+    /// Named typed calls' durable queued/held status and terminal outcome, keyed by
+    /// hash32(actor, class, invocation); never execution authority.
+    ADMISSION_INTENT: VaultMeta b"admission:intent:v1:" Named Engine;
     /// Per-agent, per-unit launch spend calibration folded from settled launches. Key: string.
     AGENT_DISPATCH_SPEND_CALIBRATION: VaultMeta b"agent.dispatch.calibration.v1\0" LegacyJson;
     /// FIX 1380: one running child's comm widening, its per-reach asks to its parent and the

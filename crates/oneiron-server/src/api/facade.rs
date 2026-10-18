@@ -25,6 +25,7 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod admission_doors;
 mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
@@ -131,7 +132,7 @@ pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
-pub(crate) use dispatch::call_verb;
+pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;
 

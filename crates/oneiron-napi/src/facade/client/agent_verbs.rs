@@ -805,6 +805,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_admission_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.admission.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_admission_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.admission.receipts", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_explain_memory(
         &self,
         input: serde_json::Value,
