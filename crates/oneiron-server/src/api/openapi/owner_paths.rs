@@ -678,6 +678,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/inbox/concern/apply",
+        summary: "Applies the Coach's skill edit on one card as the owner approves it.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/inbox/concern/move",
         summary: "Takes one of the card's moves.",
         row: None,
