@@ -23,6 +23,12 @@
 //! dropped, never held or receipted. A window with no tree says so
 //! (`no_tree`), and the program reads it by its pixels.
 //!
+//! A window's tree is read whole (Rule 5): cua-driver's walk takes a node
+//! budget and no offset, so a walk the budget cut is read again with a
+//! larger one until it ends. A long tree is answered in pages, as a page's
+//! outline is: `next` names the cursor `observe` reads the rest from, and
+//! `find` and `wait_for` page their rows the same way.
+//!
 //! A person can take the desktop over (CUA-001), asked by the agent's
 //! `handover` or not. While the agent waits on its ask, and while a person
 //! holds the desktop, every agent verb refuses `desktop_taken_over` and
@@ -30,16 +36,17 @@
 //! through the same driver. Handing it back ends the takeover with its
 //! record, which is its receipt.
 
-use crate::driver::{crop_region, encode_png, png_dimensions};
+use crate::driver::{Pages, crop_region, encode_png, find_cursor, png_dimensions, wait_cursor};
 use crate::mcp::{Mcp, ToolError, ToolReply};
 use crate::session::{effect_class, press_for, receipt_class};
 use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
-    HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, Observation, ObserveInput,
-    OpenInput, PointInput, PressMode, ReceiptEvidenceSink, RoutineDecider, Row, ScreenshotInput,
-    ScreenshotOutput, ScreenshotTrigger, ScrollInput, SelectInput, SendPolicy, TypeInput,
-    ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowsInput, WindowsOutput, ZoomInput,
+    HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, Observation, ObservationPage,
+    ObserveInput, OpenInput, PointInput, PressMode, ReceiptEvidenceSink, RoutineDecider, Row,
+    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput, SelectInput, SendPolicy,
+    TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowsInput, WindowsOutput,
+    ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde::{Deserialize, Serialize};
@@ -60,8 +67,13 @@ const CALL: Duration = Duration::from_secs(15);
 /// How long the guest's desktop, or an app it opens, has to come up.
 const LAUNCH: Duration = Duration::from_secs(30);
 const WAIT_DEFAULT: Duration = Duration::from_secs(5);
-/// Elements one read of a window asks the driver for (its default is 250).
-const MAX_ELEMENTS: u32 = 1000;
+/// The node budget a window's first walk asks cua-driver for (its own
+/// default is 250). A walk the budget cut reads again with at least twice
+/// the budget, until the tree is whole.
+const FIRST_BUDGET: u64 = 1000;
+/// The longest walk a read asks for once a walk ran out of its time (the
+/// driver's default is one second): within one driver call's bound.
+const WALK_MS_MOST: u64 = 12_000;
 /// Observations a `since` diff can name.
 const HISTORY: usize = 8;
 /// Screenshots the session holds for a later image read.
@@ -192,6 +204,8 @@ pub struct DesktopSession {
     seq: u64,
     history: VecDeque<(u64, WindowKey, HashMap<String, Row>)>,
     media: VecDeque<Held>,
+    /// The paged answers a cursor may still read on.
+    pages: Pages,
     wait_cap: Duration,
     /// Who has the desktop now.
     takeover: Takeover,
@@ -461,6 +475,7 @@ impl DesktopSession {
             seq: 0,
             history: VecDeque::new(),
             media: VecDeque::new(),
+            pages: Pages::default(),
             wait_cap: config.wait_cap,
             takeover: Takeover::Agent,
             returned: None,
@@ -759,17 +774,43 @@ impl DesktopSession {
         }
     }
 
+    /// Reads window `key` whole: a walk cua-driver cut at its node budget
+    /// reads again with a larger budget, and one cut at its time budget with
+    /// a longer one, up to [`WALK_MS_MOST`].
     fn read(&self, key: WindowKey, shot: bool) -> Result<Snapshot, BrowserError> {
-        let mut arguments = json!({
-            "pid": key.pid,
-            "window_id": key.id,
-            "tree_format": "elements",
-            "max_elements": MAX_ELEMENTS,
-        });
-        if !shot {
-            arguments["include_screenshot"] = Value::Bool(false);
-        }
-        let reply = self.tool("get_window_state", arguments)?;
+        let mut budget = FIRST_BUDGET;
+        let mut walk_ms = None;
+        let reply = loop {
+            let mut arguments = json!({
+                "pid": key.pid,
+                "window_id": key.id,
+                "tree_format": "elements",
+                "max_elements": budget,
+            });
+            if let Some(ms) = walk_ms {
+                arguments["timeout_ms"] = Value::from(ms);
+            }
+            if !shot {
+                arguments["include_screenshot"] = Value::Bool(false);
+            }
+            let reply = self.tool("get_window_state", arguments)?;
+            let state = &reply.output;
+            let count = |name: &str| state.get(name).and_then(Value::as_u64).unwrap_or(0);
+            let cut = (state.get("truncated").and_then(Value::as_bool) == Some(true))
+                .then(|| state.get("truncation_reason").and_then(Value::as_str))
+                .flatten();
+            let seen = count("nodes_visited").saturating_add(count("nodes_pending"));
+            let spent = count("timeout_ms").max(1000);
+            match cut {
+                Some("node_budget") => {
+                    budget = budget.saturating_mul(2).max(seen.saturating_add(1));
+                }
+                Some("timeout") if spent < WALK_MS_MOST => {
+                    walk_ms = Some(spent.saturating_mul(4).min(WALK_MS_MOST));
+                }
+                _ => break reply,
+            }
+        };
         let state = &reply.output;
         let elements = state
             .get("elements")
@@ -1383,14 +1424,41 @@ impl BrowserDriver for DesktopSession {
 
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?;
-        self.observation(input.since)
+        match input.cursor.as_deref() {
+            // Unpaged, a cursor reads the whole rest of its observation.
+            Some(cursor) => self.pages.rest(cursor),
+            None => self.observation(input.since),
+        }
+    }
+
+    fn paged(&mut self, observation: Observation) -> ObservationPage {
+        self.pages.first(observation)
+    }
+
+    fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
+        self.live()?;
+        let Some(cursor) = input.cursor.as_deref() else {
+            let observation = self.observation(input.since)?;
+            return Ok(self.pages.first(observation));
+        };
+        if input.since.is_some() {
+            return Err(BrowserError::Input(
+                "observe reads since or a cursor, not both".to_owned(),
+            ));
+        }
+        self.pages.next(cursor)
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
         self.live()?;
-        Ok(FindOutput {
-            rows: self.matching(|row| input.matches(row))?,
-        })
+        let (rows, next) = match find_cursor(&input)? {
+            Some(cursor) => self.pages.next_rows(cursor)?,
+            None => {
+                let rows = self.matching(|row| input.matches(row))?;
+                self.pages.first_rows(rows)
+            }
+        };
+        Ok(FindOutput { rows, next })
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
@@ -1532,6 +1600,15 @@ impl BrowserDriver for DesktopSession {
 
     fn wait_for(&mut self, input: WaitForInput) -> Result<WaitForOutput, BrowserError> {
         self.live()?;
+        if let Some(cursor) = wait_cursor(&input)? {
+            let (rows, next) = self.pages.next_rows(cursor)?;
+            return Ok(WaitForOutput {
+                rows,
+                timed_out: false,
+                waited_ms: 0,
+                next,
+            });
+        }
         let wanted = input
             .timeout_ms
             .map_or(WAIT_DEFAULT, |ms| Duration::from_millis(ms.into()));
@@ -1542,10 +1619,12 @@ impl BrowserDriver for DesktopSession {
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
+                let (rows, next) = self.pages.first_rows(rows);
                 return Ok(WaitForOutput {
                     rows,
                     timed_out,
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
+                    next,
                 });
             }
             std::thread::sleep(POLL * 2);
@@ -1835,6 +1914,13 @@ impl BrowserDriver for DesktopSession {
             None => self.batch_with(input, &mut NoDecider),
         };
         self.decider = decider;
-        output
+        let mut output = output?;
+        // The batch's last observation pages as an answer pages it.
+        if let Some(observation) = output.observation.take() {
+            let page = self.pages.first(observation);
+            output.observation = Some(page.observation);
+            output.next = page.next;
+        }
+        Ok(output)
     }
 }

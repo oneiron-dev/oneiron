@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 378 code-mode rows (358 host rows, 20 run rows), 1343 declarations.
+// Census: 378 code-mode rows (358 host rows, 20 run rows), 1344 declarations.
 // Replies: 325 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -52,7 +52,7 @@ declare namespace Sdk {
   type IdentityActNow = { state: "settled"; entity: string } | { state: "unknown" } | { state: "deciding"; ask: string } | { state: "needs_person"; ask: string; card: unknown };
   type InboxListRequest = { after?: string | null; limit?: number | null };
   type NotificationKind = "job_completed" | "job_failed" | "job_cancelled" | "job_abandoned" | "finding" | "event_received" | "import_finished" | "digest" | "ask";
-  type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null };
+  type NotificationSource = { producer: string; event: string; job_kind?: string | null; attempt?: string | null; run?: string | null; result?: string | null; detail?: string | null };
   type NotificationRow = { id: string; learned_at: number; kind: NotificationKind; source: NotificationSource; subject_refs: string[]; created_at: number; origin_conversation?: string | null; seen: boolean; acked: boolean };
   type NotificationPage = { rows: NotificationRow[]; next_after?: string | null };
   type NotificationMark = "seen" | "acked";
@@ -1044,14 +1044,14 @@ declare namespace Sdk {
   type Observation = { seq: number; url: string; title: string; full: boolean; rows: Row[]; removed?: string[]; receipt?: EffectReceipt | null; library?: LibraryCard[]; no_tree?: boolean };
   type ObservationPage = Observation & { next?: string | null };
   type ObserveInput = { since?: number | null; cursor?: string | null };
-  type FindInput = { role?: string | null; name?: string | null };
-  type FindOutput = { rows: Row[] };
+  type FindInput = { role?: string | null; name?: string | null; cursor?: string | null };
+  type FindOutput = { rows: Row[]; next?: string | null };
   type ClickInput = { ref: string };
   type PointInput = { image: string; x: number; y: number };
   type TypeInput = { ref: string; text: string; clear?: boolean };
   type SelectInput = { ref: string; option: string };
-  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null };
-  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number };
+  type WaitForInput = { targets?: string[]; role?: string | null; name?: string | null; timeout_ms?: number | null; cursor?: string | null };
+  type WaitForOutput = { rows: Row[]; timed_out: boolean; waited_ms: number; next?: string | null };
   type ExpectInput = { ref?: string | null; role?: string | null; name?: string | null; value?: string | null; absent?: boolean };
   type ExpectOutput = { met: boolean; row?: Row | null };
   type ScreenshotTrigger = "outline_thin" | "no_postcondition" | "decider_reobserve" | "no_accessibility_tree" | "effect_receipt";
@@ -1179,7 +1179,8 @@ declare namespace Sdk {
   type BodyCell = { address: string; value: XlsxValue; formula?: string | null; style?: number | null; format?: string | null; locked?: XlsxLock | null };
   type XlsxArea = { first: [number, number]; last: [number, number]; lock: XlsxLock };
   type XlsxTable = { name: string; first: [number, number]; last: [number, number]; header_rows: number; totals_rows: number; columns: string[]; worksheet: boolean };
-  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
+  type XlsxSheetVisibility = "visible" | "hidden" | "veryHidden";
+  type XlsxSheetView = { name: string; cells: BodyCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility };
   type BodyName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxStyle = { num_fmt: number; format?: string | null };
   type XlsxColor = { kind: "rgb"; argb: string } | { kind: "theme"; theme: number; tint?: number | null } | { kind: "indexed"; index: number } | { kind: "auto" };
@@ -1219,11 +1220,11 @@ declare namespace Sdk {
   type OfficeBodyCommitGap = "receipt_missing";
   type OfficeBodyCommitView = { actor?: string | null; receipt?: TextCommitReceipt | null; reason?: OfficeBodyCommitGap | null };
   type DocxBodyOp = { op: "set_text"; block: string; text: string } | { op: "splice"; block: string; at: number; delete: number; insert: string } | { op: "set_cell"; block: string; row: number; col: number; text: string } | { op: "insert_paragraph"; after?: string | null; role?: string | null; text: string } | { op: "delete"; block: string } | { op: "move"; block: string; after?: string | null } | { op: "mark"; block: string; at: number; len: number; mark: DocxMark; on: boolean };
-  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
+  type XlsxBodyOp = { op: "set_value"; sheet: string; cell: string; value: XlsxValue } | { op: "set_formula"; sheet: string; cell: string; formula: string } | { op: "set_style"; sheet: string; cell: string; style?: number | null } | { op: "define_format"; id: string; format: XlsxFormat } | { op: "set_format"; sheet: string; cell: string; format: string } | { op: "clear"; sheet: string; cell: string } | { op: "set_name"; name: string; sheet?: string | null; formula: string; hidden: boolean } | { op: "delete_name"; name: string; sheet?: string | null } | { op: "add_sheet"; sheet: string; at?: number | null } | { op: "rename_sheet"; sheet: string; name: string } | { op: "move_sheet"; sheet: string; at: number } | { op: "delete_sheet"; sheet: string } | { op: "set_sheet_visibility"; sheet: string; visibility: XlsxSheetVisibility } | { op: "insert_rows"; sheet: string; at: number; count: number } | { op: "delete_rows"; sheet: string; at: number; count: number } | { op: "insert_columns"; sheet: string; at: number; count: number } | { op: "delete_columns"; sheet: string; at: number; count: number };
   type DeckOp = { add_slide: { id?: NodeId | null } } | { add_node: { id?: NodeId | null; parent: NodeId; kind: NodeKind; name?: string | null; index?: number | null; preset?: Preset | null; payload?: NodePayload | null } } | { remove_node: { node: NodeId } } | { move_node: { node: NodeId; new_parent: NodeId; index: number } } | { set_text: { node: NodeId; body: TextBody } } | { set_run_marks: { node: NodeId; paragraph: NodeId; runs: Run[] } } | { set_geometry: { node: NodeId; geometry: GeometryProps } } | { set_preset: { node: NodeId; preset: Preset } } | { set_payload: { node: NodeId; payload: NodePayload } } | { replace_opaque: { part: string; expected: number[]; replacement: number[] } };
   type OfficeBodyOps = { format: "docx"; ops: DocxBodyOp[] } | { format: "xlsx"; ops: XlsxBodyOp[] } | { format: "pptx"; ops: DeckOp[] };
   type OfficeBodyEditRequest = { artifact_ref: string; base?: number[] | null; ops: OfficeBodyOps; made_by?: unknown | null };
-  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt };
+  type OfficeBodyEdit = { frontier: number[]; minted: string[]; receipt: TextCommitReceipt; effects: string[] };
   type OfficeBodyForkOpenRequest = { artifact_ref: string; run_root_ref?: string | null; proposal_ref?: string | null };
   type ForkState = { state: "open" } | { state: "merged"; by: EntityId; at: number; head: number[] } | { state: "discarded"; by: EntityId; at: number };
   type OfficeBodyFork = { id: EntityId; artifact: EntityId; opener: EntityId; base: number[]; commits: number; opened_at: number; state: ForkState; run_root?: EntityId | null };
@@ -1255,7 +1256,7 @@ declare namespace Sdk {
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };
-  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[] };
+  type XlsxSheet = { name: string; cells: XlsxCell[]; locked: XlsxArea[]; tables: XlsxTable[]; visibility: XlsxSheetVisibility };
   type XlsxName = { name: string; sheet?: string | null; formula: string; hidden: boolean; locked?: XlsxLock | null };
   type XlsxBook = { date1904: boolean; sheets: XlsxSheet[]; names: XlsxName[]; styles: XlsxStyle[] };
   type XlsxPreview = { frontier: number[]; book: XlsxBook; recalc?: string | null };
@@ -1432,7 +1433,7 @@ declare namespace self {
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a page row is present or absent, and holds a given value. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
-    /** Finds the page rows whose role and name match. */
+    /** Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
@@ -1460,7 +1461,7 @@ declare namespace self {
     type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until a page row its refs name, or else some row matching a role and name, is there. */
+    /** Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
     zoom(input: Sdk.ZoomInput): Promise<Sdk.ImageOutput | StoredResult>;
@@ -1470,42 +1471,42 @@ declare namespace self {
     asks(input: Sdk.EmptyRequest): Promise<Sdk.DecisionAsk[] | StoredResult>;
   };
   const desktop: {
-    /** Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails. */
+    /** Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
     batch(input: Sdk.BatchInput): Promise<Sdk.BatchOutput | StoredResult>;
-    /** Clicks one window target and observes the result. */
-    click(input: Sdk.ClickInput): Promise<Sdk.Observation | StoredResult>;
-    /** Clicks a point of a held screenshot, mapped onto the window. */
-    click_at(input: Sdk.PointInput): Promise<Sdk.Observation | StoredResult>;
+    /** Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor. */
+    click(input: Sdk.ClickInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    click_at(input: Sdk.PointInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Crops a held image to a rectangle. */
     crop(input: Sdk.CropInput): Promise<Sdk.ImageOutput | StoredResult>;
     /** Checks that a window row is present or absent, and holds a given value. */
     expect(input: Sdk.ExpectInput): Promise<Sdk.ExpectOutput | StoredResult>;
-    /** Finds the window rows whose role and name match. */
+    /** Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page. */
     find(input: Sdk.FindInput): Promise<Sdk.FindOutput | StoredResult>;
     /** Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record. */
     handover(input: Sdk.HandoverInput): Promise<Sdk.HandoverOutput | StoredResult>;
-    /** Presses a key combination in the current window. */
-    hotkey(input: Sdk.HotkeyInput): Promise<Sdk.Observation | StoredResult>;
-    /** Presses one key, with modifiers, on a window target or the window's focus. */
-    key(input: Sdk.KeyInput): Promise<Sdk.Observation | StoredResult>;
-    /** Observes the current window of the run's desktop guest. */
-    observe(input: Sdk.ObserveInput): Promise<Sdk.Observation | StoredResult>;
-    /** Opens an app of the run's own desktop guest by app:name and observes its window. */
-    open(input: Sdk.OpenInput): Promise<Sdk.Observation | StoredResult>;
+    /** Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    hotkey(input: Sdk.HotkeyInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor. */
+    key(input: Sdk.KeyInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page. */
+    observe(input: Sdk.ObserveInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor. */
+    open(input: Sdk.OpenInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Takes a screenshot of the window the session holds, by image ref and never captioned. */
     screenshot(input: Sdk.ScreenshotInput): Promise<Sdk.ScreenshotOutput | StoredResult>;
-    /** Scrolls a window target, or the window, by steps. */
-    scroll(input: Sdk.ScrollInput): Promise<Sdk.Observation | StoredResult>;
-    /** Sets the value of a combo box or list target by its option label. */
-    select(input: Sdk.SelectInput): Promise<Sdk.Observation | StoredResult>;
-    /** Types text into one window target and observes the result. */
-    type(input: Sdk.TypeInput): Promise<Sdk.Observation | StoredResult>;
+    /** Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor. */
+    scroll(input: Sdk.ScrollInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor. */
+    select(input: Sdk.SelectInput): Promise<Sdk.ObservationPage | StoredResult>;
+    /** Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor. */
+    type(input: Sdk.TypeInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Reads back a held image by its ref. */
     view(input: Sdk.ViewInput): Promise<Sdk.ImageOutput | StoredResult>;
-    /** Waits until a window row its refs name, or else some row matching a role and name, is there. */
+    /** Waits until a window row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor. */
     wait_for(input: Sdk.WaitForInput): Promise<Sdk.WaitForOutput | StoredResult>;
-    /** Moves the session onto another desktop window and observes it. */
-    window(input: Sdk.WindowInput): Promise<Sdk.Observation | StoredResult>;
+    /** Moves the session onto another desktop window and observes it; a long window's observation comes in pages, read on with observe and its next cursor. */
+    window(input: Sdk.WindowInput): Promise<Sdk.ObservationPage | StoredResult>;
     /** Lists the desktop guest's windows, or one app's. */
     windows(input: Sdk.WindowsInput): Promise<Sdk.WindowsOutput | StoredResult>;
     /** Zooms into a rectangle of a held image. */
