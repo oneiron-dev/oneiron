@@ -56,7 +56,9 @@ pub use contribution::{
 mod late_credit;
 mod pack_learning;
 pub use late_credit::{LateCreditReceipt, LateCreditShare, late_credit_receipt};
-pub use pack_learning::{AnchoredPackOutcome, project_anchored_pack_outcome};
+pub use pack_learning::{
+    AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
+};
 mod positive;
 pub use self::positive::{
     PositiveFinding, PositiveSkillProposal, pending_positive_proposals, positive_finding,

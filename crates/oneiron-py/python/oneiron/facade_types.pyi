@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 513 facade rows, 1897 declarations.
-Inputs: 463 of 513 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 457 of 513 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 89; unread shapes: 0.
+Census: 517 facade rows, 1911 declarations.
+Inputs: 466 of 517 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 460 of 517 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6742,6 +6742,82 @@ class CallableCardView(TypedDict):
     reference: str
     arguments: Any
     returns: Any
+class SkillPackReceiptRequest(TypedDict):
+    attempt_receipt: str
+class ContributionCheck(TypedDict):
+    receipt: str
+    contributed: bool
+class SkillContribution(TypedDict):
+    skill: EntityId
+    check: ContributionCheck
+class UsedProvenanceEdge(TypedDict):
+    derived: EntityId
+    source: EntityId
+    check: NotRequired[ContributionCheck | None]
+class CreditOptions(TypedDict):
+    enabled: bool
+    depth_cap: NotRequired[int | None]
+    check_every_hop: bool
+class PackAttributionFields(TypedDict):
+    typeRef: CellTypeRef
+    executor: str
+    judge: str
+    pattern: EntityId
+    team_shape: list[str]
+    decider: EntityId
+    project: NotRequired[EntityId | None]
+    output: NotRequired[EntityId | None]
+    contributions: list[SkillContribution]
+    used_edges: list[UsedProvenanceEdge]
+    credit: CreditOptions
+class SkillPackReceipt(TypedDict):
+    receipt: ReceiptRecord
+    loaded_skills: list[str]
+    attribution: PackAttributionFields
+class SkillPackOutcomeRequest(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+class AnchorHeldOut(TypedDict):
+    kind: Literal["held_out"]
+class AnchorOwnerVerdict(TypedDict):
+    kind: Literal["owner_verdict"]
+class AnchorWorldOutcome(TypedDict):
+    kind: Literal["world_outcome"]
+class AnchorAudit(TypedDict):
+    kind: Literal["audit"]
+    rate: float
+class AnchorRetest(TypedDict):
+    kind: Literal["retest"]
+class AnchorFittingCheck(TypedDict):
+    kind: Literal["fitting_check"]
+Anchor = AnchorHeldOut | AnchorOwnerVerdict | AnchorWorldOutcome | AnchorAudit | AnchorRetest | AnchorFittingCheck
+class LateCreditShare(TypedDict):
+    subject: EntityId
+    origin_skill: NotRequired[EntityId | None]
+    chain: list[UsedProvenanceEdge]
+    decay: float
+    weight: float
+class LateCreditReceipt(TypedDict):
+    receipt_id: str
+    attempt_receipt: str
+    outcome_receipt: str
+    anchor: Anchor
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+    attribution: PackAttributionFields
+    direct_subjects: list[EntityId]
+    shares: list[LateCreditShare]
+class SkillPackOutcomeProjection(TypedDict):
+    receipt: LateCreditReceipt
+    persisted: bool
+class SkillPackCreditRequest(TypedDict):
+    receipt_id: str
 class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
@@ -9653,6 +9729,9 @@ class LeaderSplitOutput(TypedDict):
     parent: EntityId
     leader: EntityId
     depth_remaining: int
+class SkillCallInput(TypedDict):
+    skill: str
+    args: Any
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

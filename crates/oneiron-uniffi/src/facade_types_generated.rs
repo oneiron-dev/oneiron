@@ -3,9 +3,9 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 513 facade rows, 1826 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 476.
-// WireJson rows: none.
+// UniFFI census: 517 facade rows, 1841 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 479.
+// WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
     clippy::large_enum_variant,
@@ -20654,6 +20654,202 @@ pub struct CallableCardView {
     pub returns: crate::WireJson,
 }
 
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceiptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackReceiptRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+}
+
+/// `oneiron::receipt::pack_attribution::ContributionCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ContributionCheck {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "contributed")]
+    pub contributed: bool,
+}
+
+/// `oneiron::receipt::pack_attribution::SkillContribution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillContribution {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "check")]
+    pub check: ContributionCheck,
+}
+
+/// `oneiron::receipt::pack_attribution::UsedProvenanceEdge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct UsedProvenanceEdge {
+    #[serde(rename = "derived")]
+    pub derived: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "check", default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<ContributionCheck>,
+}
+
+/// `oneiron::receipt::pack_attribution::CreditOptions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CreditOptions {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(rename = "depth_cap", default, skip_serializing_if = "Option::is_none")]
+    pub depth_cap: Option<u32>,
+    #[serde(rename = "check_every_hop")]
+    pub check_every_hop: bool,
+}
+
+/// `oneiron::receipt::pack_attribution::PackAttributionFields`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PackAttributionFields {
+    #[serde(rename = "typeRef")]
+    pub type_ref: CellTypeRef,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "judge")]
+    pub judge: String,
+    #[serde(rename = "pattern")]
+    pub pattern: String,
+    #[serde(rename = "team_shape")]
+    pub team_shape: Vec<String>,
+    #[serde(rename = "decider")]
+    pub decider: String,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(rename = "output", default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(rename = "contributions")]
+    pub contributions: Vec<SkillContribution>,
+    #[serde(rename = "used_edges")]
+    pub used_edges: Vec<UsedProvenanceEdge>,
+    #[serde(rename = "credit")]
+    pub credit: CreditOptions,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillPackReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: ReceiptRecord,
+    #[serde(rename = "loaded_skills")]
+    pub loaded_skills: Vec<String>,
+    #[serde(rename = "attribution")]
+    pub attribution: PackAttributionFields,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackOutcomeRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "succeeded")]
+    pub succeeded: bool,
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(
+        rename = "goal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_revision: Option<String>,
+}
+
+/// `oneiron::learning::evidence::Anchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum Anchor {
+    #[serde(rename = "held_out")]
+    HeldOut,
+    #[serde(rename = "owner_verdict")]
+    OwnerVerdict,
+    #[serde(rename = "world_outcome")]
+    WorldOutcome,
+    #[serde(rename = "audit")]
+    Audit {
+        #[serde(rename = "rate")]
+        rate: f64,
+    },
+    #[serde(rename = "retest")]
+    Retest,
+    #[serde(rename = "fitting_check")]
+    FittingCheck,
+}
+
+/// `oneiron::skill_attribution::late_credit::LateCreditShare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LateCreditShare {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(
+        rename = "origin_skill",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub origin_skill: Option<String>,
+    #[serde(rename = "chain")]
+    pub chain: Vec<UsedProvenanceEdge>,
+    #[serde(rename = "decay")]
+    pub decay: f64,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+}
+
+/// `oneiron::skill_attribution::late_credit::LateCreditReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LateCreditReceipt {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "anchor")]
+    pub anchor: Anchor,
+    #[serde(rename = "succeeded")]
+    pub succeeded: bool,
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(
+        rename = "goal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_revision: Option<String>,
+    #[serde(rename = "attribution")]
+    pub attribution: PackAttributionFields,
+    #[serde(rename = "direct_subjects")]
+    pub direct_subjects: Vec<String>,
+    #[serde(rename = "shares")]
+    pub shares: Vec<LateCreditShare>,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillPackOutcomeProjection {
+    #[serde(rename = "receipt")]
+    pub receipt: LateCreditReceipt,
+    #[serde(rename = "persisted")]
+    pub persisted: bool,
+}
+
+/// `oneiron::task_verb::sdk_skill_execution::SkillPackCreditRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillPackCreditRequest {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+}
+
 /// `oneiron_model::llm::call::CallPurpose`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum CallPurpose {
@@ -29210,4 +29406,24 @@ pub struct LeaderSplitOutput {
     pub leader: String,
     #[serde(rename = "depth_remaining")]
     pub depth_remaining: u8,
+}
+
+/// `oneiron::code_run::run_verbs::SkillCallInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillCallInput {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "args")]
+    pub args: crate::WireJson,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `SkillCallInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestSkillCallInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: SkillCallInput,
 }

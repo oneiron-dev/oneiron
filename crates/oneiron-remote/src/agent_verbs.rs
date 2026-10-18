@@ -1121,6 +1121,15 @@ impl OneironClient {
                 "self.skills.callables" => remote_agent_verb_output::<
                     Vec<oneiron::skill::helper::CallableCardView>,
                 >(client, verb, &input),
+                "vault.skills.pack_receipt" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillPackReceipt,
+                >(client, verb, &input),
+                "vault.skills.outcomes.project" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillPackOutcomeProjection,
+                >(client, verb, &input),
+                "vault.skills.outcomes.get" => remote_agent_verb_output::<
+                    Option<oneiron::skill_attribution::LateCreditReceipt>,
+                >(client, verb, &input),
                 "ai.steps.submit" => remote_agent_verb_output::<
                     oneiron::llm::model_step::ModelStepReceipt,
                 >(client, verb, &input),
@@ -1616,6 +1625,9 @@ impl OneironClient {
                 "self.leader.split" => remote_agent_verb_output::<
                     oneiron::code_run::LeaderSplitOutput,
                 >(client, verb, &input),
+                "self.skills.call" => {
+                    remote_agent_verb_output::<serde_json::Value>(client, verb, &input)
+                }
                 _ => Err(crate::error::bad_request(
                     "unknown SDK agent verb",
                     &["Use a verb from the SDK catalog."],
@@ -5977,6 +5989,42 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("self.skills.callables", value)
     }
+    pub fn vault_skills_pack_receipt(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillPackReceiptRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillPackReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.pack_receipt", value)
+    }
+    pub fn vault_skills_outcomes_project(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillPackOutcomeRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillPackOutcomeProjection, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.outcomes.project", value)
+    }
+    pub fn vault_skills_outcomes_get(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillPackCreditRequest,
+    ) -> Result<Option<oneiron::skill_attribution::LateCreditReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.outcomes.get", value)
+    }
     pub fn ai_steps_submit(
         &self,
         input: &oneiron::llm::model_step::ModelStepSubmit,
@@ -7992,5 +8040,17 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.leader.split", value)
+    }
+    pub fn self_skills_call(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::SkillCallInput>,
+    ) -> Result<serde_json::Value, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.skills.call", value)
     }
 }

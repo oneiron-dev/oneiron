@@ -217,8 +217,8 @@ def long_signature(params):
 RUST_PRIMITIVES = frozenset({'bool', 'char', 'String', 'f32', 'f64', 'u8', 'u16', 'u32', 'u64', 'u128', 'usize',
                              'i8', 'i16', 'i32', 'i64', 'i128', 'isize', '()'})
 def rust_type(value):
-    'A row type as a crate outside the engine names it: a primitive as is, an engine path under `oneiron::`, any other from the SDK module.'
-    if value in RUST_PRIMITIVES: return value
+    'A row type outside the engine: primitives and JSON values as is, engine paths under `oneiron::`, other names from the SDK module.'
+    if value in RUST_PRIMITIVES or value == 'serde_json::Value': return value
     return value.replace('crate::', 'oneiron::') if value.startswith('crate::') else 'oneiron::task_verb::sdk::' + value
 
 SERVER_RECALL_DOC = "/// `vault.recall` → `SyncServer::recall_off_runtime_listing`, the recall door\n/// every server transport shares (`POST /v1/core/facade/vault.recall`, and\n/// the held socket's `rpc.req`): it embeds the query whenever the vault's\n/// embedder is serving.\n///\n/// The lease is not a client input, and a bearer slip is not one. At high,\n/// xhigh and max the door admits the recall on a line of its own and\n/// reranks on the `[models]` reranker; its refusals (`BUDGET_SPENT`,\n/// `MODEL_UNAVAILABLE`) are forwarded as those exact codes. With no\n/// reranker route the recall runs unreranked and reports\n/// `skipped / no_reranker` in `retrieval_meta.rerank`.\n"
@@ -827,7 +827,7 @@ pub(crate) async fn execute_agent_verb_input(
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks).await;
+        let produced = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks)).await;
         served.extend(producers.take());
         produced
     }
