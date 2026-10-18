@@ -161,6 +161,15 @@ pub struct ServeArgs {
     #[arg(long = "models-file")]
     pub models_file: Option<PathBuf>,
 
+    /// Managed mode: the supervisor's embedder, an absolute path to a TOML
+    /// file holding only `[embedder]` and an optional `[gpu]`, as a config
+    /// file writes them. Managed mode reads no environment, so `api_key_env`
+    /// is refused in either table, and a local provider names its files with
+    /// an absolute `model_dir` or `models_dir`. Without it a managed vault
+    /// runs with no embedder: lexical and graph recall only (FIX 777).
+    #[arg(long = "embedder-file")]
+    pub embedder_file: Option<PathBuf>,
+
     /// Managed mode: this vault's e-sign seal key, an absolute path to its
     /// PKCS#8 file (PEM or DER), in place of `ONEIRON_SEAL_KEY`, which
     /// managed mode never reads (FIX 3487).
@@ -432,6 +441,7 @@ impl fmt::Debug for ServeArgs {
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
             .field("models_file", &self.models_file)
+            .field("embedder_file", &self.embedder_file)
             .field("seal_key_file", &self.seal_key_file)
             .field("seal_chain_file", &self.seal_chain_file)
             .field("seal_trust_file", &self.seal_trust_file)

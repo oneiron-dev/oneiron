@@ -10,8 +10,10 @@ use serde::Deserialize;
 use oneiron::federation::derivation::DerivationOwner;
 use oneiron_vault_contract::{CONTRACT_VERSION, valid_vault_name};
 
+use crate::config::embedder::EmbedderConfigOverride;
 use crate::config::models::{ModelsConfig, ModelsFile};
-use crate::config::{KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
+use crate::config::{EmbedderProvider, KeystoreBackend, KeystoreConfig, ServeArgs, ServeConfig};
+use crate::runtime::GpuPoolConfig;
 
 use super::listener::HYPNOS_LISTEN_FD;
 
@@ -169,6 +171,8 @@ pub struct ManagedArgs {
     pub artifact_domains: Vec<String>,
     /// The supervisor's `[models]` file (`--models-file`).
     pub models_file: Option<PathBuf>,
+    /// The supervisor's `[embedder]` and `[gpu]` file (`--embedder-file`).
+    pub embedder_file: Option<PathBuf>,
     /// This vault's e-sign seal key file (`--seal-key-file`).
     pub seal_key: Option<PathBuf>,
     /// Its certificate chain file (`--seal-chain-file`).
@@ -188,6 +192,15 @@ pub struct ManagedArgs {
 #[serde(deny_unknown_fields)]
 struct ManagedModelsFile {
     models: ModelsFile,
+}
+
+/// A `--embedder-file`: the `[embedder]` table and an optional `[gpu]`, as a
+/// config file writes them.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManagedEmbedderFile {
+    embedder: EmbedderConfigOverride,
+    gpu: Option<GpuPoolConfig>,
 }
 
 impl ManagedArgs {
@@ -290,6 +303,7 @@ impl ManagedArgs {
                 .filter(|domain| !domain.is_empty())
                 .collect(),
             models_file: args.models_file.clone(),
+            embedder_file: args.embedder_file.clone(),
             seal_key: args.seal_key_file.clone(),
             seal_chain: args.seal_chain_file.clone(),
             seal_trust: args.seal_trust_file.clone(),
@@ -319,6 +333,7 @@ impl ManagedArgs {
             ("break-glass-recipient-file", &managed.break_glass_recipient),
             ("escrow-outbox-dir", &managed.escrow_outbox),
             ("models-file", &managed.models_file),
+            ("embedder-file", &managed.embedder_file),
             ("seal-key-file", &managed.seal_key),
             ("seal-chain-file", &managed.seal_chain),
             ("seal-trust-file", &managed.seal_trust),
@@ -363,19 +378,6 @@ impl ManagedArgs {
         )
     }
 
-    /// Serve configuration for managed mode, built from argv alone.
-    ///
-    /// Outside the managed group, the argv allowlist permits exactly the
-    /// fields read here: dimensions, map size, dictionary roots, log level
-    /// and `--no-hooks`.
-    /// Everything else on `ServeArgs` is refused before this runs, so nothing
-    /// reaches here to be quietly dropped.
-    ///
-    /// `auth_secret` stays `None` and unauthenticated requests are allowed:
-    /// bearer auth terminates at the supervisor, which owns the listening
-    /// socket inside an owner-only directory. Consulting
-    /// `ONEIRON_AUTH_SECRET` here would give the child a second, weaker
-    /// opinion about who may talk to it.
     /// The models table `--models-file` holds, resolved; `None` without one.
     /// Managed mode reads no environment, so a provider that names its key by
     /// `key_env`, or a System One seat (whose bearer is an environment
@@ -413,6 +415,64 @@ impl ManagedArgs {
         Ok(Some(models))
     }
 
+    /// Settles the `[embedder]` and `[gpu]` tables `--embedder-file` holds
+    /// onto `config`, as serve settles a config file's (FIX 777); nothing
+    /// without one. Managed mode reads no environment and no HOME, so a key
+    /// named by `api_key_env` (the endpoint's, the remote rung's or the
+    /// pods') is refused, and a local provider names its files with an
+    /// absolute `model_dir` or `models_dir` rather than find them under the
+    /// XDG data root.
+    pub fn embedder(&self, config: &mut ServeConfig) -> anyhow::Result<()> {
+        let Some(path) = &self.embedder_file else {
+            return Ok(());
+        };
+        let raw = std::fs::read_to_string(path)
+            .with_context(|| format!("read embedder file {}", path.display()))?;
+        let file: ManagedEmbedderFile = toml::from_str(&raw)
+            .with_context(|| format!("parse embedder file {}", path.display()))?;
+        let names_env_key = file.embedder.api_key_env.is_some()
+            || file
+                .embedder
+                .remote
+                .as_ref()
+                .is_some_and(|remote| remote.api_key_env.is_some())
+            || file
+                .gpu
+                .as_ref()
+                .is_some_and(|gpu| gpu.api_key_env.is_some());
+        if names_env_key {
+            anyhow::bail!(
+                "embedder file {}: api_key_env names a key in the environment, which managed mode never reads",
+                path.display()
+            );
+        }
+        let dirs = [&file.embedder.model_dir, &file.embedder.models_dir];
+        if dirs.into_iter().flatten().any(|dir| dir.is_relative()) {
+            anyhow::bail!(
+                "embedder file {}: model_dir and models_dir must be absolute paths",
+                path.display()
+            );
+        }
+        crate::config::merge::settle_embedder_section(config, file.embedder)
+            .with_context(|| format!("embedder file {}", path.display()))?;
+        if let Some(embedder) = &config.embedder
+            && embedder.provider == EmbedderProvider::Local
+            && embedder.local.model_dir.is_none()
+            && embedder.local.models_dir.is_none()
+        {
+            anyhow::bail!(
+                "embedder file {}: a local provider needs model_dir or models_dir, because managed mode never reads HOME or XDG_DATA_HOME",
+                path.display()
+            );
+        }
+        if let Some(gpu) = &file.gpu {
+            gpu.validate()
+                .with_context(|| format!("embedder file {}", path.display()))?;
+        }
+        config.gpu = file.gpu;
+        Ok(())
+    }
+
     /// The vault's own e-sign seal settings, from its argv alone (FIX 3487).
     #[cfg(unix)]
     pub(crate) fn seal_config(&self) -> crate::api::EsignSealConfig {
@@ -427,6 +487,19 @@ impl ManagedArgs {
         }
     }
 
+    /// Serve configuration for managed mode, built from argv alone.
+    ///
+    /// Outside the managed group, the argv allowlist permits exactly the
+    /// fields read here: dimensions, map size, dictionary roots, log level
+    /// and `--no-hooks`.
+    /// Everything else on `ServeArgs` is refused before this runs, so nothing
+    /// reaches here to be quietly dropped.
+    ///
+    /// `auth_secret` stays `None` and unauthenticated requests are allowed:
+    /// bearer auth terminates at the supervisor, which owns the listening
+    /// socket inside an owner-only directory. Consulting
+    /// `ONEIRON_AUTH_SECRET` here would give the child a second, weaker
+    /// opinion about who may talk to it.
     pub fn serve_config(&self, args: &ServeArgs) -> ServeConfig {
         let defaults = ServeConfig::default();
         let mut config = ServeConfig {
@@ -524,6 +597,9 @@ const NO_HOST_PORT_REASON: &str =
 const NO_CONFIG_LAYER_REASON: &str = "managed mode reads its whole configuration from argv; config files, ONEIRON_* environment and XDG layers are never consulted";
 
 const NO_AUTH_LAYER_REASON: &str = "bearer auth terminates at the supervisor, which owns the listening socket inside an owner-only directory; a managed child holds no second opinion about who may talk to it";
+
+const NO_EMBEDDER_FLAGS_REASON: &str =
+    "managed mode reads its embedder from the one file --embedder-file names";
 
 const NO_TUNING_LAYER_REASON: &str = "managed mode builds its whole ServeConfig from the vault, dimension, dictionary and log-level flags; this one would be parsed and then dropped";
 
@@ -642,6 +718,17 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         "models-file",
         |args| args.models_file.is_some(),
         ArgvUse::Read,
+    ),
+    (
+        "embedder-file",
+        |args| args.embedder_file.is_some(),
+        ArgvUse::Read,
+    ),
+    // The embedder's layered flags: managed mode reads its one file.
+    (
+        "embedder-*",
+        |args| !EmbedderConfigOverride::from(&args.embedder).is_empty(),
+        ArgvUse::Refused(NO_EMBEDDER_FLAGS_REASON),
     ),
     (
         "seal-key-file",

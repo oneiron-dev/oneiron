@@ -188,6 +188,17 @@ provider there names its key with `key_secret`; a `key_env` provider or a
 stops the vault at start. Without the flag a managed vault runs with no model
 seats: its ladder is the rule table and the owner's asks.
 
+Its embedder comes the same way, as `--embedder-file <path>`: an absolute path
+to a TOML file that holds only `[embedder]` and, optionally, `[gpu]` (§12),
+written as a config file writes them. The file is the section's one layer, and
+the `--embedder-*` flags stop a managed vault at start. Managed mode reads no
+environment, so an `api_key_env` in either table (the endpoint's, the remote
+rung's or the pods') stops the vault too, and a `local` provider names its files
+with an absolute `model_dir` or `models_dir`, because the XDG data root is never
+read. Each fill pass runs under the vault's write admission, so a vault frozen
+for reap fills nothing until it thaws. Without the flag a managed vault has no
+embedder: it answers lexical and graph recall only.
+
 The broker holds `<socket>.lock` while it serves, so a second broker on the same
 path refuses to start. `scripts/ci/broker-fixture.sh` runs the paid-leg fixture with
 the broker as a second OS user. It needs an `/etc/subuid` and `/etc/subgid` range

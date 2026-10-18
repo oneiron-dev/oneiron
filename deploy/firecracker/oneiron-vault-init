@@ -48,6 +48,9 @@ if [ "$config" = "1" ]; then
   if [ -f /config/models.toml ]; then
     set -- "$@" --models-file /config/models.toml
   fi
+  if [ -f /config/embedder.toml ]; then
+    set -- "$@" --embedder-file /config/embedder.toml
+  fi
   for pair in key:--seal-key-file chain:--seal-chain-file trust:--seal-trust-file; do
     if [ -f "/config/seal/${pair%%:*}.pem" ]; then
       set -- "$@" "${pair#*:}" "/config/seal/${pair%%:*}.pem"

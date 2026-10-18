@@ -257,6 +257,23 @@ pub(crate) fn layer_serve_config(
     Ok(resolved)
 }
 
+/// One `[embedder]` table settled onto `config` as [`layer_serve_config`]
+/// settles the layered section: applied over the defaults as the vault file's
+/// layer, its local space settled, then refused as serve refuses a section
+/// that cannot make a working slot. Managed mode's `--embedder-file` is the
+/// one layer it has (FIX 777).
+pub(crate) fn settle_embedder_section(
+    config: &mut ServeConfig,
+    section: EmbedderConfigOverride,
+) -> anyhow::Result<()> {
+    let space_naming = super::embedder_space::SpaceNaming::of([Some(&section), None, None]);
+    let mut embedder = EmbedderConfig::default();
+    embedder.apply_override(section, ConfigLayer::Vault)?;
+    super::embedder_space::settle_local_space(&mut embedder, space_naming)?;
+    config.embedder = Some(embedder);
+    validate_embedder_config(config)
+}
+
 /// The engine's own config-validation refusal, wrapped for this crate's
 /// `anyhow` boundary so it survives as a downcastable `oneiron::Error`.
 fn invalid_sync_config(field: SyncConfigField) -> anyhow::Error {
