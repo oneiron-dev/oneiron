@@ -897,6 +897,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.push(crate::api::spawn_esign_seal_worker_admitted(
         Arc::clone(&sync_server),
         admitted(),
+        managed.seal_config(),
     ));
     // Held automated sign acts are asked up their role chain (OF-415).
     ladder_workers.push(crate::api::spawn_esign_hold_worker_admitted(

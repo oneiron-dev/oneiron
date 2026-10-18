@@ -40,7 +40,7 @@ use crate::authority::{
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, held_authority_entries,
-    import_authority_page,
+    held_authority_history, import_authority_page,
 };
 use crate::sync::transport::TransportError;
 
@@ -287,7 +287,9 @@ async fn append_authority(
     let mut pages = Vec::new();
     let mut page: Vec<Vec<u8>> = Vec::new();
     let mut bytes = 0;
-    for entry in vault.export_signed_authority_history().map_err(storage)? {
+    // The rows this machine holds: an adopted machine not yet hydrated holds
+    // no covered row, and the full export refuses there.
+    for entry in held_authority_history(vault).map_err(storage)? {
         let hash = authority_entry_hash(&decode_authority_log_entry_body(&entry).map_err(storage)?)
             .map_err(storage)?;
         if !wanted.contains(&hash) {
