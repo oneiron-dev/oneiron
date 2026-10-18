@@ -427,6 +427,8 @@ class Oneiron:
         @property
         def tagging(self) -> "Oneiron._VaultTaggingVerbs": ...
         @property
+        def cluster(self) -> "Oneiron._VaultClusterVerbs": ...
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
         def scope(self) -> "Oneiron._VaultScopeVerbs": ...
@@ -860,6 +862,19 @@ class Oneiron:
             """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
         def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.TaggingMentionsView:
             """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+    class _VaultClusterVerbs:
+        def __call__(self, spec: Facade.ClusterRequest) -> Facade.ScopedReadResult[Facade.ClusterProposal]:
+            """Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."""
+        def proposal(self, spec: Facade.ClusterProposalRequest) -> Facade.ScopedReadResult[Facade.ClusterProposalView]:
+            """Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."""
+        def propose(self, spec: Facade.ClusterProposeRequest) -> Facade.ClusterTopologyReceipt:
+            """Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."""
+        def merge(self, spec: Facade.ClusterMergeRequest) -> Facade.ClusterTopologyReceipt:
+            """Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."""
+        def split(self, spec: Facade.ClusterSplitRequest) -> Facade.ClusterTopologyReceipt:
+            """Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."""
+        def resolve_proposal(self, spec: Facade.ClusterResolveRequest) -> Facade.ClusterTopologyReceipt:
+            """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:

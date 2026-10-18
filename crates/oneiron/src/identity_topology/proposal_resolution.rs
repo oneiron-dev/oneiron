@@ -379,7 +379,7 @@ impl Vault {
     }
 
     /// Transaction-composable [`Vault::resolve_identity_proposal_as`].
-    fn resolve_identity_proposal_in_txn(
+    pub(crate) fn resolve_identity_proposal_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         proposal: &EntityId,

@@ -73,6 +73,7 @@ pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::cleanup_doors::*;
+pub(crate) use super::clustering_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;

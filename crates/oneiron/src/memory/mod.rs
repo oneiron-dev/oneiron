@@ -35,6 +35,7 @@ mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod clustering;
 pub mod commitment_doors;
 mod conflict_settle;
 pub mod consolidation;

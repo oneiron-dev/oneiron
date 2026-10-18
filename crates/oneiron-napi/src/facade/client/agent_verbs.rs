@@ -760,6 +760,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_cluster(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_proposal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.proposal", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_merge(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.merge", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_split(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.split", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_resolve_proposal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.resolve_proposal", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_retrieval_recall(
         &self,
         input: serde_json::Value,
