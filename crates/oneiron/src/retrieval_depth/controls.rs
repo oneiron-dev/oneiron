@@ -315,6 +315,8 @@ impl RecallQueryVectors {
 /// No implicit embedding or model is invented when a host supplies neither.
 #[derive(Default)]
 pub struct RecallExecution<'a> {
+    /// Explicit host-injected expansion; free efforts never consume it.
+    pub hyde: Option<crate::query_expansion::HydeBinding<'a>>,
     pub deadline: Option<&'a RetrievalDeadline>,
     pub reranker: Option<&'a dyn Reranker>,
     pub embedding: Option<&'a [f32]>,

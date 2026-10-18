@@ -128,6 +128,20 @@ impl AuthorityFold {
             .map(|folded| &folded.request)
     }
 
+    /// The admitted request signed as entry `hash` when it counts here,
+    /// answered or not: what a bundle published for it proves (CALLS
+    /// BUNDLE_PUBLISH_PROOF).
+    pub(crate) fn counted_owner_work_request(
+        &self,
+        hash: &AuthorityEntryHash,
+    ) -> Option<&OwnerWorkRequest> {
+        self.owner_work
+            .requests
+            .get(hash)
+            .filter(|folded| folded.counts)
+            .map(|folded| &folded.request)
+    }
+
     /// The one result of the request signed as entry `request`.
     pub(crate) fn owner_work_result(
         &self,

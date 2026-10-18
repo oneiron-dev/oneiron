@@ -4,8 +4,8 @@
 //! exact members and policy frontier; settlement keeps their inverse handles.
 
 mod revert;
-mod snapshot;
 mod settle;
+mod snapshot;
 
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -18,15 +18,30 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RunReviewChange {
-    Claim { claim_ref: String },
+    Claim {
+        claim_ref: String,
+    },
     /// An edge is undone through its existing provenance retraction door.
-    Edge { provenance_ref: String },
-    Note { note_ref: String, fork_ref: String },
-    Topology { event_ref: String },
+    Edge {
+        provenance_ref: String,
+    },
+    Note {
+        note_ref: String,
+        fork_ref: String,
+    },
+    Topology {
+        event_ref: String,
+    },
     /// An existing external-effect gate receipt; it is never replayed.
-    ExternalEffect { receipt_ref: String },
-    Delete { entity_ref: String },
-    Erase { entity_ref: String },
+    ExternalEffect {
+        receipt_ref: String,
+    },
+    Delete {
+        entity_ref: String,
+    },
+    Erase {
+        entity_ref: String,
+    },
 }
 
 impl RunReviewChange {
@@ -61,7 +76,12 @@ pub struct RunReviewRequest {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RunChangeVerdict { Landed, Rejected, Waiting, LetGo }
+pub enum RunChangeVerdict {
+    Landed,
+    Rejected,
+    Waiting,
+    LetGo,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunChangeOutcome {
@@ -87,7 +107,10 @@ pub struct RunReview {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RunSettleDecision { Approve, Reject }
+pub enum RunSettleDecision {
+    Approve,
+    Reject,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -106,11 +129,16 @@ pub enum RunAnsweredBy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub enum RunSettlementKind { ProposalOutcome }
+pub enum RunSettlementKind {
+    ProposalOutcome,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum RunSettlementReason { OwnerApproved, OwnerRejected }
+pub enum RunSettlementReason {
+    OwnerApproved,
+    OwnerRejected,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunSettlement {
@@ -150,7 +178,11 @@ pub struct RunCompensation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RunNotUndoneReason {
-    OneWay, BackupOnly, Dependent, NotSelected, NotLanded,
+    OneWay,
+    BackupOnly,
+    Dependent,
+    NotSelected,
+    NotLanded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -194,49 +226,87 @@ const SETTLEMENTS: SideTable<String, StoredRun, Named> =
 fn run_key(run: &str) -> MemoryResult<String> {
     let run = run.strip_prefix("run:").unwrap_or(run);
     if run.trim().is_empty() || run.len() > 1024 {
-        return Err(MemoryError::bad_request("run_id is a nonempty job id of at most 1024 bytes"));
+        return Err(MemoryError::bad_request(
+            "run_id is a nonempty job id of at most 1024 bytes",
+        ));
     }
     Ok(run.to_owned())
 }
 
 fn require_owner(
-    memory: &Memory<'_>, txn: &heed::RoTxn<'_>, owner: &AuthenticatedOwner,
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    owner: &AuthenticatedOwner,
 ) -> MemoryResult<WriteActor> {
     let person = super::authorship::verify_owner(memory.vault(), txn, owner)?;
     if person != memory.actor() || memory.actor_class() != EdgeActorClass::Human {
-        return Err(MemoryError::new(super::MEMORY_CODE_FORBIDDEN,
-            "run review acts through the caller's own owner credential", &[]));
+        return Err(MemoryError::new(
+            super::MEMORY_CODE_FORBIDDEN,
+            "run review acts through the caller's own owner credential",
+            &[],
+        ));
     }
     memory.verify_actor_write_in_txn(txn)?;
     Ok(WriteActor::new(person, EdgeActorClass::Human))
 }
 
-fn fingerprint(bytes: &[u8]) -> String { blake3::hash(bytes).to_hex().to_string() }
+fn fingerprint(bytes: &[u8]) -> String {
+    blake3::hash(bytes).to_hex().to_string()
+}
 
 impl Memory<'_> {
     /// The durable result of this job's one cross-kind settlement.
     pub fn run_settlement_as_owner(
-        &self, owner: &AuthenticatedOwner, input: &RunSettlementRequest,
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &RunSettlementRequest,
     ) -> MemoryResult<RunSettlement> {
         let run = run_key(&input.run_id)?;
-        let txn = self.vault().store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         require_owner(self, &txn, owner)?;
-        let journal = SETTLEMENTS.get(&self.vault().store, &txn, &run)?
+        let journal = SETTLEMENTS
+            .get(&self.vault().store, &txn, &run)?
             .ok_or_else(|| MemoryError::not_found("no run settlement has that id"))?;
-        self.produced_from(journal.changes.iter().map(|m| m.member.rows())
-            .collect::<MemoryResult<Vec<_>>>()?.into_iter().flatten());
+        self.produced_from(
+            journal
+                .changes
+                .iter()
+                .map(|m| m.member.rows())
+                .collect::<MemoryResult<Vec<_>>>()?
+                .into_iter()
+                .flatten(),
+        );
         Ok(journal.settlement)
     }
 
     /// Reads exactly the explicit set and the live policy in one snapshot.
     pub fn review_run_as_owner(
-        &self, owner: &AuthenticatedOwner, input: &RunReviewRequest,
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &RunReviewRequest,
     ) -> MemoryResult<RunReview> {
-        let txn = self.vault().store.env.read_txn().map_err(crate::Error::from)?;
+        let txn = self
+            .vault()
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
         require_owner(self, &txn, owner)?;
         let reviewed = snapshot::review_in_txn(self, &txn, input)?;
-        self.produced_from(input.changes.iter().map(RunReviewChange::rows)
-            .collect::<MemoryResult<Vec<_>>>()?.into_iter().flatten());
+        self.produced_from(
+            input
+                .changes
+                .iter()
+                .map(RunReviewChange::rows)
+                .collect::<MemoryResult<Vec<_>>>()?
+                .into_iter()
+                .flatten(),
+        );
         Ok(reviewed)
     }
 }

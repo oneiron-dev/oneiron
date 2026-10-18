@@ -60,6 +60,10 @@ pub enum SlotKind {
     /// The seed this install's checkpoint signing keys are remade from: an Ed25519
     /// key and an SLH-DSA-SHA2-256s key (OF-570 (e)).
     CheckpointSigning,
+    /// The host root secret of a vault this install rooted itself as a new local
+    /// origin with no configured secret, such as the desktop app's own vault
+    /// (FIX 4730). The root's recovery material, on this device only.
+    HostRoot,
 }
 
 impl SlotKind {
@@ -71,6 +75,7 @@ impl SlotKind {
             Self::DeviceSigning => "device-signing",
             Self::VaultUnlock => "vault-unlock",
             Self::CheckpointSigning => "checkpoint-signing",
+            Self::HostRoot => "host-root",
         }
     }
 }

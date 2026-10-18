@@ -26,7 +26,7 @@ pub struct GoalAxisPlan {
     pub pulls_per_axis: u32,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AxisScores {
     pub before: f64,
     pub after: f64,
@@ -38,7 +38,7 @@ pub enum AxisArm {
     Candidate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConfidenceInterval {
     pub lower: f64,
     pub upper: f64,
@@ -91,7 +91,7 @@ pub trait GoalAxisBandits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OnlineAxisOutcome {
     CandidateBetter,
@@ -99,7 +99,7 @@ pub enum OnlineAxisOutcome {
     Inconclusive,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OnlineAxisMeasurement {
     pub axis: String,
     pub before_pulls: u32,
@@ -114,7 +114,7 @@ pub struct OnlineAxisMeasurement {
     pub outcome: OnlineAxisOutcome,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct GoalAxisReport {
     pub held_out_receipts: Vec<String>,
     pub offline: Vec<(String, AxisScores)>,

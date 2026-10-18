@@ -72,6 +72,11 @@ pub enum AgentVerb {
     VaultRetrievalAgingConfigure,
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
+    VaultRetrievalHydeConfigure,
+    VaultRetrievalHydeGet,
+    VaultRetrievalHydePending,
+    VaultRetrievalHydeComplete,
+    VaultRetrievalHydeReceipt,
     VaultAffectAnnotationsPut,
     VaultTaggingStatus,
     VaultTaggingTags,
@@ -165,10 +170,24 @@ pub enum AgentVerb {
     VaultSkillsPermissionsApprove,
     VaultSkillsOptimizeStart,
     VaultSkillsOptimizeResult,
+    VaultProjectsGoalIntakeComplete,
+    VaultProjectsGoalGet,
+    VaultSkillsOptimizePropose,
+    VaultSkillsOptimizeMeasure,
+    VaultSkillsOptimizeScore,
+    VaultSkillsOptimizeAdmit,
+    VaultSkillsOptimizeGoalGet,
+    VaultSkillsOptimizeGoalBind,
+    VaultSkillsOptimizePreferencesGet,
+    VaultSkillsOptimizePreferencesSet,
+    VaultSkillsOptimizeTradeoffAsks,
+    VaultSkillsOptimizeTradeoffAsksPick,
     VaultSkillsGovernanceGet,
     VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
     VaultPacksHooksList,
+    VaultPacksHooksGrantSet,
+    VaultPacksHooksGrantGet,
     VaultPacksHooksQualify,
     VaultPacksPut,
     VaultPacksConnectorPrepare,
@@ -247,6 +266,9 @@ pub enum AgentVerb {
     VaultTrustedContactsConcernAuthorize,
     VaultTrustedContactsConcernPropose,
     VaultTrustedContactsConcernDeliver,
+    VaultGuestsShare,
+    VaultGuestsExportEnvelope,
+    VaultGuestsReshare,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultSupportGrantsMint,
@@ -267,6 +289,7 @@ pub enum AgentVerb {
     SelfOffRecordExecute,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
+    VaultRecordsEraseSweep,
     VaultResearchCreateChild,
     VaultResearchArchive,
     VaultResearchArchiveInstall,
@@ -394,6 +417,9 @@ pub enum AgentVerb {
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
+    VaultLensesSelect,
+    VaultLensesResolve,
+    VaultLensesResultSetAction,
     VaultLensesDefault,
     VaultDisclosureOffer,
     Reveal,
@@ -407,6 +433,9 @@ pub enum AgentVerb {
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
+    HostCompact,
+    HostWake,
+    HostBudgetHit,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -653,6 +682,11 @@ pub enum AgentVerb {
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
+    CalendarIcsConfigure,
+    CalendarIcsPoll,
+    CalendarIcsStatus,
+    VaultCalendarPassportsRead,
+    VaultCalendarPassportsHistory,
     CalendarConnectorConfigure,
     CalendarConnectorGet,
     CalendarConnectorPull,
@@ -910,6 +944,11 @@ impl AgentVerb {
         Self::VaultRetrievalAgingConfigure,
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
+        Self::VaultRetrievalHydeConfigure,
+        Self::VaultRetrievalHydeGet,
+        Self::VaultRetrievalHydePending,
+        Self::VaultRetrievalHydeComplete,
+        Self::VaultRetrievalHydeReceipt,
         Self::VaultAffectAnnotationsPut,
         Self::VaultTaggingStatus,
         Self::VaultTaggingTags,
@@ -1003,10 +1042,24 @@ impl AgentVerb {
         Self::VaultSkillsPermissionsApprove,
         Self::VaultSkillsOptimizeStart,
         Self::VaultSkillsOptimizeResult,
+        Self::VaultProjectsGoalIntakeComplete,
+        Self::VaultProjectsGoalGet,
+        Self::VaultSkillsOptimizePropose,
+        Self::VaultSkillsOptimizeMeasure,
+        Self::VaultSkillsOptimizeScore,
+        Self::VaultSkillsOptimizeAdmit,
+        Self::VaultSkillsOptimizeGoalGet,
+        Self::VaultSkillsOptimizeGoalBind,
+        Self::VaultSkillsOptimizePreferencesGet,
+        Self::VaultSkillsOptimizePreferencesSet,
+        Self::VaultSkillsOptimizeTradeoffAsks,
+        Self::VaultSkillsOptimizeTradeoffAsksPick,
         Self::VaultSkillsGovernanceGet,
         Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
         Self::VaultPacksHooksList,
+        Self::VaultPacksHooksGrantSet,
+        Self::VaultPacksHooksGrantGet,
         Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
         Self::VaultPacksConnectorPrepare,
@@ -1085,6 +1138,9 @@ impl AgentVerb {
         Self::VaultTrustedContactsConcernAuthorize,
         Self::VaultTrustedContactsConcernPropose,
         Self::VaultTrustedContactsConcernDeliver,
+        Self::VaultGuestsShare,
+        Self::VaultGuestsExportEnvelope,
+        Self::VaultGuestsReshare,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultSupportGrantsMint,
@@ -1105,6 +1161,7 @@ impl AgentVerb {
         Self::SelfOffRecordExecute,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
+        Self::VaultRecordsEraseSweep,
         Self::VaultResearchCreateChild,
         Self::VaultResearchArchive,
         Self::VaultResearchArchiveInstall,
@@ -1232,6 +1289,9 @@ impl AgentVerb {
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
+        Self::VaultLensesSelect,
+        Self::VaultLensesResolve,
+        Self::VaultLensesResultSetAction,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
         Self::Reveal,
@@ -1245,6 +1305,9 @@ impl AgentVerb {
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
+        Self::HostCompact,
+        Self::HostWake,
+        Self::HostBudgetHit,
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
@@ -1491,6 +1554,11 @@ impl AgentVerb {
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
+        Self::CalendarIcsConfigure,
+        Self::CalendarIcsPoll,
+        Self::CalendarIcsStatus,
+        Self::VaultCalendarPassportsRead,
+        Self::VaultCalendarPassportsHistory,
         Self::CalendarConnectorConfigure,
         Self::CalendarConnectorGet,
         Self::CalendarConnectorPull,
@@ -1751,6 +1819,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => "vault.retrieval.aging.configure",
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
+            Self::VaultRetrievalHydeConfigure => "vault.retrieval.hyde.configure",
+            Self::VaultRetrievalHydeGet => "vault.retrieval.hyde.get",
+            Self::VaultRetrievalHydePending => "vault.retrieval.hyde.pending",
+            Self::VaultRetrievalHydeComplete => "vault.retrieval.hyde.complete",
+            Self::VaultRetrievalHydeReceipt => "vault.retrieval.hyde.receipt",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
             Self::VaultTaggingStatus => "vault.tagging.status",
             Self::VaultTaggingTags => "vault.tagging.tags",
@@ -1844,10 +1917,24 @@ impl AgentVerb {
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
             Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
+            Self::VaultProjectsGoalIntakeComplete => "vault.projects.goal.intake.complete",
+            Self::VaultProjectsGoalGet => "vault.projects.goal.get",
+            Self::VaultSkillsOptimizePropose => "vault.skills.optimize.propose",
+            Self::VaultSkillsOptimizeMeasure => "vault.skills.optimize.measure",
+            Self::VaultSkillsOptimizeScore => "vault.skills.optimize.score",
+            Self::VaultSkillsOptimizeAdmit => "vault.skills.optimize.admit",
+            Self::VaultSkillsOptimizeGoalGet => "vault.skills.optimize.goal.get",
+            Self::VaultSkillsOptimizeGoalBind => "vault.skills.optimize.goal.bind",
+            Self::VaultSkillsOptimizePreferencesGet => "vault.skills.optimize.preferences.get",
+            Self::VaultSkillsOptimizePreferencesSet => "vault.skills.optimize.preferences.set",
+            Self::VaultSkillsOptimizeTradeoffAsks => "vault.skills.optimize.tradeoff_asks",
+            Self::VaultSkillsOptimizeTradeoffAsksPick => "vault.skills.optimize.tradeoff_asks.pick",
             Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
             Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
+            Self::VaultPacksHooksGrantSet => "vault.packs.hooks.grant.set",
+            Self::VaultPacksHooksGrantGet => "vault.packs.hooks.grant.get",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksConnectorPrepare => "vault.packs.connector.prepare",
@@ -1930,6 +2017,9 @@ impl AgentVerb {
             }
             Self::VaultTrustedContactsConcernPropose => "vault.trusted_contacts.concern.propose",
             Self::VaultTrustedContactsConcernDeliver => "vault.trusted_contacts.concern.deliver",
+            Self::VaultGuestsShare => "vault.guests.share",
+            Self::VaultGuestsExportEnvelope => "vault.guests.export_envelope",
+            Self::VaultGuestsReshare => "vault.guests.reshare",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultSupportGrantsMint => "vault.support_grants.mint",
@@ -1950,6 +2040,7 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => "self.off_record.execute",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
+            Self::VaultRecordsEraseSweep => "vault.records.erase_sweep",
             Self::VaultResearchCreateChild => "vault.research.create_child",
             Self::VaultResearchArchive => "vault.research.archive",
             Self::VaultResearchArchiveInstall => "vault.research.archive.install",
@@ -2087,6 +2178,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesSelect => "vault.lenses.select",
+            Self::VaultLensesResolve => "vault.lenses.resolve",
+            Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
             Self::Reveal => "reveal",
@@ -2100,6 +2194,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
+            Self::HostCompact => "host.compact",
+            Self::HostWake => "host.wake",
+            Self::HostBudgetHit => "host.budget.hit",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
@@ -2350,6 +2447,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
+            Self::CalendarIcsConfigure => "calendar.ics.configure",
+            Self::CalendarIcsPoll => "calendar.ics.poll",
+            Self::CalendarIcsStatus => "calendar.ics.status",
+            Self::VaultCalendarPassportsRead => "vault.calendar.passports.read",
+            Self::VaultCalendarPassportsHistory => "vault.calendar.passports.history",
             Self::CalendarConnectorConfigure => "calendar.connector.configure",
             Self::CalendarConnectorGet => "calendar.connector.get",
             Self::CalendarConnectorPull => "calendar.connector.pull",
@@ -2610,6 +2712,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
@@ -2703,10 +2810,24 @@ impl AgentVerb {
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultProjectsGoalGet
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalGet
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesGet
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsks
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksGrantSet
+                | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -2785,6 +2906,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultTrustedContactsConcernPropose
                 | Self::VaultTrustedContactsConcernDeliver
+                | Self::VaultGuestsShare
+                | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -2805,6 +2929,7 @@ impl AgentVerb {
                 | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultRecordsEraseSweep
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -2932,6 +3057,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -2945,6 +3073,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -3171,6 +3302,11 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -3475,6 +3611,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
@@ -3568,10 +3709,24 @@ impl AgentVerb {
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultProjectsGoalGet
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalGet
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesGet
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsks
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksGrantSet
+                | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -3650,6 +3805,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultTrustedContactsConcernPropose
                 | Self::VaultTrustedContactsConcernDeliver
+                | Self::VaultGuestsShare
+                | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -3670,6 +3828,7 @@ impl AgentVerb {
                 | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultRecordsEraseSweep
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -3797,6 +3956,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -3810,6 +3972,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -4036,6 +4201,11 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -4244,6 +4414,7 @@ impl AgentVerb {
             Self::SelfStandingList
                 | Self::SelfInboxList
                 | Self::Describe
+                | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
                 | Self::VaultRetrievalOutcomesPut
@@ -4255,6 +4426,7 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
+                | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultMeshPathReceipts
@@ -4334,6 +4506,8 @@ impl AgentVerb {
                 | Self::VaultExportScoped
                 | Self::ExecuteCode
                 | Self::VaultCommit
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
@@ -4421,6 +4595,11 @@ impl AgentVerb {
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeGet
+                | Self::VaultRetrievalHydePending
+                | Self::VaultRetrievalHydeComplete
+                | Self::VaultRetrievalHydeReceipt
                 | Self::VaultTaggingStatus
                 | Self::VaultTaggingTags
                 | Self::VaultTaggingHistory
@@ -4509,10 +4688,24 @@ impl AgentVerb {
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultProjectsGoalGet
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalGet
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesGet
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsks
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksGrantSet
+                | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -4591,6 +4784,9 @@ impl AgentVerb {
                 | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultTrustedContactsConcernPropose
                 | Self::VaultTrustedContactsConcernDeliver
+                | Self::VaultGuestsShare
+                | Self::VaultGuestsExportEnvelope
+                | Self::VaultGuestsReshare
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultSupportGrantsMint
@@ -4611,6 +4807,7 @@ impl AgentVerb {
                 | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
+                | Self::VaultRecordsEraseSweep
                 | Self::VaultResearchCreateChild
                 | Self::VaultResearchArchive
                 | Self::VaultResearchArchiveInstall
@@ -4738,6 +4935,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -4751,6 +4951,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -4995,6 +5198,9 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -5198,6 +5404,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRetrievalAgingConfigure
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultRetrievalHydeConfigure
+                | Self::VaultRetrievalHydeComplete
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultAffectCopingRecord
@@ -5245,8 +5453,17 @@ impl AgentVerb {
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksGrantSet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -5401,6 +5618,7 @@ impl AgentVerb {
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
+                | Self::VaultLensesResultSetAction
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::SelfUse
@@ -5410,6 +5628,9 @@ impl AgentVerb {
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -5548,6 +5769,8 @@ impl AgentVerb {
                 | Self::VaultBookingReschedule
                 | Self::VaultBookingCancel
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorPull
                 | Self::CalendarConnectorWrite
@@ -5764,6 +5987,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultRetrievalHydeConfigure => &["spec"],
+            Self::VaultRetrievalHydeGet => &["spec"],
+            Self::VaultRetrievalHydePending => &["spec"],
+            Self::VaultRetrievalHydeComplete => &["spec"],
+            Self::VaultRetrievalHydeReceipt => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
             Self::VaultTaggingStatus => &["spec"],
             Self::VaultTaggingTags => &["spec"],
@@ -5857,10 +6085,24 @@ impl AgentVerb {
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultProjectsGoalIntakeComplete => &["spec"],
+            Self::VaultProjectsGoalGet => &["spec"],
+            Self::VaultSkillsOptimizePropose => &["spec"],
+            Self::VaultSkillsOptimizeMeasure => &["spec"],
+            Self::VaultSkillsOptimizeScore => &["spec"],
+            Self::VaultSkillsOptimizeAdmit => &["spec"],
+            Self::VaultSkillsOptimizeGoalGet => &["spec"],
+            Self::VaultSkillsOptimizeGoalBind => &["spec"],
+            Self::VaultSkillsOptimizePreferencesGet => &["spec"],
+            Self::VaultSkillsOptimizePreferencesSet => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksGrantSet => &["spec"],
+            Self::VaultPacksHooksGrantGet => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksConnectorPrepare => &["spec"],
@@ -5939,6 +6181,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultTrustedContactsConcernPropose => &["spec"],
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
+            Self::VaultGuestsShare => &["spec"],
+            Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultSupportGrantsMint => &["spec"],
@@ -5959,6 +6204,7 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultRecordsEraseSweep => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -6086,6 +6332,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesSelect => &["spec"],
+            Self::VaultLensesResolve => &["spec"],
+            Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::Reveal => &["spec"],
@@ -6099,6 +6348,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
+            Self::HostCompact => &["spec"],
+            Self::HostWake => &["spec"],
+            Self::HostBudgetHit => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -6345,6 +6597,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
+            Self::CalendarIcsConfigure => &["spec"],
+            Self::CalendarIcsPoll => &["spec"],
+            Self::CalendarIcsStatus => &["spec"],
+            Self::VaultCalendarPassportsRead => &["spec"],
+            Self::VaultCalendarPassportsHistory => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
             Self::CalendarConnectorGet => &["spec"],
             Self::CalendarConnectorPull => &["spec"],
@@ -6603,6 +6860,11 @@ impl AgentVerb {
             Self::VaultRetrievalAgingConfigure => &["spec"],
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultRetrievalHydeConfigure => &["spec"],
+            Self::VaultRetrievalHydeGet => &["spec"],
+            Self::VaultRetrievalHydePending => &["spec"],
+            Self::VaultRetrievalHydeComplete => &["spec"],
+            Self::VaultRetrievalHydeReceipt => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
             Self::VaultTaggingStatus => &["spec"],
             Self::VaultTaggingTags => &["spec"],
@@ -6696,10 +6958,24 @@ impl AgentVerb {
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultProjectsGoalIntakeComplete => &["spec"],
+            Self::VaultProjectsGoalGet => &["spec"],
+            Self::VaultSkillsOptimizePropose => &["spec"],
+            Self::VaultSkillsOptimizeMeasure => &["spec"],
+            Self::VaultSkillsOptimizeScore => &["spec"],
+            Self::VaultSkillsOptimizeAdmit => &["spec"],
+            Self::VaultSkillsOptimizeGoalGet => &["spec"],
+            Self::VaultSkillsOptimizeGoalBind => &["spec"],
+            Self::VaultSkillsOptimizePreferencesGet => &["spec"],
+            Self::VaultSkillsOptimizePreferencesSet => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksGrantSet => &["spec"],
+            Self::VaultPacksHooksGrantGet => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksConnectorPrepare => &["spec"],
@@ -6778,6 +7054,9 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultTrustedContactsConcernPropose => &["spec"],
             Self::VaultTrustedContactsConcernDeliver => &["spec"],
+            Self::VaultGuestsShare => &["spec"],
+            Self::VaultGuestsExportEnvelope => &["spec"],
+            Self::VaultGuestsReshare => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultSupportGrantsMint => &["spec"],
@@ -6798,6 +7077,7 @@ impl AgentVerb {
             Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
+            Self::VaultRecordsEraseSweep => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
             Self::VaultResearchArchive => &["spec"],
             Self::VaultResearchArchiveInstall => &["spec"],
@@ -6925,6 +7205,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesSelect => &["spec"],
+            Self::VaultLensesResolve => &["spec"],
+            Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::Reveal => &["spec"],
@@ -6938,6 +7221,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
+            Self::HostCompact => &["spec"],
+            Self::HostWake => &["spec"],
+            Self::HostBudgetHit => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -7184,6 +7470,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
+            Self::CalendarIcsConfigure => &["spec"],
+            Self::CalendarIcsPoll => &["spec"],
+            Self::CalendarIcsStatus => &["spec"],
+            Self::VaultCalendarPassportsRead => &["spec"],
+            Self::VaultCalendarPassportsHistory => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
             Self::CalendarConnectorGet => &["spec"],
             Self::CalendarConnectorPull => &["spec"],
@@ -7573,6 +7864,21 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsConfigure => {
                 "The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."
             }
+            Self::VaultRetrievalHydeConfigure => {
+                "The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."
+            }
+            Self::VaultRetrievalHydeGet => {
+                "The owner reads the serving host HyDE binding, grounding and bounded retry options."
+            }
+            Self::VaultRetrievalHydePending => {
+                "Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."
+            }
+            Self::VaultRetrievalHydeComplete => {
+                "Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."
+            }
+            Self::VaultRetrievalHydeReceipt => {
+                "Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."
+            }
             Self::VaultAffectAnnotationsPut => {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
             }
@@ -7850,6 +8156,42 @@ impl AgentVerb {
             Self::VaultSkillsOptimizeResult => {
                 "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."
             }
+            Self::VaultProjectsGoalIntakeComplete => {
+                "Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal."
+            }
+            Self::VaultProjectsGoalGet => {
+                "Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it."
+            }
+            Self::VaultSkillsOptimizePropose => {
+                "Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules."
+            }
+            Self::VaultSkillsOptimizeMeasure => {
+                "Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms."
+            }
+            Self::VaultSkillsOptimizeScore => {
+                "Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it."
+            }
+            Self::VaultSkillsOptimizeAdmit => {
+                "Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks."
+            }
+            Self::VaultSkillsOptimizeGoalGet => {
+                "Reads the optimizer goal identity, effective axes, revision and joined project goal claim."
+            }
+            Self::VaultSkillsOptimizeGoalBind => {
+                "Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision."
+            }
+            Self::VaultSkillsOptimizePreferencesGet => {
+                "Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority."
+            }
+            Self::VaultSkillsOptimizePreferencesSet => {
+                "The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsks => {
+                "Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsksPick => {
+                "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."
+            }
             Self::VaultSkillsGovernanceGet => {
                 "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."
             }
@@ -7860,7 +8202,13 @@ impl AgentVerb {
                 "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
             }
             Self::VaultPacksHooksList => {
-                "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."
+                "Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants."
+            }
+            Self::VaultPacksHooksGrantSet => {
+                "The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant."
+            }
+            Self::VaultPacksHooksGrantGet => {
+                "Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set."
             }
             Self::VaultPacksHooksQualify => {
                 "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."
@@ -8088,9 +8436,18 @@ impl AgentVerb {
             Self::VaultTrustedContactsConcernDeliver => {
                 "The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."
             }
+            Self::VaultGuestsShare => {
+                "The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch."
+            }
+            Self::VaultGuestsExportEnvelope => {
+                "The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."
+            }
+            Self::VaultGuestsReshare => {
+                "The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."
+            }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
-                "The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."
+                "The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device."
             }
             Self::VaultSupportGrantsMint => {
                 "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."
@@ -8145,6 +8502,9 @@ impl AgentVerb {
             }
             Self::VaultRecordsEraseConfirm => {
                 "Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."
+            }
+            Self::VaultRecordsEraseSweep => {
+                "Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."
             }
             Self::VaultResearchCreateChild => {
                 "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."
@@ -8517,6 +8877,15 @@ impl AgentVerb {
             Self::VaultLensesList => {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
             }
+            Self::VaultLensesSelect => {
+                "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."
+            }
+            Self::VaultLensesResolve => {
+                "Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span."
+            }
+            Self::VaultLensesResultSetAction => {
+                "Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate."
+            }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."
             }
@@ -8552,6 +8921,15 @@ impl AgentVerb {
             }
             Self::VaultSharesRevoke => "",
             Self::VaultSharesView => "",
+            Self::HostCompact => {
+                "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."
+            }
+            Self::HostWake => {
+                "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."
+            }
+            Self::HostBudgetHit => {
+                "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
+            }
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
             }
@@ -9237,6 +9615,21 @@ impl AgentVerb {
             }
             Self::CalendarInvite => {
                 "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."
+            }
+            Self::CalendarIcsConfigure => {
+                "Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent."
+            }
+            Self::CalendarIcsPoll => {
+                "Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence."
+            }
+            Self::CalendarIcsStatus => {
+                "Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL."
+            }
+            Self::VaultCalendarPassportsRead => {
+                "Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence."
+            }
+            Self::VaultCalendarPassportsHistory => {
+                "Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate."
             }
             Self::CalendarConnectorConfigure => {
                 "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."
