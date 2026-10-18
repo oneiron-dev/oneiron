@@ -215,6 +215,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_OWNER_HANDOVER => super::owner_handover::decode_owner_handover(entries),
         OP_KIND_RESIDENCE_DIRECTIVE => super::residence::decode_residence_directive(entries),
         OP_KIND_RESIDENCE_RESULT => super::residence::decode_residence_result(entries),
+        OP_KIND_GRANT_TRAVEL => super::grant_travel::decode_grant_travel(entries),
         _ => Err(invalid_authority()),
     }
 }

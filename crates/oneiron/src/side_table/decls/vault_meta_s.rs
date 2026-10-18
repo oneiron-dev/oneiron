@@ -70,6 +70,11 @@ side_tables! {
     /// T1/T2 secret-materialization lease row (escalation ladder to local registration). Key:
     /// hex32(lease id).
     SECRET_LEASE: VaultMeta b"secret_lease:v1:" Raw;
+    /// A value-free grant a secret lease's holder redeems (FIX 4313): the custody record, the
+    /// value generation it pins, the holder principal and run, the effector, the target and the
+    /// expiry, and for a T1/T2 grant the lease it rides. Key: id16 (grant id).
+    SECRET_LEASE_GRANT: VaultMeta b"secret_lease_grant:v1:" Named Engine
+        => crate::secret_lease::erase_secret_grant_actor_in_txn;
     /// Durable receipt written before a secret value is returned from materialization. Key:
     /// hex32(receipt id).
     SECRET_MATERIALIZATION_RECEIPT: VaultMeta b"secret_lease_receipt:v1:" Raw;
@@ -509,8 +514,4 @@ side_tables! {
     /// Born-with text a copy from another vault carried for one row: the fields its sharer let
     /// travel (OF-491), prose only, never a ref. Key: id16 (the row).
     SYNC_BORN_WITH_CARRIED: VaultMeta b"sync:born_with:carried:v1:" Named;
-    /// The born-with text the owner lets one federation grant's windows carry to another vault,
-    /// set on this device and never synced or taken from the wire (OF-491). Key: id16 (the
-    /// grant).
-    SYNC_BORN_WITH_GRANT: VaultMeta b"sync:born_with:grant:v1:" Named;
 }

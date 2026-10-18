@@ -13,13 +13,20 @@
 //! door sends one connector call with the handle's secret as the call's
 //! credential ([`use_secret_for_connector_call`]), and an embedded vault,
 //! which installs no connector transport, refuses it.
+//!
+//! The lease-aware twins ([`use_secret_grant_as_caller`],
+//! [`use_secret_grant_for_connector_call`], FIX 4313) take a secret grant the
+//! caller holds in place of a handle, and answer the same way.
 use serde::{Deserialize, Serialize};
 
 use super::sdk_connector_call::ConnectorCallReply;
+use crate::attempt_queue::AttemptId;
+use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, SecretError};
 use crate::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, Memory,
-    MemoryError, MemoryResult, verify_actor_binding,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
+    MEMORY_CODE_MODEL_UNAVAILABLE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
+    verify_actor_binding,
 };
 use crate::outbound_consent::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallRequest, connector_call_effector,
@@ -28,6 +35,7 @@ use crate::secret_custody::{
     SECRET_BIND_DOOR, SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SecretUseConsumed,
     SecretUseOutcome, SecretUseSend, SecretUser,
 };
+use crate::secret_lease::{SecretGrantCaller, SecretGrantTarget};
 
 /// `self.use`'s input: the handle, the operation, and its arguments.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -174,6 +182,120 @@ pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
         )
         .map_err(|error| use_refusal(error, SECRET_USE_CONNECTOR_CALL))?;
     Ok(answer(outcome))
+}
+
+/// `self.use` under the secret grant `grant` the caller holds, acting in
+/// `run` when its host attached one (FIX 4313): the grant is redeemed for
+/// `operation`, one of the table's, and the use answers as
+/// [`use_secret_as_caller`] does. `connector.call` is refused here: a
+/// server's host door sends it ([`use_secret_grant_for_connector_call`]).
+pub fn use_secret_grant_as_caller(
+    memory: &Memory<'_>,
+    run: Option<AttemptId>,
+    grant: &EntityId,
+    operation: &str,
+    arguments: &serde_json::Value,
+) -> MemoryResult<SecretUseAnswer> {
+    if operation == SECRET_USE_CONNECTOR_CALL {
+        return Err(MemoryError::new(
+            MEMORY_CODE_MODEL_UNAVAILABLE,
+            "self.use's connector.call sends through a server's installed connector transports; \
+             an embedded vault has none",
+            &["Call it through a remote client of a server that serves it."],
+        ));
+    }
+    let caller = SecretGrantCaller::of(memory, run)?;
+    let outcome = memory
+        .vault()
+        .use_secret_grant(&caller, grant, operation, arguments)
+        .map_err(|error| grant_refusal(error, operation))?;
+    Ok(answer(outcome))
+}
+
+/// [`use_secret_for_connector_call`] under the secret grant `grant` the
+/// caller holds, acting in `run` when its host attached one (FIX 4313): the
+/// grant must be a connector grant for the route `request` names. The call's
+/// row keeps the grant, and the host redeems it again at every real send, a
+/// held send resumed later included; the caller's own standing grant, gate
+/// and invocation govern the call as before, and the reply comes back
+/// cleared of the value.
+pub fn use_secret_grant_for_connector_call<H: ConnectorCallHost>(
+    memory: &Memory<'_>,
+    run: Option<AttemptId>,
+    grant: &EntityId,
+    request: ConnectorCallRequest,
+    invocation: Option<ConnectorCallInvocation>,
+    host: &mut H,
+) -> MemoryResult<SecretUseAnswer> {
+    let caller = SecretGrantCaller::of(memory, run)?;
+    let vault = memory.vault();
+    let route = vault.route_connector_call(&request.name)?.ok_or_else(|| {
+        MemoryError::bad_request(format!(
+            "{} is not a catalogued connector a call can route to",
+            request.name
+        ))
+    })?;
+    let target = SecretGrantTarget::Connector { name: route.name };
+    let (name, tool) = (request.name.clone(), request.tool.clone());
+    let mut request = Some(request);
+    let outcome = vault
+        .use_secret_grant_with(
+            &caller,
+            grant,
+            &target,
+            SECRET_USE_CONNECTOR_CALL,
+            &mut |used, presented| {
+                let Some(request) = request.take() else {
+                    return SecretUseConsumed::failed("the call was already made".to_owned());
+                };
+                match vault.call_connector_with_secret_grant(
+                    memory,
+                    request,
+                    invocation,
+                    &mut *host,
+                    used.custody,
+                    *presented,
+                ) {
+                    Ok(outcome) => {
+                        connector_consumed(&ConnectorCallReply::project(&name, &tool, outcome))
+                    }
+                    Err(error) => SecretUseConsumed::failed(error.to_string()),
+                }
+            },
+        )
+        .map_err(|error| grant_refusal(error, SECRET_USE_CONNECTOR_CALL))?;
+    Ok(answer(outcome))
+}
+
+/// A grant's refusal in words its holder can act on: a stale grant renews,
+/// an ended one is minted again, another's reads as unknown; the rest reads
+/// as the handle use's refusal.
+fn grant_refusal(error: Error, operation: &str) -> MemoryError {
+    match error {
+        Error::Secret(SecretError::SecretGrantStale { .. }) => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            error.to_string(),
+            &["Renew the grant: a renewal mints a fresh one at the secret's current generation."],
+        ),
+        Error::Secret(SecretError::SecretLeaseNotActive { .. }) => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            error.to_string(),
+            &["Mint a fresh grant: an expired, torn down or replaced grant does not come back."],
+        ),
+        Error::Secret(SecretError::SecretLeaseNotFound { .. }) => MemoryError::new(
+            MEMORY_CODE_NOT_FOUND,
+            error.to_string(),
+            &["Name a grant this caller holds, in the run it was minted for."],
+        ),
+        Error::Secret(
+            SecretError::SecretGrantTargetMismatch { .. } | SecretError::SecretGrantSpent { .. },
+        ) => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            error.to_string(),
+            &["Mint a grant for this operation or connector."],
+        ),
+        other => use_refusal(other, operation),
+    }
 }
 
 /// The caller as a secret's user: a verified actor of a session that keeps

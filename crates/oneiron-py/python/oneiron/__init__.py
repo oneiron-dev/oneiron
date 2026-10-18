@@ -573,6 +573,9 @@ class Oneiron:
             """
             return json.loads(_translate(lambda: self._client.vault_recall(query, effort, json.dumps(scope) if scope is not None else None, limit, format, as_of, deadline_ms, json.dumps(media) if media is not None else None, json.dumps(query_affect) if query_affect is not None else None)))
         @property
+        def retrieval(self) -> "Oneiron._VaultRetrievalVerbs":
+            return Oneiron._VaultRetrievalVerbs(self._client)
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs":
             return Oneiron._VaultExportVerbs(self._client)
         @property
@@ -666,6 +669,9 @@ class Oneiron:
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
         @property
+        def learning(self) -> "Oneiron._VaultLearningVerbs":
+            return Oneiron._VaultLearningVerbs(self._client)
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
@@ -695,6 +701,9 @@ class Oneiron:
         @property
         def code(self) -> "Oneiron._VaultCodeVerbs":
             return Oneiron._VaultCodeVerbs(self._client)
+        @property
+        def results(self) -> "Oneiron._VaultResultsVerbs":
+            return Oneiron._VaultResultsVerbs(self._client)
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
@@ -914,6 +923,42 @@ class Oneiron:
         def supersede(self, spec):
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
             return json.loads(_translate(lambda: self._client.vault_claims_supersede(json.dumps(spec))))
+    class _VaultRetrievalVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def recall(self, spec):
+            """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_recall(json.dumps(spec))))
+        def runs(self, spec):
+            """The owner reads finalized local retrieval runs and their independent outcome sidecars, newest first."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_runs(json.dumps(spec))))
+        def run(self, spec):
+            """The owner reads one finalized local serving run, its turn, policy state, trace and explicit outcomes; an unknown run reads as none."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_run(json.dumps(spec))))
+        def turn(self, spec):
+            """The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_turn(json.dumps(spec))))
+        @property
+        def outcomes(self) -> "Oneiron._VaultRetrievalOutcomesVerbs":
+            return Oneiron._VaultRetrievalOutcomesVerbs(self._client)
+        def trace(self, spec):
+            """The owner reads an opt-in trace by its vault-local keyed fork hash; hashes are never comparable across vaults."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_trace(json.dumps(spec))))
+        def export(self, spec):
+            """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_export(json.dumps(spec))))
+        def replay(self, spec):
+            """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_replay(json.dumps(spec))))
+    class _VaultRetrievalOutcomesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_outcomes_put(json.dumps(spec))))
+        def end(self, spec):
+            """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_outcomes_end(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1747,6 +1792,15 @@ class Oneiron:
         def set(self, spec):
             """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
             return json.loads(_translate(lambda: self._client.vault_gate_checker_set(json.dumps(spec))))
+    class _VaultLearningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+            return json.loads(_translate(lambda: self._client.vault_learning_read(json.dumps(spec))))
+        def projection(self, spec):
+            """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
+            return json.loads(_translate(lambda: self._client.vault_learning_projection(json.dumps(spec))))
     class _VaultSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2144,6 +2198,21 @@ class Oneiron:
         def recover(self, spec):
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
+    class _VaultResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+            return json.loads(_translate(lambda: self._client.vault_results_status(json.dumps(spec))))
+        def recover(self, spec):
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+            return json.loads(_translate(lambda: self._client.vault_results_recover(json.dumps(spec))))
+        def read(self, spec):
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+            return json.loads(_translate(lambda: self._client.vault_results_read(json.dumps(spec))))
+        def slice(self, spec):
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
+            return json.loads(_translate(lambda: self._client.vault_results_slice(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2156,9 +2225,18 @@ class Oneiron:
         def update(self, spec):
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
             return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
+        @property
+        def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
+            return Oneiron._VaultAgentsSpawnVerbs(self._client)
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
             """The agent's travelling AgentPack folder (files base64) and what stayed home."""
             return json.loads(_translate(lambda: self._client.vault_agents_export_pack(json.dumps(request, allow_nan=False))))
+    class _VaultAgentsSpawnVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+            return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
     class _VaultWorkflowsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2861,6 +2939,9 @@ class Oneiron:
         def reply(self, spec):
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
             return json.loads(_translate(lambda: self._client.ai_reply(json.dumps(spec))))
+        @property
+        def voice(self) -> "Oneiron._AiVoiceVerbs":
+            return Oneiron._AiVoiceVerbs(self._client)
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
@@ -2891,6 +2972,33 @@ class Oneiron:
         def receipt(self, spec):
             """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
             return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
+    class _AiVoiceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."""
+            return json.loads(_translate(lambda: self._client.ai_voice_start(json.dumps(spec))))
+        def audio(self, spec):
+            """Feeds one utterance of PCM16LE with client VAD to the live voice host; sustained speech retires old output through the shared cancellation path."""
+            return json.loads(_translate(lambda: self._client.ai_voice_audio(json.dumps(spec))))
+        def events(self, spec):
+            """Reads ordered utterance and epoch events, PCM, flushes, playout stops, safeguard receipts and notices; advancing the cursor releases consumed events."""
+            return json.loads(_translate(lambda: self._client.ai_voice_events(json.dumps(spec))))
+        def ack(self, spec):
+            """Acknowledges the exact playout-end or playout-stop event of one session epoch after client playback or flush has completed."""
+            return json.loads(_translate(lambda: self._client.ai_voice_ack(json.dumps(spec))))
+        def usage(self, spec):
+            """Observes actual voice-brain run settlements and a terminal boundary after producer teardown, epoch retirement, TTS cancel and client playout acknowledgment."""
+            return json.loads(_translate(lambda: self._client.ai_voice_usage(json.dumps(spec))))
+        def tool(self, spec):
+            """Calls a connector under the caller grant and carries its delivered result, marked foreign, into the next voice utterance for parallel sentence safeguards."""
+            return json.loads(_translate(lambda: self._client.ai_voice_tool(json.dumps(spec))))
+        def end(self, spec):
+            """Ends live voice through the shared cancellation path; keeps the session available for final playout acknowledgment and usage observation."""
+            return json.loads(_translate(lambda: self._client.ai_voice_end(json.dumps(spec))))
+        def close(self, spec):
+            """Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."""
+            return json.loads(_translate(lambda: self._client.ai_voice_close(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

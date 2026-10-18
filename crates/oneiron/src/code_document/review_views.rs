@@ -33,12 +33,13 @@ pub struct CodeProposalViewRequest {
     pub proposal_ref: String,
 }
 
-/// Who proposed a change, and why: the stamp its landed operation carries.
+/// Who proposed a change, and why: the stamp its landed operation carries,
+/// each ref as the caller reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeProposedStamp {
-    pub actor_ref: String,
-    pub session_ref: String,
-    pub provenance_claim_ref: String,
+    pub actor_ref: Option<String>,
+    pub session_ref: Option<String>,
+    pub provenance_claim_ref: Option<String>,
     pub turn_ref: Option<String>,
     pub activity_ref: Option<String>,
     pub intent_ref: Option<String>,
@@ -151,7 +152,7 @@ impl Memory<'_> {
         if self.get_entity(&proposal.id.to_hex())?.value.is_none() {
             return Ok(None);
         }
-        self.produced_from([proposal.id, proposal.session, proposal.provenance_claim]);
+        self.produced_from([proposal.id]);
         let repo = RepoRef::parse(&proposal.repo)?;
         let base =
             vault.mount_repo_ref(&repo, RepoMountRef::Fork(proposal.pre_action_fork_hash))?;
@@ -185,23 +186,27 @@ impl Memory<'_> {
         let mut refs = OpRefs::new(self);
         let (changes, diff) = refs.changes(changes)?;
         let landed = landed.as_ref().map(|op| refs.operation(op)).transpose()?;
-        let id = |id: Option<EntityId>| id.map(|id| id.to_hex());
+        // The stamp's refs come from the proposal record, so each is shown,
+        // and listed as a producer, only when the caller reads it (FIX 4446).
         let provenance = &proposal.op_provenance;
         let proposed = CodeProposedStamp {
-            actor_ref: proposal.actor.to_hex(),
-            session_ref: proposal.session.to_hex(),
-            provenance_claim_ref: proposal.provenance_claim.to_hex(),
-            turn_ref: id(provenance.turn),
-            activity_ref: id(provenance.activity),
-            intent_ref: id(provenance.intent),
-            model_ref: id(provenance.substrate_ref),
+            actor_ref: match proposal.actor.id() {
+                Some(actor) => refs.admitted(Some(actor))?,
+                None => Some(proposal.actor.to_hex()),
+            },
+            session_ref: refs.admitted(Some(proposal.session))?,
+            provenance_claim_ref: refs.admitted(Some(proposal.provenance_claim))?,
+            turn_ref: refs.admitted(provenance.turn)?,
+            activity_ref: refs.admitted(provenance.activity)?,
+            intent_ref: refs.admitted(provenance.intent)?,
+            model_ref: refs.admitted(provenance.substrate_ref)?,
             reasoning_effort: provenance.reasoning_effort.clone(),
         };
         let shown = |id: &Option<String>| id.clone().unwrap_or_else(|| "-".to_owned());
         let rendered = format!(
             "# proposed actor:{} session:{} turn:{} activity:{} intent:{} model:{} effort:{}\n{diff}",
-            proposed.actor_ref,
-            proposed.session_ref,
+            shown(&proposed.actor_ref),
+            shown(&proposed.session_ref),
             shown(&proposed.turn_ref),
             shown(&proposed.activity_ref),
             shown(&proposed.intent_ref),

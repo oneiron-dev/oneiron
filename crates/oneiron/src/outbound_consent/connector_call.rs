@@ -30,7 +30,9 @@
 //! row keeps the record, so every pass presents the same one through the
 //! host ([`ConnectorCallHost::present_credential`]), the credential door
 //! rechecks the record's binding at each send, and a delivered reply is
-//! cleared of the value before it goes anywhere.
+//! cleared of the value before it goes anywhere. A call under a secret grant
+//! (FIX 4313) keeps the grant beside the record, and the host redeems it again
+//! at every send.
 //!
 //! A connector may answer a call with questions instead of a result (its
 //! mid-call elicitation). The request reached it, so the send is delivered:
@@ -59,6 +61,7 @@ use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, IntentState, OutboundSendOutcome,
     OutboundToolDescriptor,
 };
+use crate::secret_lease::SecretGrantRef;
 use crate::side_table::{self, Named, SideTable};
 
 use super::authority::OutboundBindingAuthority;
@@ -227,10 +230,16 @@ pub trait ConnectorCallHost: OutboundResultSender {
     /// Presents the custody record `credential` as each send's credential
     /// from here on, in place of the route's own secret, through the
     /// credential door for the route's effector; `None` goes back to the
-    /// route's. False when this host cannot present a record: a call that
-    /// names one is then refused unsent.
-    fn present_credential(&mut self, credential: Option<EntityId>) -> bool {
-        credential.is_none()
+    /// route's. With a `grant`, each send redeems it at its door
+    /// (`Vault::redeem_secret_grant_at_door`) instead. False when this host
+    /// cannot present a record or a grant: a call that names one is then
+    /// refused unsent.
+    fn present_credential(
+        &mut self,
+        credential: Option<EntityId>,
+        grant: Option<SecretGrantRef>,
+    ) -> bool {
+        credential.is_none() && grant.is_none()
     }
 
     /// Binds the caller and grant the next send runs for, or none. A host
@@ -285,6 +294,10 @@ pub(super) struct PendingConnectorCall {
     /// place of the route's own secret. Every pass presents it again.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) credential: Option<EntityId>,
+    /// The secret grant a lease-aware `self.use` call redeems at every send,
+    /// beside its record (FIX 4313).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) grant: Option<SecretGrantRef>,
     /// The code consent wait bound beside this hold (DOOR-079 1a), in the
     /// writer that first kept it: only its owner's answer and the effect's
     /// own gate settle the call then.
@@ -306,6 +319,7 @@ impl PendingConnectorCall {
             && self.mutation == other.mutation
             && self.principal_ref == other.principal_ref
             && self.credential == other.credential
+            && self.grant == other.grant
             && arguments(&self.arguments).is_some()
             && arguments(&self.arguments) == arguments(&other.arguments)
     }
@@ -465,7 +479,7 @@ impl Vault {
         invocation: Option<ConnectorCallInvocation>,
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
-        self.start_connector_call(memory, request, invocation, None, host)
+        self.start_connector_call(memory, request, invocation, None, None, host)
     }
 
     /// [`Self::call_connector`] with the value of the custody record
@@ -483,17 +497,35 @@ impl Vault {
         host: &mut H,
         credential: EntityId,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
-        self.start_connector_call(memory, request, invocation, Some(credential), host)
+        self.start_connector_call(memory, request, invocation, Some(credential), None, host)
     }
 
-    /// The body of both calls: `credential` is the record a `self.use` call
-    /// presents, if any.
+    /// [`Self::call_connector_with_secret`] under the secret grant `grant`
+    /// (FIX 4313): the call's row keeps the grant beside the record, and the
+    /// host redeems it at every send, a held send resumed later included, so
+    /// a grant gone stale, expired or torn down since sends nothing.
+    pub(crate) fn call_connector_with_secret_grant<H: ConnectorCallHost>(
+        &self,
+        memory: &Memory<'_>,
+        request: ConnectorCallRequest,
+        invocation: Option<ConnectorCallInvocation>,
+        host: &mut H,
+        credential: EntityId,
+        grant: SecretGrantRef,
+    ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
+        let (credential, grant) = (Some(credential), Some(grant));
+        self.start_connector_call(memory, request, invocation, credential, grant, host)
+    }
+
+    /// The body of every call: `credential` is the record a `self.use` call
+    /// presents, if any, and `grant` the secret grant it redeems.
     fn start_connector_call<H: ConnectorCallHost>(
         &self,
         memory: &Memory<'_>,
         request: ConnectorCallRequest,
         invocation: Option<ConnectorCallInvocation>,
         credential: Option<EntityId>,
+        grant: Option<SecretGrantRef>,
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
         if !std::ptr::eq(memory.vault(), self) {
@@ -523,6 +555,7 @@ impl Vault {
             held_reasons: Vec::new(),
             owner_ask_seq: None,
             credential,
+            grant,
             code_consent_wait: None,
             code: None,
         };
@@ -683,7 +716,7 @@ impl Vault {
         host: &mut H,
     ) -> Result<ConnectorCallOutcome, IntentLedgerError> {
         // A call that names a custody record sends with it or not at all.
-        let step = if host.present_credential(pending.credential) {
+        let step = if host.present_credential(pending.credential, pending.grant) {
             // A call its row already holds resumes through the ledger row it
             // admitted, if any; only a call with none resolves and prepares
             // live.

@@ -75,6 +75,7 @@ mod reads;
 mod recall;
 mod report;
 mod result_attachment;
+pub mod result_doors;
 mod room_turn;
 mod scoped_export;
 mod search_hybrid;

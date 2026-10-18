@@ -180,6 +180,25 @@ pub fn team_spawn_context_for_attempt_in_txn(
     }
 }
 
+/// Every team start `leader` made, in the caller's snapshot: the starts
+/// [`team_spawn_context_for_attempt_in_txn`] counts, for a reader that names
+/// several rather than refusing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn team_starts_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    leader: AttemptId,
+) -> Result<Vec<TeamRunBinding>> {
+    Ok(TEAM_RUN
+        .scan_from(&vault.store, txn, leader_prefix(leader).as_bytes())?
+        .into_iter()
+        .map(|(_, run)| run)
+        .collect())
+}
+
 /// The TASK each recorded team start ran, by team reference: the grouping a
 /// comparison of team runs on one task reads. Starts that name no TASK are
 /// left out.

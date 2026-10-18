@@ -197,6 +197,7 @@ pub(crate) use self::project_conversion::{
 };
 pub(crate) use self::repair::{evaluate_repair_consent, repair_criticality};
 pub(crate) use self::replicated_confirm::attach_replicated_critical_confirm_in_txn;
+pub(crate) use self::resolution::policy_manifest_contributors;
 pub(crate) use self::resolution::{
     GateDecisionRetentionPolicy, GateRetentionContext, LeaderChatDefault, ManifestDecodeMemo,
     PolicyManifestResolution, ProjectWidenAskFallback, ResidenceOperationBudgetLimits,

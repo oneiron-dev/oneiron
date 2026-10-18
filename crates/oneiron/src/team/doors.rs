@@ -6,17 +6,26 @@
 //! in force when the ordinary admission gate admits it; the receipt says
 //! whether it is in force, and nothing here admits, flips a lifecycle or
 //! registers a fork.
+//!
+//! The owner also reads one spawned agent by its attempt (S6): what the
+//! stores hold for it, every stamp as stored. A stamp that disagrees is an
+//! issue on the observation, never a correction.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    load_team_type_tree, load_team_type_tree_at, store_team_type_tree, team_shape_skill_in_force,
+    CoordinationPattern, SkillRevisionRef, load_team_type_tree, load_team_type_tree_at,
+    store_team_type_tree, team_shape_skill_in_force,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::learning::TypeRef;
+use crate::llm::ReasoningEffort;
+use crate::llm::decision::{DecisionRung, ProviderPin};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
+use crate::team::{PatternSkillRef, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
 
 /// The highest version an authored tree may carry: the learning cell's type
@@ -39,6 +48,17 @@ impl From<&TaskTypeRef> for TypeStamp {
         Self {
             node_id: stamp.node_id.clone(),
             tree_version: stamp.tree_version,
+        }
+    }
+}
+
+/// A learning, team or critic stamp holds a `u32` version: widened here, it
+/// reads exactly as stored, never saturated.
+impl From<&TypeRef> for TypeStamp {
+    fn from(stamp: &TypeRef) -> Self {
+        Self {
+            node_id: stamp.node_id.clone(),
+            tree_version: u64::from(stamp.tree_version),
         }
     }
 }
@@ -134,6 +154,359 @@ pub struct TaskTypeTreeReadReply {
     pub tree: Option<TaskTypeTreeView>,
 }
 
+/// One spawned agent, by the root or leader attempt its spawn answered; a
+/// child spawn's attempt is one too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedSpawnRead {
+    pub spawn_ref: EntityId,
+}
+
+/// Where a spawn stands. The read answers `launched` only: it reads an
+/// attempt the queue holds. The other phases are a planned intent's, before
+/// or around its launch.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SpawnPhase {
+    Reserved,
+    Planned,
+    Launched,
+    InDoubt,
+}
+
+/// A coordination pattern by its word, as a plan, a team start or a team
+/// receipt stored it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CoordinationPatternView {
+    Solo,
+    CeoDecides,
+    Committee,
+    Vote,
+    Market,
+    Rotation,
+}
+
+impl From<CoordinationPattern> for CoordinationPatternView {
+    fn from(pattern: CoordinationPattern) -> Self {
+        match pattern {
+            CoordinationPattern::Solo => Self::Solo,
+            CoordinationPattern::CeoDecides => Self::CeoDecides,
+            CoordinationPattern::Committee => Self::Committee,
+            CoordinationPattern::Vote => Self::Vote,
+            CoordinationPattern::Market => Self::Market,
+            CoordinationPattern::Rotation => Self::Rotation,
+        }
+    }
+}
+
+impl From<TeamPattern> for CoordinationPatternView {
+    fn from(pattern: TeamPattern) -> Self {
+        match pattern {
+            TeamPattern::CeoDecides => Self::CeoDecides,
+            TeamPattern::Committee => Self::Committee,
+            TeamPattern::Vote => Self::Vote,
+            TeamPattern::Market => Self::Market,
+            TeamPattern::Rotation => Self::Rotation,
+        }
+    }
+}
+
+/// One skill revision a plan read or selected, or a team ran.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SkillRevisionView {
+    pub skill_ref: EntityId,
+    pub version: String,
+}
+
+impl From<&SkillRevisionRef> for SkillRevisionView {
+    fn from(revision: &SkillRevisionRef) -> Self {
+        Self {
+            skill_ref: revision.skill,
+            version: revision.version.clone(),
+        }
+    }
+}
+
+impl From<&PatternSkillRef> for SkillRevisionView {
+    fn from(revision: &PatternSkillRef) -> Self {
+        Self {
+            skill_ref: revision.skill,
+            version: revision.version.clone(),
+        }
+    }
+}
+
+/// One executor that read the planner rung's question, at revision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ProviderPinView {
+    pub rung: DecisionRung,
+    pub model: String,
+    pub version: String,
+}
+
+impl From<&ProviderPin> for ProviderPinView {
+    fn from(pin: &ProviderPin) -> Self {
+        Self {
+            rung: pin.rung,
+            model: pin.model.clone(),
+            version: pin.version.clone(),
+        }
+    }
+}
+
+/// The plan the dispatch froze: the stamp it was asked under, what it
+/// resolved and why. Read back, never re-planned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlanObservation {
+    pub type_ref: TypeStamp,
+    /// The selected model; the models actually seated are the routes'.
+    pub model: String,
+    pub width: u32,
+    pub pattern: CoordinationPatternView,
+    /// `None`: unmetered by any lease tree.
+    #[serde(default)]
+    pub hard_cap_units: Option<u64>,
+    pub expected_spend_units: u64,
+    #[serde(default)]
+    pub available_units: Option<u64>,
+    pub over_budget: bool,
+    pub fitted_to_budget: bool,
+    pub why: Vec<String>,
+    #[serde(default)]
+    pub team_shape: Option<SkillRevisionView>,
+    /// The pattern skill revision the plan selected; `None` for solo.
+    #[serde(default)]
+    pub pattern_skill: Option<SkillRevisionView>,
+    #[serde(default)]
+    pub rung_skill: Option<SkillRevisionView>,
+    pub rung_providers: Vec<ProviderPinView>,
+}
+
+/// One attempt that launched: durably queued, not necessarily run. Its
+/// state, type stamp and team stamp are its own row's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LaunchedMember {
+    pub attempt_ref: EntityId,
+    pub state: String,
+    pub type_ref: TypeStamp,
+    /// The team its dispatch froze, which a leader's may predate.
+    #[serde(default)]
+    pub team_ref: Option<String>,
+}
+
+/// The team the frozen plan resolved to, given only when the one team the
+/// attempt started launched exactly that: the plan's pattern and width in
+/// distinct attempts, every stamp the dispatch's, and the selected pattern
+/// revision the one the team ran. One queued agent is never a team.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResolvedTeam {
+    pub type_ref: TypeStamp,
+    pub pattern: CoordinationPatternView,
+    pub width: u32,
+    /// The plan's selected model.
+    pub model: String,
+    /// `None` until the team's receipt records it.
+    #[serde(default)]
+    pub axis: Option<TeamAxis>,
+    /// The project the dispatch named; `None` when it named none.
+    #[serde(default)]
+    pub project_ref: Option<EntityId>,
+    pub root_attempt_ref: EntityId,
+    pub member_attempt_refs: Vec<EntityId>,
+    #[serde(default)]
+    pub team_ref: Option<String>,
+}
+
+/// The team start the host recorded for the attempt as leader: the members
+/// its spawns queued and the widenings they asked instead.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TeamBindingView {
+    pub team_ref: String,
+    pub pattern: CoordinationPatternView,
+    pub leader: EntityId,
+    pub member_attempt_refs: Vec<EntityId>,
+    /// Never members: a proposal is one only once its approval queues it.
+    pub proposal_refs: Vec<String>,
+    #[serde(default)]
+    pub root_task: Option<String>,
+    pub started_at: u64,
+}
+
+/// That team's receipt, once the team recorded one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TeamReceiptView {
+    pub team_ref: String,
+    pub type_ref: TypeStamp,
+    pub pattern: CoordinationPatternView,
+    /// The pattern skill revision the leader loaded, when it loaded one.
+    #[serde(default)]
+    pub pattern_skill: Option<SkillRevisionView>,
+    pub axis: TeamAxis,
+    pub width: u32,
+    pub models: Vec<String>,
+    /// The receipt the anchored outcome rests on, once one settled the team.
+    #[serde(default)]
+    pub outcome_receipt: Option<String>,
+}
+
+/// Whether a seat route carries a type stamp. Agent-run seats are born
+/// unstamped until the seat stamp lands (S5).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RouteStampState {
+    UnstampedBeforeS5,
+    Stamped,
+}
+
+/// One launched run's agent-run seat, as its choice receipt keeps it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RouteObservation {
+    pub run_ref: EntityId,
+    /// The seat's own stamp; `None` while `stamp_state` is unstamped. The
+    /// dispatch's stamp is never copied in.
+    #[serde(default)]
+    pub type_ref: Option<TypeStamp>,
+    pub stamp_state: RouteStampState,
+    pub model: String,
+    pub effort: ReasoningEffort,
+    pub why: String,
+    pub reused: bool,
+}
+
+/// How a critique was found for a launched run.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CriticAssociation {
+    /// Keyed under the run's own attempt.
+    BranchAttempt,
+    /// A review whose run reference is the run's canonical id: it names the
+    /// run, which does not prove it reviewed the run's work.
+    CanonicalRunRef,
+}
+
+/// One critique artifact and its calibration stamp, as stored.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CriticObservation {
+    pub run_ref: String,
+    pub branch_attempt_ref: EntityId,
+    pub association: CriticAssociation,
+    pub artifact_id: String,
+    pub target_ref: String,
+    pub type_ref: TypeStamp,
+    pub lens_ref: EntityId,
+    pub lens_id: String,
+    pub executor: String,
+    pub axis: String,
+    pub verdict: String,
+}
+
+/// The learning cell a team receipt's pattern skill is scored in.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearningCellView {
+    pub predicate: String,
+    pub subject: EntityId,
+    pub executor: String,
+    pub type_ref: TypeStamp,
+    pub axis: String,
+}
+
+/// The cell a borrowed prior came from, with its own qualifiers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct BorrowedCellView {
+    pub predicate: String,
+    pub subject: EntityId,
+    #[serde(default)]
+    pub executor: Option<String>,
+    #[serde(default)]
+    pub type_ref: Option<TypeStamp>,
+    #[serde(default)]
+    pub axis: Option<String>,
+}
+
+/// One admitted evidence row of the cell.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearningEvidenceView {
+    pub receipt_ref: String,
+    pub at: u64,
+    pub anchor_kind: String,
+    pub weight: f64,
+}
+
+/// The reliability read of a team receipt's pattern skill cell: the estimate
+/// in force, its prior and the cell's own evidence. A read; it writes
+/// nothing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LearningObservation {
+    pub cell: LearningCellView,
+    pub mean: f64,
+    /// Whether the estimate rests on the cell's own runs.
+    pub own: bool,
+    pub own_runs: f64,
+    pub prior_origin: String,
+    pub prior_weight_runs: f64,
+    #[serde(default)]
+    pub borrowed_from: Option<BorrowedCellView>,
+    pub untested: bool,
+    pub window_half_life_secs: u64,
+    pub estimator_version: u32,
+    pub evidence: Vec<LearningEvidenceView>,
+}
+
+/// What the read found that does not add up, or could not read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ObservationIssue {
+    /// A consumer's stamp is not the dispatch's. Both are as stored.
+    StampMismatch {
+        consumer: String,
+        reference: String,
+        expected: TypeStamp,
+        actual: TypeStamp,
+    },
+    /// The frozen plan resolved a team, and the attempt started none.
+    MissingBinding { reference: String },
+    /// The attempt started several teams. None is picked.
+    SeveralTeams { team_refs: Vec<String> },
+    /// A member the team start bound carries another team stamp.
+    TeamMismatch {
+        member_ref: EntityId,
+        expected: String,
+        #[serde(default)]
+        actual: Option<String>,
+    },
+    /// What `consumer` could not report or resolve, and why.
+    Unavailable { consumer: String, reason: String },
+}
+
+/// What the stores hold for one spawned agent. Each list is what was found;
+/// an empty one is none found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PlannedSpawnObservation {
+    pub spawn_ref: EntityId,
+    pub phase: SpawnPhase,
+    /// The type stamp the dispatch froze, placed once at spawn.
+    pub type_ref: TypeStamp,
+    /// The frozen plan; `None` for a spawn that was not planned.
+    #[serde(default)]
+    pub plan: Option<PlanObservation>,
+    /// The requested attempt, then each member of the one team it started.
+    pub launched: Vec<LaunchedMember>,
+    #[serde(default)]
+    pub resolved: Option<ResolvedTeam>,
+    #[serde(default)]
+    pub binding: Option<TeamBindingView>,
+    #[serde(default)]
+    pub receipt: Option<TeamReceiptView>,
+    pub routes: Vec<RouteObservation>,
+    /// Critiques keyed under a launched attempt or under a review run that
+    /// names one. Not exhaustive: a review under a run reference the caller
+    /// chose is not discoverable from an attempt.
+    pub critics: Vec<CriticObservation>,
+    pub learning: Vec<LearningObservation>,
+    pub issues: Vec<ObservationIssue>,
+}
+
 /// Stores an authored task-type tree on `input.fork_ref`, an open local fork
 /// of the team-shape skill, as the owner, through the tree store (which
 /// refuses a fork outside the lineage, a fork no longer open and a version
@@ -190,6 +563,26 @@ pub fn read_tree_as(
         in_force_skill_ref: team_shape_skill_in_force(vault, input.project_ref)?,
         tree: tree.as_ref().map(TaskTypeTreeView::from),
     })
+}
+
+/// Reads, as the owner, what the stores hold for the agent
+/// `input.spawn_ref` runs: its dispatch's type stamp and frozen plan, the
+/// one team it started with the members that launched and the team's
+/// receipt, each launched run's seat route, the critiques found for those
+/// runs and the receipt-backed learning read. Every stamp reads as stored.
+///
+/// # Errors
+///
+/// `NOT_FOUND` for an attempt the queue does not hold; `BAD_REQUEST` for one
+/// that is not an agent's dispatch; a dispatch that does not decode; a stale
+/// owner proof; storage errors.
+pub fn observe_spawn_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: PlannedSpawnRead,
+) -> MemoryResult<PlannedSpawnObservation> {
+    owner.revalidate(vault)?;
+    super::door_reads::observe_spawn(vault, input.spawn_ref)
 }
 
 /// An authored structure is whole: unique non-empty ids, the root

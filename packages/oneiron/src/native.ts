@@ -75,6 +75,15 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalRecall(input: unknown): unknown
+vaultRetrievalRuns(input: unknown): unknown
+vaultRetrievalRun(input: unknown): unknown
+vaultRetrievalTurn(input: unknown): unknown
+vaultRetrievalOutcomesPut(input: unknown): unknown
+vaultRetrievalOutcomesEnd(input: unknown): unknown
+vaultRetrievalTrace(input: unknown): unknown
+vaultRetrievalExport(input: unknown): unknown
+vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
@@ -257,6 +266,8 @@ vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
 vaultGateCheckerGet(input: unknown): unknown
 vaultGateCheckerSet(input: unknown): unknown
+vaultLearningRead(input: unknown): unknown
+vaultLearningProjection(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
@@ -303,6 +314,10 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultResultsStatus(input: unknown): unknown
+vaultResultsRecover(input: unknown): unknown
+vaultResultsRead(input: unknown): unknown
+vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -331,6 +346,7 @@ vaultWorkflowsDispatch(input: unknown): unknown
 vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
+vaultAgentsSpawnGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown
@@ -398,6 +414,14 @@ aiStepsSubmit(input: unknown): unknown
 aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
+aiVoiceStart(input: unknown): unknown
+aiVoiceAudio(input: unknown): unknown
+aiVoiceEvents(input: unknown): unknown
+aiVoiceAck(input: unknown): unknown
+aiVoiceUsage(input: unknown): unknown
+aiVoiceTool(input: unknown): unknown
+aiVoiceEnd(input: unknown): unknown
+aiVoiceClose(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown

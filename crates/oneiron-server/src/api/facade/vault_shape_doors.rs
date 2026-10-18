@@ -6,29 +6,50 @@
 //! handler and the MCP dispatcher both call this through `host_doors`.
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::vault_shape::{ShapeApplier, ShapeApplyReceipt, ShapeApplyRequest};
 
-use super::host_doors::internal;
+use super::host_doors::{MaybeListed, internal};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// `vault.shape.apply`: lands a plan, or resumes the apply of one.
+/// A receipt beside the rows it stands on, `None` when they are unknown.
+type ShapeApplyListing = (ShapeApplyReceipt, Option<Vec<EntityId>>);
+
+/// `vault.shape.apply`: lands a plan, or resumes the apply of one. Beside
+/// it, the rows its receipt stands on ([`oneiron::Vault::apply_shape_listing`]):
+/// what the re-plan read, the seed revision, each landing's live reads and
+/// writes. `None` for a resumed apply, and once an item lands through a
+/// door whose reads it does not follow. A refusal lists no row.
 pub(crate) async fn vault_shape_apply(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ShapeApplyRequest,
-) -> MemoryResult<ShapeApplyReceipt> {
+) -> MaybeListed<ShapeApplyReceipt> {
+    match vault_shape_apply_answer(server, auth, input).await {
+        Ok((receipt, rows)) => (Ok(receipt), rows),
+        Err(refusal) => (Err(refusal), Some(Vec::new())),
+    }
+}
+
+/// [`vault_shape_apply`]'s answer, beside its listing.
+async fn vault_shape_apply_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ShapeApplyRequest,
+) -> MemoryResult<ShapeApplyListing> {
     const VERB: &str = "vault.shape.apply";
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs());
     let server = Arc::clone(server);
     if let Ok(owner) = crate::api::owner_routes::owner(auth, &server) {
-        return tokio::task::spawn_blocking(move || -> MemoryResult<ShapeApplyReceipt> {
-            let apply = |slips: Option<&HostSlipIssuer>| -> MemoryResult<ShapeApplyReceipt> {
-                Ok(server.vault().apply_shape(
+        return tokio::task::spawn_blocking(move || -> MemoryResult<ShapeApplyListing> {
+            // Each attempt lists into a set of its own.
+            let apply = |slips: Option<&HostSlipIssuer>| -> MemoryResult<ShapeApplyListing> {
+                Ok(server.vault().apply_shape_listing(
                     ShapeApplier::Owner {
                         owner: &owner,
                         slips,
@@ -57,7 +78,7 @@ pub(crate) async fn vault_shape_apply(
     tokio::task::spawn_blocking(move || {
         crate::api::credential_memory(&server.vault, Some(&auth), actor, class)
             .at(auth.locality())
-            .shape_apply_as_principal(&input)
+            .shape_apply_as_principal_listing(&input)
     })
     .await
     .map_err(|_| internal(VERB))?

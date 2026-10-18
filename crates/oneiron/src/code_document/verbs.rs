@@ -2,9 +2,9 @@
 //! between two tested states of one file, and `vault.code.blame`, blame by op
 //! over one. Every unit names the operations that wrote it, and every
 //! operation its actor, session, turn, activity, intent, model and effort,
-//! each ref as the caller reads it ([`OpRefs`]). Text diff stays a derived
-//! rendering (`rendered`); birth text, which no operation wrote, carries no
-//! operation.
+//! each ref as the caller reads it ([`OpRefs`]). An erased actor is no ref,
+//! of class `erased` (FIX 3520). Text diff stays a derived rendering
+//! (`rendered`); birth text, which no operation wrote, carries no operation.
 
 use std::collections::BTreeMap;
 
@@ -18,6 +18,7 @@ use crate::code_symbol::{
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
 use crate::memory::{Memory, MemoryResult};
+use crate::receipt::ERASED_CALL_IDENTITY;
 
 /// One tested state of a file: as the code revision `revision_ref` tested
 /// it, or, with no revision, the document's live head.
@@ -237,7 +238,7 @@ impl<'a, 'v> OpRefs<'a, 'v> {
     }
 
     /// `id` as a view names it: its hex when the caller reads it.
-    fn admitted(&mut self, id: Option<EntityId>) -> MemoryResult<Option<String>> {
+    pub(super) fn admitted(&mut self, id: Option<EntityId>) -> MemoryResult<Option<String>> {
         let Some(id) = id else {
             return Ok(None);
         };
@@ -261,8 +262,13 @@ impl<'a, 'v> OpRefs<'a, 'v> {
             operation_ref: op.operation.to_hex(),
             sequence: op.sequence,
             session_ref: self.admitted(Some(op.session_id))?,
-            actor_ref: self.admitted(Some(op.actor.entity_ref()))?,
-            actor_class: op.actor.actor_class().gate_actor_class().to_owned(),
+            actor_ref: self.admitted(op.actor.map(|actor| actor.entity_ref()))?,
+            actor_class: op
+                .actor
+                .map_or(ERASED_CALL_IDENTITY, |actor| {
+                    actor.actor_class().gate_actor_class()
+                })
+                .to_owned(),
             turn_ref: self.admitted(op.provenance.turn)?,
             activity_ref: self.admitted(op.provenance.activity)?,
             intent_ref: self.admitted(op.provenance.intent)?,

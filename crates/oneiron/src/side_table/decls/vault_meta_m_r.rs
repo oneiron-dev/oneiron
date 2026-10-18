@@ -476,10 +476,12 @@ side_tables! {
     REPO_CONFLICT_RECONCILIATION_INDEX: VaultMeta b"repo_conflict:reconciliation:v1:" Raw;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
-    REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named;
+    REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named
+        => crate::repo_mutation::erase_oplog_actor_in_txn;
     /// Durable per-operation code proposal (file change plus critic evidence), keyed by proposal
     /// claim id. Key: id16.
-    REPO_MUTATION_PROPOSAL: VaultMeta b"repo_mutation:proposal:v1:" Named;
+    REPO_MUTATION_PROPOSAL: VaultMeta b"repo_mutation:proposal:v1:" Named
+        => crate::repo_mutation::erase_proposal_actor_in_txn;
     /// Pointer from one repo's (repo key hash, oplog seq) to the proposal id it is bound to. Key:
     /// hex64 ":" u64be.
     REPO_MUTATION_PROPOSAL_OP: VaultMeta b"repo_mutation:proposal_op:v1:" Raw;

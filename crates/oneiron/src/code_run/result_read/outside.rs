@@ -37,7 +37,9 @@ impl Vault {
     /// One read of a code run's result for a caller outside the run (the
     /// MCP door): its card when `facet` is `None`, else that facet of it,
     /// with `input` less the reference. Only `run_id`'s own results resolve,
-    /// by a name it bound, a handle or a range of either. `withholds` says
+    /// by a name it bound, a handle or a range of either. An explicit
+    /// `occurrence:<hex>` selects that run/path occurrence, never another
+    /// occurrence that happens to hold the same bytes. `withholds` says
     /// whether the rows the run's answers were served from (`None` when one
     /// kept no set) stay where the caller is not; then the result's taint
     /// is checked as in the run. A selection past one reply pages, as
@@ -62,7 +64,27 @@ impl Vault {
             .outputs
             .iter()
             .filter(|output| is_result_output_path(&output.path));
-        let Some((output, name)) = resolve(outputs, &live, &target.reference) else {
+        let selected = match &target.reference {
+            crate::engine_executor::JsResultRef::Handle(reference)
+                if reference.starts_with("occurrence:") =>
+            {
+                let occurrence = reference.strip_prefix("occurrence:").unwrap_or_default();
+                let mut selected = None;
+                for output in outputs {
+                    if crate::code_run::ResultOccurrence::owned(run_id, &output.path)?
+                        .id()
+                        .to_hex()
+                        == occurrence
+                    {
+                        selected = Some((output.clone(), None));
+                        break;
+                    }
+                }
+                selected
+            }
+            _ => resolve(outputs, &live, &target.reference),
+        };
+        let Some((output, name)) = selected else {
             return Ok(unknown_handle(&live));
         };
         if withholds(record.agent_verb_rows().as_deref())? {

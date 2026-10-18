@@ -70,6 +70,7 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -101,6 +102,7 @@ pub(crate) use super::embedding_space_doors::*;
 pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
+pub(crate) use super::learning_doors::*;
 pub(crate) use super::setting_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
@@ -112,8 +114,8 @@ pub(crate) use super::widen_proposal_doors::*;
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
-pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::content_policy_doors::*;
+pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -129,6 +131,7 @@ pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
+pub(crate) use super::result_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
@@ -136,6 +139,7 @@ pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
+pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1109,6 +1113,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.retrieval.recall"
+        | "vault.retrieval.runs"
+        | "vault.retrieval.run"
+        | "vault.retrieval.turn"
+        | "vault.retrieval.outcomes.put"
+        | "vault.retrieval.outcomes.end"
+        | "vault.retrieval.trace"
+        | "vault.retrieval.export"
+        | "vault.retrieval.replay"
+        | "vault.learning.read"
+        | "vault.learning.projection"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"
@@ -1136,6 +1151,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.status"
         | "vault.task_types.pin"
         | "vault.task_types.get"
+        | "vault.agents.spawn.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -1202,6 +1218,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
         | "vault.code.oplog"
+        | "vault.results.status"
+        | "vault.results.recover"
+        | "vault.results.read"
+        | "vault.results.slice"
         | "vault.code.model_heal_count"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
@@ -1242,7 +1262,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.voices.render_consent"
         | "vault.voices.targets.provision"
         | "vault.voices.targets.evict"
-        | "vault.voices.inspect" => owner_proof(auth, server, verb).map(drop),
+        | "vault.voices.inspect"
+        | "ai.voice.start"
+        | "ai.voice.audio"
+        | "ai.voice.events"
+        | "ai.voice.ack"
+        | "ai.voice.usage"
+        | "ai.voice.tool"
+        | "ai.voice.end"
+        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

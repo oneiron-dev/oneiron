@@ -4,14 +4,14 @@ use std::path::Path;
 
 use super::admission::admit_record_use;
 use super::codec::{SECRET_LEASE, SECRET_LOCAL_REGISTRATION};
-use super::files::write_secret_file;
+use super::files::{SecretFileGuard, write_secret_file};
 use super::storage::{
     read_live_lease_in_txn, read_local_registration_in_txn, read_record_for_ref_in_txn,
     read_secret_lease_in_txn, read_value_for_ref_in_txn, stamp_secret_lease_in_txn,
     teardown_local_registration_in_txn, write_local_registration_in_txn, write_secret_lease_in_txn,
 };
 use super::types::{
-    DoorInjectionReceipt, LocalRegistration, SecretLease, SecretLeaseMaterialization,
+    DoorInjectionReceipt, FileIdentity, LocalRegistration, SecretLease, SecretLeaseMaterialization,
     SecretLeaseStatus, SecretTaintRef, StoredLocalRegistration, VaultInstant,
 };
 use crate::entity_id::EntityId;
@@ -244,24 +244,7 @@ impl Vault {
                 return Err(error);
             }
         };
-        let (id, rec) = read_record_for_ref_in_txn(&self.store, &wtxn, &lease.secret_ref)?;
-        let floor = SecretCustodyFloor::resolve(&self.store, &wtxn)?;
-        admit_record_use(
-            &rec,
-            &lease.binding_effector,
-            CustodyTier::T2LocalRegistered,
-            &floor,
-        )?;
-        if !rec
-            .declared_paths
-            .iter()
-            .any(|declared| Path::new(declared) == target_path)
-        {
-            return Err(Error::Secret(SecretError::SecretLeasePathNotDeclared {
-                secret_ref: rec.name,
-                path: target_path.display().to_string(),
-            }));
-        }
+        let id = self.admit_local_in_txn(&wtxn, &lease, target_path)?;
         // One registration row per lease (SOL-1920-02): a live registration
         // pins the lease to its path. A DIFFERENT declared path under the
         // same lease would overwrite the row and orphan the first plaintext
@@ -279,7 +262,67 @@ impl Vault {
             Some(stored) => Some(stored.file_identity),
             None => None,
         };
-        let value = read_value_for_ref_in_txn(self, &wtxn, &id, &lease.binding_effector)?;
+        let (registration, guard) = self.write_local_in_txn(
+            &mut wtxn,
+            &mut lease,
+            &id,
+            target_path,
+            project_id,
+            registered,
+        )?;
+        // A failed commit drops the guard armed: a fresh file is removed,
+        // a replaced file stays under its live row.
+        wtxn.commit()?;
+        guard.disarm();
+        Ok(registration)
+    }
+
+    /// The admission half of a T2 registration under `lease`, in its
+    /// caller's transaction: `T2LocalRegistered` admits under the one
+    /// admission rule against the LIVE floor, and `target_path` is a
+    /// manifest-declared path of the record. Answers the record's id.
+    pub(super) fn admit_local_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        lease: &SecretLease,
+        target_path: &Path,
+    ) -> Result<EntityId> {
+        let (id, rec) = read_record_for_ref_in_txn(&self.store, txn, &lease.secret_ref)?;
+        let floor = SecretCustodyFloor::resolve(&self.store, txn)?;
+        admit_record_use(
+            &rec,
+            &lease.binding_effector,
+            CustodyTier::T2LocalRegistered,
+            &floor,
+        )?;
+        if !rec
+            .declared_paths
+            .iter()
+            .any(|declared| Path::new(declared) == target_path)
+        {
+            return Err(Error::Secret(SecretError::SecretLeasePathNotDeclared {
+                secret_ref: rec.name,
+                path: target_path.display().to_string(),
+            }));
+        }
+        Ok(id)
+    }
+
+    /// The writing half of a T2 registration, in its caller's transaction:
+    /// the value re-read from the vault (S4), the file written into
+    /// `registered` (the identity a live registration holds) or created
+    /// fresh, the registration row under `lease`, and the lease raised to
+    /// `T2LocalRegistered`. The caller commits, then disarms the guard.
+    pub(super) fn write_local_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        lease: &mut SecretLease,
+        id: &EntityId,
+        target_path: &Path,
+        project_id: &str,
+        registered: Option<FileIdentity>,
+    ) -> Result<(LocalRegistration, SecretFileGuard)> {
+        let value = read_value_for_ref_in_txn(self, wtxn, id, &lease.binding_effector)?;
         // The file write lands before any row persists, under the T2
         // file-lifecycle policy (no-follow, no-clobber, owner-only before
         // the first byte, and a replace only into the registered file). The
@@ -297,7 +340,7 @@ impl Vault {
         };
         write_local_registration_in_txn(
             &self.store,
-            &mut wtxn,
+            wtxn,
             &StoredLocalRegistration {
                 registration: registration.clone(),
                 file_identity: guard.identity(),
@@ -306,12 +349,8 @@ impl Vault {
             },
         )?;
         lease.tier = CustodyTier::T2LocalRegistered;
-        write_secret_lease_in_txn(&self.store, &mut wtxn, &lease)?;
-        // A failed commit drops the guard armed: a fresh file is removed,
-        // a replaced file stays under its live row.
-        wtxn.commit()?;
-        guard.disarm();
-        Ok(registration)
+        write_secret_lease_in_txn(&self.store, wtxn, lease)?;
+        Ok((registration, guard))
     }
 
     /// Tears a lease down: flips the status to `Revoked`, revokes
