@@ -216,7 +216,7 @@ fn recall_kinds(scope: &RecallScope) -> MemoryResult<Option<Vec<u8>>> {
 }
 
 /// Item provenance (S6, default-on).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryProvenance {
     /// Claim source string, or `record` for structural source records.
     pub source: String,
@@ -230,7 +230,7 @@ pub struct MemoryProvenance {
 }
 
 /// One memory pack item (S6 schema).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryItem {
     /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
     /// a witness receipt returns, never revision-qualified.
@@ -292,7 +292,7 @@ pub struct MemoryItem {
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CitedMessage {
     /// The message's short ref, the one its witness receipt returned.
     pub short_id: String,
@@ -317,7 +317,7 @@ impl MemoryItem {
 }
 
 /// Scope honesty (S6): what the scope excluded.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopeHonesty {
     /// Worlds holding surfaceable claims outside the requested scope.
     pub out_of_scope_worlds: Vec<String>,
@@ -332,7 +332,7 @@ fn is_false(value: &bool) -> bool {
 }
 
 /// Retrieval accounting (S6).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalMeta {
     #[serde(default)]
     pub quality: RetrievalQuality,
@@ -369,7 +369,7 @@ pub struct RetrievalMeta {
 }
 
 /// The facade projection of a `ContextPack` (S6, `pack_version: 1`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryPack {
     /// Ranked items.
     pub items: Vec<MemoryItem>,

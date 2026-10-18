@@ -48,7 +48,10 @@ pub const TEAM_SHAPE_LESSONS: [&str; 6] = [
 /// shape the skill starts from; the rest are OF-540's skill patterns.
 /// Whether a team converges on one answer or diverges into many is a
 /// setting of the pattern, not a pattern of its own.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CoordinationPattern {
     Solo,
@@ -134,7 +137,7 @@ impl CoordinationPattern {
 }
 
 /// A concrete team shape a plan commits to: a pattern at a width.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TeamShape {
     pub pattern: CoordinationPattern,
     pub width: u32,

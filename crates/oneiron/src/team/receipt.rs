@@ -27,7 +27,7 @@ const TEAM_RECEIPT: SideTable<String, TeamReceipt, Named> =
 const MAX_REF_BYTES: usize = 256;
 
 /// The pattern skill revision a team ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PatternSkillRef {
     pub skill: EntityId,
     pub version: String,

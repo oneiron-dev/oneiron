@@ -39,7 +39,10 @@ const BENCHMARK: SideTable<String, SelectionBenchmark, Named> =
     SideTable::new(&side_table::AUTORESEARCH_ESTIMATOR);
 
 /// A rung of the cold-start ladder, in the order it seeds a new posterior.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PriorRung {
     User,
@@ -49,7 +52,7 @@ pub enum PriorRung {
 
 /// One rung's Beta pseudo-counts, read from that level's data, and the
 /// receipt naming where they came from. Pinned at bind.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PriorSeed {
     pub rung: PriorRung,
@@ -59,7 +62,7 @@ pub struct PriorSeed {
 }
 
 /// One branch's belief at a round.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BranchBelief {
     pub alpha: f64,
@@ -72,7 +75,7 @@ pub struct BranchBelief {
 }
 
 /// Which formula ranked a round's parents.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum SelectionRanking {
     /// The DGM parent formula, the shipped floor.

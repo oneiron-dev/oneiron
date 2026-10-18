@@ -99,6 +99,28 @@ impl Serialize for ConfidenceAdjustment {
     }
 }
 
+/// The wire form is one JSON number, exactly one of the three pinned values
+/// `Serialize` emits (`0`, `-0.15`, `-0.35`), not any number.
+impl schemars::JsonSchema for ConfidenceAdjustment {
+    fn schema_name() -> String {
+        "ConfidenceAdjustment".to_owned()
+    }
+
+    fn json_schema(_: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        schemars::schema::SchemaObject {
+            instance_type: Some(schemars::schema::InstanceType::Number.into()),
+            enum_values: Some(
+                [Self::FULL, Self::DEGRADED, Self::PASSTHROUGH]
+                    .into_iter()
+                    .map(|adjustment| serde_json::Value::from(adjustment.as_f64()))
+                    .collect(),
+            ),
+            ..Default::default()
+        }
+        .into()
+    }
+}
+
 struct ConfidenceAdjustmentVisitor;
 
 impl Visitor<'_> for ConfidenceAdjustmentVisitor {

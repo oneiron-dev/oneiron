@@ -96,7 +96,7 @@ pub struct CampaignCorpusFilter {
 }
 
 /// Identity of one evaluation dataset revision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct CampaignDatasetRef {
     /// Dataset id.
@@ -110,7 +110,7 @@ pub struct CampaignDatasetRef {
 /// The sealed split is pinned here so it can be reserved, never evaluated:
 /// [`CampaignEvaluationSplit`] has no sealed variant and no report constructor
 /// can select this ref.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub struct CampaignSplits {
     /// Split used while searching for a configuration.

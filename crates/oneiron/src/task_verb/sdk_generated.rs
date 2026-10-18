@@ -3922,9 +3922,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.standing.edit",
     "vault.fanout.spawn",
     "vault.fanout.slots",
+    "self.budget",
+    "self.budget.land",
     "vault.budgets.lease.open",
     "vault.budgets.lease",
     "vault.budgets.lease.top_up",
+    "vault.budgets.hold",
+    "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
     "vault.retrieval.aging.get",
@@ -4029,16 +4033,19 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.status",
     "vault.off_record.witness",
     "vault.off_record.discard",
+    "vault.off_record.recall",
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
     "vault.research.create_child",
+    "vault.research.archive",
     "vault.research.archive.install",
     "vault.research.archive.record",
     "vault.research.archive.get",
     "vault.research.archive.best",
     "vault.research.archive.repropose",
     "vault.research.archive.coverage",
+    "vault.evals.inventory",
     "vault.evals.cohorts.setup",
     "vault.cleanup.run",
     "vault.entities.mention",
@@ -4282,6 +4289,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.fanout.slots" => crate::code_run::vault_read::request_schema::<
             Option<crate::task_verb::sdk::FanoutBatchView>,
         >(),
+        "self.budget" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::budget_doors::AgentBudgetView,
+        >(),
+        "self.budget.land" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::PartialResultHold,
+        >(),
         "vault.budgets.lease.open" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::SpendLeaseView,
         >(),
@@ -4290,6 +4303,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.lease.top_up" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::SpendLeaseView,
+        >(),
+        "vault.budgets.hold" => crate::code_run::vault_read::request_schema::<
+            Option<crate::agent_dispatch::PartialResultHold>,
+        >(),
+        "vault.budgets.hold.resume" => crate::code_run::vault_read::request_schema::<
+            crate::agent_dispatch::PartialResultHold,
         >(),
         "vault.budgets.local" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::LocalRunnerBudgetView,
@@ -4607,6 +4626,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.off_record.discard" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OffRecordClosed>()
         }
+        "vault.off_record.recall" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::MemoryPack>()
+        }
         "vault.off_record.notes.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
@@ -4619,6 +4641,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchChildReceipt,
         >(),
+        "vault.research.archive" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ResearchArchive>()
+        }
         "vault.research.archive.install" => crate::code_run::vault_read::request_schema::<
             crate::autoreason_campaign::archive::CampaignArchiveView,
         >(),
@@ -4636,6 +4661,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.research.archive.coverage" => crate::code_run::vault_read::request_schema::<
             crate::autoreason_campaign::archive::CampaignArchiveAdmission,
+        >(),
+        "vault.evals.inventory" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalAuthoringInventory,
         >(),
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,

@@ -61,7 +61,7 @@ const EVAL_AUTHORING_MAX_CANDIDATES: usize = 256;
 const INVENTORY_DOMAIN: &[u8] = b"skill_optimize:eval_authoring_inventory:v1\0";
 
 /// One label fixed code found for a candidate in grounded evidence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CandidateLabel {
     pub kind: EvalLabelKind,
     /// `amended` or `kept` for an amendment, `preferred` or `not_preferred`
@@ -75,7 +75,7 @@ pub struct CandidateLabel {
 }
 
 /// One recent attempt receipt that records a seat: a candidate case.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalCandidate {
     /// The attempt's pack receipt id.
     pub id: String,
@@ -89,7 +89,7 @@ pub struct EvalCandidate {
 }
 
 /// Candidates that share a root: one source family's worth of history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalSourceGroup {
     pub id: String,
     pub seat: EvalSeat,
@@ -110,7 +110,7 @@ pub struct EvalSourceGroup {
 }
 
 /// How many of a seat's families have each purpose.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PurposeCounts {
     pub development: usize,
     pub judge_audit: usize,
@@ -118,7 +118,7 @@ pub struct PurposeCounts {
 }
 
 /// A sealed family no cohort holds yet: what a cut could take.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct UncutFamily {
     pub family: EntityId,
     pub cases: usize,
@@ -128,7 +128,7 @@ pub struct UncutFamily {
 }
 
 /// One cohort of a seat, as the skill reads it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CohortSummary {
     pub id: EntityId,
     pub from: u64,
@@ -142,7 +142,7 @@ pub struct CohortSummary {
 }
 
 /// One seat's set as it stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SeatInventory {
     pub seat: EvalSeat,
     pub families: PurposeCounts,
@@ -153,7 +153,7 @@ pub struct SeatInventory {
 
 /// What the eval-authoring skill reads: metadata only, never a case's text,
 /// trace, output or success check.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EvalAuthoringInventory {
     /// SHA-256 over the rest of the inventory; a plan names it.
     pub inventory_digest: String,
