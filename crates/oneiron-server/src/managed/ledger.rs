@@ -117,6 +117,14 @@ impl WakeLedger {
         action.verify(&self.token, &self.vault_name, body)
     }
 
+    pub(super) fn verify_owner_action(
+        &self,
+        action: &oneiron_vault_contract::ManagedOwnerAction,
+        request: &oneiron_vault_contract::ManagedOwnerRequest<'_>,
+    ) -> bool {
+        action.verify(&self.token, &self.vault_name, request)
+    }
+
     pub fn rev(&self) -> u64 {
         self.rev.load(Ordering::SeqCst)
     }

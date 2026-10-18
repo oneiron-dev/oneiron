@@ -223,9 +223,11 @@ side_tables! {
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
     /// A replay library program a retire took out, with whose word, when and why. Key: id16.
-    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored;
+    BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored
+        => crate::browser_library::erase_retired_actor_in_txn;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
-    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored;
+    BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored
+        => crate::browser_library::erase_workflow_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
@@ -251,7 +253,8 @@ side_tables! {
     SYNC_CALENDAR_ORIGIN_PENDING: VaultMeta b"calendar_origin_pending:v1:" Raw;
     /// One wire call's lasting receipt (OF-538): who called on which credential, which verb, how
     /// it ended, and digests of what was asked and answered; never the bodies. Key: id16.
-    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored;
+    CALL_RECEIPT: VaultMeta b"call_receipt:v1:" Named Authored
+        => crate::Vault::erase_call_receipt_actor_in_txn;
     /// The currently active campaign compliance rule pack. Key: ().
     CAMPAIGN_COMPLIANCE_ACTIVE: VaultMeta b"campaign:compliance:active:v1" Named;
     /// Durable UTF-8 activation notice for one compliance-pack version, one row per version. Key:
