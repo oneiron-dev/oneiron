@@ -80,6 +80,30 @@ pub(crate) fn credential_memory<'a>(
     }
 }
 
+/// An MCP caller's handle: [`credential_memory`]'s, inside the off-record
+/// session its request names whenever its call binds that session for a
+/// principal (`call_receipt::mcp_session_principal`, OF-063, FIX 2271): the
+/// one its credential names, or, for the configured root, the host-registered
+/// actor it acts through. A verified slip that names no principal binds
+/// none. Its call receipt reads the same principal, so a reference refusal
+/// or an unlinked prose link its rows make inside an anonymous session it
+/// entered keeps no receipt, as the call keeps none. HTTP callers keep
+/// [`credential_memory`]'s own rule.
+pub(crate) fn mcp_credential_memory<'a>(
+    vault: &'a oneiron::Vault,
+    auth: Option<&CoreAuth>,
+    actor: oneiron::EntityId,
+    class: oneiron::EdgeActorClass,
+) -> oneiron::memory::Memory<'a> {
+    let memory = credential_memory(vault, auth, actor, class);
+    match auth.and_then(CoreAuth::off_record_session) {
+        Some(session) if super::call_receipt::mcp_session_principal(auth, actor).is_some() => {
+            memory.in_off_record_session(session)
+        }
+        _ => memory,
+    }
+}
+
 /// The exact instrument a verified slip's request was admitted on, as a
 /// verb hook's ask names it: only a slip whose request kept its instrument
 /// for queued work has one, so the host can verify it again.

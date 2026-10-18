@@ -21,6 +21,8 @@ const DEFAULT_IMAGE_PICK_BUDGET_MS: u64 = 1_000;
 const DEFAULT_BOOKING_PARSE_INPUT_BYTES: usize = 4096;
 /// One registration's whole slate-drafting budget when the file names none.
 const DEFAULT_CONNECTOR_SLATE_BUDGET_MS: u64 = 30_000;
+/// One imported topic's sensitivity read budget when the file names none.
+const DEFAULT_IMPORT_AUDIENCE_BUDGET_MS: u64 = 30_000;
 
 /// `[models.decisions]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -34,6 +36,21 @@ pub(super) struct DecisionsFile {
     image_pick: Option<ImagePickFile>,
     booking_parse: Option<BookingParseFile>,
     connector_slate: Option<ConnectorSlateFile>,
+    import_audience: Option<ImportAudienceFile>,
+}
+
+/// `[models.decisions.import_audience]`: the two questions an imported topic is asked
+/// with (OF-492). The sensitivity read goes up to the Big rung; a sensitive or unsure
+/// topic asks the owner who may see its later imports. Without it, no topic is asked
+/// and every import stays private.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportAudienceFile {
+    /// "Is this imported topic sensitive?"
+    sensitive_wording: String,
+    /// "Who may see what later imports say about this topic?"
+    audience_wording: String,
+    budget_ms: Option<u64>,
 }
 
 /// `[models.decisions.connector_slate]`: the per-row question a connector
@@ -134,6 +151,15 @@ pub struct DecisionsSettings {
     pub image_pick: Option<ImagePickSettings>,
     pub booking_parse: Option<BookingParseSettings>,
     pub connector_slate: Option<ConnectorSlateSettings>,
+    pub import_audience: Option<ImportAudienceSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportAudienceSettings {
+    pub sensitive_wording: String,
+    pub audience_wording: String,
+    /// One topic's sensitivity read budget; a read past it asks the owner.
+    pub budget: Duration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -295,6 +321,32 @@ impl DecisionsFile {
                 })
             })
             .transpose()?;
+        let import_audience = self
+            .import_audience
+            .map(|audience| -> anyhow::Result<_> {
+                Ok(ImportAudienceSettings {
+                    sensitive_wording: filled(
+                        "import_audience.sensitive_wording",
+                        audience.sensitive_wording,
+                    )?,
+                    audience_wording: filled(
+                        "import_audience.audience_wording",
+                        audience.audience_wording,
+                    )?,
+                    budget: Duration::from_millis(
+                        match audience
+                            .budget_ms
+                            .unwrap_or(DEFAULT_IMPORT_AUDIENCE_BUDGET_MS)
+                        {
+                            0 => anyhow::bail!(
+                                "models.decisions.import_audience.budget_ms must be above 0"
+                            ),
+                            ms => ms,
+                        },
+                    ),
+                })
+            })
+            .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
             seat,
@@ -303,6 +355,7 @@ impl DecisionsFile {
             image_pick,
             booking_parse,
             connector_slate,
+            import_audience,
         })
     }
 }

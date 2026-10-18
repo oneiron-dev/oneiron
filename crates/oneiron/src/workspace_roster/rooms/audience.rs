@@ -5,11 +5,12 @@
 //! # A birth fact on the root
 //!
 //! A thread's audience rides its first TURN's body under the door-owned
-//! `room_thread` key: `{ root, audience }`. The root names the set, or
-//! `null` for a thread that reads as its room does. Every later TURN of the
-//! thread names the same root and `null`; readers consult the root. A trunk
-//! TURN carries no key. No side table holds it, so a TURN never syncs ahead
-//! of its own audience.
+//! `room_thread` key: `{ root, room, anchor, audience }`. The root names the
+//! set, or `null` for a thread that reads as its room does. Every later TURN
+//! of the thread names the same root, room and anchor, and `null`; readers
+//! consult the root. A trunk TURN carries no key. No side table holds it, so
+//! a TURN never syncs ahead of its own audience, and a TURN a session
+//! overlay stages carries the room it is read against (FIX 3122).
 //!
 //! # Fixed once stamped
 //!
@@ -20,21 +21,26 @@
 //! reads as one that does not exist.
 
 use super::*;
-use crate::error::RecordError;
 use crate::registry::{
-    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN,
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON,
+    ENTITY_TYPE_TURN,
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The door-owned TURN body key a thread binding rides under.
 pub(crate) const ROOM_THREAD_KEY: &str = "room_thread";
 
-/// A thread TURN's birth binding: its thread's root and, on the root alone,
-/// the audience the thread names (`None`: it reads as its room does).
+/// A thread TURN's birth binding: its thread's root, the room whose
+/// membership it reads under, the trunk turn the thread hangs off and, on
+/// the root alone, the audience the thread names (`None`: it reads as its
+/// room does). The room is the canonical one, never a session's shell, and
+/// every turn of a thread repeats its root's room and anchor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ThreadBinding {
     pub(crate) root: EntityId,
+    pub(crate) room: EntityId,
+    pub(crate) anchor: Option<EntityId>,
     pub(crate) audience: Option<BTreeSet<EntityId>>,
 }
 
@@ -274,18 +280,73 @@ pub(crate) fn thread_root_readable_in(
     root: EntityId,
     viewers: &[EntityId],
 ) -> Result<bool> {
-    let room = match crate::conversation_dag::conversation_of(&vault.store, txn, &root) {
-        Ok(room) => room,
-        Err(Error::EntityNotFound | Error::Record(RecordError::InvalidConversationDag(_))) => {
-            return Ok(false);
-        }
-        Err(error) => return Err(error),
+    thread_root_readable_with_read_in(vault, &vault.store.read(), txn, root, viewers)
+}
+
+/// [`thread_root_readable_in`] with the root and its carrier read in `dbs`,
+/// a session's composed view or base (FIX 3122): a live TURN whose own
+/// binding names it, held by one live conversation, the room itself or a
+/// stretch's shell. The audience is checked against the room the binding
+/// names, on base, since authority reads base (ARCH-0052).
+pub(crate) fn thread_root_readable_with_read_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    root: EntityId,
+    viewers: &[EntityId],
+) -> Result<bool> {
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_TURN,
+        body,
+    } = live_entity_row_in_txn(dbs, txn, &root)?
+    else {
+        return Ok(false);
     };
-    let audience = match root_audience_in(vault, txn, room, root) {
-        Ok(audience) => audience,
-        Err(Error::EntityNotFound) => return Ok(false),
-        Err(error) => return Err(error),
+    let Some(binding) = thread_binding(&body)? else {
+        return Ok(false);
     };
+    if binding.root != root {
+        return Ok(false);
+    }
+    let owners = crate::conversation_dag::edge_ids(
+        dbs,
+        txn,
+        &root,
+        crate::edge::EdgeKind::ChildOf,
+        false,
+        2,
+    )?;
+    if owners.len() != 1
+        || !matches!(
+            live_entity_row_in_txn(dbs, txn, &owners[0])?,
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_CONVERSATION,
+                ..
+            }
+        )
+    {
+        return Ok(false);
+    }
+    match private_members_readable_in(vault, txn, binding.room, binding.audience.as_ref(), viewers)
+    {
+        Err(Error::EntityNotFound) => Ok(false),
+        result => result,
+    }
+}
+
+/// Whether every one of `viewers` reads a thread of `room` naming
+/// `audience`: anyone a public one (`None`), and a private one only from
+/// its audience while each is still one of the room's members, a pen
+/// through its PERSON ([`names_actor_in`]); no one when there are no
+/// viewers. The one member rule a thread's root and a stretch's staged
+/// thread turn both read.
+pub(super) fn private_members_readable_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    audience: Option<&BTreeSet<EntityId>>,
+    viewers: &[EntityId],
+) -> Result<bool> {
     let Some(ids) = audience else {
         return Ok(true);
     };
@@ -297,7 +358,7 @@ pub(crate) fn thread_root_readable_in(
         .into_iter()
         .collect();
     for &viewer in viewers {
-        if !names_actor_in(vault, txn, &ids, viewer)?
+        if !names_actor_in(vault, txn, ids, viewer)?
             || !names_actor_in(vault, txn, &members, viewer)?
         {
             return Ok(false);
