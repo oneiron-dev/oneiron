@@ -11,7 +11,7 @@ const PURPOSE: SideTable<String, SummaryPurpose, Named> =
     SideTable::new(&side_table::SCOPE_SUMMARY_PURPOSE);
 
 /// A named purpose with host-editable descriptive text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SummaryPurpose {
     pub id: String,

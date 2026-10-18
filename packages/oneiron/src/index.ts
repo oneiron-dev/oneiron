@@ -1583,6 +1583,32 @@ export class Oneiron {
       /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
       evaluate: (input: Facade.DeliveryWindowEvaluateRequest): Facade.DeliveryWindowPreview => this.#call(() => this.#client.vaultDeliveryWindowEvaluate(input) as Facade.DeliveryWindowPreview),
     },
+    summaries: {
+      /** Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth. */
+      create: (request: Facade.SummaryCreateRequest): Facade.SummaryQueued => this.#call(() => this.#client.vaultSummariesCreate(request) as Facade.SummaryQueued),
+      /** Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot. */
+      read: (request: Facade.SummaryReadRequest): Facade.ScopedReadResult<Facade.SummaryReadView | null> => this.#call(() => this.#client.vaultSummariesRead(request) as Facade.ScopedReadResult<Facade.SummaryReadView | null>),
+      /** Reads the calling principal's own summary declaration and its retained completion or failure. */
+      status: (request: Facade.SummaryStatusRequest): Facade.ScopeSummaryStatus => this.#call(() => this.#client.vaultSummariesStatus(request) as Facade.ScopeSummaryStatus),
+      /** Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant. */
+      keep: (request: Facade.SummaryKeepRequest): Facade.SummaryKeepResult => this.#call(() => this.#client.vaultSummariesKeep(request) as Facade.SummaryKeepResult),
+      /** Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal. */
+      edit: (request: Facade.SummaryEditRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesEdit(request) as Facade.SummaryProposalView),
+      /** Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read. */
+      patch: (request: Facade.SummaryPatchRequest): Facade.SummaryMutationResult => this.#call(() => this.#client.vaultSummariesPatch(request) as Facade.SummaryMutationResult),
+      /** Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch. */
+      regenerate: (request: Facade.SummaryRegenerateRequest): Facade.SummaryMutationResult => this.#call(() => this.#client.vaultSummariesRegenerate(request) as Facade.SummaryMutationResult),
+      proposals: {
+        /** Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable. */
+        read: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsRead(request) as Facade.SummaryProposalView),
+        /** Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts. */
+        merge: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsMerge(request) as Facade.SummaryProposalView),
+        /** Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set. */
+        switch: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsSwitch(request) as Facade.SummaryProposalView),
+        /** Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads. */
+        reject: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsReject(request) as Facade.SummaryProposalView),
+      },
+    },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),

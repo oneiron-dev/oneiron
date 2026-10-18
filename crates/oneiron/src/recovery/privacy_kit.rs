@@ -1,6 +1,6 @@
 //! Vault-scoped 2-of-3 offline recovery kits; no person-level master secret.
 //!
-//! A kit carries one 32-byte secret: an owner-held vault key, or the world recovery root
+//! A kit carries one 32-byte secret: a vault's data key, or the world recovery root
 //! seed. Shamir over GF(2^8), degree 1, bytewise; the point x (1, 2 or 3) is only the
 //! point. Beside it sits the home the owner picked. The host and the cloud have no home.
 //! The passphrase piece stores nothing: its point is Argon2id(passphrase), and the line is
@@ -25,7 +25,12 @@ const TAG_CONTEXT: &str = "oneiron/kit/v2/tag";
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KitSecretKind {
-    /// An owner-held vault's data key. Refused on a host-readable vault.
+    /// A vault's data key, on any valid custody and placement (CALLS:
+    /// DATA_KEY_KIT). It recovers the data key from the pieces. It does not
+    /// remove or revoke the provider's, the supervisor's, a device's or an
+    /// escrow's copy, and does not recover private-world keys (the recovery
+    /// root kit does); a running host that holds the key reads what it
+    /// decrypts.
     VaultKey,
     /// The world recovery root seed. Any posture, a hosted vault included.
     RecoveryRoot,
@@ -294,9 +299,9 @@ impl RestoredKitSecret {
 /// No piece, passphrase, key or entropy material appears in these errors.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum KitError {
-    /// A hosted-readable vault cannot present a vault-key kit as host-blind recovery.
-    #[error("privacy backup requires owner-held keys")]
-    PrivacyModeRequired,
+    /// The vault's posture/custody pairing does not validate.
+    #[error("the vault's key custody configuration is invalid")]
+    InvalidCustodyConfig,
     /// Entropy acquisition failed.
     #[error("backup entropy unavailable")]
     EntropyUnavailable,
@@ -344,15 +349,17 @@ pub enum KitError {
     NoMatch,
 }
 
-/// Issues a kit for an owner-held vault's data key. The hosted-readable refusal stands:
-/// this does not implement an unratified sealed-envelope VEK-rotation protocol either.
+/// Issues a kit for a vault's data key on any valid custody, a hosted one included: the
+/// owner's will to keep a copy counts wherever the vault runs (owner, 10-19). The kit is
+/// a copy, never a claim of host-blindness ([`KitSecretKind::VaultKey`] says what it does
+/// not do). This does not implement an unratified sealed-envelope VEK-rotation protocol.
 pub fn issue_vault_key_kit(
     posture: &crate::config::VaultPrivacyConfig,
     issue: &KitIssue<'_>,
     vault_key: &[u8; 32],
 ) -> Result<IssuedKit, KitError> {
-    if posture.validate().is_err() || posture.host_readable() {
-        return Err(KitError::PrivacyModeRequired);
+    if posture.validate().is_err() {
+        return Err(KitError::InvalidCustodyConfig);
     }
     issue_kit(KitSecretKind::VaultKey, issue, vault_key)
 }

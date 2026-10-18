@@ -22875,7 +22875,7 @@
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
       "const": 1,
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 4,
       "fn": 7,
       "struct": 4
@@ -23084,7 +23084,7 @@
      "path": "src/entity_doc/summary.rs",
      "purpose": "Scope-summary documents: retained derivations, purpose and editor `keep` memo",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 2
      }
     },
@@ -41097,7 +41097,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries",
      "surface": {
       "crate-vis": 4,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -41108,6 +41108,46 @@
      "purpose": "Private admission for locally minted scope-summary bodies",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scope_summary/public.rs",
+     "purpose": "Credential-bound adapters",
+     "surface": {
+      "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SummaryCreateRequest",
+      "SummaryEdit",
+      "SummaryEditRequest",
+      "SummaryForkView",
+      "SummaryKeepRequest",
+      "SummaryKeepResult",
+      "SummaryMutationResult",
+      "SummaryPatchRequest",
+      "SummaryPath",
+      "SummaryProposalRequest",
+      "SummaryProposalView",
+      "SummaryQueued",
+      "SummaryReadRequest",
+      "SummaryReadView",
+      "SummaryRegenerateRequest",
+      "SummaryScope",
+      "SummarySpan",
+      "SummaryStatusRequest"
+     ],
+     "path": "src/scope_summary/public_types.rs",
+     "purpose": "Typed SUMMARY doors over the retained scope-summary and entity-document APIs",
+     "surface": {
+      "enum": 2,
+      "struct": 16
      }
     },
     {
@@ -50300,7 +50340,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 615
+      "fn": 626
      }
     },
     {
@@ -50358,6 +50398,7 @@
      "purpose": "The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`…",
      "surface": {
       "const": 4,
+      "crate-vis": 1,
       "enum": 6,
       "fn": 25,
       "struct": 27
@@ -54946,7 +54987,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
@@ -57058,7 +57099,7 @@
      "purpose": "Engine scans never refuse for how many rows they read (rule 5: ARCH-0044 C5, OF-520)"
     },
     "scope_summary": {
-     "files": 10,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57445,7 +57486,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3500,
+   "source_files": 3502,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65933,7 +65974,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 565
+      "fn": 576
      }
     },
     {
@@ -66982,7 +67023,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 566
+      "fn": 577
      }
     },
     {
@@ -70195,7 +70236,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 108
+      "crate-vis": 109
      }
     },
     {
@@ -70486,6 +70527,16 @@
      "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/summary_doors.rs",
+     "purpose": "SUMMARY writes on the caller's own credential",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -77775,7 +77826,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 367,
+     "files": 368,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78197,7 +78248,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 698,
+   "source_files": 699,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78527,6 +78578,7 @@
       "AuthorityHistoryImported",
       "BandMode",
       "BatchState",
+      "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -79079,7 +79131,9 @@
       "FolderItemInput",
       "ForceCancelGrounds",
       "ForkKind",
+      "ForkRecord",
       "ForkState",
+      "ForkStatus",
       "GateCheckerReceipt",
       "GateCheckerSet",
       "GateCheckerView",
@@ -79699,6 +79753,7 @@
       "PromotionEvidenceReason",
       "ProposalAsk",
       "ProposalAskRefusal",
+      "ProposalBundle",
       "ProposalHeader",
       "ProposalMember",
       "ProposalSettleRequest",
@@ -79973,6 +80028,9 @@
       "ScopeScope",
       "ScopeSensitivityBand",
       "ScopeSensitivityInput",
+      "ScopeSummaryMetadata",
+      "ScopeSummaryResult",
+      "ScopeSummaryStatus",
       "ScopedClaimInput",
       "ScopedCommitRequest",
       "ScopedExport",
@@ -79993,6 +80051,7 @@
       "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalSharedBriefView",
+      "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
@@ -80044,6 +80103,7 @@
       "SensitivityCeiling",
       "SensitivityName",
       "SetNoteOverridesRequest",
+      "SettleVerb",
       "SettleVerdict",
       "ShapeApplyItem",
       "ShapeApplyReceipt",
@@ -80234,6 +80294,27 @@
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
+      "SummaryCreateRequest",
+      "SummaryDerivation",
+      "SummaryEdit",
+      "SummaryEditRequest",
+      "SummaryForkView",
+      "SummaryKeepRequest",
+      "SummaryKeepResult",
+      "SummaryMutationResult",
+      "SummaryPatchRequest",
+      "SummaryPath",
+      "SummaryProposalRequest",
+      "SummaryProposalView",
+      "SummaryPurpose",
+      "SummaryQueued",
+      "SummaryReadRequest",
+      "SummaryReadView",
+      "SummaryRegenerateRequest",
+      "SummaryScope",
+      "SummarySourceVersion",
+      "SummarySpan",
+      "SummaryStatusRequest",
       "SupportGrantList",
       "SupportGrantListRequest",
       "SupportGrantMintAnswer",
@@ -80322,10 +80403,12 @@
       "TeamPlan",
       "TeamReceiptView",
       "TeamShape",
+      "TextAnchor",
       "TextBlockAtom",
       "TextBody",
       "TextCommitReceipt",
       "TextInputControl",
+      "TextReceipt",
       "ThreadEntryAtom",
       "ThreadMaskView",
       "ThreadPassportLookup",
@@ -80495,8 +80578,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 556,
-      "struct": 1544
+      "enum": 560,
+      "struct": 1572
      }
     },
     {
