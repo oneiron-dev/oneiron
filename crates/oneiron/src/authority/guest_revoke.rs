@@ -1,5 +1,6 @@
 //! OF-232: the owner mints an ask guest's capability slip, bound to its
-//! grant, and withdraws one ask guest's access at this host.
+//! grant, and withdraws one guest's access at this host: an ask guest's, or
+//! a Connect peer's (FIX 3016; canon: guest grants are host-owner revocable).
 //!
 //! A guest slip's signed claims name the guest FEDERATION_GRANT it was minted
 //! under (`grant_ref`). The withdrawal's one writer deletes the grant,
@@ -187,7 +188,8 @@ impl Vault {
         Ok(bound)
     }
 
-    /// Withdraws one ask guest's access at this host (OF-232) in one writer:
+    /// Withdraws one guest's access at this host (OF-232), an ask guest's or a
+    /// Connect peer's guest grant (FIX 3016), in one writer:
     /// deletes the guest's FEDERATION_GRANT, disconnects each live pact the
     /// grant still governs, tombstones every slip minted under the grant, and
     /// keeps the withdrawal, so a repeat returns the first revoke with
@@ -226,7 +228,12 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             };
             let grant = decode_federation_grant_body(&body)?;
-            if !grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Ask { .. }) {
+            if !grant.role.is_guest()
+                || !matches!(
+                    grant.scope,
+                    FederationGrantScope::Ask { .. } | FederationGrantScope::Connect { .. }
+                )
+            {
                 return Err(Error::EntityNotFound);
             }
             let revoked_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;

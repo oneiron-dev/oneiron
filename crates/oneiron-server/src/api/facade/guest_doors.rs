@@ -16,8 +16,9 @@ use super::host_doors::internal;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
-/// `vault.guests.revoke`: the owner withdraws one ask guest's access at this
-/// host, with the copied-bytes disclosure.
+/// `vault.guests.revoke`: the owner withdraws one guest's access (an ask
+/// guest's or a Connect peer's) at this host, with the copied-bytes
+/// disclosure.
 pub(crate) async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
