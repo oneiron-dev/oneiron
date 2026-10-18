@@ -1,9 +1,9 @@
 //! Read-only shared regions: how blob bytes cross without being copied.
 //!
-//! Linux: a memfd sealed against write, grow and shrink, so every holder sees
-//! the same immutable bytes. Other Unix: a POSIX shared-memory object written
-//! once, reopened read-only and unlinked; only the read-only descriptor ever
-//! leaves this process.
+//! Linux and Android: a memfd sealed against write, grow and shrink, so every
+//! holder sees the same immutable bytes. Other Unix: a POSIX shared-memory
+//! object written once, reopened read-only and unlinked; only the read-only
+//! descriptor ever leaves this process.
 
 use std::fs::File;
 use std::io;
@@ -60,7 +60,7 @@ impl SharedRegion {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn create(bytes: &[u8]) -> io::Result<OwnedFd> {
     use rustix::fs::{MemfdFlags, SealFlags, fcntl_add_seals, memfd_create};
     use std::io::Write;
@@ -79,7 +79,7 @@ fn create(bytes: &[u8]) -> io::Result<OwnedFd> {
     Ok(fd)
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 fn create(bytes: &[u8]) -> io::Result<OwnedFd> {
     let (name, rw) = open_fresh_name()?;
     let filled = fill_and_reopen(&name, rw, bytes);
@@ -89,7 +89,7 @@ fn create(bytes: &[u8]) -> io::Result<OwnedFd> {
     Ok(ro)
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 fn fill_and_reopen(name: &str, rw: OwnedFd, bytes: &[u8]) -> io::Result<OwnedFd> {
     use rustix::fs::{Mode, ftruncate};
     use rustix::shm;
@@ -107,7 +107,7 @@ fn fill_and_reopen(name: &str, rw: OwnedFd, bytes: &[u8]) -> io::Result<OwnedFd>
     Ok(shm::open(name, shm::OFlags::RDONLY, Mode::empty())?)
 }
 
-#[cfg(all(unix, not(target_os = "linux")))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 fn open_fresh_name() -> io::Result<(String, OwnedFd)> {
     use rustix::fs::Mode;
     use rustix::shm;
@@ -154,7 +154,7 @@ impl MappedRegion {
     /// Fails if the region is shorter than `len`, unsealed on Linux, or the
     /// OS refuses the mapping.
     pub fn map(fd: OwnedFd, len: u64) -> io::Result<Self> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         require_seals(&fd)?;
         if sealed_size(&fd)? < len {
             return Err(io::Error::new(
@@ -168,13 +168,13 @@ impl MappedRegion {
     /// Maps the whole of a region another process made and sealed, if it is
     /// no larger than `max`.
     ///
-    /// Linux only: elsewhere a received region cannot be proven immutable,
-    /// so an organ's outputs ride inline there.
+    /// Linux and Android only: elsewhere a received region cannot be proven
+    /// immutable, so an organ's outputs ride inline there.
     ///
     /// # Errors
     /// Fails if the region is unsealed, larger than `max`, or not on Linux.
     pub fn map_sealed(fd: OwnedFd, max: u64) -> io::Result<Self> {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             require_seals(&fd)?;
             let size = sealed_size(&fd)?;
@@ -186,12 +186,12 @@ impl MappedRegion {
             }
             Self::map_len(fd, size)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             let _ = (fd, max);
             Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "regions from an organ cross only on Linux",
+                "regions from an organ cross only on Linux and Android",
             ))
         }
     }
@@ -217,7 +217,7 @@ fn sealed_size(fd: &OwnedFd) -> io::Result<u64> {
     Ok(u64::try_from(rustix::fs::fstat(fd)?.st_size).unwrap_or(0))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 fn require_seals(fd: &OwnedFd) -> io::Result<()> {
     use rustix::fs::{SealFlags, fcntl_get_seals};
     let needed = SealFlags::WRITE | SealFlags::GROW | SealFlags::SHRINK;

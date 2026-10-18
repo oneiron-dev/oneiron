@@ -9,6 +9,8 @@
 //! Dreamer's or an actor's confirmation makes the real, synced entity, under
 //! the same id, or names an existing entity in its place.
 
+#[cfg(feature = "sync")]
+use std::collections::BTreeSet;
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
@@ -402,4 +404,192 @@ pub(crate) fn provisional_in_txn(
     id: &EntityId,
 ) -> Result<Option<ProvisionalEntity>> {
     PROVISIONAL.get(store, txn, id)
+}
+
+/// How a window demotion settles a provisional entity whose origin TURN it
+/// removes (OF-534).
+#[cfg(feature = "sync")]
+enum Demoted {
+    /// No kept tag set names it and no legal hold stands on it: it goes.
+    Retire,
+    /// A kept turn whose tag set still reads names it by a span keyed to its
+    /// name: that turn becomes its origin, and that span's text its name.
+    Rehome(EntityId, String),
+    /// A kept tag set or a hold needs it, and no kept turn's text can take
+    /// it over: it stays, and so does its origin turn.
+    KeepOrigin,
+}
+
+/// The removed TURNs a window demotion keeps whole (OF-534): each is the
+/// origin of a provisional entity a kept tag set or a legal hold still
+/// needs, which no kept turn's text can take over. `gone` is every member
+/// the demotion removes; `partial` the kept turns that lose a MESSAGE to
+/// it, whose words read partly here until promotion. Reads only.
+#[cfg(feature = "sync")]
+pub(crate) fn demotion_kept_origins_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    gone: &BTreeSet<EntityId>,
+    partial: &BTreeSet<EntityId>,
+) -> Result<BTreeSet<EntityId>> {
+    let mut kept = BTreeSet::new();
+    for turn in gone {
+        let Some(set) = tags::tag_set_in_txn(store, txn, turn)? else {
+            continue;
+        };
+        for id in set.entities() {
+            let Some(entity) = PROVISIONAL.get(store, txn, &id)? else {
+                continue;
+            };
+            if entity.origin == *turn
+                && matches!(
+                    demoted_in_txn(store, txn, &id, &entity, gone, partial)?,
+                    Demoted::KeepOrigin
+                )
+            {
+                kept.insert(*turn);
+                break;
+            }
+        }
+    }
+    Ok(kept)
+}
+
+/// The tagging half of a window demotion (OF-534), in the remover's
+/// transaction before any row or edge of `gone` goes: each removed TURN
+/// loses its tag set and its own mention index rows, and each provisional
+/// entity whose origin it was is settled against the kept turns alone. One
+/// no kept set names and no hold protects is retired; one a kept turn's
+/// readable text names by a span keyed to its name moves there. A kept
+/// turn is never retagged and keeps its stored set: while a MESSAGE it was
+/// read from is away, the set reads as absent. Run it after
+/// [`demotion_kept_origins_in_txn`], with those origins left out of `gone`.
+#[cfg(feature = "sync")]
+pub(crate) fn demote_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    gone: &BTreeSet<EntityId>,
+    partial: &BTreeSet<EntityId>,
+) -> Result<()> {
+    let mut named = BTreeSet::new();
+    for turn in gone {
+        named.extend(tags::drop_demoted_set_in_txn(store, txn, turn)?);
+    }
+    for id in named {
+        let Some(mut entity) = PROVISIONAL.get(store, txn, &id)? else {
+            continue;
+        };
+        if !gone.contains(&entity.origin) {
+            continue;
+        }
+        match demoted_in_txn(store, txn, &id, &entity, gone, partial)? {
+            Demoted::Retire => {
+                retire_in_txn(store, txn, &id)?;
+            }
+            // The name keys as before, so its index row stands.
+            Demoted::Rehome(origin, name) => {
+                entity.origin = origin;
+                entity.name = name;
+                PROVISIONAL.put(store, txn, &id, &entity)?;
+            }
+            Demoted::KeepOrigin => {}
+        }
+    }
+    Ok(())
+}
+
+/// How a demotion that removes `gone` settles the provisional entity `id`.
+/// A kept turn that names it needs it; one whose words the demotion leaves
+/// partial is no new origin, nor is one whose tag set will not read.
+#[cfg(feature = "sync")]
+fn demoted_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    entity: &ProvisionalEntity,
+    gone: &BTreeSet<EntityId>,
+    partial: &BTreeSet<EntityId>,
+) -> Result<Demoted> {
+    let digest = crate::ingest::identity_hint_digest(&entity.name);
+    let mut needed = crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())?;
+    let mut after = None;
+    while let Some(turn) = tags::next_ref_in_txn(store, txn, id, after.as_ref())? {
+        after = Some(turn);
+        if gone.contains(&turn) {
+            continue;
+        }
+        needed = true;
+        if partial.contains(&turn) {
+            continue;
+        }
+        if let Some(name) = keyed_text_in_store(store, txn, &turn, id, &digest, gone)? {
+            return Ok(Demoted::Rehome(turn, name));
+        }
+    }
+    Ok(if needed {
+        Demoted::KeepOrigin
+    } else {
+        Demoted::Retire
+    })
+}
+
+/// The text of a span in `turn` linked to `entity` whose own text keys to
+/// `digest`, read through the store alone (the remover holds no vault):
+/// the check [`rehome_in_txn`] makes, for a live TURN whose tag set reads
+/// and keeps reading once the members in `gone` are removed. Each message
+/// is read as the tagger reads it: live, its words not withdrawn, its
+/// document's text in its body, shown.
+#[cfg(feature = "sync")]
+fn keyed_text_in_store(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+    entity: &EntityId,
+    digest: &[u8; 32],
+    gone: &BTreeSet<EntityId>,
+) -> Result<Option<String>> {
+    use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+    use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
+    let Some(set) = tags::readable_in_txn(store, txn, turn)? else {
+        return Ok(None);
+    };
+    let live_turn = matches!(
+        live_entity_row_in_txn(store, txn, turn)?,
+        LiveEntityRow::Live { entity_type, .. } if entity_type == ENTITY_TYPE_TURN
+    );
+    if !live_turn || set.messages.iter().any(|message| gone.contains(message)) {
+        return Ok(None);
+    }
+    for mention in &set.mentions {
+        if !mention.link.entities().contains(entity) || !set.messages.contains(&mention.message) {
+            continue;
+        }
+        let LiveEntityRow::Live { entity_type, body } =
+            live_entity_row_in_txn(store, txn, &mention.message)?
+        else {
+            continue;
+        };
+        if entity_type != ENTITY_TYPE_MESSAGE
+            || !crate::ports::body_readable_in_txn(
+                store,
+                txn,
+                &mention.message,
+                &body,
+                crate::ports::BodyStale::Withdrawn,
+            )?
+        {
+            continue;
+        }
+        let body = crate::entity_doc::resolve_record_body(store, txn, &mention.message, &body)?;
+        let Some(text) = super::input::shown_message_text(&body) else {
+            continue;
+        };
+        let Some(span) = text.get(mention.start..mention.end).map(str::trim) else {
+            continue;
+        };
+        if !span.is_empty() && crate::ingest::identity_hint_digest(span) == *digest {
+            return Ok(Some(span.to_owned()));
+        }
+    }
+    Ok(None)
 }
