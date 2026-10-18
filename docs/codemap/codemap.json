@@ -1001,7 +1001,7 @@
      "path": "src/agent_dispatch/planner_live.rs",
      "purpose": "The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
       "struct": 3
      }
@@ -1011,9 +1011,20 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/planner_live/intent.rs",
-     "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
+     "purpose": "The reserved spawn intent (DOOR-111 S2, S4c-1): a planned spawn, durable under its asker's intent key",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 13,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/intent/child.rs",
+     "purpose": "The leased child's planned spawn (DOOR-111 S4c-1): a leased agent's `self.agents.spawn` with an ask…",
+     "surface": {
+      "crate-vis": 4,
       "fn": 1
      }
     },
@@ -1032,7 +1043,17 @@
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/planner_live/team_launch.rs",
-     "purpose": "The owner's planned launch (DOOR-111 S4a): a planned intent's plan, launched at the root as one group",
+     "purpose": "The planned launch (DOOR-111 S4a, S4c-2): a planned intent's plan, launched as one group, at the root for…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/team_launch/child.rs",
+     "purpose": "The leased child's planned launch (DOOR-111 S4c-2, S4c-3): a leased agent's planned intent, launched under…",
      "surface": {
       "fn": 1
      }
@@ -44312,7 +44333,7 @@
      "path": "src/skill/pack_load.rs",
      "purpose": "Attempt-bound pack reads stamp their actual revision in the same transaction",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -53143,6 +53164,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "LeasedSpawnRequest",
       "PlannedIntentView",
       "PlannedSpawnHost",
       "PlannedSpawnRequest",
@@ -53152,7 +53174,7 @@
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
      "surface": {
       "enum": 1,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -57741,7 +57763,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 48,
+     "files": 50,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59248,7 +59270,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3615,
+   "source_files": 3617,
    "test_files": 902
   },
   "oneiron-android": {
