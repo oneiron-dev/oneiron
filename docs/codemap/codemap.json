@@ -49903,23 +49903,28 @@
      "kind": "src",
      "notable": [
       "ResidenceIndex",
+      "ResidenceIndexAnswer",
       "ResidenceIndexEntry",
       "ResidenceIndexWindowView",
       "ResidenceMachineRequest",
+      "ResidenceModeAnswer",
       "ResidenceModeChanged",
       "ResidenceModeName",
       "ResidenceModeRequest",
+      "ResidenceOpenAnswer",
       "ResidenceOpenRequest",
       "ResidenceOpened",
+      "ResidencePruneAnswer",
       "ResidencePruneRequest",
-      "ResidencePruned"
+      "ResidencePruned",
+      "ResidenceQueued"
      ],
      "path": "src/task_verb/sdk_residence.rs",
      "purpose": "The owner's residence controls (OF-534, FIX 531): a machine's residence mode, opening one item there, its…",
      "surface": {
-      "enum": 1,
+      "enum": 5,
       "fn": 2,
-      "struct": 10
+      "struct": 11
      }
     },
     {
@@ -78349,16 +78354,21 @@
       "ResearchWeaveWire",
       "ResearchWorkWire",
       "ResidenceIndex",
+      "ResidenceIndexAnswer",
       "ResidenceIndexEntry",
       "ResidenceIndexWindowView",
       "ResidenceMachineRequest",
+      "ResidenceModeAnswer",
       "ResidenceModeChanged",
       "ResidenceModeName",
       "ResidenceModeRequest",
+      "ResidenceOpenAnswer",
       "ResidenceOpenRequest",
       "ResidenceOpened",
+      "ResidencePruneAnswer",
       "ResidencePruneRequest",
       "ResidencePruned",
+      "ResidenceQueued",
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResponseFormat",
@@ -78850,8 +78860,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 460,
-      "struct": 1272
+      "enum": 464,
+      "struct": 1273
      }
     },
     {
