@@ -58,6 +58,8 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
+// The shared-act policy doors (DOOR-129) too.
+pub(crate) use super::shared_policy_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
@@ -1147,7 +1149,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.recall"
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
-        | "self.off_record.execute" => owner_proof(auth, server, verb).map(drop),
+        | "self.off_record.execute"
+        | "vault.shared.policy.get"
+        | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -1173,7 +1177,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_preview"
         | "vault.records.erase_confirm"
         | "vault.workspace.establish"
-        | "vault.workspace.members.onboard" => {
+        | "vault.workspace.members.onboard"
+        | "vault.shared.policy.propose"
+        | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

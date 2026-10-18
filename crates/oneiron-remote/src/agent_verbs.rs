@@ -440,6 +440,18 @@ impl OneironClient {
                 "vault.shared.close_erase_ask" => remote_agent_verb_output::<
                     oneiron::federation::SharedEraseAsk,
                 >(client, verb, &input),
+                "vault.shared.policy.get" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActPoliciesView,
+                >(client, verb, &input),
+                "vault.shared.policy.propose" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActPolicyChange,
+                >(client, verb, &input),
+                "vault.shared.policy.answer" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActPolicyChange,
+                >(client, verb, &input),
+                "vault.shared.policy.change" => remote_agent_verb_output::<
+                    oneiron::federation::SharedActPolicyChange,
+                >(client, verb, &input),
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
@@ -3046,6 +3058,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.shared.close_erase_ask", value)
+    }
+    pub fn vault_shared_policy_get(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedVaultRequest,
+    ) -> Result<oneiron::federation::SharedActPoliciesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.policy.get", value)
+    }
+    pub fn vault_shared_policy_propose(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedActPolicyProposeRequest,
+    ) -> Result<oneiron::federation::SharedActPolicyChange, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.policy.propose", value)
+    }
+    pub fn vault_shared_policy_answer(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedActPolicyAnswerRequest,
+    ) -> Result<oneiron::federation::SharedActPolicyChange, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.policy.answer", value)
+    }
+    pub fn vault_shared_policy_change(
+        &self,
+        input: &oneiron::task_verb::sdk::SharedActPolicyChangeRequest,
+    ) -> Result<oneiron::federation::SharedActPolicyChange, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.shared.policy.change", value)
     }
     pub fn vault_guests_revoke(
         &self,
