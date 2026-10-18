@@ -1,10 +1,9 @@
 //! ChannelIdentity addressability shapes with wire serde.
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
 /// ChannelIdentity addressability shape (OF-347 R1, ARCH-0063 R2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
+#[serde(rename_all = "snake_case")]
 pub enum ChannelIdentityShape {
     DedicatedAddress,
     DedicatedHandle,
@@ -56,8 +55,9 @@ impl ChannelIdentityShape {
 /// `DelegatedGrant` variant, so a caller cannot hand it a delegated shape for
 /// the door to silently degrade — see that constructor for what the degrade
 /// actually cost.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
+#[serde(rename_all = "snake_case")]
 pub enum SelfHeldShape {
     DedicatedAddress,
     DedicatedHandle,
@@ -87,23 +87,3 @@ impl SelfHeldShape {
     }
 }
 
-impl Serialize for ChannelIdentityShape {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_str(self.as_str())
-    }
-}
-
-impl<'de> Deserialize<'de> for ChannelIdentityShape {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::parse(&value).ok_or_else(|| {
-            serde::de::Error::custom(format!("unknown channel identity shape {value:?}"))
-        })
-    }
-}

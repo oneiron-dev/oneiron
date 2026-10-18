@@ -49,14 +49,18 @@ const MAX_DELEGATED_GRANT_SCOPES: usize = 8;
 /// granted-scope evidence for it, and every send still crosses the gate, which
 /// holds it for the owner unless a grant covers it (ARCH-0046 "depends on the
 /// grant").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
+#[serde(rename_all = "snake_case")]
 pub enum DelegatedGrantScope {
     /// Read message bodies in the granted mailbox.
+    #[serde(rename = "mail.read")]
     MailRead,
     /// Read message headers/metadata only.
+    #[serde(rename = "mail.metadata")]
     MailMetadata,
     /// Send mail as the granted mailbox (Gmail `gmail.send`).
+    #[serde(rename = "mail.send")]
     MailSend,
 }
 
@@ -87,7 +91,8 @@ impl DelegatedGrantScope {
 /// OAuth access/refresh token bytes live in the custody record and are reachable
 /// only through the SECRET-02 door under an effector binding; they never land on
 /// this struct, on the encoded body, or on any claim derived from it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct DelegatedGrant {
     /// Custody record name (`Vault::resolve_secret_ref` key), never a token.
     pub custody_record_ref: String,

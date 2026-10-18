@@ -62,7 +62,8 @@ pub struct ChannelIdentitySelectionQuery<'a> {
 }
 
 /// The resolved presentation identity.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChannelIdentitySelectionDecision {
     pub identity_ref: EntityId,
     pub facet_ref: Option<EntityId>,
@@ -384,7 +385,8 @@ fn face_candidate(
 }
 
 /// Where a rule applies.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SelectionRuleScope {
     /// Applies to every query for its relationship context.
     VaultDefault,

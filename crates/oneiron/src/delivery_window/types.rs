@@ -77,7 +77,8 @@ impl DeliveryWindowDecision {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DeliveryWindowVerbClass {
     Ambient,
     Interrupt,
@@ -105,7 +106,8 @@ impl DeliveryWindowAppliesTo {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum DeliveryWindowContextCondition {
     CalendarBusy,
     FocusOn,

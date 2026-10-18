@@ -35,7 +35,8 @@ pub(super) const RULE_KEYS: [&str; 11] = [
 ];
 
 /// One selection row.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ChannelIdentitySelectionRule {
     pub rule_id: String,
     pub relationship: RelationshipContext,
@@ -99,7 +100,8 @@ impl ChannelIdentitySelectionRule {
 }
 
 /// The persisted overlay, or the compiled law. See the module docs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ChannelIdentitySelectionRuleSet {
     pub schema_version: u16,
     pub revision: u64,
