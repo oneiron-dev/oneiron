@@ -5,6 +5,7 @@
 use super::batch::CoreTextField;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
+use crate::server::SyncServer;
 use oneiron::core_write::CoreWriteTextField;
 use oneiron::core_write::shape::{self, CoreWriteRefusal};
 use serde::Deserialize;
@@ -101,11 +102,18 @@ pub(crate) fn stage_core_entity_put<'a>(
 
 /// Commits `batch` as `auth` wrote it. Below owner grade, a put that turns an
 /// agent definition back on is refused
-/// ([`oneiron::BatchBuilder::commit_below_owner`]).
+/// ([`oneiron::BatchBuilder::commit_below_owner`]). A raw write is an owner
+/// act, admitted before anything commits (FIX 2222): a hosted operator's
+/// root writes nothing, and a self-hosted root or the dev mode writes only
+/// while its host action holds.
 pub(crate) fn commit_core_batch(
+    server: &SyncServer,
     auth: &CoreAuth,
     batch: oneiron::BatchBuilder<'_>,
 ) -> oneiron::Result<()> {
+    if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
+        action?;
+    }
     if auth.is_owner_grade() {
         batch.commit()
     } else {

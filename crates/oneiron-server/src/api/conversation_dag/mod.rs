@@ -111,6 +111,7 @@ impl IntoResponse for DagWriteError {
 }
 
 fn append_input(
+    server: &SyncServer,
     conversation: EntityId,
     req: DagAppendRequest,
     auth: &CoreAuth,
@@ -149,7 +150,7 @@ fn append_input(
         body: encode_core_body(&body)?,
         text: core_text_fields(req.text.as_deref(), &body),
         session: parse_optional(req.session.as_deref(), "session")?,
-        actor: req.actor.parse(auth)?,
+        actor: req.actor.parse(server, auth)?,
         thread_audience: req
             .thread_audience
             .map(|ids| {
@@ -180,7 +181,7 @@ pub(crate) async fn append_core_record(
     let req = json_payload(payload)?;
     // The route's own refusals first: the actor its body binds, and its
     // interval.
-    let actor = req.actor.parse(&auth)?;
+    let actor = req.actor.parse(&server, &auth)?;
     core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
     let input = append_row(conversation, req);
     // OF-181: `vault.conversations.records.append`, as an action when the
@@ -415,7 +416,7 @@ pub(crate) async fn spawn_core_sub_session(
 ) -> Result<Json<DagSpawnResponse>, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let turn = parse_entity_id_param(&turn_id, "turn_id")?;
-    let actor = json_payload(payload)?.actor.parse(&auth)?;
+    let actor = json_payload(payload)?.actor.parse(&server, &auth)?;
     let session = server
         .vault
         .spawn_dag_sub_session(&turn, actor)
@@ -492,7 +493,7 @@ pub(crate) async fn mint_core_scope_summary(
             land_on: parse_optional(req.land_on.as_deref(), "land_on")?,
             as_record: req.as_record,
         },
-        requester: req.actor.parse(&auth)?,
+        requester: req.actor.parse(&server, &auth)?,
     };
     declare_summary(&server, &request, req.purpose.as_deref())
 }
@@ -562,7 +563,7 @@ pub(crate) async fn reply_in_thread(
         )
         .into());
     }
-    let input = append_input(conversation, req, &auth)?;
+    let input = append_input(&server, conversation, req, &auth)?;
     let writer = super::credential_memory(
         &server.vault,
         Some(&auth),
@@ -634,7 +635,7 @@ pub(crate) async fn summarize_thread(
     }
     let request = ScopeSummaryRequest {
         target: ScopeSummaryTarget::Thread { trunk: record },
-        requester: req.actor.parse(&auth)?,
+        requester: req.actor.parse(&server, &auth)?,
     };
     declare_summary(&server, &request, req.purpose.as_deref())
 }
@@ -694,11 +695,12 @@ fn reaction_records(
     }
     let targets: Vec<EntityId> = pairs.iter().map(|(_, target, _)| *target).collect();
     // A credential reads each reaction under its own key, as it reads the
-    // record; the server's own secret reads them all.
-    let pills = match auth.verified_slip() {
-        Some(_) => crate::api::scoped_read_for_core_auth(&server.vault, auth)?
-            .reaction_pills(&targets, viewer),
-        None => server.vault.reaction_pills(&targets, viewer),
+    // record, and so does the dev mode, as the owner it acts as (FIX 2222);
+    // a managed vault's attested owner reads them all.
+    let pills = if auth.verified_slip().is_some() || auth.is_local_dev_hatch() {
+        crate::api::scoped_read_for_core_auth(&server.vault, auth)?.reaction_pills(&targets, viewer)
+    } else {
+        server.vault.reaction_pills(&targets, viewer)
     }
     .map_err(|e| core_engine_error("reaction listing failed", e))?;
     let records = pairs
@@ -754,7 +756,15 @@ pub(crate) async fn react_core_message(
     let message = parse_entity_id_param(&message, "message")?;
     let req = json_payload(payload)?;
     let by = parse_entity_id_param(&req.by, "by")?;
-    let actor = req.actor.parse(&auth)?;
+    // A local change writes as the body's actor, which must be the
+    // credential's own: for a self-hosted root or the dev mode, the owner its
+    // host action names; a hosted operator's root writes as nobody and never
+    // falls through to the body's actor (FIX 2222). Connector ingress writes
+    // as the mirror MACHINE and names no person.
+    let actor = match &req.external {
+        Some(_) => None,
+        None => Some(req.actor.parse(&server, &auth)?),
+    };
     if let Some(external) = &req.external {
         // Connector ingress: the host resolved the provider's identities, and
         // the engine's mirror MACHINE writes the claim.
@@ -779,7 +789,7 @@ pub(crate) async fn react_core_message(
             .into());
         }
     } else {
-        if actor.entity_ref() != by {
+        if actor.as_ref().is_none_or(|actor| actor.entity_ref() != by) {
             return Err(ApiError::forbidden_scope("reaction_actor").into());
         }
         if !req.remove && req.occurred_at.is_none() {
@@ -800,7 +810,13 @@ pub(crate) async fn react_core_message(
             origin: external.origin,
         }),
     };
-    let receipt = match super::facade::action_routes::action_bound(&server, &auth)? {
+    // Connector ingress from a host credential runs on its grade alone,
+    // outside any action: the operator's root keeps it on a hosted vault.
+    let bound = match &input.external {
+        Some(_) if super::host_action::host_action_of(server.vault(), &auth).is_some() => None,
+        _ => super::facade::action_routes::action_bound(&server, &auth)?,
+    };
+    let receipt = match bound {
         Some(bound) => {
             let row = AgentVerb::VaultMessagesReact;
             let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
@@ -811,9 +827,7 @@ pub(crate) async fn react_core_message(
             serde_json::from_value::<MessageReactionReceipt>(output)
                 .map_err(|_| ApiError::internal_server_error("reaction result encoding failed"))?
         }
-        None => {
-            super::facade::host_doors::react_message(&server, &auth, Some(actor), input).await?
-        }
+        None => super::facade::host_doors::react_message(&server, &auth, actor, input).await?,
     };
     Ok(Json(ReactionResponse {
         id: receipt.id,

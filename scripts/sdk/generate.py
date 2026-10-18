@@ -1191,7 +1191,7 @@ def facade_dispatch(facade_rows):
                 let (output, rows) = if proof.claims().holder_ref == "host" {{
                     server.vault.export_with_verified_host_owner_listing(&input, proof, auth.locality())?
                 }} else {{
-                    let (actor, class) = facade_actor(auth)?;
+                    let (actor, class) = facade_actor(server, auth)?;
                     let producers = oneiron::memory::ProducerRows::default();
                     let output = server.vault.memory(actor, class).at(auth.locality()).listing_producers(&producers).export_with_verified_owner(&input, proof)?;
                     (output, producers.take())
@@ -1221,7 +1221,7 @@ def facade_dispatch(facade_rows):
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
             dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
                 {record_scope_guard(r)}
-                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(auth)?;" if lands else ""}
+                facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(server, auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(server, auth)?;" if lands else ""}
                 let value = input?;
                 oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &value)?;
                 let hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;
@@ -1273,7 +1273,7 @@ def facade_dispatch(facade_rows):
         # its args meet, so a rewrite meets them too. `invoke` crosses them for
         # every other row.
         if 'rows' in readables or r.get('server_door'):
-            actor = 'let (actor, class) = facade_actor(auth)?;'
+            actor = 'let (actor, class) = facade_actor(server, auth)?;'
             self_branch = ''
             if name == 'describe':
                 # describe(self) renders the authenticated run brief, under no
@@ -1300,7 +1300,7 @@ def facade_dispatch(facade_rows):
             # blocking thread, its surface, rewrite admission, drain, room turn
             # and hooks with it as one row, since a model rung of the decision
             # ladder its surface binds may block on the server's runtime.
-            dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
+            dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
         let (server, owned) = (Arc::clone(server), call.owned());
         tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
         let call = owned.call();
@@ -1312,7 +1312,7 @@ def facade_dispatch(facade_rows):
         .map_err(|_| FacadeApiError::from(super::host_doors::internal("{name}")))?
         }}\n'''
             continue
-        dispatch += head + f'''let (actor, class) = facade_actor(auth)?;{room_guard}{ref_guard}{turn}
+        dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
         Ok(FacadeCallOutput::listed(output, &producers))

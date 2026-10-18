@@ -54,8 +54,18 @@ async fn vault_messages_react_answer(
     let actor = match input.external {
         Some(_) => None,
         None => {
+            // The one resolver names the actor (FIX 2222): a self-hosted root
+            // or the dev mode reacts as the owner, by that owner alone, and a
+            // hosted operator's root is refused.
             let (actor, class) =
-                super::facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
+                super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+            if oneiron::EntityId::from_hex(&input.by).ok() != Some(actor) {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    "a reaction is by the credential's own principal",
+                    &["Name the credential's own principal as `by`."],
+                ));
+            }
             Some(WriteActor::new(actor, class))
         }
     };

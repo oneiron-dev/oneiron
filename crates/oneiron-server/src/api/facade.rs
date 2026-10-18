@@ -505,7 +505,20 @@ fn unknown_verb(verb: &str) -> FacadeApiError {
 ///
 /// Nothing here is authority. The engine re-checks, per write, that the named
 /// principal exists and that its stored entity type admits the asserted class.
-fn facade_actor(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApiError> {
+///
+/// A host credential binds no principal of its own (FIX 2222): a self-hosted
+/// root, or the explicit local dev mode, writes as the owner the one
+/// resolver names ([`crate::api::host_action::facade_host_action`]), and a
+/// hosted operator's root gets the typed refusal. No other owner-grade
+/// credential chooses whom it writes as.
+fn facade_actor(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<(EntityId, EdgeActorClass), FacadeApiError> {
+    if let Some(action) = super::host_action::facade_host_action(server, auth)? {
+        let actor = action.actor();
+        return Ok((actor.entity_ref(), actor.actor_class()));
+    }
     let principal_ref = auth.principal_ref().ok_or_else(|| {
         FacadeApiError::forbidden(
             "facade routes bind writes to an authenticated principal",
@@ -678,7 +691,10 @@ async fn facade_hooks_pre(
     } else {
         host_doors::door_admits(server, auth, verb)?;
     }
-    let bound = facade_actor(auth).ok();
+    // A hosted operator's root acts as nobody, so no hook runs for it as the
+    // host either (FIX 2222).
+    super::host_action::facade_host_action(server, auth)?;
+    let bound = facade_actor(server, auth).ok();
     let (actor, class) = match bound {
         Some(actor) => actor,
         None => (
@@ -764,7 +780,7 @@ fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), FacadeApiEr
     if proof.claims().holder_ref == "host" {
         server.vault.admit_host_owner_export(proof)?;
     } else {
-        let (actor, class) = facade_actor(auth)?;
+        let (actor, class) = facade_actor(server, auth)?;
         server
             .vault
             .memory(actor, class)
@@ -798,6 +814,17 @@ pub(super) fn owner_authorship(
     // only while the person is the vault's live recorded owner.
     if let Some(holder) = auth.managed_owner() {
         return super::owner_routes::managed_owner_proof(server, holder);
+    }
+    // A self-hosted root, or the dev mode, acting as the owner (FIX 2222):
+    // the owner's proof carries the host action, which every acting
+    // transaction proves again. A hosted operator's root gets the refusal.
+    if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
+        let action = action.map_err(super::host_action::host_action_refusal)?;
+        return server
+            .vault()
+            .authenticate_host_action_owner(&action, oneiron::store::GateDecisionId::now())
+            .map(Some)
+            .map_err(|_| ApiError::forbidden_scope("owner"));
     }
     let Some((principal, actor)) = auth
         .principal_ref()

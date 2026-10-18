@@ -315,9 +315,10 @@ pub(crate) fn mcp_scoped_read<'a>(
         .as_ref()
         .and_then(crate::auth::CoreAuth::verified_slip)
         .ok_or_else(refused)?;
+    // A host credential's refusal (FIX 2222) keeps its typed kind.
     let key = vault
         .credential_read_key(proof)
-        .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?
+        .map_err(|error| mcp_engine_error("credential read key failed", error))?
         .ok_or_else(refused)?;
     Ok(vault.scoped_read(key.at(actor.locality())))
 }
@@ -368,7 +369,7 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
 
 /// The stable MCP kind of the typed refusal a host credential gets where no
 /// host acts as a person (FIX 2222); its code is -32020, as every refusal's.
-const MCP_HOST_ACTION_REFUSED: &str = "host_action_requires_support_grant";
+pub(super) const MCP_HOST_ACTION_REFUSED: &str = "host_action_requires_support_grant";
 
 pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
     // ONE-1936: a stale write-verb target gets its own stable kind, not the
@@ -381,6 +382,15 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
     {
         return McpGatewayError::new(-32020, "write_verb_target_stale", error.to_string())
             .with_successor_short_id(successor_short_id.clone());
+    }
+    // FIX 2222: the owner refusal a read key or a host action carries (a
+    // self-hosted root that binds no live owner) is the engine's typed
+    // refusal, never the generic engine error.
+    if matches!(
+        error,
+        oneiron::Error::Claim(oneiron::error::ClaimError::ScopedReadOwnerNotLive(_))
+    ) {
+        return mcp_facade_error(oneiron::MemoryError::from(error));
     }
     match error.kind() {
         ErrorKind::GateWriteRejected => {

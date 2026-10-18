@@ -72,7 +72,7 @@ pub(crate) async fn vault_lenses_default(
     owner: Option<CardOwner>,
     input: LensDefaultRequest,
 ) -> (MemoryResult<ScopedReadResult<LensFrameCard>>, Vec<EntityId>) {
-    let (actor, class) = match facade_actor(auth) {
+    let (actor, class) = match facade_actor(server, auth) {
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal.into_memory_error()), Vec::new()),
     };
@@ -143,7 +143,7 @@ async fn event(
             ["Send each event to its own card's path."],
         ));
     }
-    let (actor, class) = facade_actor(&auth)?;
+    let (actor, class) = facade_actor(&server, &auth)?;
     let held = server
         .lens_frames
         .card(&auth, &request.event.card_id)

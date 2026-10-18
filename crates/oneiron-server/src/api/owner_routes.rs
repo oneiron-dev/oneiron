@@ -192,6 +192,17 @@ pub(crate) fn owner(auth: &CoreAuth, server: &SyncServer) -> Result<Authenticate
     if let Some(holder) = auth.managed_owner() {
         return managed_owner_proof(server, holder)?.ok_or_else(refused);
     }
+    // A self-hosted root, or the dev mode, acts as the owner its host action
+    // names, and its proof carries that action into every acting
+    // transaction; a hosted operator's root gets the typed refusal, the
+    // support grant being its path (FIX 2222).
+    if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
+        let action = action.map_err(super::host_action::host_action_refusal)?;
+        return server
+            .vault()
+            .authenticate_host_action_owner(&action, GateDecisionId::now())
+            .map_err(|_| refused());
+    }
     if server.managed_issuer.is_some() || !auth.is_owner_grade() {
         return Err(refused());
     }
@@ -242,10 +253,11 @@ pub(crate) fn hooked_owner(
     server: &SyncServer,
 ) -> Result<(AuthenticatedOwner, oneiron::EntityId), ApiError> {
     let proof = owner(auth, server)?;
-    let actor = auth
-        .principal_ref()
-        .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
-        .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+    // The proof's own person: the credential's principal, or the owner a
+    // host credential acts as (FIX 2222).
+    let actor = proof
+        .actor_for_read(server.vault())
+        .map_err(|_| ApiError::forbidden_scope("owner"))?;
     Ok((proof, actor))
 }
 
@@ -356,8 +368,26 @@ struct OwnerStatus {
     link_bytes: Vec<oneiron::sync::transport::TagBytesRow>,
 }
 
+/// The admission of a ROOT ADMIN command here (FIX 2222): status, backups,
+/// a restore rehearsal and plain upkeep. The host's own live root runs it on
+/// any vault, self-hosted or hosted, as no person: `None`, no owner proof is
+/// made up for it. Any other caller runs it as the owner, through
+/// [`owner`].
+fn root_admin(
+    auth: &CoreAuth,
+    server: &SyncServer,
+) -> Result<Option<AuthenticatedOwner>, ApiError> {
+    if auth.host_root().is_some() {
+        if !auth.credential_is_live(server.vault()) {
+            return Err(ApiError::forbidden_scope("owner"));
+        }
+        return Ok(None);
+    }
+    owner(auth, server).map(Some)
+}
+
 async fn status(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<OwnerStatus> {
-    owner(&auth, &server)?;
+    root_admin(&auth, &server)?;
     let host = host(&server)?;
     let report = blocking(move || {
         Ok::<_, OwnerError>(OwnerStatus {
@@ -380,7 +410,7 @@ async fn list_backups(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<Vec<backup::BackupRecord>> {
-    owner(&auth, &server)?;
+    root_admin(&auth, &server)?;
     let host = host(&server)?;
     Ok(Json(
         blocking(move || Ok(backup::list(&host.backups)?)).await?,
@@ -391,10 +421,10 @@ async fn take_backup(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
 ) -> OwnerReply<backup::BackupOutcome> {
-    let owner = owner(&auth, &server)?;
+    let owner = root_admin(&auth, &server)?;
     let host = host(&server)?;
     Ok(Json(
-        blocking(move || host.take(server.vault(), Some(&owner))).await?,
+        blocking(move || host.take(server.vault(), owner.as_ref())).await?,
     ))
 }
 
@@ -411,15 +441,17 @@ struct MaintainQuery {
 /// `oneiron maintain` runs them on a stopped vault. A sweep left past the
 /// budget is reported and runs on a later tick. `?lift_secrets=true` queues a
 /// historical secret lift run first; the pass works it, and a run left
-/// unfinished goes on at the next tick.
+/// unfinished goes on at the next tick. Plain upkeep is a root admin
+/// command; lifting secrets is an owner act (FIX 2222).
 async fn run_housekeeping(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<MaintainQuery>, QueryRejection>,
 ) -> OwnerReply<HousekeepingReport> {
-    let owner = owner(&auth, &server)?;
+    root_admin(&auth, &server)?;
     let query = query_params(query)?;
     if query.lift_secrets {
+        let owner = owner(&auth, &server)?;
         let lifting = Arc::clone(&server);
         blocking(move || {
             let vault = lifting.vault();
@@ -449,7 +481,7 @@ async fn rehearse_backup(
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<RehearseRequest>, JsonRejection>,
 ) -> OwnerReply<backup::Rehearsal> {
-    owner(&auth, &server)?;
+    root_admin(&auth, &server)?;
     let host = host(&server)?;
     let request = json_payload(payload)?;
     let rehearsal =
@@ -953,11 +985,19 @@ async fn read_graph_fs(
     query: Result<Query<graph_fs::GraphFsQuery>, QueryRejection>,
 ) -> OwnerReply<graph_fs::GraphFsReply> {
     owner(&auth, &server)?;
-    // The owner's own scoped read: the tree is what the owner's slip reads.
-    let proof = auth
-        .verified_slip()
-        .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
-    let reader = super::credential_read_key(server.vault(), proof)?.at(auth.locality());
+    // The owner's own scoped read: the tree is what the owner's slip reads,
+    // or what the owner a self-hosted root or the dev mode acts as reads,
+    // with that owner's guarded key (FIX 2222).
+    let reader = match super::host_action::require_host_owner_act(&server, &auth)? {
+        Some(action) => action.read_key(),
+        None => {
+            let proof = auth
+                .verified_slip()
+                .ok_or_else(|| ApiError::forbidden_scope("owner"))?;
+            super::credential_read_key(server.vault(), proof)?
+        }
+    }
+    .at(auth.locality());
     let query = query_params(query)?;
     let reply = blocking(move || graph_fs::run(server.vault(), reader, &query)).await?;
     Ok(Json(reply))
