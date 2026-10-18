@@ -8,10 +8,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::EntityId;
 use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, ResultFacet, ResultOccurrence};
 use crate::consent::AuthenticatedOwner;
 use crate::engine_executor::is_result_output_path;
-use crate::EntityId;
 use crate::secret_rotation::ArtifactTaintState;
 
 impl Memory<'_> {
@@ -60,7 +60,9 @@ impl Memory<'_> {
     ) -> MemoryResult<ResultRunStatus> {
         self.result_owner(owner)?;
         let record = self.vault.get_code_run_replay_record(&input.run_id)?;
-        let rows = record.as_ref().and_then(CodeRunReplayRecord::agent_verb_rows);
+        let rows = record
+            .as_ref()
+            .and_then(CodeRunReplayRecord::agent_verb_rows);
         if self.result_sources(rows.as_deref())? {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
@@ -107,7 +109,9 @@ impl Memory<'_> {
                 .iter()
                 .filter(|output| is_result_output_path(&output.path))
             {
-                status.occurrences.push(self.result_manifest(&record, output)?);
+                status
+                    .occurrences
+                    .push(self.result_manifest(&record, output)?);
             }
         }
         Ok(status)
