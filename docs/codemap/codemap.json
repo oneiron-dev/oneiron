@@ -59021,6 +59021,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/bin/deck-gate-cases.rs",
+     "purpose": "`deck-gate-cases`: the engine half of the OF-510 deck gate runner",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -59875,8 +59883,132 @@
      "purpose": "The live deck body (ARCH-0077, \"Multiplayer: the target body shape\"; OF-510), built last in the deck chain",
      "surface": {
       "enum": 1,
-      "mod": 2,
+      "mod": 3,
       "re-export": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/assets.rs",
+     "purpose": "The runner's one picture asset, generated rather than shipped",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/checks.rs",
+     "purpose": "The engine-side checks: package corruption (step 5), the part diff and unknown-XML probes (step 2), the…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/edits.rs",
+     "purpose": "The path every exported edit takes: apply the operations to the import, project over the retained package…",
+     "surface": {
+      "crate-vis": 30
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/merge.rs",
+     "purpose": "Step 4: the concurrent cases, each merged in both landing orders through the review flow (fork, preflight…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RunOptions",
+      "RunSummary"
+     ],
+     "path": "src/live/oracle_run/mod.rs",
+     "purpose": "The OF-510 deck gate runner, engine half: the `pptx-live-v1` case set through the current projector…",
+     "surface": {
+      "fn": 1,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/nonpdf.rs",
+     "purpose": "Step 7, the checks a PDF cannot show: a modern comment kept through edits of its slide (PowerPoint must…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/recipes.rs",
+     "purpose": "The live mutations step 2 exercises, each over the first slide and its first text shape: the operations, the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/record.rs",
+     "purpose": "What a run writes: candidates with their hashes and owed Office checks, each step's engine cases, and the…",
+     "surface": {
+      "crate-vis": 40
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/regression.rs",
+     "purpose": "Step 8: the preservation corpus and the adversarial fixtures through the same path as the core set…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/spec.rs",
+     "purpose": "The `pptx-live-v1` case manifest and the two fixture manifests it names",
+     "surface": {
+      "crate-vis": 22
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/suite.rs",
+     "purpose": "One pinned baseline through steps 1 to 7: its no-op export, the probed variant and every mutation over it…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/live/oracle_run/variants.rs",
+     "purpose": "Fixture variants derived from a pinned baseline by narrow XML surgery: unknown-XML probes beside the mutated…",
+     "surface": {
+      "crate-vis": 18
      }
     },
     {
@@ -60384,7 +60516,7 @@
      "purpose": "The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed…"
     },
     "live": {
-     "files": 6,
+     "files": 18,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60449,7 +60581,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 76,
+   "source_files": 89,
    "test_files": 14
   },
   "oneiron-driver": {
