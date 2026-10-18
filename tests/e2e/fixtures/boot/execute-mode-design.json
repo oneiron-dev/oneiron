@@ -1,0 +1,62 @@
+{
+  "id": "BOOT-06",
+  "name": "MCP execute-mode session should work",
+  "reason": "waits on execute_code read-only/propose-only credential admission; the current typed door requires core:write",
+  "canon": [
+    "/oneiron/surfaces/oneiron-arch-0044-public-surface-ws/#part-a",
+    "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#mcp-actor-ceilings"
+  ],
+  "currentTypedRequest": {
+    "schema_version": "mcp_tool_args.v1",
+    "consent": {
+      "policy_ref": "policy:boot-session",
+      "purpose": "read a witnessed preference and offer a reviewable claim"
+    },
+    "run_ref": "boot-reader",
+    "task": "Read cobalt-execute-preference using vault.recall at light effort."
+  },
+  "currentTypedResult": {
+    "structuredContent": {
+      "tool": "execute_code",
+      "schema_version": "mcp_code_run.v1",
+      "run_ref": "boot-reader",
+      "result": {
+        "status": "complete"
+      },
+      "actor": {
+        "actor_ref": "<credential-bound principal>",
+        "gate_actor_ref": "<same principal>",
+        "actor_class": "agent",
+        "gate_actor_class": "agent"
+      },
+      "steps": "<recorded public verb results>",
+      "results": "<read_result handles>"
+    },
+    "isError": false
+  },
+  "steps": [
+    "Fresh authenticated model-free vault; create independent read-only and propose-only principals through token agent, without core:write.",
+    "Operator configures a real code-mode runtime and a scripted local provider, with pinned prompt-package fixtures and no private engine calls.",
+    "Initialize /mcp; setup_oneiron supplies the board, verb_grammar, instructions and actor-bound non-cacheable metadata.",
+    "Execute a scripted vault.recall through the reader credential; inspect the saved public result against the authored preference.",
+    "Execute vault.claims.upsert through the proposer credential; observe a proposed claim, its true source, bound actor and gate receipt; recall must not admit the unapproved claim.",
+    "Supply another actor in the execute_code actor block and a false user_stated source in the guest proposal; refuse the actor mismatch and reject or host-stamp the source without strengthening its trust.",
+    "Attempt an automatic write with the reader and proposal credentials; neither may exceed its tier. Confirm original content and provenance through public reads."
+  ],
+  "readInput": {
+    "query": "cobalt-execute-preference",
+    "effort": "light",
+    "limit": 10
+  },
+  "proposalInput": {
+    "predicate": "preference.travel.seat",
+    "subject_ref": "<witnessed turn ref>",
+    "value": {
+      "seat": "window",
+      "marker": "cobalt-execute-proposal"
+    },
+    "confidence": 1,
+    "source": "user_stated"
+  },
+  "noFallback": "Do not substitute a full-access credential, generated tools, a generic facade call or private state for this execute-mode flow."
+}
