@@ -50,6 +50,16 @@ impl BatchBuilder<'_> {
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
     /// for such a put; otherwise as [`Self::commit`].
     pub fn commit_below_owner(self) -> Result<()> {
+        self.commit_below_owner_with_guard(|_| Ok(()))
+    }
+
+    /// [`Self::commit_below_owner`] once `guard` passes, run first in the
+    /// same writer snapshot: a bound caller's raw write proves its actor
+    /// there (OF-063, FIX 3387).
+    pub(crate) fn commit_below_owner_with_guard(
+        self,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
         let vault = self.vault;
         let agent_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
             .ops
@@ -67,6 +77,7 @@ impl BatchBuilder<'_> {
             })
             .collect();
         self.commit_with_target_guard(move |txn| {
+            guard(txn)?;
             for (id, body) in &agent_puts {
                 if crate::agent_def::agent_definition_put_widens_in_txn(
                     &vault.store,

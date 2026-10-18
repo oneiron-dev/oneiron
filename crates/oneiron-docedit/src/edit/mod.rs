@@ -188,6 +188,12 @@ pub enum Effect {
     /// The shape inherited its geometry from its layout; the preset written
     /// is now its own.
     InheritedGeometryOwned,
+    /// A live deck edit done PowerPoint's way where the deck once refused
+    /// it (OF-510, the Office ruling of 10-18), on the live node it names.
+    Converted {
+        node: crate::live::NodeId,
+        conversion: crate::live::Conversion,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

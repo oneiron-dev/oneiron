@@ -30,6 +30,8 @@ const DEFAULT_IMPORT_AUDIENCE_BUDGET_MS: u64 = 30_000;
 pub(super) struct DecisionsFile {
     /// The write gate's auto check: allow or hold.
     auto_check: Option<String>,
+    /// The wire health check's question: a bot, or a valid burst (OF-520).
+    wire_health: Option<String>,
     seat: Option<SeatPickFile>,
     system_one: Option<SystemOneFile>,
     big: Option<BigFile>,
@@ -145,6 +147,9 @@ pub enum BigReply {
 pub struct DecisionsSettings {
     /// The auto check's wording; `None` leaves the checker unbound.
     pub auto_check: Option<String>,
+    /// The wire health question's wording; `None` asks in the host's own
+    /// words (FIX 1088).
+    pub wire_health: Option<String>,
     pub seat: Option<SeatPickSettings>,
     pub system_one: Option<SystemOneSettings>,
     pub big: Option<BigSettings>,
@@ -224,6 +229,10 @@ impl DecisionsFile {
         let auto_check = self
             .auto_check
             .map(|wording| filled("auto_check", wording))
+            .transpose()?;
+        let wire_health = self
+            .wire_health
+            .map(|wording| filled("wire_health", wording))
             .transpose()?;
         let seat = self
             .seat
@@ -349,6 +358,7 @@ impl DecisionsFile {
             .transpose()?;
         Ok(DecisionsSettings {
             auto_check,
+            wire_health,
             seat,
             system_one,
             big,
