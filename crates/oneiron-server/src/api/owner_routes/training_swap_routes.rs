@@ -23,7 +23,8 @@ use axum::routing::post;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::task_verb::TrainingSwapAskView;
 use oneiron::training_pack::{
-    ExportCheck, HeldOutResult, RoleSwapReceipt, SwapChoice, TrainingState, ViewedSwap,
+    ExportCheck, HeldOutResult, RoleSwapReceipt, SwapChoice, TrainingAuthorization, TrainingHold,
+    TrainingState, ViewedSwap,
 };
 use serde::{Deserialize, Serialize};
 
@@ -71,6 +72,10 @@ struct TrainingRunView {
     asks: Vec<TrainingSwapAskView>,
     /// How the returned checkpoint serves on this host, once it returned.
     serving: Option<TrainedServing>,
+    /// The owner's authorization of the run, if they gave one.
+    authorization: Option<TrainingAuthorization>,
+    /// Why the host cannot advance the run, while it waits on the host.
+    hold: Option<TrainingHold>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,6 +136,7 @@ async fn view(
         let serving = returned
             .map(|checkpoint| trained_serving(&server, run.plan.role, checkpoint))
             .transpose()?;
+        let waits = run.awaits_host();
         Ok(TrainingRunView {
             run: id.to_hex(),
             role: run.plan.role,
@@ -143,7 +149,9 @@ async fn view(
             swaps: vault.training_run_swap_receipts(&id)?,
             asks: oneiron::task_verb::training_swap_asks(vault, &id)?,
             serving,
+            hold: run.hold.filter(|_| waits),
             evaluation: run.evaluation,
+            authorization: run.authorization,
         })
     })
     .await?;
