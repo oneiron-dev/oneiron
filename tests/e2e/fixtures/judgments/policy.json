@@ -1,0 +1,88 @@
+{
+  "scenario": "JUDGMENTS-06",
+  "note": "Tiny routing fixture, not a model-quality benchmark or a statistically sufficient automatic-switch trial. Held-out labels never train the update.",
+  "corpus": [
+    {
+      "alias": "locker",
+      "text": "Parcel R17 is in locker cobalt."
+    },
+    {
+      "alias": "handoff",
+      "text": "The cobalt locker key is with Mira."
+    },
+    {
+      "alias": "irrelevant",
+      "text": "Parcel R18 arrives on Tuesday."
+    }
+  ],
+  "training": [
+    {
+      "query": "Where is parcel R17?",
+      "relevant": [
+        "locker"
+      ],
+      "confirmed": true,
+      "gate_score": 1
+    },
+    {
+      "query": "Who has the key for the parcel locker?",
+      "relevant": [
+        "locker",
+        "handoff"
+      ],
+      "confirmed": true,
+      "gate_score": 1
+    },
+    {
+      "query": "Where is parcel R17?",
+      "relevant": [
+        "irrelevant"
+      ],
+      "confirmed": false,
+      "gate_score": 0
+    }
+  ],
+  "heldOut": [
+    {
+      "query": "Find R17 storage.",
+      "relevant": [
+        "locker"
+      ]
+    },
+    {
+      "query": "Who can open R17 storage?",
+      "relevant": [
+        "locker",
+        "handoff"
+      ]
+    }
+  ],
+  "ownerPin": {
+    "target": "retrieval weight selected by the eventual public weight catalog",
+    "value": 0.7,
+    "mode": "pin"
+  },
+  "attempts": [
+    "accepted cost/accuracy tradeoff inside unpinned ranges",
+    "held-out regression",
+    "overwrite pinned weight",
+    "promote derived outcome into authoritative fact",
+    "use another principal outcome"
+  ],
+  "expected": {
+    "pinAfterEveryAttempt": 0.7,
+    "factsAfterEveryAttempt": "original corpus facts and source trust unchanged",
+    "foreignOutcomeUsed": false,
+    "ungatedOutcomeUsed": false,
+    "regressionAutoApplied": false,
+    "receiptFields": [
+      "policy version",
+      "weight origin: owner pin or learned",
+      "training/evaluation manifest digest",
+      "held-out result",
+      "accuracy/cost tradeoff",
+      "routing/model pin"
+    ],
+    "smallTrial": "unknown stays an offer; no hard-coded universal winning-score cutoff"
+  }
+}

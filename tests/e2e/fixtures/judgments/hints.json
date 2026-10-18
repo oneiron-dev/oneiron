@@ -1,0 +1,32 @@
+{
+  "scenario": "JUDGMENTS-07",
+  "note": "Source words deliberately exclude every query token. The extraction provider supplies hints; public claim upsert is not a substitute producer.",
+  "source": {
+    "alias": "source-turn",
+    "text": "I left my Brompton beside rack seventeen."
+  },
+  "distractor": {
+    "alias": "other-turn",
+    "text": "The telescope cover is dry."
+  },
+  "extraction": {
+    "claimText": "Brompton beside rack seventeen",
+    "prospectiveQueries": [
+      "bicycle parking location"
+    ],
+    "usage": {
+      "inputTokens": 24,
+      "outputTokens": 8
+    }
+  },
+  "query": "bicycle parking location",
+  "expected": {
+    "beforeExtraction": "no lexical hit for the hint query",
+    "afterExtraction": "find the source claim via the hint; cite its original turn/revision",
+    "hintTrust": "generated/derived",
+    "independentEvidence": false,
+    "independentIdentity": false,
+    "afterSourceErasure": "no source result, no orphan hint hit and no reusable evidence citation",
+    "distractorAfterErasure": "still readable"
+  }
+}

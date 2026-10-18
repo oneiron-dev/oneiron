@@ -1,0 +1,114 @@
+{
+  "scenario": "JUDGMENTS-04",
+  "note": "Names, predicates and model IDs are independently authored fixture pack data. Evidence revisions and real actor refs come only from public receipts.",
+  "scope": {
+    "queryOwner": "query-owner",
+    "viewer": "viewer",
+    "initialReadable": [
+      "lead-a",
+      "lead-b",
+      "lead-junior"
+    ],
+    "afterNarrow": [
+      "lead-a"
+    ],
+    "withheld": [
+      "lead-private"
+    ]
+  },
+  "entities": [
+    {
+      "alias": "lead-a",
+      "seniority": "director",
+      "headcount": 120,
+      "world": "allowed"
+    },
+    {
+      "alias": "lead-b",
+      "seniority": "director",
+      "headcount": 90,
+      "world": "revocable"
+    },
+    {
+      "alias": "lead-private",
+      "seniority": "director",
+      "headcount": 140,
+      "world": "withheld"
+    },
+    {
+      "alias": "lead-junior",
+      "seniority": "intern",
+      "headcount": 200,
+      "world": "allowed"
+    }
+  ],
+  "stages": {
+    "hard": {
+      "predicate": "fixture.seniority",
+      "equals": "director"
+    },
+    "judge": {
+      "question": "Does the entity have at least 100 staff?",
+      "model": "fixture-membership-r1",
+      "usage": {
+        "inputTokens": 20,
+        "outputTokens": 4
+      }
+    }
+  },
+  "judgeReplies": [
+    {
+      "entity": "lead-a",
+      "revision": 1,
+      "answer": "match",
+      "p": 0.95
+    },
+    {
+      "entity": "lead-b",
+      "revision": 1,
+      "answer": "no_match",
+      "p": 0.95
+    },
+    {
+      "entity": "lead-b",
+      "revision": 2,
+      "answer": "match",
+      "p": 0.95
+    }
+  ],
+  "change": {
+    "entity": "lead-b",
+    "field": "headcount",
+    "from": 90,
+    "to": 110
+  },
+  "expected": {
+    "membershipFirst": [
+      "lead-a"
+    ],
+    "judgeCallsFirst": 2,
+    "judgeCallsUnchangedRerun": 0,
+    "membershipAfterRevision": [
+      "lead-a",
+      "lead-b"
+    ],
+    "judgeCallsAfterRevision": 1,
+    "membershipAfterOwnerNarrow": [
+      "lead-a"
+    ],
+    "privateJudged": false,
+    "viewerWidensOwner": false,
+    "cacheKeyIncludes": [
+      "query definition version",
+      "source revision/evidence hash"
+    ],
+    "receiptsInclude": [
+      "owner principal",
+      "evidence revision",
+      "memo hit or measured verdict",
+      "model pin",
+      "usage/cost",
+      "membership transition cause"
+    ]
+  }
+}

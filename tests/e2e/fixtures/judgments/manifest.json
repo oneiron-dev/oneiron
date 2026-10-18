@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "area": "judgments",
+  "assets": [
+    {
+      "id": "judgments-ladder",
+      "path": "ladder.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "63dfdba60e625051455bb53e6d45ccf24f582ac36808d185a1b5feba076e0294",
+      "expectedFacts": {
+        "band": {
+          "low": 0.35,
+          "high": 0.65
+        },
+        "absentIntermediateMaySkip": true,
+        "absentSelectedFirstMaySkip": false,
+        "failedPresentProviderMaySkip": false,
+        "authorityWidened": false
+      },
+      "scenarios": [
+        "JUDGMENTS-01"
+      ],
+      "requires": []
+    },
+    {
+      "id": "judgments-parity",
+      "path": "parity.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "2f27dc9ed5b80f4062f7514042a516af8bb80cab8ab4dc6073894cd0a7b916dd",
+      "expectedFacts": {
+        "absentPair": [],
+        "validPairPreserved": true,
+        "invalidPairMintsClaim": false,
+        "receiptScope": "asker",
+        "criteriaEditMintsVersion": true,
+        "oldReceiptChanges": false,
+        "artifactLanding": "proposal held for Keep; source head unchanged before settlement",
+        "graphLanding": "attributed answer claim on its unit"
+      },
+      "scenarios": [
+        "JUDGMENTS-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "judgments-standing",
+      "path": "standing.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "57ec8edbb6f22208e78aae241bf1fc9b4247c27f0c526439ba1cf5584bac8261",
+      "expectedFacts": {
+        "standingRecords": 1,
+        "outcomeLabelsAfterArrival": 1,
+        "outcomeLabelsAfterReplay": 1,
+        "mappedLabel": true,
+        "noiseWeight": 0.75,
+        "linkFields": [
+          "answer",
+          "fact",
+          "fact_value_hash",
+          "occurred_at"
+        ],
+        "afterPause": "no scheduled or manual provider work; existing definition, answers and label remain readable"
+      },
+      "scenarios": [
+        "JUDGMENTS-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "judgments-saved-query",
+      "path": "saved-query.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5c6c069556ccdd359a178a51bd7f1c25bcbc730608e55ab0d4d7a79d76b9f810",
+      "expectedFacts": {
+        "membershipFirst": [
+          "lead-a"
+        ],
+        "judgeCallsFirst": 2,
+        "judgeCallsUnchangedRerun": 0,
+        "membershipAfterRevision": [
+          "lead-a",
+          "lead-b"
+        ],
+        "judgeCallsAfterRevision": 1,
+        "membershipAfterOwnerNarrow": [
+          "lead-a"
+        ],
+        "privateJudged": false,
+        "viewerWidensOwner": false,
+        "cacheKeyIncludes": [
+          "query definition version",
+          "source revision/evidence hash"
+        ],
+        "receiptsInclude": [
+          "owner principal",
+          "evidence revision",
+          "memo hit or measured verdict",
+          "model pin",
+          "usage/cost",
+          "membership transition cause"
+        ]
+      },
+      "scenarios": [
+        "JUDGMENTS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "judgments-telemetry",
+      "path": "telemetry.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "be71c63455a401368b1b3659eafd361bd7fcb2b03e98f23534606953f843e048",
+      "expectedFacts": {
+        "traceDefault": "off",
+        "optInStages": [
+          "per_channel",
+          "fused",
+          "blended",
+          "reranked",
+          "final"
+        ],
+        "runOutcomeJoin": "run_id",
+        "sameVaultSamePinnedInputs": "same fork identity and same ordered source ids/stage values",
+        "sameVaultMaterialChange": "different fork identity",
+        "crossVaultHashes": "not comparable; keyed per vault",
+        "crossVaultRunRead": "no record or access refusal",
+        "crossVaultOutcomeAttach": "refused with no mutation",
+        "persistedForbidden": [
+          "raw query text",
+          "unkeyed query hash",
+          "pack output text",
+          "raw frontier sample ids",
+          "trace key"
+        ],
+        "export": "supported local diagnostic/bench export only; no full-vault archive substitute"
+      },
+      "scenarios": [
+        "JUDGMENTS-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "judgments-policy",
+      "path": "policy.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3045f499dc960401495ab1b8293cef0e31702e832c73af5c5f1d585bea23d6d5",
+      "expectedFacts": {
+        "pinAfterEveryAttempt": 0.7,
+        "factsAfterEveryAttempt": "original corpus facts and source trust unchanged",
+        "foreignOutcomeUsed": false,
+        "ungatedOutcomeUsed": false,
+        "regressionAutoApplied": false,
+        "receiptFields": [
+          "policy version",
+          "weight origin: owner pin or learned",
+          "training/evaluation manifest digest",
+          "held-out result",
+          "accuracy/cost tradeoff",
+          "routing/model pin"
+        ],
+        "smallTrial": "unknown stays an offer; no hard-coded universal winning-score cutoff"
+      },
+      "scenarios": [
+        "JUDGMENTS-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "judgments-hints",
+      "path": "hints.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-e2e-judgments",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "affc3b83007735f449b783a019b38242a5c702904da4d5028a630745537cf81c",
+      "expectedFacts": {
+        "beforeExtraction": "no lexical hit for the hint query",
+        "afterExtraction": "find the source claim via the hint; cite its original turn/revision",
+        "hintTrust": "generated/derived",
+        "independentEvidence": false,
+        "independentIdentity": false,
+        "afterSourceErasure": "no source result, no orphan hint hit and no reusable evidence citation",
+        "distractorAfterErasure": "still readable"
+      },
+      "scenarios": [
+        "JUDGMENTS-07"
+      ],
+      "requires": []
+    }
+  ]
+}
