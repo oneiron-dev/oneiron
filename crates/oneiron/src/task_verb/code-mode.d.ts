@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 524 code-mode rows (503 host rows, 21 run rows), 1870 declarations.
-// Replies: 460 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 534 code-mode rows (513 host rows, 21 run rows), 1901 declarations.
+// Replies: 470 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -308,8 +308,9 @@ declare namespace Sdk {
   type QueryAffect = { valence: number; arousal: number; dominance: number };
   type RecallRequest = { query: string; effort?: RecallEffort | null; scope?: RecallScope | null; limit?: number | null; format?: string | null; as_of?: number | null; deadline_ms?: number | null; media?: ContextPackMediaQuery | null; query_affect?: QueryAffect | null };
   type MemoryProvenance = { source: string; source_revision_ids: string[]; evidence_turn_ids: string[] };
+  type MemoryStaleStamp = { stale_since?: number | null; age_secs?: number | null; reason: string; pact_epoch: number };
   type CitedMessage = { short_id: string; value_text: string; record?: RecordRef | null };
-  type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; world?: string | null; facet?: string | null; project_ref?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
+  type MemoryItem = { short_id: string; source_revision_ref?: string | null; kind: string; predicate?: string | null; value_text: string; confidence: number; hedge_bucket: string; provenance: MemoryProvenance; stale?: MemoryStaleStamp | null; world?: string | null; facet?: string | null; project_ref?: string | null; salience?: number | null; reactions?: string[]; cited_messages?: CitedMessage[]; conversation_id?: string | null; record?: RecordRef | null };
   type ScopeHonesty = { out_of_scope_worlds: string[]; census_capped?: boolean };
   type RetrievalQuality = "full" | "degraded" | "passthrough";
   type RetrievalDegradation = "ppr_cache_miss" | "embedding_timeout" | "bm25_stale" | "temporal_signal_skipped";
@@ -648,6 +649,32 @@ declare namespace Sdk {
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
   type SharedActPolicyChangeRequest = { change_id: string };
+  type ConnectIdentity = { vault: string; host_key: string };
+  type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
+  type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
+  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
+  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
+  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
+  type OfferConnect = { peer_vault: string; grant: string; outbound: FederationDirectionScope; inbound: FederationDirectionScope };
+  type FederationPactScope = { lo_to_hi: FederationDirectionScope; hi_to_lo: FederationDirectionScope };
+  type Offer = { pact: string; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string };
+  type AcceptConnect = { offer: Offer; grant: string };
+  type ConnectAccepted = { pact: string; status: string; peer_key: string; counter: Offer };
+  type NarrowConnect = { pact: string; epoch: number; outbound: FederationDirectionScope };
+  type FederationPactStatus = "Active" | "Suspended" | "Promoted" | "Disconnected" | "Dissolved";
+  type ConnectPactReceipt = { pact: string; status: FederationPactStatus; epoch: number; scope: FederationPactScope; effective_scope: FederationDirectionScope };
+  type RescopeConnect = { pact: string; epoch: number; outbound: FederationDirectionScope; inbound: FederationDirectionScope };
+  type RescopeOffer = { pact: string; epoch: number; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string };
+  type AcceptRescopeConnect = { offer: RescopeOffer };
+  type ConnectRescoped = { receipt: ConnectPactReceipt; counter: RescopeOffer };
+  type ConnectPactRequest = { pact: string };
+  type GuestCopyState = "unknown";
+  type ConnectDisconnected = { receipt: ConnectPactReceipt; outbound_access: boolean; inbound_access: boolean; sync_stopped: boolean; copied_bytes_recallable: boolean; recipient_copy_state: GuestCopyState };
+  type ConnectExportRequest = { pact: string; window_key: string; world_ref: EntityId; facets?: EntityId[]; bands?: SelectorRange[] };
+  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
+  type ConnectDelivery = { body: ConnectWindow; signature: string };
+  type ConnectRejoinStatus = "imported" | "deferred";
+  type ConnectRejoined = { pact: string; epoch: number; world_ref: EntityId; status: ConnectRejoinStatus; request?: string | null };
   type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
   type TrustedContactDial = "ask_first" | "just_call";
   type TrustedContactNameRequest = { contact_ref: string; reach: TrustedContactReach; dial: TrustedContactDial };
@@ -673,7 +700,6 @@ declare namespace Sdk {
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
-  type GuestCopyState = "unknown";
   type GuestDeletionRequestStatus = "not_requested" | "queued" | "sent";
   type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus };
   type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null };
@@ -683,6 +709,8 @@ declare namespace Sdk {
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
+  type ResidenceQueued = { directive: EntityId; machine: EntityId };
+  type ResidenceModeAnswer = (ResidenceModeChanged & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type NoteReadSpan = { start: number; end: number };
   type ResidenceOpenRequest = { machine: EntityId; window: string; item: EntityId; reason?: string | null; spans?: NoteReadSpan[] };
   type NoteReadSource = "local" | "home";
@@ -691,12 +719,15 @@ declare namespace Sdk {
   type NoteAnchoredSpan = { start: NoteAnchor; end: NoteAnchor };
   type NoteReadView = { version: NoteVersion; markdown: string; title?: string | null; spans: NoteAnchoredSpan[]; source: NoteReadSource };
   type ResidenceOpened = { item: EntityId; window: string; residence: string; bytes: number; source: NoteReadSource; note?: NoteReadView | null };
+  type ResidenceOpenAnswer = (ResidenceOpened & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type ResidenceMachineRequest = { machine: EntityId };
   type ResidenceIndexEntry = { entity_id: string; title?: string | null; learned_at: number };
   type ResidenceIndexWindowView = { window: string; items: ResidenceIndexEntry[] };
   type ResidenceIndex = { windows: ResidenceIndexWindowView[] };
+  type ResidenceIndexAnswer = (ResidenceIndex & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type ResidencePruneRequest = { machine: EntityId; before: number };
   type ResidencePruned = { dropped: number };
+  type ResidencePruneAnswer = (ResidencePruned & { state: "applied" }) | (ResidenceQueued & { state: "queued" });
   type OffRecordEnterMode = "off_record" | "anonymous";
   type OffRecordBackendClass = "local" | "remote_provider";
   type OffRecordStartRequest = { session_ref: string; mode: OffRecordEnterMode; backend: OffRecordBackendClass };
@@ -2621,6 +2652,34 @@ declare const vault: Sdk.VaultHost & {
     /** A live lead or board holder of a held fan-out launch's project rules on it by the digest they saw: approve once, or deny, which keeps the hold visible; only the owner may remember. */
     resume_as(input: Sdk.FanoutResumeRequest): Promise<Sdk.FanoutLaunchView | StoredResult>;
   };
+  federation: {
+    connect: {
+      /** The owner accepts the peer host signed Connect half and receives the matching host counter-half. */
+      accept(input: Sdk.AcceptConnect): Promise<Sdk.ConnectAccepted | StoredResult>;
+      /** The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy. */
+      disconnect(input: Sdk.ConnectPactRequest): Promise<Sdk.ConnectDisconnected | StoredResult>;
+      /** The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch. */
+      export(input: Sdk.ConnectExportRequest): Promise<Sdk.ConnectDelivery | StoredResult>;
+      grants: {
+        /** The owner mints an inert Connect guest grant inside the named local-world ceiling. */
+        mint(input: Sdk.MintConnectGrant): Promise<Sdk.ConnectGrant | StoredResult>;
+      };
+      /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
+      identity(input: Sdk.EmptyRequest): Promise<Sdk.ConnectIdentity | StoredResult>;
+      /** The owner narrows the current outbound scope without breaking the reciprocal relationship. */
+      narrow(input: Sdk.NarrowConnect): Promise<Sdk.ConnectPactReceipt | StoredResult>;
+      /** The owner asks the host to sign one disclosed Connect half without activating it. */
+      offer(input: Sdk.OfferConnect): Promise<Sdk.Offer | StoredResult>;
+      /** The owner admits a peer host signed update through guest admission into the retained foreign-world vault. */
+      rejoin(input: Sdk.ConnectDelivery): Promise<Sdk.ConnectRejoined | StoredResult>;
+      rescope: {
+        /** The owner accepts the peer host signed re-scope and receives the matching signed counter-half. */
+        accept(input: Sdk.AcceptRescopeConnect): Promise<Sdk.ConnectRescoped | StoredResult>;
+        /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
+        offer(input: Sdk.RescopeConnect): Promise<Sdk.RescopeOffer | StoredResult>;
+      };
+    };
+  };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
   forget(input: Sdk.ForgetRequest): Promise<Sdk.CommitReceipt[] | StoredResult>;
   gate: {
@@ -2936,14 +2995,14 @@ declare const vault: Sdk.VaultHost & {
     weave(input: Sdk.ResearchWeaveWire): Promise<Sdk.ExperimentNode | StoredResult>;
   };
   residence: {
-    /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
-    index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndex | StoredResult>;
-    /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
-    mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeChanged | StoredResult>;
-    /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
-    open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpened | StoredResult>;
-    /** Drops the opened-item caches one of the owner's machines last touched before a time. */
-    prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruned | StoredResult>;
+    /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
+    index(input: Sdk.ResidenceMachineRequest): Promise<Sdk.ResidenceIndexAnswer | StoredResult>;
+    /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
+    mode(input: Sdk.ResidenceModeRequest): Promise<Sdk.ResidenceModeAnswer | StoredResult>;
+    /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive. */
+    open(input: Sdk.ResidenceOpenRequest): Promise<Sdk.ResidenceOpenAnswer | StoredResult>;
+    /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
+    prune(input: Sdk.ResidencePruneRequest): Promise<Sdk.ResidencePruneAnswer | StoredResult>;
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */

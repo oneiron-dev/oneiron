@@ -63,14 +63,15 @@ pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The owner's legal-hold doors (OF-470) too.
+pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
-pub(crate) use super::extraction_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
+pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
@@ -1134,6 +1135,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.embedding_spaces.probes.delete"
         | "vault.fanout.resume"
         | "vault.fanout.ack"
+        | "vault.federation.connect.identity"
+        | "vault.federation.connect.grants.mint"
+        | "vault.federation.connect.offer"
+        | "vault.federation.connect.accept"
+        | "vault.federation.connect.narrow"
+        | "vault.federation.connect.rescope.offer"
+        | "vault.federation.connect.rescope.accept"
+        | "vault.federation.connect.disconnect"
+        | "vault.federation.connect.export"
+        | "vault.federation.connect.rejoin"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
         | "vault.projects.confirm"

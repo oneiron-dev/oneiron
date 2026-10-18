@@ -2223,6 +2223,157 @@
       "openapi": true
     },
     {
+      "name": "vault.federation.connect.identity",
+      "description": "The owner reads this vault identity and the host key used for reciprocal Connect consent.",
+      "input": "crate::task_verb::sdk::EmptyRequest",
+      "output": "crate::task_verb::sdk::ConnectIdentity",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.identity\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "mcp_fields": {}
+    },
+    {
+      "name": "vault.federation.connect.grants.mint",
+      "description": "The owner mints an inert Connect guest grant inside the named local-world ceiling.",
+      "input": "crate::task_verb::sdk::MintConnectGrant",
+      "output": "crate::task_verb::sdk::ConnectGrant",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.grants.mint\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.offer",
+      "description": "The owner asks the host to sign one disclosed Connect half without activating it.",
+      "input": "crate::task_verb::sdk::OfferConnect",
+      "output": "crate::task_verb::sdk::Offer",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.offer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.accept",
+      "description": "The owner accepts the peer host signed Connect half and receives the matching host counter-half.",
+      "input": "crate::task_verb::sdk::AcceptConnect",
+      "output": "crate::task_verb::sdk::ConnectAccepted",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.accept\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.narrow",
+      "description": "The owner narrows the current outbound scope without breaking the reciprocal relationship.",
+      "input": "crate::task_verb::sdk::NarrowConnect",
+      "output": "crate::task_verb::sdk::ConnectPactReceipt",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.narrow\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.rescope.offer",
+      "description": "The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal.",
+      "input": "crate::task_verb::sdk::RescopeConnect",
+      "output": "crate::task_verb::sdk::RescopeOffer",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.rescope.offer\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.rescope.accept",
+      "description": "The owner accepts the peer host signed re-scope and receives the matching signed counter-half.",
+      "input": "crate::task_verb::sdk::AcceptRescopeConnect",
+      "output": "crate::task_verb::sdk::ConnectRescoped",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.rescope.accept\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.disconnect",
+      "description": "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy.",
+      "input": "crate::task_verb::sdk::ConnectPactRequest",
+      "output": "crate::task_verb::sdk::ConnectDisconnected",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.disconnect\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.export",
+      "description": "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch.",
+      "input": "crate::task_verb::sdk::ConnectExportRequest",
+      "output": "crate::task_verb::sdk::ConnectDelivery",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.export\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.federation.connect.rejoin",
+      "description": "The owner admits a peer host signed update through guest admission into the retained foreign-world vault.",
+      "input": "crate::task_verb::sdk::ConnectDelivery",
+      "output": "crate::task_verb::sdk::ConnectRejoined",
+      "call": "crate::task_verb::sdk::connect_host_only(memory, \"vault.federation.connect.rejoin\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.trusted_contacts.name",
       "description": "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again.",
       "input": "crate::task_verb::sdk::TrustedContactNameRequest",
@@ -2371,9 +2522,9 @@
     },
     {
       "name": "vault.residence.mode",
-      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it.",
+      "description": "Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceModeRequest",
-      "output": "crate::task_verb::sdk::ResidenceModeChanged",
+      "output": "crate::task_verb::sdk::ResidenceModeAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.mode\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2385,9 +2536,9 @@
     },
     {
       "name": "vault.residence.open",
-      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors.",
+      "description": "Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceOpenRequest",
-      "output": "crate::task_verb::sdk::ResidenceOpened",
+      "output": "crate::task_verb::sdk::ResidenceOpenAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2399,9 +2550,9 @@
     },
     {
       "name": "vault.residence.index",
-      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body.",
+      "description": "The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidenceMachineRequest",
-      "output": "crate::task_verb::sdk::ResidenceIndex",
+      "output": "crate::task_verb::sdk::ResidenceIndexAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.index\", &input)?",
       "host_door": true,
       "host_door_lists": true,
@@ -2413,9 +2564,9 @@
     },
     {
       "name": "vault.residence.prune",
-      "description": "Drops the opened-item caches one of the owner's machines last touched before a time.",
+      "description": "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive.",
       "input": "crate::task_verb::sdk::ResidencePruneRequest",
-      "output": "crate::task_verb::sdk::ResidencePruned",
+      "output": "crate::task_verb::sdk::ResidencePruneAnswer",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.prune\", &input)?",
       "host_door": true,
       "host_door_lists": true,

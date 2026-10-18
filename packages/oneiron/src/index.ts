@@ -668,6 +668,34 @@ export class Oneiron {
       /** An Admin with the add_member power takes back a pending invitation. */
       withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
+    federation: {
+      connect: {
+        /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
+        identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
+        grants: {
+          /** The owner mints an inert Connect guest grant inside the named local-world ceiling. */
+          mint: (input: Facade.MintConnectGrant): Facade.ConnectGrant => this.#call(() => this.#client.vaultFederationConnectGrantsMint(input) as Facade.ConnectGrant),
+        },
+        /** The owner asks the host to sign one disclosed Connect half without activating it. */
+        offer: (input: Facade.OfferConnect): Facade.Offer => this.#call(() => this.#client.vaultFederationConnectOffer(input) as Facade.Offer),
+        /** The owner accepts the peer host signed Connect half and receives the matching host counter-half. */
+        accept: (input: Facade.AcceptConnect): Facade.ConnectAccepted => this.#call(() => this.#client.vaultFederationConnectAccept(input) as Facade.ConnectAccepted),
+        /** The owner narrows the current outbound scope without breaking the reciprocal relationship. */
+        narrow: (input: Facade.NarrowConnect): Facade.ConnectPactReceipt => this.#call(() => this.#client.vaultFederationConnectNarrow(input) as Facade.ConnectPactReceipt),
+        rescope: {
+          /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
+          offer: (input: Facade.RescopeConnect): Facade.RescopeOffer => this.#call(() => this.#client.vaultFederationConnectRescopeOffer(input) as Facade.RescopeOffer),
+          /** The owner accepts the peer host signed re-scope and receives the matching signed counter-half. */
+          accept: (input: Facade.AcceptRescopeConnect): Facade.ConnectRescoped => this.#call(() => this.#client.vaultFederationConnectRescopeAccept(input) as Facade.ConnectRescoped),
+        },
+        /** The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy. */
+        disconnect: (input: Facade.ConnectPactRequest): Facade.ConnectDisconnected => this.#call(() => this.#client.vaultFederationConnectDisconnect(input) as Facade.ConnectDisconnected),
+        /** The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch. */
+        export: (input: Facade.ConnectExportRequest): Facade.ConnectDelivery => this.#call(() => this.#client.vaultFederationConnectExport(input) as Facade.ConnectDelivery),
+        /** The owner admits a peer host signed update through guest admission into the retained foreign-world vault. */
+        rejoin: (input: Facade.ConnectDelivery): Facade.ConnectRejoined => this.#call(() => this.#client.vaultFederationConnectRejoin(input) as Facade.ConnectRejoined),
+      },
+    },
     trusted_contacts: {
       /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
       name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
@@ -698,14 +726,14 @@ export class Oneiron {
       mint_slip: (input: Facade.GuestSlipMintRequest): Facade.GuestSlipMinted => this.#call(() => this.#client.vaultGuestsMintSlip(input) as Facade.GuestSlipMinted),
     },
     residence: {
-      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. */
-      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeChanged => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeChanged),
-      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. */
-      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpened => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpened),
-      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. */
-      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndex => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndex),
-      /** Drops the opened-item caches one of the owner's machines last touched before a time. */
-      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruned => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruned),
+      /** Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive. */
+      mode: (input: Facade.ResidenceModeRequest): Facade.ResidenceModeAnswer => this.#call(() => this.#client.vaultResidenceMode(input) as Facade.ResidenceModeAnswer),
+      /** Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive. */
+      open: (input: Facade.ResidenceOpenRequest): Facade.ResidenceOpenAnswer => this.#call(() => this.#client.vaultResidenceOpen(input) as Facade.ResidenceOpenAnswer),
+      /** The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive. */
+      index: (input: Facade.ResidenceMachineRequest): Facade.ResidenceIndexAnswer => this.#call(() => this.#client.vaultResidenceIndex(input) as Facade.ResidenceIndexAnswer),
+      /** Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive. */
+      prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruneAnswer => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruneAnswer),
     },
     off_record: {
       /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */

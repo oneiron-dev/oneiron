@@ -14,10 +14,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/bin/uniffi_bindgen.rs` | src | s | — | — | Local bindgen entry point, behind the `bindgen-cli` feature |
 | `src/codec.rs` | src | L | 7 crate-vis | — | Lift and lower codecs between this crate's UniFFI records and the engine types the shared… |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
-| `src/dto.rs` | src | L | 51 struct · 9 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews +52 | The typed UniFFI records of the SDK surface |
+| `src/dto.rs` | src | L | 52 struct · 9 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews +53 | The typed UniFFI records of the SDK surface |
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 11 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/facade_generated.rs` | src | XL | — | — | — |
-| `src/facade_types_generated.rs` | src | XL | 1251 struct · 455 enum | AccessStatus, ActExecution, ActorCeiling, AdmissionBasis, AdmissionConsent, AgentBudgetView, AgentCeilingInput, AgentDefinitionCreateRequest +1698 | — |
+| `src/facade_types_generated.rs` | src | XL | 1273 struct · 464 enum | AcceptConnect, AcceptRescopeConnect, AccessStatus, ActExecution, ActorCeiling, AdmissionBasis, AdmissionConsent, AgentBudgetView +1729 | — |
 | `src/lib.rs` | src | s | 1 struct · 10 fn · 1 const · 5 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
