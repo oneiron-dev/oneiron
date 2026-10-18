@@ -1,0 +1,649 @@
+{
+  "version": 1,
+  "area": "sync",
+  "oracle": "Independently authored synthetic content and invariants from the pinned canon and owner rulings, never engine output. Labels bind to public runtime refs; they are not encoded vault records.",
+  "ownerRulings": {
+    "G01": "Designed operations wait for their typed HTTP and SDK calls; no generic escape hatch.",
+    "OF-147": "Deterministic election without TTL or automatic failover; transfer requires an explicit public owner/host act."
+  },
+  "launch": {
+    "harness": "EngineFixture.start",
+    "profile": "deterministic",
+    "slots": 2,
+    "auth": "real paired actors, fresh holder proof on every public call",
+    "replicas": "peers are independent vaults, not automatic clones or grants",
+    "network": "loopback-only and byte-transparent controllable proxy",
+    "cleanup": "shared owned process/resource cleanup, including failure paths"
+  },
+  "assumptionsAndConstants": {
+    "engineDefaultsChanged": false,
+    "privateClocks": false,
+    "automaticMutationRetries": 0,
+    "fixedSleepOracle": false,
+    "fixtureOnlyConstants": [
+      "two disjoint replacement spans per merge",
+      "two opposite delivery orders on fresh replica sets",
+      "three repeated citations to one source",
+      "synthetic dates and marker strings in this file"
+    ],
+    "time": "Use declared public expiry, receipts/events and bounded public observations. No invented TTL, failover delay or trust/confidence threshold."
+  },
+  "sourcePins": [
+    {
+      "source": "generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+    },
+    {
+      "source": "generated/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1.md",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    {
+      "source": "generated/oneiron/identity.md",
+      "sha256": "cfce80cc03e867bf2a2340c01372bae03330271b740de8f012ab2f87b5f7730c"
+    },
+    {
+      "source": "generated/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1.md",
+      "sha256": "92160a74ea205a7d4e6cdbc9fcaa642dc31f0230ff5e71f116dc32f32a2dbcc4"
+    },
+    {
+      "source": "generated/oneiron/sync/oneiron-arch-0043-federation-membership-v1.md",
+      "sha256": "9a9f83242578b5e90c6faf5cec009ef1c9e6d0b1633e3e4c92476a2f170433e7"
+    },
+    {
+      "source": "generated/oneiron/core/oneiron-arch-0032-agentic-notes-v1.md",
+      "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
+    },
+    {
+      "source": "registry/oneiron.json",
+      "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7"
+    },
+    {
+      "source": "e2e-plan.json",
+      "sha256": "133dc98326022c9e01452abdbc42a78e067fd59b9cf9f142496d3bc50c6c3ba2"
+    },
+    {
+      "source": "e2e-rulings.md",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+    }
+  ],
+  "publicBinding": {
+    "head": "c8c62bc0931c5b39210af19b45c420c0c3ed622d",
+    "checkedOriginMain": "0dcb431bb50d39b01d7bc222e2d28922bf59bc4d",
+    "scope": "No differences in the server, SDK or shared-support paths read between these heads; source binding only, not runtime qualification or a behavior oracle.",
+    "files": [
+      {
+        "path": "packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "packages/oneiron/src/index.ts",
+        "sha256": "e840da73676149b46e60308ba229a7b856c263ae5081cb110fe402523359f9b8"
+      },
+      {
+        "path": "crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      },
+      {
+        "path": "crates/oneiron-server/src/protocol.rs",
+        "sha256": "869837b8e5e636feb634bd2de4a2205c3c1f39d7ae26340dd298291c8fee45d1"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/facade/agent_verbs.rs",
+        "sha256": "fa597aadc4320b8056f20f8ef699c4469c34bac8a8326a4ad1244129fba62e50"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/openapi/mod.rs",
+        "sha256": "f1b6b935b77c56454501318fd34b18dad14c0bfab811203f0bd57ad8e5e9e598"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/openapi_registry.rs",
+        "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/openapi/endpoints_merge.rs",
+        "sha256": "edbcb928be6877398c1a0417f399852d7cf7dd617ec98fc6af063bb36956ba0f"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/search.rs",
+        "sha256": "5e9b52f419bbede78c9d7615fc1ede73b3c02797bb557c6324e1a68195e7b63d"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/owner_routes/federation_connect_routes.rs",
+        "sha256": "d7014dd428f99293decb16481e65a46e3081eac92f843224a2d3503251f2baa0"
+      },
+      {
+        "path": "crates/oneiron-server/src/handler/mesh.rs",
+        "sha256": "1a8f95f912d032e42b81fade72fda29f324e205b27a49e5818496f050a346a9f"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "id": "SYNC-01",
+      "name": "Concurrent document and ledger convergence should work",
+      "rows": [
+        "OF-143",
+        "OF-475"
+      ],
+      "canon": [
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/registry/oneiron/#OF-143",
+        "/registry/oneiron/#OF-475"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed NOTE live text, stable cursor/version and actor-attributed operation reads",
+      "inputs": {
+        "note": {
+          "label": "shared-note",
+          "kind": "annotation",
+          "base": "# Observatory\nNorth: amber.\nSouth: violet.\n"
+        },
+        "writers": [
+          "north-writer",
+          "south-writer"
+        ],
+        "edits": [
+          {
+            "writer": "north-writer",
+            "replace": "amber",
+            "with": "silver"
+          },
+          {
+            "writer": "south-writer",
+            "replace": "violet",
+            "with": "copper"
+          }
+        ],
+        "claims": [
+          {
+            "label": "north-fact",
+            "writer": "north-writer",
+            "value": "The north cabinet contains silver lenses."
+          },
+          {
+            "label": "south-fact",
+            "writer": "south-writer",
+            "value": "The south cabinet contains copper lenses."
+          }
+        ],
+        "messages": [
+          {
+            "label": "north-message",
+            "writer": "north-writer",
+            "text": "The north edit is complete."
+          },
+          {
+            "label": "south-message",
+            "writer": "south-writer",
+            "text": "The south edit is complete."
+          }
+        ],
+        "deliveryOrders": [
+          [
+            "north-to-home",
+            "south-to-home"
+          ],
+          [
+            "south-to-home",
+            "north-to-home"
+          ]
+        ],
+        "redelivery": "Reconnect each replica again with no new writes."
+      },
+      "expected": {
+        "noteText": "# Observatory\nNorth: silver.\nSouth: copper.\n",
+        "claimValues": [
+          "The north cabinet contains silver lenses.",
+          "The south cabinet contains copper lenses."
+        ],
+        "writerByFact": {
+          "north-fact": "north-writer",
+          "south-fact": "south-writer"
+        },
+        "writerByEdit": {
+          "silver": "north-writer",
+          "copper": "south-writer"
+        },
+        "messageMultiplicity": {
+          "north-message": 1,
+          "south-message": 1
+        },
+        "invariants": [
+          "Both replicas equal the independently authored note and claim set in each delivery order.",
+          "Reconnecting without new writes adds no message, claim or document operation.",
+          "Ledger authors and text operation actors remain the paired writers, never the relay."
+        ]
+      },
+      "publicPrerequisites": [
+        "typed NOTE live text read",
+        "typed NOTE stable cursor/version read",
+        "typed actor-attributed document operation read",
+        "public same-vault clone/enrol fixture",
+        "bounded byte-transparent TCP partition/delivery helper"
+      ]
+    },
+    {
+      "id": "SYNC-02",
+      "name": "One selector governs ledger and text should work",
+      "rows": [
+        "OF-475",
+        "OF-152"
+      ],
+      "canon": [
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/oneiron/sync/oneiron-arch-0043-federation-membership-v1/#guest-grants",
+        "/registry/oneiron/#OF-475",
+        "/registry/oneiron/#OF-152"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed grant-scoped NOTE live text and document-history reads on a federation replica",
+      "inputs": {
+        "entities": [
+          {
+            "label": "allowed-note",
+            "kind": "annotation",
+            "text": "Shared orchard map: cedar path."
+          },
+          {
+            "label": "private-note",
+            "kind": "annotation",
+            "text": "Private canary: hidden-saffron-chamber."
+          }
+        ],
+        "guestGrant": "Read the allowed entity in its named world/facet; exclude the private entity and base.",
+        "edge": {
+          "from": "allowed-note",
+          "to": "private-note",
+          "label": "linked-private"
+        },
+        "updates": [
+          {
+            "label": "allowed-note",
+            "text": "Shared orchard map: birch path."
+          },
+          {
+            "label": "private-note",
+            "text": "Private canary: hidden-umber-chamber."
+          }
+        ],
+        "derivedCanary": "A derived snippet names hidden-saffron-chamber and hidden-umber-chamber."
+      },
+      "expected": {
+        "allowedText": "Shared orchard map: birch path.",
+        "forbiddenText": [
+          "hidden-saffron-chamber",
+          "hidden-umber-chamber",
+          "Private canary"
+        ],
+        "forbiddenEntityLabels": [
+          "private-note"
+        ],
+        "forbiddenEdges": [
+          "linked-private"
+        ],
+        "invariants": [
+          "The same grant admits the allowed ledger record and its text document.",
+          "No private title, body, endpoint id, edge, count, snippet or generated summary crosses either plane.",
+          "Admission sends state and future updates, not pre-admission document history.",
+          "The guest vault owner is not used as an unscoped credential at the sharing vault."
+        ]
+      },
+      "publicPrerequisites": [
+        "typed grant-scoped NOTE live text read",
+        "typed document admission/history boundary read",
+        "public federation replica connection with accountable guest actor"
+      ]
+    },
+    {
+      "id": "SYNC-03",
+      "name": "Ephemeral progress expires without history should work",
+      "rows": [
+        "OF-144"
+      ],
+      "canon": [
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/registry/oneiron/#OF-144"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on an independent native EphemeralStore wire fixture/client for live progress, presence and expiry observations",
+      "inputs": {
+        "durableControl": "The durable observatory marker survives restart.",
+        "job": {
+          "keyPattern": "job:{public-job-id}",
+          "value": "sync-live-progress-cobalt",
+          "updates": [
+            "queued",
+            "working"
+          ]
+        },
+        "presence": {
+          "keyPattern": "presence:{paired-machine-id}",
+          "value": "sync-live-presence-cobalt"
+        },
+        "wire": "Authentic Loro native EphemeralStore payloads on tag 1, not app RPC or durable tasks.update progress.",
+        "expiry": "Use the publicly declared inactivity timeout with real wall time; do not change an engine clock."
+      },
+      "expected": {
+        "expiredKeys": [
+          "job:{public-job-id}",
+          "presence:{paired-machine-id}"
+        ],
+        "nonDurableMarkers": [
+          "sync-live-progress-cobalt",
+          "sync-live-presence-cobalt"
+        ],
+        "durableControl": "The durable observatory marker survives restart.",
+        "invariants": [
+          "A second live client observes both keys before the publisher disconnects.",
+          "After declared expiry a newly joined client receives neither live value.",
+          "After restart neither value reappears.",
+          "No live tick becomes a durable claim, message, ledger history entry or backup/archive row.",
+          "The durable control is present in public history/export so absence checks are not vacuous."
+        ]
+      },
+      "publicPrerequisites": [
+        "independent native EphemeralStore wire fixture/client with live timestamp support",
+        "raw authenticated tag-1 WS observation",
+        "public inactivity-timeout declaration",
+        "real public export/backup decoding by record family"
+      ]
+    },
+    {
+      "id": "SYNC-04",
+      "name": "Opened-item sync and remote search should work",
+      "rows": [
+        "OF-146",
+        "OF-534",
+        "OF-536"
+      ],
+      "canon": [
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#partial-sync",
+        "/registry/oneiron/#OF-146",
+        "/registry/oneiron/#OF-534",
+        "/registry/oneiron/#OF-536"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed opened-item NOTE body reads that distinguish local residence from a home fetch",
+      "inputs": {
+        "project": "observatory-project",
+        "items": [
+          {
+            "label": "old-unopened",
+            "occurredAt": "2026-01-14T12:00:00Z",
+            "text": "Old project body: quartz lantern."
+          },
+          {
+            "label": "new-opened",
+            "occurredAt": "2026-10-17T12:00:00Z",
+            "text": "Opened project body: jade lantern."
+          },
+          {
+            "label": "new-unopened",
+            "occurredAt": "2026-10-17T13:00:00Z",
+            "text": "Unopened project body: opal lantern."
+          },
+          {
+            "label": "private-project",
+            "occurredAt": "2026-10-17T14:00:00Z",
+            "text": "Private project body: hidden-marigold-lantern."
+          }
+        ],
+        "open": "new-opened",
+        "searchQueries": [
+          "quartz lantern",
+          "opal lantern",
+          "hidden-marigold-lantern"
+        ],
+        "revocation": "Revoke the test reader grant, then attempt a fresh home search and a never-opened body fetch."
+      },
+      "expected": {
+        "initialMode": "opened",
+        "currentThinIndexLabels": [
+          "new-opened",
+          "new-unopened"
+        ],
+        "initialBodyLabels": [],
+        "openedBody": "Opened project body: jade lantern.",
+        "homeSearchLabels": {
+          "quartz lantern": [
+            "old-unopened"
+          ],
+          "opal lantern": [
+            "new-unopened"
+          ],
+          "hidden-marigold-lantern": []
+        },
+        "afterRevocationNewBodyLabels": [],
+        "invariants": [
+          "The current thin index contains metadata, not note/document bytes; old windows need not appear in that current listing.",
+          "Opening one item does not download its unopened neighbour or the full month window.",
+          "Search names the home source and scope, not a falsely complete local-only empty result.",
+          "No private project title, topology or derived content is revealed.",
+          "Revocation stops future reads; it does not claim recall of a copy already disclosed."
+        ]
+      },
+      "publicPrerequisites": [
+        "public same-vault clone/enrol fixture",
+        "typed opened-item NOTE read with local-versus-home residence information",
+        "typed NOTE live text read",
+        "public grant revocation and caller-bound home search"
+      ]
+    },
+    {
+      "id": "SYNC-05",
+      "name": "Sync-all switch retains public semantics should work",
+      "rows": [
+        "OF-534",
+        "OF-536"
+      ],
+      "canon": [
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#partial-sync",
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/registry/oneiron/#OF-534",
+        "/registry/oneiron/#OF-536"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed NOTE live text and stable cursor/version reads for the offline sync-all merge",
+      "inputs": {
+        "base": "# Inventory\nLens: brass.\nCase: wool.\n",
+        "offlineEdit": {
+          "writer": "device-writer",
+          "replace": "brass",
+          "with": "steel"
+        },
+        "homeEdit": {
+          "writer": "home-writer",
+          "replace": "wool",
+          "with": "linen"
+        },
+        "otherAllowedBody": "The copied crate contains a sapphire prism.",
+        "privateBody": "The private crate contains hidden-moss-prism.",
+        "modes": [
+          "opened",
+          "all"
+        ],
+        "replay": "Reconnect twice after both writes settle."
+      },
+      "expected": {
+        "noteText": "# Inventory\nLens: steel.\nCase: linen.\n",
+        "offlineAllowedBody": "The copied crate contains a sapphire prism.",
+        "forbiddenText": [
+          "hidden-moss-prism"
+        ],
+        "invariants": [
+          "Sync-all makes authorized unopened bodies queryable while the home link is cut.",
+          "Changing mode neither widens a grant nor changes a claim source/approval.",
+          "Disjoint text edits converge and retain both writers after rejoin.",
+          "Repeated reconnect does not add another claim/message/effect.",
+          "Denied data remains denied in both modes, online and offline."
+        ]
+      },
+      "publicPrerequisites": [
+        "typed NOTE live text read",
+        "typed NOTE stable cursor/version read",
+        "public same-vault clone/enrol fixture",
+        "bounded byte-transparent TCP partition/delivery helper"
+      ]
+    },
+    {
+      "id": "SYNC-06",
+      "name": "Single Dreamer home leadership should work",
+      "rows": [
+        "OF-147",
+        "OF-195"
+      ],
+      "canon": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#wake-model",
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/registry/oneiron/#OF-147",
+        "/registry/oneiron/#OF-195"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed owner home-leadership transfer, durable attempt handoff and shared-budget observation",
+      "inputs": {
+        "nodes": [
+          "preferred-home",
+          "eligible-survivor"
+        ],
+        "work": {
+          "label": "one-macro-bucket",
+          "input": "The observatory requires one delivery receipt.",
+          "effectKey": "sync-single-effect-cobalt"
+        },
+        "providerBarrier": "Hold a declared external provider response after public attempt acceptance and before the sink effect.",
+        "leadership": "Stop the elected home; transfer explicitly through the public owner/host contract before survivor resumes.",
+        "budget": "One declared public vault budget, with every scripted provider usage receipt charged to it; no new cap per node."
+      },
+      "expected": {
+        "maxActiveMacroLeaders": 1,
+        "sinkEffectMultiplicity": {
+          "sync-single-effect-cobalt": 1
+        },
+        "automaticFailover": false,
+        "invariants": [
+          "A second eligible node does not start a competing MACRO for the same bucket.",
+          "A stopped home does not grant leadership merely by a TTL expiring.",
+          "An explicit transfer resumes the durable attempt/checkpoint lineage, not a new independent workflow.",
+          "Effects are idempotent and total billed/settled usage stays within the one original budget.",
+          "A model response barrier alone is not proof of a storage commit.",
+          "Private live leases, scratch and counters are not asserted to sync as ATTEMPT rows; durable checkpoints/consent/effect receipts are."
+        ]
+      },
+      "publicPrerequisites": [
+        "typed owner/host home-leadership transfer",
+        "typed durable attempt handoff/status",
+        "typed shared-budget lease/reservation/settlement observation",
+        "scripted external provider and idempotent local effect sink"
+      ]
+    },
+    {
+      "id": "SYNC-07",
+      "name": "Guest evidence remains foreign should work",
+      "rows": [
+        "OF-149",
+        "OF-056"
+      ],
+      "canon": [
+        "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/#memory-board-source-trust",
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/registry/oneiron/#OF-149",
+        "/registry/oneiron/#OF-056"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on typed trust-graded consolidation input and generated-claim evidence with foreign actor attribution",
+      "inputs": {
+        "evidenceText": "The prototype uses cobalt fasteners.",
+        "senders": [
+          "owner-clone",
+          "foreign-guest"
+        ],
+        "foreignCases": [
+          "admitted-foreign",
+          "least-trusted-foreign"
+        ],
+        "repeatedCitations": 3,
+        "generatedRestatement": "The prototype uses cobalt fasteners.",
+        "consolidation": "One named, typed consolidation of these admitted evidence refs under declared policy."
+      },
+      "expected": {
+        "ownerEvidenceMultiplicity": 1,
+        "foreignFirstPartyCorroboration": 0,
+        "generatedRestatementIndependentSignals": 0,
+        "invariants": [
+          "Owner replay preserves the original identity/source/approval without a fresh write approval or new ask.",
+          "A replicated foreign row retains its accountable local guest actor, origin vault, connection, grant and epoch.",
+          "Every receiving device derives its trust locally; no synced trusted flag vouches for it.",
+          "Repeated foreign citations and generated restatements cannot manufacture independent first-party corroboration.",
+          "Only the least-trusted slice is wholly inert; do not falsely require all foreign evidence to be absent.",
+          "No invented numeric confidence down-weight threshold or model-quality score is used."
+        ]
+      },
+      "publicPrerequisites": [
+        "typed consolidation input naming evidence refs and trust policy",
+        "typed foreign admission/source attribution read",
+        "typed generated-claim evidence/frontier read",
+        "public owner-clone and guest replica fixtures"
+      ]
+    },
+    {
+      "id": "SYNC-08",
+      "name": "Mesh admission follows pairing should work",
+      "rows": [
+        "OF-535"
+      ],
+      "canon": [
+        "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/#two-planes",
+        "/oneiron/identity/#authority-log",
+        "/registry/oneiron/#OF-535"
+      ],
+      "status": "BLOCKED",
+      "reason": "waits on public typed mesh address/ALPN grant configuration and a caller-facing unpaired mesh dial",
+      "inputs": {
+        "peers": [
+          "paired-home",
+          "paired-device",
+          "unpaired-third"
+        ],
+        "network": "Loopback only; no public discovery, relay or cloud service.",
+        "transport": "Explicit opt-in mesh, oneiron/sync/1; compare the same fixture via ordinary HTTP/WS.",
+        "allowedBody": "The mesh test parcel contains a turquoise lens.",
+        "privateBody": "The private mesh parcel contains hidden-slate-lens.",
+        "actions": [
+          "observe off by default",
+          "enable on paired peers",
+          "pair and bind addresses/grants publicly",
+          "transfer",
+          "attempt unpaired join",
+          "attempt a denied data read on the paired transport",
+          "disable and restart"
+        ]
+      },
+      "expected": {
+        "enabledByDefault": false,
+        "pairedAllowedBody": "The mesh test parcel contains a turquoise lens.",
+        "unpairedAdmitted": false,
+        "forbiddenText": [
+          "hidden-slate-lens"
+        ],
+        "pathKind": "direct",
+        "publicRelayContacts": 0,
+        "invariants": [
+          "Only a paired machine with the required ALPN/grant reaches application data.",
+          "A paired transport conveys no extra data authority; denied data is equally denied over HTTP/WS and mesh.",
+          "Path receipts distinguish admitted paired and refused unpaired attempts.",
+          "Disabling mesh removes that listener while ordinary loopback HTTP/WS stays usable.",
+          "A same-build optional mesh capability is a prepared prerequisite, not a download or public relay fallback."
+        ]
+      },
+      "publicPrerequisites": [
+        "typed mesh address binding and ALPN grant configuration",
+        "caller-facing mesh dial with an unpaired identity",
+        "prepared same-build opt-in mesh transport and loopback-only containment"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "area": "sync",
+  "assets": [
+    {
+      "id": "sync-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-sync-e2e-20261018",
+        "revision": "7c157fa3118a3e489045cbf9a1b3767ed966ede705a4b7df84fa1862145bd14a"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4a0fa90bf05e9374e2459c1d91d2a37557da4a8bd8f6d46624cd5286440c5159",
+      "expectedFacts": {
+        "scenarioCount": 8,
+        "orderedIds": [
+          "SYNC-01",
+          "SYNC-02",
+          "SYNC-03",
+          "SYNC-04",
+          "SYNC-05",
+          "SYNC-06",
+          "SYNC-07",
+          "SYNC-08"
+        ],
+        "authoredContent": true,
+        "oracle": "Pinned canon and owner rulings plus synthetic expected text/sets; no engine-derived expected values. Full typed binding notes and per-ID prerequisites remain BLOCKED.",
+        "automaticFailover": false,
+        "authorityDoesNotFollowResidence": true,
+        "revocationDoesNotRecallPreviouslyDisclosedCopies": true
+      },
+      "scenarios": [
+        "SYNC-01",
+        "SYNC-02",
+        "SYNC-03",
+        "SYNC-04",
+        "SYNC-05",
+        "SYNC-06",
+        "SYNC-07",
+        "SYNC-08"
+      ],
+      "requires": [
+        "typed NOTE live text read",
+        "typed NOTE stable cursor/version read",
+        "typed actor-attributed document operation read",
+        "public same-vault clone/enrol fixture",
+        "bounded byte-transparent TCP partition/delivery helper",
+        "typed grant-scoped NOTE live text read",
+        "typed document admission/history boundary read",
+        "public federation replica connection with accountable guest actor",
+        "independent native EphemeralStore wire fixture/client with live timestamp support",
+        "raw authenticated tag-1 WS observation",
+        "public inactivity-timeout declaration",
+        "real public export/backup decoding by record family",
+        "typed opened-item NOTE read with local-versus-home residence information",
+        "public grant revocation and caller-bound home search",
+        "typed owner/host home-leadership transfer",
+        "typed durable attempt handoff/status",
+        "typed shared-budget lease/reservation/settlement observation",
+        "scripted external provider and idempotent local effect sink",
+        "typed consolidation input naming evidence refs and trust policy",
+        "typed foreign admission/source attribution read",
+        "typed generated-claim evidence/frontier read",
+        "public owner-clone and guest replica fixtures",
+        "typed mesh address binding and ALPN grant configuration",
+        "caller-facing mesh dial with an unpaired identity",
+        "prepared same-build opt-in mesh transport and loopback-only containment"
+      ]
+    }
+  ]
+}
