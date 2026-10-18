@@ -65,6 +65,7 @@ include = [
   "oneiron_scored_entity_array_free",
   "oneiron_subtree_entry_array_free",
   "oneiron_vault_open",
+  "oneiron_vault_open_with_host_root",
   "oneiron_vault_bind",
   "oneiron_vault_free",
   "oneiron_vault_health_json",

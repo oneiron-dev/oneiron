@@ -90,7 +90,17 @@ pub const MAX_GUEST_DISCLOSED_REFS: usize = 64;
 const GUEST_SCOPE_KEYS: [&str; 3] = ["person_ref", "asker_ref", "disclosed_refs"];
 
 /// Scope addressed by a federation grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[non_exhaustive]
 pub enum FederationGrantScope {
     /// Membership in a shared vault.

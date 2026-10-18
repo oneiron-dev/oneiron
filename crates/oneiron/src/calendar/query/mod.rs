@@ -26,6 +26,7 @@
 mod facts;
 mod occurrences;
 pub(in crate::calendar) use occurrences::occurrences;
+pub mod passport;
 mod requests;
 mod service;
 mod window;

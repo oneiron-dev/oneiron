@@ -96,6 +96,7 @@ pub use reembed::reembed;
 mod device;
 pub use device::device_enrol;
 mod serve;
+pub(crate) use self::serve::hook_sandbox;
 use self::serve::serve_with_config;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::serve::spawn_fact_hooks;
@@ -215,6 +216,7 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             actor_class: Some("human".into()),
             org_ref: None,
             write_facet: None,
+            comm: None,
         },
     )?;
     Ok(oneiron::authority::format_pinned_pairing_link(
@@ -284,6 +286,7 @@ pub fn token_read(args: TokenReadArgs) -> anyhow::Result<()> {
         &args.actor_class,
         [CoreScope::Read.as_str().to_owned()].into_iter().collect(),
         args.lifetime_secs,
+        comm_arg(args.comm.as_deref())?,
     )?;
     println!("{}", serde_json::to_string_pretty(&credential)?);
     Ok(())
@@ -452,6 +455,7 @@ fn mint_agent_credential(
         "agent",
         verbs,
         args.lifetime_secs,
+        comm_arg(args.comm.as_deref())?,
     )?;
     let slip_id = oneiron::authority::CapabilitySlip::from_token(&credential.token)?
         .claims
@@ -523,10 +527,21 @@ struct MintedAgent {
     replaced: Vec<String>,
 }
 
+/// The owner's `--comm`, as the slip's signed reach (FIX 3899); `None` when
+/// he named none, the vault's.
+fn comm_arg(comm: Option<&str>) -> anyhow::Result<Option<oneiron::agent_dispatch::CommReach>> {
+    comm.map(|value| {
+        oneiron::agent_dispatch::CommReach::parse(value)
+            .ok_or_else(|| anyhow::anyhow!("--comm is parent, subtree, project or vault"))
+    })
+    .transpose()
+}
+
 /// Issues a one-use link for an existing `principal` carrying `verbs`, and
 /// redeems it at once with a fresh connection key: the host-rooted pairing
 /// doors `/v1/core/pairing/redeem` uses, on the stopped vault. The slip is
-/// logged like every paired slip and revoked by its id.
+/// logged like every paired slip and revoked by its id. `comm` is the
+/// owner's reach for it, fixed on the link (FIX 3899).
 fn mint_paired_credential(
     vault: &oneiron::Vault,
     issuer: &oneiron::authority::HostSlipIssuer,
@@ -534,6 +549,7 @@ fn mint_paired_credential(
     actor_class: &str,
     verbs: std::collections::BTreeSet<String>,
     lifetime_secs: u64,
+    comm: Option<oneiron::agent_dispatch::CommReach>,
 ) -> anyhow::Result<PairedCredential> {
     use ed25519_dalek::{Signer, SigningKey};
     let mut scope = oneiron::federation::Scope::top();
@@ -547,6 +563,7 @@ fn mint_paired_credential(
             actor_class: Some(actor_class.to_owned()),
             org_ref: None,
             write_facet: None,
+            comm,
         },
     )?;
     let key = SigningKey::generate(&mut rand_core::OsRng);
@@ -603,6 +620,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         actor_class: args.actor_class,
         org_ref: None,
         write_facet: None,
+        comm: comm_arg(args.comm.as_deref())?,
     };
     let mut body = json!({
         "scope": scope,

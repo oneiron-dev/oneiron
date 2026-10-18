@@ -71,7 +71,7 @@ impl Vault {
     }
 
     /// Transaction-composable [`Vault::undo_identity_topology_event_as`].
-    fn undo_identity_topology_event_in_txn(
+    pub(crate) fn undo_identity_topology_event_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         event: &EntityId,

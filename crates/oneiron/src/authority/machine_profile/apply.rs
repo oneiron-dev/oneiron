@@ -10,8 +10,8 @@ use super::*;
 
 /// One fold transition, signed by an owner roster key, for a machine that is
 /// not an actor and whose key is not authority: the explicit bootstrap arm
-/// (the host's own node, the fresh self-host first install; C4) and older
-/// roster revisions. The owner's answer carried by a linked machine under his
+/// (the host's own node, the fresh self-host first install, the serving
+/// install's own unanswered profile; C4) and older roster revisions. The owner's answer carried by a linked machine under his
 /// act folds through [`super::apply_owner_answer`] instead. Only an
 /// owner-held key answers "yours", "work/school" or "rented" here (truthful
 /// custody): a cloud or custodial root, which the hosted posture lets
@@ -43,9 +43,12 @@ pub(in crate::authority) fn apply_machine_profile(
     };
     let admitted = match profile.role {
         MachineRole::Owned(_) => signer_class == SignerClass::OwnerHeld,
-        MachineRole::HostedNode | MachineRole::ExecutionNode | MachineRole::Removed => {
-            context.device_can_consent(device)
-        }
+        // An unanswered install answers nothing for the owner: the root
+        // registers it as it registers its own node, never as the owner's.
+        MachineRole::HostedNode
+        | MachineRole::ExecutionNode
+        | MachineRole::Unanswered
+        | MachineRole::Removed => context.device_can_consent(device),
     };
     if !admitted {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));

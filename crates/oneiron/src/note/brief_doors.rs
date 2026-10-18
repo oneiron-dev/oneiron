@@ -53,7 +53,10 @@ impl Memory<'_> {
     /// Capture pins in the caller's scoped read snapshot, then let the existing
     /// brief writer recheck their source versions and live read authority in
     /// the transaction that writes the brief.
-    pub fn author_citing_brief(&self, input: &AuthorBriefRequest) -> MemoryResult<EntityRefReceipt> {
+    pub fn author_citing_brief(
+        &self,
+        input: &AuthorBriefRequest,
+    ) -> MemoryResult<EntityRefReceipt> {
         let id = |value: &str| {
             EntityId::from_hex(value)
                 .map_err(|_| MemoryError::bad_request("brief citations require 32-hex entity ids"))

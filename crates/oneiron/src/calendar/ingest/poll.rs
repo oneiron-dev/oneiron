@@ -38,7 +38,7 @@ const MAX_SYSTEM_BYTES: usize = 128;
 /// Carries the custody record NAME only. The resolved URL never appears in
 /// this struct, in the attempt payload it serializes into, or in any EVENT,
 /// claim, or receipt the adapter writes.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IcsFeedPollConfig {
     /// SECRET custody record name (e.g. `ics-feed:work`).
     pub secret_ref: String,
@@ -53,7 +53,7 @@ pub struct IcsFeedPollConfig {
 impl IcsFeedPollConfig {
     /// Structural validation: bounded non-empty names and an ordered,
     /// non-zero cadence window (mirrors the LinkedIn cadence guard).
-    fn validate(&self) -> Result<(), CalendarError> {
+    pub(super) fn validate(&self) -> Result<(), CalendarError> {
         if self.secret_ref.is_empty() || self.secret_ref.len() > MAX_SECRET_REF_BYTES {
             return Err(ingest("secret_ref must be non-empty and bounded"));
         }
@@ -384,7 +384,7 @@ pub fn ics_feed_pause_exceptions(
 
 /// Host-visible snapshot of one feed's poll cursor. Carries the custody
 /// record name and provider ETag — never the resolved URL.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct IcsFeedCursorSnapshot {
     /// The ETag the next poll sends as `If-None-Match`, when one is held.
     pub etag: Option<String>,

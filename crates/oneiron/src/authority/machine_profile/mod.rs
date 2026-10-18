@@ -446,7 +446,12 @@ impl AuthorityFold {
     /// The machine key a connection proves to stand as `machine` here: its
     /// trusted identity's under this install's pin, else its live roster
     /// revision's (a node the owner never called theirs, so never mine). A
-    /// key only an untrusted chain names never speaks for the machine.
+    /// key only an untrusted chain names never speaks for the machine, and
+    /// neither does an unanswered install's ([`MachineRole::answered`]): it
+    /// stays `Unknown` on every connection, so its births go masked with
+    /// their born-with text, and the authority tail, dialing and archive
+    /// custody stay as they are for an unprofiled install, until the owner
+    /// answers (CALLS "selfprofile serving-install role", amendment (a)).
     #[must_use]
     pub fn machine_proof_key(&self, machine: EntityId) -> Option<[u8; 32]> {
         let folded = self.machines.get(&machine)?;
@@ -455,7 +460,7 @@ impl AuthorityFold {
             None => folded
                 .roster
                 .as_ref()
-                .filter(|roster| roster.is_live())
+                .filter(|roster| roster.is_live() && roster.profile.role.answered())
                 .map(|roster| roster.profile.machine_key),
         }
     }
