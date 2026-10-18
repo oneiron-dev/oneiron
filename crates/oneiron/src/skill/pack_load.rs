@@ -261,41 +261,53 @@ impl Vault {
             ))?;
         self.with_write_txn_grouped(|txn| {
             let loaded = self.exact_workflow_pack_in_txn(txn, skill, version)?;
-            let queue = AttemptQueue::new(self);
-            queue.require_skill_load_lease_in_txn(
-                txn,
-                leased.id,
-                lease_owner,
-                leased.attempt_count,
-            )?;
-            let live = queue
-                .get_in_txn(txn, leased.id)?
-                .ok_or(Error::EntityNotFound)?;
-            if live.executor_model.is_none() {
-                queue.set_executor_model_in_txn(
-                    txn,
-                    leased.id,
-                    lease_owner,
-                    leased.attempt_count,
-                    executor,
-                )?;
-            }
             let entry = ManifestEntry::new(
                 ManifestKind::Skill,
                 &loaded.record.skill_id,
                 &loaded.record.version,
                 at,
             );
-            let recorded = live.manifest().iter().any(|row| {
-                row.kind == entry.kind
-                    && row.reference == entry.reference
-                    && row.version == entry.version
-            });
-            if !recorded {
-                queue.append_manifest_entry_in_txn(txn, leased.id, entry)?;
-            }
+            self.record_manifest_once_in_txn(txn, leased, lease_owner, executor, entry)?;
             Ok(loaded)
         })
+    }
+
+    /// Records `entry` on the manifest of `leased`, in the caller's writer
+    /// and under the live lease `lease_owner` holds in its generation: once,
+    /// since a row of the same kind, skill and revision already on the
+    /// attempt stands for it. The first executor stamps the attempt, as the
+    /// load door's does.
+    pub(crate) fn record_manifest_once_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        leased: &AttemptRecord,
+        lease_owner: &str,
+        executor: &str,
+        entry: ManifestEntry,
+    ) -> Result<()> {
+        let queue = AttemptQueue::new(self);
+        queue.require_skill_load_lease_in_txn(txn, leased.id, lease_owner, leased.attempt_count)?;
+        let live = queue
+            .get_in_txn(txn, leased.id)?
+            .ok_or(Error::EntityNotFound)?;
+        if live.executor_model.is_none() {
+            queue.set_executor_model_in_txn(
+                txn,
+                leased.id,
+                lease_owner,
+                leased.attempt_count,
+                executor,
+            )?;
+        }
+        let recorded = live.manifest().iter().any(|row| {
+            row.kind == entry.kind
+                && row.reference == entry.reference
+                && row.version == entry.version
+        });
+        if !recorded {
+            queue.append_manifest_entry_in_txn(txn, leased.id, entry)?;
+        }
+        Ok(())
     }
 
     /// One exact workflow revision as its admitted package, on the caller's

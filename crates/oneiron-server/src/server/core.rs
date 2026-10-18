@@ -25,7 +25,7 @@ use crate::usage::UsageLedger;
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
-mod pattern_workflow;
+pub(super) mod pattern_workflow;
 
 /// Internal fan-out. Recovery notices never become wire frames.
 #[derive(Debug, Clone)]
