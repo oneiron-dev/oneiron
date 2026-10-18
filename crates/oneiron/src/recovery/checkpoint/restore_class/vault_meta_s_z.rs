@@ -171,6 +171,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_OPTIMIZE_EVAL_ROOT, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_ASK, CONTENT),
     (&t::SKILL_OPTIMIZE_JUDGE_LABEL, CONTENT),
+    (&t::SKILL_OPTIMIZE_JUDGE_RUBRIC, CONTENT),
     (&t::SKILL_OPTIMIZE_OFFER, CONTENT),
     (&t::SKILL_OPTIMIZE_OFFER_ANSWER, LIVE),
     (&t::SKILL_OPTIMIZE_OFFER_CHECK, CONTENT),
@@ -218,6 +219,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::TASK_PROJECT_TRADEOFF_TURN, CONTENT),
     (&t::TASK_REPORT_JOURNAL, CONTENT),
     (&t::TASK_SYMBOL_LEASE, CONTENT),
+    (&t::TASK_TRAINING_OFFER_ASK, CONTENT),
+    (&t::TASK_TRAINING_OFFER_ASK_GROUP, CONTENT),
     (&t::TASK_ASK_WAIT, CONTENT),
     // An approved, denied or launched hold never rewinds to waiting.
     (&t::TASK_FANOUT_LAUNCH, LIVE),

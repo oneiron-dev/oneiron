@@ -131,7 +131,7 @@ impl Memory<'_> {
         )? {
             return Ok(receipt);
         }
-        self.require_ask_ceiling_in(txn)?;
+        self.require_ask_ceiling_in(txn, input)?;
         // Revocation and admission observe the SAME snapshot.
         let census = self.ask_census_in(txn, input, group_ref, now)?;
         // One ask counts once on the asker's ask window, whatever its
@@ -294,15 +294,32 @@ impl Memory<'_> {
         Ok(None)
     }
 
-    /// An actor that may not ask is refused before any census runs.
-    fn require_ask_ceiling_in(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
-        if super::rate_limit::task_actor_ceiling(
-            self.vault(),
-            txn,
-            self.actor(),
-            self.actor_class(),
-        )? != PolicyApprovalCeiling::Auto
-        {
+    /// An actor that may not ask is refused before any census runs. A
+    /// training offer intent takes the Coach's scoped offer-ask reach and
+    /// nothing else (`gate::coach_offer_ask_ceiling_in_txn`), never the
+    /// generic ceiling; every other ask needs the actor's own Auto ceiling.
+    pub(super) fn require_ask_ceiling_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        input: &TaskAskSpec,
+    ) -> MemoryResult<()> {
+        let auto = if super::training_offer_ask::is_training_offer_ask_intent(&input.intent_key) {
+            crate::gate::coach_offer_ask_ceiling_in_txn(
+                self.vault(),
+                txn,
+                self.actor(),
+                self.actor_class(),
+                input,
+            )?
+        } else {
+            super::rate_limit::task_actor_ceiling(
+                self.vault(),
+                txn,
+                self.actor(),
+                self.actor_class(),
+            )? == PolicyApprovalCeiling::Auto
+        };
+        if !auto {
             return Err(consult_refusal(
                 crate::memory::MEMORY_CODE_FORBIDDEN,
                 "scope ask requires an own auto-ceiling actor",
@@ -526,7 +543,7 @@ impl Memory<'_> {
                 crate::Error::InvariantViolation("a held ask already has its group").into(),
             );
         }
-        self.require_ask_ceiling_in(txn)?;
+        self.require_ask_ceiling_in(txn, held.requested)?;
         let now = self.vault().store.clock.now_recorded_at();
         let census = self.ask_census_in(txn, held.requested, group_ref, now)?;
         let mut current = census.holders.clone();
