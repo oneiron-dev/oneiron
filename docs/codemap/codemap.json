@@ -47463,7 +47463,7 @@
      "path": "src/sync/ingest/peer_import.rs",
      "purpose": "Which rows of a window a federation peer's import brought (Docs Q04)",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 10
      }
     },
     {
