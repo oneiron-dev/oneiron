@@ -21,7 +21,7 @@ const ADMISSION_RECEIPT: SideTable<EntityId, HubAdmissionReceipt, LegacyJson> =
 
 /// Durable ruling with both actual scores, exact consent, content and source.
 /// IDs are canonical hex strings to keep this envelope transport-neutral.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HubAdmissionReceipt {
     pub receipt_id: String,

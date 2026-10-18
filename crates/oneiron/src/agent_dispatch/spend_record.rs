@@ -62,7 +62,7 @@ impl std::fmt::Display for SpendScopeId {
 }
 
 /// Whether a scope still takes spend and reservations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SpendState {
     Open,
@@ -74,7 +74,7 @@ pub enum SpendState {
 /// the root's cap and accepted it for this scope. Children inherit it by
 /// walking to their root; it is never copied. A cap, a scope id or an attempt
 /// id is never this evidence by itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SpendPayer {
     /// The PERSON whose funds the tree spends.
@@ -92,7 +92,7 @@ pub struct SpendPayer {
 /// parent (it grows when the scope tops up). `held_units` is what this scope's
 /// open children hold from it. What the scope may spend itself, before any top
 /// up, is `cap_units - spent_units - held_units`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SpendScope {
     pub scope: SpendScopeId,
@@ -178,7 +178,7 @@ impl From<SpendRefused> for Error {
 }
 
 /// What a spend crossed. The lease's own Suspend is the stop; these steer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "signal", rename_all = "snake_case")]
 pub enum SpendSignal {
     /// At most 5 percent of the binding hard cap is left: start no new work,
@@ -192,7 +192,7 @@ pub enum SpendSignal {
 }
 
 /// One scope after a spend.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpendRead {
     pub scope: SpendScopeId,
     pub unit: LeaseUnit,

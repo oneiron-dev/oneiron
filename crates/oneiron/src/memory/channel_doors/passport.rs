@@ -18,7 +18,7 @@ pub struct ThreadPassportsRequest {
     pub thread_ref: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ThreadMaskView {
     pub identity_ref: EntityId,
     pub actor_ref: EntityId,
@@ -35,7 +35,7 @@ impl From<ThreadMask> for ThreadMaskView {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ThreadPassportView {
     pub identity_ref: EntityId,
     pub message_id: String,
@@ -44,12 +44,12 @@ pub struct ThreadPassportView {
     pub observed_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ThreadPassportLookup {
     pub passport: Option<ThreadPassportView>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ThreadPassportsView {
     pub canonical_thread_ref: String,
     pub passports: Vec<ThreadPassportView>,

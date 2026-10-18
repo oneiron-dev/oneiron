@@ -116,7 +116,9 @@ pub(crate) fn marketplace_hash_blocked_in_txn(
 
 /// A source receipt for a marketplace install. One content holder can have many source receipts.
 /// The publisher field is engine-stamped only by the admitted-publisher adapter door.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct HubImportReceipt {
     pub entity: String,

@@ -31,7 +31,7 @@ pub struct SkillHubPutRequest {
     pub sync_policy: HubSyncPolicy,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HubConsentOutcome {
     Approved,
@@ -40,7 +40,7 @@ pub enum HubConsentOutcome {
 }
 
 /// The actual engine consent decision, not an inferred successful HTTP status.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubConsentReceipt {
     pub outcome: HubConsentOutcome,
     pub decision: String,
@@ -67,7 +67,7 @@ impl From<ConsentReceipt> for HubConsentReceipt {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillHubConfigured {
     pub hub: EntityId,
     pub consent: HubConsentReceipt,
@@ -81,7 +81,7 @@ pub struct SkillPublisherRequest {
     pub identity: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SkillPublisherAdmission {
     pub hub: EntityId,
     pub identity: String,
@@ -123,12 +123,12 @@ pub struct HubSkillRequest {
     pub entity: EntityId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubSkillImported {
     pub entity: EntityId,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HubSkillSyncOutcome {
     Applied,
@@ -137,7 +137,7 @@ pub enum HubSkillSyncOutcome {
 }
 
 /// A proposal never changes the trusted content or effective capabilities.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubSkillSyncReceipt {
     pub outcome: HubSkillSyncOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -171,7 +171,7 @@ impl From<HubSyncDisposition> for HubSkillSyncReceipt {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubSkillReceipts {
     pub sources: Vec<HubRef>,
     pub imports: Vec<HubImportReceipt>,
@@ -192,13 +192,13 @@ pub struct HubHookQualifyRequest {
     pub source: EntityId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubHookQualificationReceipt {
     pub put: PackPutReceipt,
     pub replays: Vec<HubHookReplay>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubHookReplay {
     pub hook: String,
     pub entries: Vec<super::sdk::HookReplayRow>,
@@ -210,7 +210,7 @@ pub struct HubHookBindRequest {
     pub pack: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HubHookBindingRow {
     pub id: EntityId,
     pub binding: PackHookBinding,

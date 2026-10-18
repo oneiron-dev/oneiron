@@ -16,7 +16,7 @@ pub struct CalendarOccurrencesRequest {
     pub range: CalendarRangeDto,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarOccurrenceView {
     pub event_ref: String,
     pub master_ref: String,

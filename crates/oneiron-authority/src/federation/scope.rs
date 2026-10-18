@@ -4,8 +4,8 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeSet;
 
 /// Canonical entity id used by the world, facet, and project axes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct ScopeId(pub EntityId);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, schemars::JsonSchema)]
+pub struct ScopeId(#[schemars(with = "String")] pub EntityId);
 impl Serialize for ScopeId {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         serializer.serialize_str(&self.0.to_hex())
@@ -25,7 +25,7 @@ impl<'de> Deserialize<'de> for ScopeId {
 }
 
 /// Powerset axis. Empty sets normalize to bottom, never to all.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", content = "values", rename_all = "snake_case")]
 pub enum ScopeAxis<T: Ord> {
     #[default]
@@ -136,7 +136,19 @@ impl<T: ScopeAtom> ScopeAxis<T> {
 }
 
 /// Content sensitivity. This is not criticality or a hardware assurance tier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Sensitivity {
     Public,
@@ -168,7 +180,9 @@ impl Sensitivity {
 }
 
 /// A channel's maximum sensitivity; bottom permits no content, even public.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -205,7 +219,9 @@ impl SensitivityCeiling {
 /// Canonical six-axis Scope. Missing axes deny; callers select `top()` explicitly.
 /// Kind bands contain type bytes, not ordinal storage ranges. Audience is project.
 /// Verb values are class names, not individual tool names.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(default, deny_unknown_fields)]
 pub struct Scope {
     pub worlds: ScopeAxis<ScopeId>,

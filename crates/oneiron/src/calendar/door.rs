@@ -28,7 +28,7 @@ pub enum CalendarEventCreateRequest {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarEventCreated {
     pub event_ref: String,
     pub origin: String,

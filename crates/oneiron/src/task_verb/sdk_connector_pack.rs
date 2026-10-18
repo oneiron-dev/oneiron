@@ -73,7 +73,7 @@ pub struct ConnectorPackUpdateRequest {
     pub manifest: SlateManifest,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectorPackView {
     pub basis: ConnectorPackBasis,
     pub status: String,
@@ -88,7 +88,7 @@ pub struct ConnectorPackView {
     pub advisories: Vec<ConnectorPackAdvisory>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectorPackDelta {
     pub prior: ConnectorPackBasis,
     pub current: ConnectorPackView,
@@ -126,14 +126,14 @@ pub struct ConnectorPackGrantsPutRequest {
     pub rows: Vec<ConnectorPackGrantRow>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectorPackGrants {
     pub basis: ConnectorPackBasis,
     pub endpoint: Option<String>,
     pub authority: crate::connector_key::ConnectorConsentView,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectorPackAdvisory {
     pub content_hash: String,

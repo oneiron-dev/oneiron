@@ -33,7 +33,7 @@ use super::model::{
 use super::{LinearSyncAdapter, VaultLinearTaskStore};
 
 /// The provider's actor of one webhook: evidence, never a vault actor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct LinearExternalActor {
     /// The provider's actor id.

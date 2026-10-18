@@ -39,7 +39,7 @@ pub struct NoteReadRequest {
 }
 
 /// The endpoints can be passed directly to `vault.notes.edit`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteAnchoredSpan {
     pub start: NoteAnchor,
     pub end: NoteAnchor,
@@ -54,7 +54,7 @@ pub enum NoteReadSource {
 }
 
 /// One coherent editor read, including the base for a whole-text diff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteReadView {
     pub version: NoteVersion,
     pub markdown: String,
@@ -65,7 +65,7 @@ pub struct NoteReadView {
 
 /// Only retained, authenticated operation records are history. A shallow
 /// admission cannot turn inherited state-map bylines into disclosed history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteHistoryView {
     pub version: NoteVersion,
     pub operations: Vec<NoteAuthorship>,
@@ -75,7 +75,7 @@ pub struct NoteHistoryView {
 
 /// An explicit live editor handle. Close it when the editor leaves; a server
 /// restart drops all handles. Its id carries no authority by itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteEditorBinding {
     pub binding: String,
     pub note: NoteReadView,
@@ -87,7 +87,7 @@ pub struct NoteEditorCloseRequest {
     pub binding: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoteEditorClosed {
     pub closed: bool,
 }

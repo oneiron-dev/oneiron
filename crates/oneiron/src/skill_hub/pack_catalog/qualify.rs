@@ -17,7 +17,7 @@ use crate::skill::SkillContentHash;
 use serde::{Deserialize, Serialize};
 
 /// Source identity and the contract evidence retained in the installed receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackConnectorReceipt {
     pub source_hash: String,

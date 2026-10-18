@@ -11,7 +11,7 @@ pub struct BookingPageTokenRequest {
 }
 
 /// The canonical opaque address, not publication or booking authority.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct BookingPageTokenResponse {
     pub page_token: String,
 }

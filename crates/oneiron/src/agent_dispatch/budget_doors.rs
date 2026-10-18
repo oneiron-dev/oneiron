@@ -45,7 +45,7 @@ pub struct TopUpSpendLeaseRequest {
 }
 
 /// One persisted lease and its effective allowance, including its hard ancestor.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SpendLeaseView {
     pub lease: SpendScope,
     pub spend: SpendRead,
@@ -105,13 +105,13 @@ pub struct LocalRunnerBudgetRequest {
 
 /// `counter: None` means this device has not initialized this counter. A
 /// read never creates one, which makes restore-reset observation meaningful.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LocalRunnerBudgetView {
     pub budget_id: String,
     pub counter: Option<LocalRunnerBudgetCounter>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LocalRunnerBudgetCounter {
     pub total_units: u64,
     pub remaining_units: u64,
@@ -126,7 +126,7 @@ pub struct RunSettlementsRequest {
     pub run: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunSettlementsView {
     pub run: String,
     /// False when this host has not bound its usage ledger to an account.
@@ -134,7 +134,7 @@ pub struct RunSettlementsView {
     pub settlements: Vec<RunRungSettlement>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunRungSettlement {
     pub instance: String,
     pub lease: String,

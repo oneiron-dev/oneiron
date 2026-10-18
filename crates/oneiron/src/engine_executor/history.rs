@@ -12,7 +12,7 @@ use crate::{EntityId, Error, Result, Vault};
 
 use super::store::{load_context_output, observation_output_path, script_output_path};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldHistory {
     pub run: String,
     /// Count of checkpointed steps, not an in-flight step or a caller's ordinal.
@@ -27,7 +27,7 @@ pub struct FoldHistory {
     pub next: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldHistoryEpoch {
     pub summary_ref: String,
     pub epoch: u64,
@@ -37,7 +37,7 @@ pub struct FoldHistoryEpoch {
     pub text: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct FoldHistoryStep {
     pub step: u64,
     pub code: String,

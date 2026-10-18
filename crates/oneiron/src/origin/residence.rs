@@ -25,7 +25,7 @@ pub enum OriginResidence {
     LocalVault,
     CloudVault,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginAuthority {
     pub epoch: u64,
     pub residence: OriginResidence,

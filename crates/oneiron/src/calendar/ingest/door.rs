@@ -34,7 +34,7 @@ pub struct CalendarInstanceMoveRequest {
     pub end_utc: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarImportClaimReceipt {
     pub claim_ref: String,
     pub predicate: String,
@@ -44,7 +44,7 @@ pub struct CalendarImportClaimReceipt {
 
 /// References are returned even when their imported claims await consent.
 /// A successful parse/import is not an approval or an admitted occurrence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarImportedEvent {
     pub event_ref: String,
     pub uid: String,
@@ -52,7 +52,7 @@ pub struct CalendarImportedEvent {
     pub claims: Vec<CalendarImportClaimReceipt>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarIcsImportReceipt {
     pub source_blob_ref: String,
     pub source_version: u64,

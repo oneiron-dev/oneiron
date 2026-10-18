@@ -42,7 +42,7 @@ const WITHHELD_HANDLE_HEX: usize = 16;
 /// The birth envelope of one row: Rule A's `made_by` plus the derivation
 /// memo-key's input hash (ARCH-0035, `content_hash`: the hash of the exact
 /// input records and claims read).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RowBirth {
     pub made_by: MadeBy,
@@ -57,7 +57,7 @@ pub struct RowBirth {
 
 /// A ref a birth names that its copy's destination may not see (Q26 = B): a
 /// handle in its place, never the ref.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WithheldRef {
     /// `wh_` and 16 hex of the ref keyed by the copy's [`WithheldKey`]: one
@@ -67,7 +67,7 @@ pub struct WithheldRef {
 }
 
 /// What a withheld ref was in the birth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WithheldRole {
     Input,

@@ -62,7 +62,7 @@ pub struct ChannelSelectionRequest {
     pub thread_ref: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChannelSelectionView {
     pub revision: u64,
     pub decision: ChannelIdentitySelectionDecision,
