@@ -9,105 +9,20 @@
 use oneiron::authority::{AuthorityKey, ConnectOffer, FederationPactGesture};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::parse_hex;
-use oneiron::federation::{FederationDirectionScope, FederationPactScope, Scope};
-use serde::{Deserialize, Serialize};
+use oneiron::federation::{FederationDirectionScope, FederationPactScope};
+pub(crate) use oneiron::task_verb::sdk::{
+    AcceptConnect, ConnectAccepted as Accepted, ConnectGrant, ConnectIdentity, MintConnectGrant, Offer, OfferConnect,
+};
+use oneiron::task_verb::sdk::{
+    AcceptRescopeConnect, ConnectDelivery, ConnectDisconnected, ConnectExportRequest,
+    ConnectPactReceipt, ConnectPactRequest, ConnectRejoined, ConnectRescoped, NarrowConnect,
+    RescopeConnect, RescopeOffer,
+};
 
 use super::cooperative_deletion::with_issuer;
 use super::vault_key::hex;
 use super::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
-
-/// `GET /v1/owner/federation/connect`: what a peer's owner names to offer
-/// this vault a pact.
-#[derive(Debug, Serialize)]
-pub(crate) struct ConnectIdentity {
-    /// This vault's id (its genesis hash), as 64 hex.
-    pub(crate) vault: String,
-    /// The host-root key this host signs its halves and courtesy asks with.
-    pub(crate) host_key: String,
-}
-
-/// `POST /v1/owner/federation/connect/grants`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MintConnectGrant {
-    /// The peer vault's id, as 64 hex.
-    pub(crate) peer_vault: String,
-    /// What the peer may read and propose here: named local worlds, verbs
-    /// `read`/`propose`, inside the vault's Connect guest ceiling.
-    pub(crate) authority_scope: Scope,
-    /// Unix seconds the grant stops conferring; absent until revoked.
-    #[serde(default)]
-    pub(crate) expires_at: Option<u64>,
-}
-
-/// The minted Connect guest grant.
-#[derive(Debug, Serialize)]
-pub(crate) struct ConnectGrant {
-    /// The FEDERATION_GRANT to name in the offer or accept, as 32 hex.
-    pub(crate) grant: String,
-    /// The vault-resident guest actor the grant names for the peer, as 32 hex.
-    pub(crate) guest_actor: String,
-    /// The scope stored.
-    pub(crate) resolved_scope: Scope,
-    /// Unix seconds the grant stops conferring; `null` until revoked.
-    pub(crate) expires_at: Option<u64>,
-}
-
-/// `POST /v1/owner/federation/connect/offer`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct OfferConnect {
-    /// The peer vault's id, as 64 hex.
-    pub(crate) peer_vault: String,
-    /// This vault's FEDERATION_GRANT the pact will govern, as 32 hex.
-    pub(crate) grant: String,
-    /// What this vault shares with the peer.
-    pub(crate) outbound: FederationDirectionScope,
-    /// What the peer shares with this vault.
-    pub(crate) inbound: FederationDirectionScope,
-}
-
-/// One host's signed half of a Connect, as the owner carries it.
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Offer {
-    /// The pact id, as 64 hex.
-    pub(crate) pact: String,
-    /// The pact nonce, as 32 hex.
-    pub(crate) nonce: String,
-    /// The signing host's vault, as 64 hex.
-    pub(crate) from: String,
-    /// The vault the offer is for, as 64 hex.
-    pub(crate) to: String,
-    /// The scope pair, by vault id: `lo_to_hi` is what the smaller id shares.
-    pub(crate) scope: FederationPactScope,
-    /// The signing host's root key (Ed25519), as 64 hex.
-    pub(crate) signer: String,
-    /// Its signature over the pact transcript, as 128 hex.
-    pub(crate) signature: String,
-}
-
-/// `POST /v1/owner/federation/connect/accept`.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AcceptConnect {
-    /// The peer host's half.
-    pub(crate) offer: Offer,
-    /// This vault's FEDERATION_GRANT the pact governs, as 32 hex.
-    pub(crate) grant: String,
-}
-
-/// The pact as this vault's log now holds it.
-#[derive(Debug, Serialize)]
-pub(crate) struct Accepted {
-    pub(crate) pact: String,
-    pub(crate) status: String,
-    /// The key this log pinned for the peer: its host-root key.
-    pub(crate) peer_key: String,
-    /// This host's half of the same pact, for the peer's owner to accept.
-    pub(crate) counter: Offer,
-}
 
 fn hex_field<const N: usize>(field: &str, value: &str) -> OwnerResult<[u8; N]> {
     parse_hex(value).ok_or_else(|| OwnerError::Invalid(format!("{field} must be {} hex", N * 2)))
@@ -239,4 +154,107 @@ pub(crate) fn accept(
         peer_key: key_hex(&pact.peer_owner_key),
         counter: offer_json(&counter),
     })
+}
+
+fn scope_pair(
+    server: &SyncServer,
+    pact: &str,
+    outbound: FederationDirectionScope,
+    inbound: FederationDirectionScope,
+) -> OwnerResult<FederationPactScope> {
+    let fold = server.vault().authority_fold()?;
+    let state = fold.federation_pacts.get(&hex_field("pact", pact)?).ok_or_else(|| {
+        OwnerError::NotFound("pact", pact.to_owned())
+    })?;
+    let local = fold.vault_id.ok_or_else(|| OwnerError::Refused("no authority root".into()))?;
+    Ok(if local <= state.peer_vault_id {
+        FederationPactScope { lo_to_hi: outbound, hi_to_lo: inbound }
+    } else {
+        FederationPactScope { lo_to_hi: inbound, hi_to_lo: outbound }
+    })
+}
+
+fn pact_receipt(pact: String, state: oneiron::authority::FederationPactState) -> ConnectPactReceipt {
+    ConnectPactReceipt {
+        pact, status: state.status, epoch: state.pact_epoch,
+        scope: state.pact_scope, effective_scope: state.effective_scope,
+    }
+}
+
+fn rescope_json(offered: &oneiron::authority::ConnectRescopeOffer) -> RescopeOffer {
+    let offer = offer_json(&offered.offer);
+    RescopeOffer {
+        pact: offer.pact, epoch: offered.epoch, nonce: offer.nonce, from: offer.from,
+        to: offer.to, scope: offer.scope, signer: offer.signer, signature: offer.signature,
+    }
+}
+
+pub(crate) fn rescope_offer(
+    server: &SyncServer, owner: &AuthenticatedOwner, request: &RescopeConnect,
+) -> OwnerResult<RescopeOffer> {
+    let scope = scope_pair(server, &request.pact, request.outbound.clone(), request.inbound.clone())?;
+    let pact = hex_field("pact", &request.pact)?;
+    let offered = with_issuer(server, |issuer| {
+        Ok(server.vault().propose_connect_rescope_as(owner, issuer,
+            pact, request.epoch, scope))
+    })?.map_err(|error| refused(server.vault(), owner, error))?;
+    Ok(rescope_json(&offered))
+}
+
+pub(crate) fn rescope_accept(
+    server: &SyncServer, owner: &AuthenticatedOwner, request: &AcceptRescopeConnect,
+) -> OwnerResult<ConnectRescoped> {
+    let offer = &request.offer;
+    let offered = oneiron::authority::ConnectRescopeOffer {
+        epoch: offer.epoch,
+        offer: parse_offer(&Offer {
+            pact: offer.pact.clone(), nonce: offer.nonce.clone(), from: offer.from.clone(),
+            to: offer.to.clone(), scope: offer.scope.clone(), signer: offer.signer.clone(),
+            signature: offer.signature.clone(),
+        })?,
+    };
+    let (state, counter) = with_issuer(server, |issuer| {
+        Ok(server.vault().accept_connect_rescope_as(owner, issuer, &offered))
+    })?.map_err(|error| refused(server.vault(), owner, error))?;
+    Ok(ConnectRescoped { receipt: pact_receipt(offer.pact.clone(), state), counter: rescope_json(&counter) })
+}
+
+pub(crate) fn narrow(
+    server: &SyncServer, owner: &AuthenticatedOwner, request: &NarrowConnect,
+) -> OwnerResult<ConnectPactReceipt> {
+    let pact = hex_field("pact", &request.pact)?;
+    let state = with_issuer(server, |issuer| {
+        Ok(server.vault().narrow_connect_as(owner, issuer, pact,
+            request.epoch, request.outbound.clone()))
+    })?.map_err(|error| refused(server.vault(), owner, error))?;
+    Ok(pact_receipt(request.pact.clone(), state))
+}
+
+pub(crate) fn disconnect(
+    server: &SyncServer, owner: &AuthenticatedOwner, request: &ConnectPactRequest,
+) -> OwnerResult<ConnectDisconnected> {
+    let pact = hex_field("pact", &request.pact)?;
+    let state = with_issuer(server, |issuer| {
+        Ok(server.vault().disconnect_connect_as(owner, issuer, pact))
+    })?.map_err(|error| refused(server.vault(), owner, error))?;
+    Ok(ConnectDisconnected {
+        receipt: pact_receipt(request.pact.clone(), state),
+        outbound_access: false, inbound_access: false, sync_stopped: true,
+        copied_bytes_recallable: false, recipient_copy_state: oneiron::receipt::GuestCopyState::Unknown,
+    })
+}
+
+pub(crate) fn export(
+    server: &SyncServer, owner: &AuthenticatedOwner, request: ConnectExportRequest,
+) -> OwnerResult<ConnectDelivery> {
+    with_issuer(server, |issuer| {
+        Ok(oneiron::sync::SyncClient::export_connect_window_as(&server.reassert_manager, owner, issuer, request))
+    })?.map_err(|error| refused(server.vault(), owner, error))
+}
+
+pub(crate) fn rejoin(
+    server: &SyncServer, owner: &AuthenticatedOwner, request: ConnectDelivery,
+) -> OwnerResult<ConnectRejoined> {
+    oneiron::sync::SyncClient::rejoin_connect_as(&server.reassert_manager, owner, request)
+        .map_err(|error| refused(server.vault(), owner, error))
 }

@@ -43,6 +43,7 @@
 
 mod artifacts;
 mod base;
+mod connect;
 mod documents;
 mod federated;
 mod federation_replay;

@@ -11,6 +11,8 @@ mod items;
 mod paid;
 mod presentation;
 mod scope_honesty;
+mod stale;
+pub use stale::MemoryStaleStamp;
 
 pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
 #[cfg(test)]
@@ -255,6 +257,9 @@ pub struct MemoryItem {
     pub hedge_bucket: String,
     /// Provenance (default-on).
     pub provenance: MemoryProvenance,
+    /// Retained foreign content is explicitly stale after its pact stops refresh.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<MemoryStaleStamp>,
     /// World hex, when world-scoped.
     pub world: Option<String>,
     /// Facet hex, when faceted.

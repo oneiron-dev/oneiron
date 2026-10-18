@@ -4,7 +4,7 @@ use super::{ENTITY_TYPE_REGISTRY, EntityClassification, EntityTypeRegistryEntry,
 
 /// Stable kind family. A spill keeps its family even when its byte is in overflow.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 pub enum TypeByteFamily {
     Conversation,

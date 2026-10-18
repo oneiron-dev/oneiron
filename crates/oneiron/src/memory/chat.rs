@@ -632,6 +632,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         confidence: 1.0,
         // The bucket recall stamps for a structural record's certainty of 1.0.
         hedge_bucket: "confident".to_owned(),
+        stale: None,
         provenance: MemoryProvenance {
             source: "record".to_owned(),
             source_revision_ids: vec![view.id_hex.clone()],
