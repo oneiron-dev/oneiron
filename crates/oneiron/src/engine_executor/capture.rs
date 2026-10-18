@@ -54,7 +54,6 @@ impl EngineNativeExecutor<'_> {
                     seat_effort: config.seat_effort,
                     global_tier: &config.global_tier,
                     soft_steps: config.limits.soft_steps,
-                    hard_steps: config.limits.hard_steps,
                     prompt_fingerprint,
                 }),
             },

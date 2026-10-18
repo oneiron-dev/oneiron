@@ -1267,6 +1267,11 @@ class Oneiron:
             """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
         def freebusy(self, spec: Facade.CalendarFreebusyRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyDto]:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+        @property
+        def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
+    class _VaultCalendarTranscriptVerbs:
+        def ingest(self, spec: Facade.TranscriptFileDropInput) -> Facade.TranscriptIngestOutcome:
+            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
     class _VaultWritesVerbs:
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""

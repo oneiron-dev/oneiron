@@ -11614,6 +11614,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "FoldCompactRequest",
+      "FoldHistoryRequest",
+      "FoldMarkRequest",
+      "FoldRunRequest",
+      "FoldUnfoldRequest",
+      "RunAttachRequest",
+      "RunAttached"
+     ],
+     "path": "src/code_run/fold_api.rs",
+     "purpose": "Typed public calls on a credential's attached live run",
+     "surface": {
+      "fn": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CodeRunLiveRunBinding",
       "LiveRunCredential"
      ],
@@ -11633,7 +11652,7 @@
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
       "crate-vis": 18,
-      "mod": 5,
+      "mod": 6,
       "re-export": 17
      }
     },
@@ -22220,6 +22239,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "FoldHistory",
+      "FoldHistoryEpoch",
+      "FoldHistoryStep"
+     ],
+     "path": "src/engine_executor/history.rs",
+     "purpose": "Durable steps and landed compaction boundaries of an attached run",
+     "surface": {
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -22237,7 +22271,7 @@
      "purpose": "Engine-native JS code-mode executor",
      "surface": {
       "crate-vis": 2,
-      "mod": 1,
+      "mod": 2,
       "re-export": 4
      }
     },
@@ -22383,7 +22417,7 @@
      "path": "src/engine_executor/types.rs",
      "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
      "surface": {
-      "const": 6,
+      "const": 5,
       "crate-vis": 3,
       "enum": 5,
       "fn": 8,
@@ -48873,7 +48907,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 424
+      "fn": 431
      }
     },
     {
@@ -54360,7 +54394,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54682,7 +54716,7 @@
      "purpose": "—"
     },
     "engine_executor": {
-     "files": 25,
+     "files": 26,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55643,7 +55677,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3388,
+   "source_files": 3390,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64038,7 +64072,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 375
+      "fn": 382
      }
     },
     {
@@ -65086,7 +65120,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 376
+      "fn": 383
      }
     },
     {
@@ -67929,7 +67963,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -68096,6 +68130,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/fold_doors.rs",
+     "purpose": "Public run-bound folds, through the caller's existing live-run action door",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/gate_policy_doors.rs",
      "purpose": "Owner policy and checker host doors",
      "surface": {
@@ -68129,7 +68173,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 75
+      "crate-vis": 76
      }
     },
     {
@@ -75404,7 +75448,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 329,
+     "files": 330,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75819,7 +75863,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 651,
+   "source_files": 652,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -76466,6 +76510,27 @@
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
+      "FoldCompactAsked",
+      "FoldCompactRequest",
+      "FoldDescription",
+      "FoldHistory",
+      "FoldHistoryEpoch",
+      "FoldHistoryRequest",
+      "FoldHistoryStep",
+      "FoldList",
+      "FoldMarkRequest",
+      "FoldMarked",
+      "FoldPending",
+      "FoldReplyFoldCompactAsked",
+      "FoldReplyFoldDescription",
+      "FoldReplyFoldList",
+      "FoldReplyFoldMarked",
+      "FoldReplyFoldUnfolded",
+      "FoldRunRequest",
+      "FoldSpan",
+      "FoldUnfold",
+      "FoldUnfoldRequest",
+      "FoldUnfolded",
       "FolderItemInput",
       "ForkKind",
       "ForkState",
@@ -77042,6 +77107,8 @@
       "RsiSettlement",
       "RsiSpendPurpose",
       "Run",
+      "RunAttachRequest",
+      "RunAttached",
       "RunSignalState",
       "RunTree",
       "RunTreeEvent",
@@ -77407,8 +77474,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 396,
-      "struct": 995
+      "enum": 402,
+      "struct": 1012
      }
     },
     {

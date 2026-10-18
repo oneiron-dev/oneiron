@@ -273,7 +273,6 @@ pub fn fork_executor_run(
         determinism: prefix.determinism,
         limits: EngineExecutorLimits {
             soft_steps: body.soft_steps,
-            hard_steps: body.hard_steps,
         },
     };
     let seed = ChildSeed {
