@@ -490,15 +490,17 @@ impl Vault {
     /// anchors this install's own request under it unless this machine is
     /// already mine there with its own keys; pins it; and opens each key
     /// wrapped to it whose world is live here. Every root-wrapped key lands in
-    /// exactly one list.
+    /// exactly one list. `_origin` does not narrow it: the owner's say-so counts
+    /// from any surface the owner is authenticated on (owner, 10-19), so a
+    /// peer's request restores as this machine's does. The revalidated owner
+    /// proof and the kit's seed gate are what stand.
     pub fn restore_world_keys(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
+        _origin: EditOrigin,
         seed: &RecoveryRootSeed,
         confirm: Option<KitConfirmation>,
     ) -> Result<RootRestore> {
-        this_machine_only(origin)?;
         self.precheck_root_door(owner, |txn, fold| {
             self.kit_seed_gate_in_txn(txn, fold, seed, confirm)
                 .map(drop)
