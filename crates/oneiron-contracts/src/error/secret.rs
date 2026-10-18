@@ -143,6 +143,11 @@ pub enum SecretError {
     /// may not hold. The reason is a fixed name, never key or envelope bytes.
     #[error("world key refused: {0}")]
     WorldKeyRefused(&'static str),
+    /// No capsule of a sealed bundle or pad object opens for this key: it was
+    /// sealed to other readers, as before this machine was added (FIX 4274).
+    /// A world key refusal by kind.
+    #[error("world key refused: no capsule of the object opens for this key")]
+    SealedBundleNoCapsule,
     /// This install has no this-device-only keystore, so it can hold no machine
     /// secret and open no world key.
     #[error("no this-device-only keystore: {0}")]
@@ -190,7 +195,7 @@ impl SecretError {
             Self::InvalidSecretRotationBody(_) => ErrorKind::InvalidSecretRotationBody,
             Self::TaintedArtifactStale { .. } => ErrorKind::TaintedArtifactStale,
             Self::InvalidSecretLeaseBody(_) => ErrorKind::InvalidSecretLeaseBody,
-            Self::WorldKeyRefused(_) => ErrorKind::WorldKeyRefused,
+            Self::WorldKeyRefused(_) | Self::SealedBundleNoCapsule => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
         }

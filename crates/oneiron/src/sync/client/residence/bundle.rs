@@ -34,6 +34,7 @@ use serde_json::json;
 use super::kit_fetch::KitHome;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::authority::{Destination, PeerMachine};
+use crate::error::{Error, SecretError};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
@@ -65,6 +66,16 @@ const STALE_PARENT_RETRIES: usize = 1;
 /// SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT). Past it the slot is
 /// finished, and the next slot uploads again (FIX 3353).
 const SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT: usize = 0;
+
+/// What a slot does when no capsule of the newest generation opens here, as on
+/// a machine added since (CALLS: SEALED_BUNDLE_NO_CAPSULE_ACTION).
+enum NoCapsuleAction {
+    /// The slot is finished, nothing taken or uploaded and no error: a later
+    /// slot takes a generation sealed to this machine (FIX 4274).
+    DeferSlot,
+}
+
+const SEALED_BUNDLE_NO_CAPSULE_ACTION: NoCapsuleAction = NoCapsuleAction::DeferSlot;
 
 /// The publisher call (FIX 922): every eligible machine asks for the home's
 /// publisher turn each slot, the holder publishes, and the rest take its
@@ -355,7 +366,8 @@ impl SlotRelay<'_> {
     /// home refused the upload on an unchanged parent past
     /// [`SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT`]; a machine waiting
     /// for the turn, or whose upload did not reach the home, tries again next
-    /// tick.
+    /// tick. A take no capsule here opens is no error
+    /// ([`SEALED_BUNDLE_NO_CAPSULE_ACTION`]).
     async fn run(
         &self,
         rpc: &mut ResidenceRpc,
@@ -394,7 +406,18 @@ impl SlotRelay<'_> {
                     Err(error) => {
                         cursor.slot = self.slot;
                         store_cursor(vault, cursor).map_err(storage)?;
-                        return Err(storage(error));
+                        if !matches!(error, Error::Secret(SecretError::SealedBundleNoCapsule)) {
+                            return Err(storage(error));
+                        }
+                        match SEALED_BUNDLE_NO_CAPSULE_ACTION {
+                            // The next machine waiting need not wait out the lease.
+                            NoCapsuleAction::DeferSlot => {
+                                if self.publisher {
+                                    let _ = turn::ask_turn(rpc, true).await;
+                                }
+                                return Ok(());
+                            }
+                        }
                     }
                 }
                 store_cursor(vault, cursor).map_err(storage)?;

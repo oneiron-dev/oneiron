@@ -55,7 +55,9 @@ use super::{
 use crate::Vault;
 use crate::authority::{AuthorityFold, Destination, EffectiveRead, SealedCopies};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result, SecretError};
+use crate::ports::TombstoneStoreRead;
+use crate::store::Store;
 
 /// The bundle's size step: every bundle is a positive multiple of it.
 pub const SEALED_BUNDLE_PAD_STEP_BYTES: usize = 64 * 1024 * 1024;
@@ -113,6 +115,16 @@ enum EraseKey {
 /// it, so a machine added after older generations were sealed can sweep them
 /// too (FIX 3355).
 const SEALED_BUNDLE_ERASE_KEY_SOURCE: &[EraseKey] = &[EraseKey::Machine, EraseKey::Kit];
+
+/// What a new pad object holds of a world deleted here (CALLS:
+/// SEALED_BUNDLE_NEW_PAD_DELETED_WORLD).
+enum DeletedWorldPads {
+    /// None of its pads: its section no longer rides either (FIX 4275). Its pad
+    /// rows here and every kept object stay as they are; erase strips those.
+    Omit,
+}
+
+const SEALED_BUNDLE_NEW_PAD_DELETED_WORLD: DeletedWorldPads = DeletedWorldPads::Omit;
 
 /// A bundle or a pad object: its frame magic, its envelope purpose, its size step.
 #[derive(Clone, Copy)]
@@ -681,7 +693,8 @@ impl Vault {
     /// bundle must carry it for `holder` ([`bundle_carries`]; owner ruling Q1).
     /// `carried` are sections of an earlier generation, kept unchanged unless one
     /// of `worlds` replaces it. The pad object holds the pad of every key here of
-    /// every world the bundle carries for `holder`.
+    /// every world the bundle carries for `holder`, but a world deleted here
+    /// ([`SEALED_BUNDLE_NEW_PAD_DELETED_WORLD`]).
     pub fn seal_vault_bundle(
         &self,
         slot: u64,
@@ -697,10 +710,11 @@ impl Vault {
     /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
     /// from the generation whose pad object is `latest`: the new pad object
     /// also holds each pad of `latest` this machine has no row for, of a world
-    /// the bundle still carries for `holder` whose keys were not destroyed here,
-    /// so a carried section's key still restores with the kit. Its index files
-    /// each fresh section's tag under its key, and each carried one's under
-    /// the key it names, where known ([`OpenedVaultBundle::sections_known`]).
+    /// the bundle still carries for `holder`, not deleted here and whose keys
+    /// were not destroyed here, so a carried section's key still restores with
+    /// the kit. Its index files each fresh section's tag under its key, and
+    /// each carried one's under the key it names, where known
+    /// ([`OpenedVaultBundle::sections_known`]).
     pub(crate) fn seal_vault_bundle_carrying(
         &self,
         slot: u64,
@@ -799,18 +813,20 @@ impl Vault {
         let mut pads = Vec::new();
         for key in fold.all_world_keys() {
             if bundle_carries(&fold, key.id.world, holder)
+                && new_pads_hold(&self.store, &txn, key.id.world)?
                 && let Some(pad) = pad_in_txn(&self.store, &txn, &key.id)?
             {
                 pads.push((key.id, Zeroizing::new(*pad.bytes())));
             }
         }
         // A carried section's key keeps the pad the latest generation held for
-        // it, unless the bundle no longer carries its world for this holder or
-        // its keys were destroyed here.
+        // it, unless the bundle no longer carries its world for this holder, or
+        // the world was deleted or its keys destroyed here.
         for (key, pad) in latest.map_or(&[][..], |latest| &latest.entries[..]) {
             if bundle_carries(&fold, key.world, holder)
                 && !pads.iter().any(|(held, _)| held == key)
                 && !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
+                && new_pads_hold(&self.store, &txn, key.world)?
             {
                 pads.push((*key, Zeroizing::new(**pad)));
             }
@@ -1081,6 +1097,15 @@ fn bundle_carries(fold: &AuthorityFold, world: EntityId, holder: Destination) ->
         }
 }
 
+/// Whether a new pad object holds `world`'s pads, by its deletion state in `txn`
+/// ([`SEALED_BUNDLE_NEW_PAD_DELETED_WORLD`]).
+fn new_pads_hold(store: &Store, txn: &heed::RoTxn<'_>, world: EntityId) -> Result<bool> {
+    let deleted = TombstoneStoreRead::port_deletion_state(store, txn, &world)?.deleted;
+    Ok(match SEALED_BUNDLE_NEW_PAD_DELETED_WORLD {
+        DeletedWorldPads::Omit => !deleted,
+    })
+}
+
 /// `pads` opened with the first of `secrets` that opens it.
 fn open_to_erase(
     vault_id: &[u8; 32],
@@ -1197,7 +1222,8 @@ fn open_slots(
             return Ok(key);
         }
     }
-    Err(refused("no capsule of the object opens for this key"))
+    // Typed, so a relay whose take this machine cannot open defers its slot.
+    Err(Error::Secret(SecretError::SealedBundleNoCapsule))
 }
 
 /// Frames `body` under the outer key behind `slots`, padded inside the
