@@ -12,6 +12,9 @@ use crate::side_table::{self, LegacyJson, SideTable};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::Ordering;
 
+mod observation;
+pub use observation::*;
+
 const POLICY: SideTable<(), DreamerWakePolicy, LegacyJson> =
     SideTable::new(&side_table::DREAMER_WAKE_POLICY);
 const STATE: SideTable<(), WakeState, LegacyJson> = SideTable::new(&side_table::DREAMER_WAKE_STATE);
@@ -25,7 +28,7 @@ fn invalid() -> Error {
 
 /// Per-vault recipe dials. An owner may write a different v1 row; these are
 /// data, not compiled thresholds. `new_records` excludes Generated claims.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerWakePolicy {
     pub wake_grain_turns: u64,
@@ -50,14 +53,14 @@ pub struct DreamerWakePolicy {
     pub surprise_permille: u16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaveRecipePriority {
     BeforeConnectorEvent,
     AfterConnectorEvent,
 }
 /// Which role a definition without an explicit cadence dial receives.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentWakeRole {
     Companion,
@@ -67,7 +70,7 @@ pub enum AgentWakeRole {
 
 /// The owner-selected cadence precedence. The shipped default prevents a
 /// nested definition from making cadence more frequent than its vault.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CadencePrecedence {
     VaultFloor,
@@ -76,7 +79,7 @@ pub enum CadencePrecedence {
 
 /// Which signal classes admit a wake for one role. Each bit is policy data,
 /// not a hardcoded role switch in the scheduler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWakeTriggers {
     pub cadence: bool,
@@ -86,7 +89,7 @@ pub struct AgentWakeTriggers {
 }
 
 /// Role table on the owner-editable wake-policy row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentWakePolicy {
     pub absent_role: AgentWakeRole,
@@ -162,7 +165,7 @@ impl DreamerWakePolicy {
 /// Liveness is sampled by the host at the same instant as the policy check.
 /// `last_inbound_at` is seconds on the vault clock. A running turn or live
 /// background job cancels the quiet timer rather than merely postponing work.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WakeIdleState {
     pub running_turns: bool,
     pub live_background_work: bool,
@@ -171,7 +174,7 @@ pub struct WakeIdleState {
     pub last_inbound_at: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum WakePolicyDecision {
     Silent,
     ArmIdle { due_at: u64 },
@@ -180,7 +183,7 @@ pub enum WakePolicyDecision {
 
 /// Which workflow recipe receives the durable wake signal. This is not a
 /// consolidation scope: a policy trigger alone has no partition payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WakeRecipe {
     Continuous,
@@ -248,6 +251,7 @@ pub struct WakePolicyOutcome {
 #[derive(Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct WakeState {
+    cadence: Option<WakeCadenceReceipt>,
     last_weave_at: Option<u64>,
     last_nightly_at: Option<u64>,
     // Each recipe consumes its own ordered prefix. Continuous turn wakes
@@ -626,144 +630,6 @@ impl Vault {
             rows.push(trigger);
         }
         Ok(rows)
-    }
-
-    /// Re-evaluate against the writer snapshot and co-commit wake + cursor.
-    /// A competing check cannot enqueue again for the same rows.
-    pub fn enqueue_due_dreamer_wake(
-        &self,
-        idle: WakeIdleState,
-        now: u64,
-    ) -> Result<WakePolicyOutcome> {
-        if !idle.compute_available || idle.running_turns || idle.live_background_work {
-            return Ok(WakePolicyOutcome {
-                decision: WakePolicyDecision::Silent,
-                attempt: None,
-            });
-        }
-        self.with_write_txn_grouped(|txn| {
-            let policy = policy_in_txn(self, txn)?;
-            let mut state = state_in_txn(self, txn)?;
-            let previous_processed = state.processed_change_id;
-            let counts = count_new(self, txn, &mut state)?;
-            let decision = decide(policy, &state, &counts, idle, now);
-            let WakePolicyDecision::Enqueue { recipe } = decision else {
-                // Irrelevant rows advance only their own recipe cursor;
-                // pending explicit records survive continuous turn wakes.
-                let mut changed = false;
-                if counts.turns == 0 && state.turn_change_id != counts.last {
-                    state.turn_change_id = counts.last;
-                    changed = true;
-                }
-                if counts.records == 0 && state.record_change_id != counts.last {
-                    state.record_change_id = counts.last;
-                    changed = true;
-                }
-                if counts.nightly == 0 && state.nightly_change_id != counts.last {
-                    state.nightly_change_id = counts.last;
-                    changed = true;
-                }
-                if changed || state.processed_change_id != previous_processed {
-                    STATE
-                        .put(&self.store, txn, &(), &state)
-                        .map_err(|e| row_error(e, invalid()))?;
-                }
-                return Ok(WakePolicyOutcome {
-                    decision,
-                    attempt: None,
-                });
-            };
-            let trigger = WakePolicyTrigger {
-                recipe,
-                turn_count: counts.turns,
-                record_count: counts.records,
-                nightly_count: counts.nightly,
-                after_nightly: state.nightly_change_id,
-                after_turn: state.turn_change_id,
-                after_record: state.record_change_id,
-                through: counts
-                    .last
-                    .ok_or(Error::CorruptedIndex("wake policy mutation head"))?,
-                observed_at: now,
-                latest_after_turn: state.turn_change_id,
-                latest_after_record: state.record_change_id,
-                latest_after_nightly: state.nightly_change_id,
-                latest_turn_count: counts.turns,
-                latest_record_count: counts.records,
-                latest_nightly_count: counts.nightly,
-            };
-            let attempt =
-                DreamerRunnerStore::new(self).enqueue_recipe_wake_in_txn(txn, &trigger, now)?;
-            let key = [recipe.key()];
-            let mut pending = trigger;
-            if let Some(prior) = OUTBOX
-                .get(&self.store, txn, &key)
-                .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
-            {
-                if prior.recipe != recipe {
-                    return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
-                }
-                pending.turn_count = merge_component(
-                    pending.turn_count,
-                    pending.latest_after_turn,
-                    prior.turn_count,
-                    prior.latest_turn_count,
-                    prior.latest_after_turn,
-                )?;
-                pending.record_count = merge_component(
-                    pending.record_count,
-                    pending.latest_after_record,
-                    prior.record_count,
-                    prior.latest_record_count,
-                    prior.latest_after_record,
-                )?;
-                pending.nightly_count = merge_component(
-                    pending.nightly_count,
-                    pending.latest_after_nightly,
-                    prior.nightly_count,
-                    prior.latest_nightly_count,
-                    prior.latest_after_nightly,
-                )?;
-                pending.after_turn = prior.after_turn;
-                pending.after_record = prior.after_record;
-                pending.after_nightly = prior.after_nightly;
-            }
-            OUTBOX
-                .put(&self.store, txn, &key, &pending)
-                .map_err(|e| row_error(e, invalid()))?;
-            match recipe {
-                WakeRecipe::Continuous => {
-                    state.turn_change_id = counts.last;
-                    state.pending_turns.clear();
-                }
-                WakeRecipe::Weave => {
-                    state.record_change_id = counts.last;
-                    state.pending_records.clear();
-                    state.last_weave_at = Some(now);
-                }
-                WakeRecipe::Nightly => {
-                    state.nightly_change_id = counts.last;
-                    state.pending_nightly.clear();
-                    state.last_nightly_at = Some(now);
-                }
-            }
-            if counts.turns == 0 {
-                state.turn_change_id = counts.last;
-            }
-            if counts.records == 0 {
-                state.record_change_id = counts.last;
-            }
-            if counts.nightly == 0 {
-                state.nightly_change_id = counts.last;
-            }
-            STATE
-                .put(&self.store, txn, &(), &state)
-                .map_err(|e| row_error(e, invalid()))?;
-            Ok(WakePolicyOutcome {
-                decision,
-                attempt: Some(attempt),
-            })
-        })
     }
 }
 

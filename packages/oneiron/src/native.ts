@@ -768,6 +768,11 @@ vaultRunsStep(input: unknown): unknown
 vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
+vaultSieveEvidence(input: unknown): unknown
+vaultSieveEvidenceReplay(input: unknown): unknown
+vaultSieveCadence(input: unknown): unknown
+vaultSieveSettlements(input: unknown): unknown
+vaultSieveSettlementsGet(input: unknown): unknown
 vaultSieveQueue(input: unknown): unknown
 vaultSieveRetained(input: unknown): unknown
 vaultSieveReceipts(input: unknown): unknown

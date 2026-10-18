@@ -120,6 +120,7 @@ mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
 mod sieve_doors;
+mod sieve_observation_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;

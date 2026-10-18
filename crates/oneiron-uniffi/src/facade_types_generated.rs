@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 856 facade rows, 2920 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 812.
+// UniFFI census: 861 facade rows, 2940 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 817.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -41133,6 +41133,343 @@ pub struct ScopedReadResultConsolidationEvidenceSourceList {
     pub narrowing: ScopedReadReceipt,
 }
 
+/// `oneiron::dreamer_wake::sieve::evidence::SieveEvidenceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SieveEvidenceRequest {
+    #[serde(rename = "turn")]
+    pub turn: String,
+}
+
+/// `oneiron::dreamer_wake::sieve::evidence::SieveEvidenceCursor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveEvidenceCursor {
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+    #[serde(rename = "turn")]
+    pub turn: String,
+}
+
+/// `oneiron::dreamer_wake::sieve::evidence::SieveEvidenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SieveEvidenceView {
+    #[serde(rename = "turn")]
+    pub turn: String,
+    #[serde(rename = "reading", default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<Vec<u8>>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<SieveEvidenceCursor>,
+    #[serde(rename = "owed")]
+    pub owed: bool,
+    #[serde(rename = "continuing")]
+    pub continuing: bool,
+}
+
+/// `oneiron::dreamer_wake::policy::AgentWakeRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentWakeRole {
+    #[serde(rename = "companion")]
+    Companion,
+    #[serde(rename = "leader")]
+    Leader,
+    #[serde(rename = "worker")]
+    Worker,
+}
+
+/// `oneiron::dreamer_wake::policy::CadencePrecedence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CadencePrecedence {
+    #[serde(rename = "vault_floor")]
+    VaultFloor,
+    #[serde(rename = "agent_override")]
+    AgentOverride,
+}
+
+/// `oneiron::dreamer_wake::policy::AgentWakeTriggers`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWakeTriggers {
+    #[serde(rename = "cadence")]
+    pub cadence: bool,
+    #[serde(rename = "surprise")]
+    pub surprise: bool,
+    #[serde(rename = "agency")]
+    pub agency: bool,
+    #[serde(rename = "event")]
+    pub event: bool,
+}
+
+/// `oneiron::dreamer_wake::policy::AgentWakePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentWakePolicy {
+    #[serde(rename = "absent_role")]
+    pub absent_role: AgentWakeRole,
+    #[serde(rename = "precedence")]
+    pub precedence: CadencePrecedence,
+    #[serde(rename = "companion")]
+    pub companion: AgentWakeTriggers,
+    #[serde(rename = "leader")]
+    pub leader: AgentWakeTriggers,
+    #[serde(rename = "worker")]
+    pub worker: AgentWakeTriggers,
+}
+
+/// `oneiron::dreamer_wake::policy::WeaveRecipePriority`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WeaveRecipePriority {
+    #[serde(rename = "before_connector_event")]
+    BeforeConnectorEvent,
+    #[serde(rename = "after_connector_event")]
+    AfterConnectorEvent,
+}
+
+/// `oneiron::dreamer_wake::policy::DreamerWakePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerWakePolicy {
+    #[serde(rename = "wake_grain_turns")]
+    pub wake_grain_turns: u64,
+    #[serde(rename = "agent_cadence")]
+    pub agent_cadence: AgentWakePolicy,
+    #[serde(rename = "new_records")]
+    pub new_records: u64,
+    #[serde(rename = "longest_wait_secs")]
+    pub longest_wait_secs: u64,
+    #[serde(rename = "nightly_secs")]
+    pub nightly_secs: u64,
+    #[serde(rename = "idle_secs")]
+    pub idle_secs: u64,
+    #[serde(rename = "quiet_weave_secs")]
+    pub quiet_weave_secs: u64,
+    #[serde(rename = "weave_recipe_priority")]
+    pub weave_recipe_priority: WeaveRecipePriority,
+    #[serde(rename = "surprise_permille")]
+    pub surprise_permille: u16,
+}
+
+/// `oneiron::dreamer_wake::policy::WakeIdleState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeIdleState {
+    #[serde(rename = "running_turns")]
+    pub running_turns: bool,
+    #[serde(rename = "live_background_work")]
+    pub live_background_work: bool,
+    #[serde(rename = "compute_available")]
+    pub compute_available: bool,
+    #[serde(rename = "last_inbound_at")]
+    pub last_inbound_at: u64,
+}
+
+/// `oneiron::dreamer_wake::policy::WakeRecipe`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WakeRecipe {
+    #[serde(rename = "continuous")]
+    Continuous,
+    #[serde(rename = "nightly")]
+    Nightly,
+    #[serde(rename = "weave")]
+    Weave,
+}
+
+/// `oneiron::dreamer_wake::policy::WakePolicyDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WakePolicyDecision {
+    #[serde(rename = "Silent")]
+    Silent,
+    #[serde(rename = "ArmIdle")]
+    ArmIdle {
+        #[serde(rename = "due_at")]
+        due_at: u64,
+    },
+    #[serde(rename = "Enqueue")]
+    Enqueue {
+        #[serde(rename = "recipe")]
+        recipe: WakeRecipe,
+    },
+}
+
+/// `oneiron::dreamer_wake::policy::observation::WakeCadenceReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeCadenceReceipt {
+    #[serde(rename = "sequence")]
+    pub sequence: u64,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+    #[serde(
+        rename = "previous_due_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub previous_due_at: Option<u64>,
+    #[serde(rename = "boundary_reached")]
+    pub boundary_reached: bool,
+    #[serde(
+        rename = "last_boundary_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_boundary_at: Option<u64>,
+    #[serde(rename = "idle")]
+    pub idle: WakeIdleState,
+    #[serde(rename = "decision")]
+    pub decision: WakePolicyDecision,
+    #[serde(rename = "wake", default, skip_serializing_if = "Option::is_none")]
+    pub wake: Option<String>,
+    #[serde(
+        rename = "processed_change_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub processed_change_id: Option<Vec<u8>>,
+}
+
+/// `oneiron::dreamer_wake::policy::observation::WakeRecipeInputView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeRecipeInputView {
+    #[serde(rename = "recipe")]
+    pub recipe: WakeRecipe,
+    #[serde(rename = "turn_count")]
+    pub turn_count: u64,
+    #[serde(rename = "record_count")]
+    pub record_count: u64,
+    #[serde(rename = "nightly_count")]
+    pub nightly_count: u64,
+    #[serde(
+        rename = "after_turn",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_turn: Option<Vec<u8>>,
+    #[serde(
+        rename = "after_record",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_record: Option<Vec<u8>>,
+    #[serde(
+        rename = "after_nightly",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub after_nightly: Option<Vec<u8>>,
+    #[serde(rename = "through")]
+    pub through: Vec<u8>,
+    #[serde(rename = "observed_at")]
+    pub observed_at: u64,
+}
+
+/// `oneiron::dreamer_wake::policy::observation::WakeCadenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeCadenceView {
+    #[serde(rename = "policy")]
+    pub policy: DreamerWakePolicy,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<WakeCadenceReceipt>,
+    #[serde(rename = "pending")]
+    pub pending: Vec<WakeRecipeInputView>,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeSettlementsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WakeSettlementsRequest {
+    #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+    #[serde(rename = "limit")]
+    pub limit: u32,
+}
+
+/// `oneiron::memory::dreamer::DreamerParkCauseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DreamerParkCauseView {
+    #[serde(rename = "provider_unavailable")]
+    ProviderUnavailable,
+    #[serde(rename = "executor_error")]
+    ExecutorError,
+    #[serde(rename = "checkpoint")]
+    Checkpoint,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+    #[serde(rename = "signal")]
+    Signal,
+    #[serde(rename = "other")]
+    Other,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeRecipeJobView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeRecipeJobView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "parent", default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "state")]
+    pub state: AttemptState,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
+    pub facet: Option<String>,
+    #[serde(
+        rename = "authority_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub authority_receipt: Option<Vec<u8>>,
+    #[serde(
+        rename = "park_cause",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub park_cause: Option<DreamerParkCauseView>,
+    #[serde(rename = "parked_at", default, skip_serializing_if = "Option::is_none")]
+    pub parked_at: Option<u64>,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "conclusions")]
+    pub conclusions: Vec<String>,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeSettlementView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeSettlementView {
+    #[serde(rename = "wake")]
+    pub wake: String,
+    #[serde(rename = "input", default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<WakeRecipeInputView>,
+    #[serde(rename = "settled")]
+    pub settled: bool,
+    #[serde(rename = "jobs")]
+    pub jobs: Vec<WakeRecipeJobView>,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeSettlementsPage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeSettlementsPage {
+    #[serde(rename = "wakes")]
+    pub wakes: Vec<WakeSettlementView>,
+    #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+/// `oneiron::dreamer_runner::observation::WakeSettlementRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WakeSettlementRequest {
+    #[serde(rename = "wake")]
+    pub wake: String,
+}
+
 /// `oneiron::dreamer_wake::sieve_doors::SievePageRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -41358,23 +41695,6 @@ pub struct SignalExtractionTicket {
 pub struct SignalExtractionResultRequest {
     #[serde(rename = "job_ref")]
     pub job_ref: String,
-}
-
-/// `oneiron::memory::dreamer::DreamerParkCauseView`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum DreamerParkCauseView {
-    #[serde(rename = "provider_unavailable")]
-    ProviderUnavailable,
-    #[serde(rename = "executor_error")]
-    ExecutorError,
-    #[serde(rename = "checkpoint")]
-    Checkpoint,
-    #[serde(rename = "cancelled")]
-    Cancelled,
-    #[serde(rename = "signal")]
-    Signal,
-    #[serde(rename = "other")]
-    Other,
 }
 
 /// `oneiron::memory::dreamer::DreamerParkedAttemptView`.

@@ -4080,6 +4080,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.sieve.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.evidence.replay",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.cadence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::WakeCadenceRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.settlements",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::observation::WakeSettlementsRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.settlements.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::observation::WakeSettlementRequest,
+                >(),
+            ),
+            (
                 "vault.sieve.queue",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_wake::sieve_doors::SievePageRequest,
@@ -5241,6 +5271,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.step",
     "vault.runs.checkpoint",
     "vault.consolidation.promote",
+    "vault.sieve.evidence",
+    "vault.sieve.evidence.replay",
+    "vault.sieve.cadence",
+    "vault.sieve.settlements",
+    "vault.sieve.settlements.get",
     "vault.sieve.queue",
     "vault.sieve.retained",
     "vault.sieve.receipts",
@@ -6593,6 +6628,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
+        >(),
+        "vault.sieve.evidence" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
+        >(),
+        "vault.sieve.evidence.replay" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_evidence::SieveEvidenceView,
+        >(),
+        "vault.sieve.cadence" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeCadenceView>()
+        }
+        "vault.sieve.settlements" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_runner::observation::WakeSettlementsPage,
+        >(),
+        "vault.sieve.settlements.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::dreamer_runner::observation::WakeSettlementView>,
         >(),
         "vault.sieve.queue" => crate::code_run::vault_read::request_schema::<
             crate::dreamer_wake::sieve_doors::SieveQueuePage,
@@ -12130,6 +12180,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.sieve.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.evidence.replay" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.cadence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.settlements" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.settlements.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.sieve.queue" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -15480,6 +15565,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
                 decode(value.clone())?;
         }
+        "vault.sieve.evidence" => {
+            let _input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.evidence.replay" => {
+            let _input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.cadence" => {
+            let _input: crate::dreamer_wake::WakeCadenceRequest = decode(value.clone())?;
+        }
+        "vault.sieve.settlements" => {
+            let _input: crate::dreamer_runner::observation::WakeSettlementsRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.settlements.get" => {
+            let _input: crate::dreamer_runner::observation::WakeSettlementRequest =
+                decode(value.clone())?;
+        }
         "vault.sieve.queue" => {
             let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
         }
@@ -17334,6 +17438,15 @@ pub fn invoke(
         }
         "vault.consolidation.evidence" => {
             encode(vault_consolidation_evidence(memory, decode(value)?)?)
+        }
+        "vault.sieve.evidence" => encode(vault_sieve_evidence(memory, decode(value)?)?),
+        "vault.sieve.evidence.replay" => {
+            encode(vault_sieve_evidence_replay(memory, decode(value)?)?)
+        }
+        "vault.sieve.cadence" => encode(vault_sieve_cadence(memory, decode(value)?)?),
+        "vault.sieve.settlements" => encode(vault_sieve_settlements(memory, decode(value)?)?),
+        "vault.sieve.settlements.get" => {
+            encode(vault_sieve_settlements_get(memory, decode(value)?)?)
         }
         "vault.sieve.queue" => encode(vault_sieve_queue(memory, decode(value)?)?),
         "vault.sieve.retained" => encode(vault_sieve_retained(memory, decode(value)?)?),
@@ -24006,6 +24119,61 @@ pub fn vault_consolidation_evidence(
         &memory.embedded_owner("vault.consolidation.evidence")?,
         &input,
     )
+}
+pub fn vault_sieve_evidence(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_evidence::SieveEvidenceView> {
+    crate::dreamer_wake::sieve_evidence::evidence_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.evidence")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_evidence_replay(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_evidence::SieveEvidenceView> {
+    crate::dreamer_wake::sieve_evidence::replay_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.evidence.replay")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_cadence(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::WakeCadenceRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeCadenceView> {
+    crate::dreamer_wake::cadence_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.cadence")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_settlements(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::observation::WakeSettlementsRequest,
+) -> MemoryResult<crate::dreamer_runner::observation::WakeSettlementsPage> {
+    crate::dreamer_runner::observation::settlements_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.settlements")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_settlements_get(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::observation::WakeSettlementRequest,
+) -> MemoryResult<Option<crate::dreamer_runner::observation::WakeSettlementView>> {
+    crate::dreamer_runner::observation::settlement_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.settlements.get")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_sieve_queue(
     memory: &Memory<'_>,

@@ -3691,6 +3691,31 @@ export_facade! {
     let output = client.vault_consolidation_evidence(&input)?;
     crate::codec::lift_record("vault.consolidation.evidence", &output)
 };
+"vault.sieve.evidence" => fn vault_sieve_evidence(&self, input: SieveEvidenceRequest) -> SieveEvidenceView = |client| {
+    let input: oneiron::dreamer_wake::sieve_evidence::SieveEvidenceRequest = crate::codec::lower_record("vault.sieve.evidence", input)?;
+    let output = client.vault_sieve_evidence(&input)?;
+    crate::codec::lift_record("vault.sieve.evidence", &output)
+};
+"vault.sieve.evidence.replay" => fn vault_sieve_evidence_replay(&self, input: SieveEvidenceRequest) -> SieveEvidenceView = |client| {
+    let input: oneiron::dreamer_wake::sieve_evidence::SieveEvidenceRequest = crate::codec::lower_record("vault.sieve.evidence.replay", input)?;
+    let output = client.vault_sieve_evidence_replay(&input)?;
+    crate::codec::lift_record("vault.sieve.evidence.replay", &output)
+};
+"vault.sieve.cadence" => fn vault_sieve_cadence(&self) -> WakeCadenceView = |client| {
+    let input: oneiron::dreamer_wake::WakeCadenceRequest = crate::codec::lower_empty("vault.sieve.cadence")?;
+    let output = client.vault_sieve_cadence(&input)?;
+    crate::codec::lift_record("vault.sieve.cadence", &output)
+};
+"vault.sieve.settlements" => fn vault_sieve_settlements(&self, input: WakeSettlementsRequest) -> WakeSettlementsPage = |client| {
+    let input: oneiron::dreamer_runner::observation::WakeSettlementsRequest = crate::codec::lower_record("vault.sieve.settlements", input)?;
+    let output = client.vault_sieve_settlements(&input)?;
+    crate::codec::lift_record("vault.sieve.settlements", &output)
+};
+"vault.sieve.settlements.get" => fn vault_sieve_settlements_get(&self, input: WakeSettlementRequest) -> Option<WakeSettlementView> = |client| {
+    let input: oneiron::dreamer_runner::observation::WakeSettlementRequest = crate::codec::lower_record("vault.sieve.settlements.get", input)?;
+    let output = client.vault_sieve_settlements_get(&input)?;
+    crate::codec::lift_record("vault.sieve.settlements.get", &output)
+};
 "vault.sieve.queue" => fn vault_sieve_queue(&self, input: SievePageRequest) -> SieveQueuePage = |client| {
     let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest = crate::codec::lower_record("vault.sieve.queue", input)?;
     let output = client.vault_sieve_queue(&input)?;

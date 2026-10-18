@@ -6715,6 +6715,48 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sieve_evidence(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.evidence", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_evidence_replay(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.evidence.replay", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_cadence(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.cadence", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_settlements(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.settlements", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_settlements_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.settlements.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_sieve_queue(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.sieve.queue", js_json(input))

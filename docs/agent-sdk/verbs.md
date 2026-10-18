@@ -744,6 +744,11 @@ both bindings and their export-census tests in one change.
 - `vault.runs.checkpoint`
 - `vault.consolidation.promote`
 - `vault.consolidation.evidence`
+- `vault.sieve.evidence`
+- `vault.sieve.evidence.replay`
+- `vault.sieve.cadence`
+- `vault.sieve.settlements`
+- `vault.sieve.settlements.get`
 - `vault.sieve.queue`
 - `vault.sieve.retained`
 - `vault.sieve.receipts`

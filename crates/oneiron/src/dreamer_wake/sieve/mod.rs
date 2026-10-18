@@ -39,6 +39,7 @@
 //! spans go in the queue as it reads, so a pass writes only what it read.
 
 mod chunks;
+pub mod evidence;
 mod policy;
 mod read;
 mod recipes;
