@@ -1,0 +1,870 @@
+{
+  "version": 1,
+  "format": "Canonical design data, not HTTP/SDK wire requests or a seeded vault.",
+  "referenceRule": "@ references are fixture roles. Bind them only to records created or discovered through typed public calls. They are not invented engine handles. The real owner comes from EngineFixture pairing; base is the reserved world, not a minted WORLD.",
+  "sources": {
+    "engineBindingHead": "5ecd5af5bea2c70e25760f0583f276790f49fba4",
+    "canon": [
+      {
+        "page": "/oneiron/core/oneiron-arch-0003-semantic-memory/",
+        "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+      },
+      {
+        "page": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+        "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+      },
+      {
+        "page": "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/",
+        "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
+      },
+      {
+        "page": "/oneiron/core/oneiron-arch-0055-entity-merge-split-consent-ramp-v1/",
+        "sha256": "88f2cf67ea8a5225ec9437da67ccaa7d557e4ec31794d3ca69f8c9ad4fed6fd9"
+      },
+      {
+        "page": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
+        "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+      },
+      {
+        "page": "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/",
+        "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+      },
+      {
+        "page": "/oneiron/sync/oneiron-arch-0043-federation-membership-v1/",
+        "sha256": "9a9f83242578b5e90c6faf5cec009ef1c9e6d0b1633e3e4c92476a2f170433e7"
+      },
+      {
+        "page": "/oneiron/identity/oneiron-arch-0022-identity-world-model-v1/",
+        "sha256": "c76f7ba7b6f160afaeaf66c424ba2ce9d03e0eee8937e3735cf417cfca3cecb3"
+      }
+    ],
+    "registryRows": [
+      "OF-006",
+      "OF-007",
+      "OF-015",
+      "OF-016",
+      "OF-019",
+      "OF-023",
+      "OF-031",
+      "OF-041",
+      "OF-045",
+      "OF-072",
+      "OF-172",
+      "OF-330",
+      "OF-332",
+      "OF-398",
+      "OF-434",
+      "OF-443",
+      "OF-464",
+      "OF-466",
+      "OF-494"
+    ]
+  },
+  "fixture": {
+    "people": [
+      {
+        "ref": "@person-a",
+        "name": "Morgan Vale"
+      },
+      {
+        "ref": "@person-b",
+        "name": "Morgan Reed"
+      }
+    ],
+    "agents": [
+      {
+        "ref": "@agent-a",
+        "name": "Reviewer North"
+      },
+      {
+        "ref": "@agent-b",
+        "name": "Reviewer South"
+      }
+    ],
+    "projects": [
+      {
+        "ref": "@project-north",
+        "name": "North Observatory",
+        "role": "project"
+      },
+      {
+        "ref": "@project-south",
+        "name": "South Observatory",
+        "role": "project"
+      }
+    ],
+    "worlds": [
+      {
+        "ref": "@dream",
+        "name": "Glass Observatory",
+        "kind": "dream"
+      },
+      {
+        "ref": "@roleplay",
+        "name": "Paper Observatory",
+        "kind": "fictional"
+      }
+    ],
+    "facets": [
+      {
+        "ref": "@facet-work",
+        "person": "@person-a",
+        "name": "work"
+      },
+      {
+        "ref": "@facet-story",
+        "person": "@person-a",
+        "name": "story"
+      }
+    ],
+    "base": "@base"
+  },
+  "cases": [
+    {
+      "id": "MEMORY-01",
+      "name": "Claim lifecycle with historical truth should work",
+      "current": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "profile.name",
+        "value": {
+          "kind": "string",
+          "value": "Morgan Vale"
+        },
+        "confidence": 1,
+        "source": "user_stated",
+        "approvalStatus": "auto",
+        "lifecycleStatus": "active",
+        "stale": false,
+        "evidenceTurnIds": [
+          "@name-statement"
+        ]
+      },
+      "alternative": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "profile.name",
+        "value": {
+          "kind": "string",
+          "value": "Morgan Reed"
+        },
+        "confidence": 1,
+        "source": "user_stated",
+        "approvalStatus": "proposed",
+        "lifecycleStatus": "active",
+        "stale": false,
+        "evidenceTurnIds": [
+          "@name-correction"
+        ]
+      },
+      "expected": {
+        "recallBeforeApproval": [
+          "Morgan Vale"
+        ],
+        "proposedVisibleInReview": true,
+        "approvalRequiresAuthorizedHolder": true,
+        "recallAfterAuthorizedApprovalAndSupersession": [
+          "Morgan Reed"
+        ],
+        "recallAfterRetraction": [],
+        "timeline": [
+          {
+            "value": "Morgan Vale",
+            "approvalStatus": "auto",
+            "lifecycleStatus": "superseded"
+          },
+          {
+            "value": "Morgan Reed",
+            "approvalStatus": "approved",
+            "lifecycleStatus": "retracted"
+          }
+        ],
+        "supersedesEdge": {
+          "from": "@alternative",
+          "to": "@current"
+        },
+        "validityClosesWithoutDeleting": true,
+        "recallAdmission": {
+          "approvalStatus": [
+            "auto",
+            "approved"
+          ],
+          "lifecycleStatus": "active",
+          "stale": false
+        }
+      }
+    },
+    {
+      "id": "MEMORY-02",
+      "name": "Claim admission rejects malformed scope should work",
+      "valid": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "profile.name",
+        "value": {
+          "kind": "string",
+          "value": "Morgan Vale"
+        },
+        "confidence": 1,
+        "source": "user_stated",
+        "evidenceTurnIds": [
+          "@name-statement"
+        ]
+      },
+      "malformed": [
+        {
+          "case": "missing-world",
+          "omit": "worldId"
+        },
+        {
+          "case": "missing-facet",
+          "omit": "scopeFacetId"
+        },
+        {
+          "case": "missing-relationship",
+          "omit": "scopeRelationshipId"
+        },
+        {
+          "case": "missing-project",
+          "omit": "scopeProjectId"
+        },
+        {
+          "case": "invalid-value",
+          "value": {
+            "kind": "number",
+            "value": "not-a-number"
+          }
+        },
+        {
+          "case": "invalid-confidence",
+          "confidence": 1.1
+        },
+        {
+          "case": "unknown-structural-kind",
+          "subjectType": "not-a-kind"
+        },
+        {
+          "case": "forged-author",
+          "made_by": {
+            "inputs": [],
+            "process": {
+              "actor": "@agent-b",
+              "class": "stated",
+              "identity": "forged",
+              "version": "1",
+              "params_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+            },
+            "at": 1
+          }
+        }
+      ],
+      "expected": {
+        "scopeOmissionError": "InvalidClaimBody",
+        "malformedClaimsStored": 0,
+        "malformedClaimsRecalled": 0,
+        "httpAndMcpUseSameActorAndValidation": true,
+        "authorComesFromCredentialNotRequest": true,
+        "validControlRetainsFourExplicitAxes": true,
+        "batchContract": "Each commit element has its own gate and outcome. A malformed element leaves no partial row/edges. Do not demand rollback of valid siblings or treat a top-level request refusal as per-element success."
+      }
+    },
+    {
+      "id": "MEMORY-03",
+      "name": "Observed preference disagreement should work",
+      "stated": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "preference.language",
+        "value": {
+          "kind": "string",
+          "value": "English"
+        },
+        "confidence": 1,
+        "source": "user_stated",
+        "evidenceTurnIds": [
+          "@stated-language"
+        ]
+      },
+      "observations": [
+        {
+          "session": "@session-one",
+          "turn": "@observation-one",
+          "content": "Please answer this explanation in Japanese."
+        },
+        {
+          "session": "@session-one",
+          "turn": "@observation-two",
+          "content": "Use Japanese for this summary too."
+        },
+        {
+          "session": "@session-two",
+          "turn": "@observation-three",
+          "content": "Please write the next reply in Japanese."
+        }
+      ],
+      "scriptedCanonicalCandidate": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "preference.language",
+        "value": {
+          "kind": "string",
+          "value": "Japanese"
+        },
+        "confidence": 1,
+        "source": "observed",
+        "evidenceTurnIds": [
+          "@observation-one",
+          "@observation-two",
+          "@observation-three"
+        ]
+      },
+      "generatedAlternative": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "preference.language",
+        "value": {
+          "kind": "string",
+          "value": "Japanese"
+        },
+        "confidence": 1,
+        "source": "generated"
+      },
+      "expected": {
+        "activeValues": [
+          {
+            "value": "English",
+            "source": "user_stated"
+          },
+          {
+            "value": "Japanese",
+            "source": "observed"
+          }
+        ],
+        "conflict": {
+          "predicate": "conflict.open",
+          "members": [
+            "@stated",
+            "@observed"
+          ]
+        },
+        "observedNeverRanksAheadOfStated": true,
+        "generatedMayNotSupersedeStated": true,
+        "statedStillActiveAfterGeneratedAttempt": true,
+        "sourceCannotBeLaunderedToObserved": true,
+        "minimumObservations": 3,
+        "minimumSessions": 2
+      }
+    },
+    {
+      "id": "MEMORY-04",
+      "name": "Opinion notes stay attributed should work",
+      "neutral": {
+        "subjectType": "PERSON",
+        "subjectId": "@person-a",
+        "worldId": "@base",
+        "scopeFacetId": "@facet-work",
+        "scopeRelationshipId": "all",
+        "scopeProjectId": "@project-north",
+        "predicate": "profile.name",
+        "value": {
+          "kind": "string",
+          "value": "Morgan Vale"
+        },
+        "confidence": 1,
+        "source": "user_stated",
+        "evidenceTurnIds": [
+          "@name-statement"
+        ]
+      },
+      "takes": [
+        {
+          "actor": "@agent-a",
+          "target": "@neutral",
+          "targetKind": "claim",
+          "markdown": "Use the full name in every observatory report."
+        },
+        {
+          "actor": "@agent-b",
+          "target": "@neutral",
+          "targetKind": "claim",
+          "markdown": "Use the given name in observatory reports."
+        }
+      ],
+      "expected": {
+        "noteKind": "opinion/take",
+        "distinctTakeRecords": 2,
+        "labels": [
+          "Reviewer North take",
+          "Reviewer South take"
+        ],
+        "eachTakeLinksToItsBoundAuthor": true,
+        "eachTakeLinksToNeutralBy": "claim_of",
+        "subjectTakeLink": "about",
+        "neutralValue": {
+          "kind": "string",
+          "value": "Morgan Vale"
+        },
+        "neutralSource": "user_stated",
+        "neutralLifecycle": "active",
+        "neutralEvidenceTurnIds": [
+          "@name-statement"
+        ],
+        "neutralClaimIsNotSupersededOrRetractedByOpinion": true,
+        "edgeProvenanceRetainsAuthorAndSourceRevision": true
+      }
+    },
+    {
+      "id": "MEMORY-05",
+      "name": "Bitemporal entity history should work",
+      "statements": [
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@base",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-north",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Morgan Vale"
+          },
+          "confidence": 1,
+          "source": "user_stated",
+          "evidenceTurnIds": [
+            "@name-statement"
+          ],
+          "ref": "@historical-name",
+          "occurredAt": 1767441600,
+          "learnedAt": 1770724800
+        },
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@base",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-north",
+          "predicate": "profile.pronouns",
+          "value": {
+            "kind": "string",
+            "value": "they/them"
+          },
+          "confidence": 1,
+          "source": "user_stated",
+          "evidenceTurnIds": [
+            "@pronouns-statement"
+          ],
+          "ref": "@historical-pronouns",
+          "occurredAt": 1768910400,
+          "learnedAt": 1769947200
+        }
+      ],
+      "windows": [
+        {
+          "axis": "occurred",
+          "start": 1767398400,
+          "end": 1767484799,
+          "expected": [
+            "@historical-name"
+          ]
+        },
+        {
+          "axis": "occurred",
+          "start": 1768867200,
+          "end": 1768953599,
+          "expected": [
+            "@historical-pronouns"
+          ]
+        },
+        {
+          "axis": "learned",
+          "start": 1769904000,
+          "end": 1769990399,
+          "expected": [
+            "@historical-pronouns"
+          ]
+        },
+        {
+          "axis": "learned",
+          "start": 1770681600,
+          "end": 1770767999,
+          "expected": [
+            "@historical-name"
+          ]
+        }
+      ],
+      "expected": {
+        "occurredOrder": [
+          "@historical-name",
+          "@historical-pronouns"
+        ],
+        "learnedOrder": [
+          "@historical-pronouns",
+          "@historical-name"
+        ],
+        "provenanceActor": "@paired-owner",
+        "provenanceClass": "stated",
+        "originalEvidenceAndSourceSurviveHistoryReads": true,
+        "historyAndReceiptsRetainBothClocks": true,
+        "asOfIsNotATimeTravelSnapshot": "RecallRequest.as_of resolves relative query words, not the learned-time filter."
+      }
+    },
+    {
+      "id": "MEMORY-06",
+      "name": "Task and habit lifecycle should work",
+      "pack": "oneiron-productivity",
+      "project": "@project-north",
+      "tasks": [
+        {
+          "ref": "@goal",
+          "role": "Goal",
+          "title": "Publish an observatory report"
+        },
+        {
+          "ref": "@milestone",
+          "role": "Milestone",
+          "title": "Collect observations",
+          "parent": "@goal"
+        },
+        {
+          "ref": "@task",
+          "role": "Task",
+          "title": "Record the northern sky",
+          "parent": "@milestone"
+        },
+        {
+          "ref": "@habit",
+          "role": "Habit",
+          "title": "Record one sky observation daily"
+        }
+      ],
+      "invalidNesting": [
+        {
+          "parent": "@goal",
+          "childRole": "Task"
+        },
+        {
+          "parent": "@task",
+          "childRole": "Task"
+        },
+        {
+          "parent": "@habit",
+          "childRole": "Task"
+        }
+      ],
+      "checkin": {
+        "ref": "@checkin",
+        "habit": "@habit",
+        "intent": "memory-sky-checkin-one",
+        "occurredAt": 1769947200,
+        "data": {
+          "observation": "Clear northern sky"
+        }
+      },
+      "expected": {
+        "allTaskRolesHaveKind": "TASK",
+        "checkinRole": "HabitCheckin",
+        "checkinChildOf": "@habit",
+        "validEdges": [
+          [
+            "@milestone",
+            "@goal"
+          ],
+          [
+            "@task",
+            "@milestone"
+          ],
+          [
+            "@checkin",
+            "@habit"
+          ]
+        ],
+        "invalidNestingChangesTree": false,
+        "checkinsAfterIdenticalIntentReplay": 1,
+        "currentStreak": 1,
+        "longestStreak": 1,
+        "changedPayloadCannotMutateCheckin": true,
+        "projectIsScopeNotTaskRole": true
+      }
+    },
+    {
+      "id": "MEMORY-07",
+      "name": "Identity merge split and undo should work",
+      "evidence": [
+        {
+          "ref": "@evidence-a",
+          "subject": "@person-a",
+          "content": "Morgan Vale made the North Observatory report."
+        },
+        {
+          "ref": "@evidence-b",
+          "subject": "@person-b",
+          "content": "Morgan Reed made the South Observatory report."
+        },
+        {
+          "ref": "@ambiguous-evidence",
+          "subject": "@person-a",
+          "content": "Morgan prepared an observatory report."
+        }
+      ],
+      "intentionalFacet": {
+        "entity": "@person-a",
+        "facet": "@facet-story",
+        "meaning": "Same person, a different mask; not another candidate PERSON."
+      },
+      "merge": {
+        "sources": [
+          "@person-b"
+        ],
+        "survivor": "@person-a",
+        "evidence": [
+          "@evidence-a",
+          "@evidence-b"
+        ],
+        "survivorship_plan": "read-through"
+      },
+      "split": {
+        "entity": "@person-a",
+        "heads": [
+          "@head-north",
+          "@head-south"
+        ],
+        "reassignment_map": [
+          {
+            "evidence": "@evidence-a",
+            "head": "@head-north"
+          },
+          {
+            "evidence": "@evidence-b",
+            "head": "@head-south"
+          }
+        ],
+        "evidence": [
+          "@evidence-a",
+          "@evidence-b"
+        ]
+      },
+      "expected": {
+        "oldIdAfterMerge": {
+          "id": "@person-b",
+          "heads": [
+            "@person-a"
+          ],
+          "lifecycle": "merged",
+          "edge": "merged_into"
+        },
+        "oldIdAfterSplit": {
+          "id": "@person-b",
+          "heads": [
+            "@head-north",
+            "@head-south"
+          ]
+        },
+        "originalSplitShell": {
+          "id": "@person-a",
+          "lifecycle": "split",
+          "edge": "split_into"
+        },
+        "claimSubjectsKeepOriginalIds": true,
+        "ambiguousResidueStaysOn": "@person-a",
+        "topologyEventsRetainEvidenceActorAndRationale": true,
+        "undoAppendsCounterEvents": true,
+        "headsAfterUndoSplit": [
+          "@person-a"
+        ],
+        "afterUndoMerge": {
+          "@person-a": [
+            "@person-a"
+          ],
+          "@person-b": [
+            "@person-b"
+          ]
+        },
+        "distinct": {
+          "predicate": "entity.distinct_from",
+          "a": "@person-a",
+          "b": "@person-b",
+          "reason": "Separate people with separate source statements."
+        },
+        "mergeSuggestionsForDistinctPair": 0,
+        "facetIsNotMergedIntoPersonOrAnotherFacet": true
+      }
+    },
+    {
+      "id": "MEMORY-08",
+      "name": "World and project separation should work",
+      "claims": [
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@base",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-north",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Morgan Vale north"
+          },
+          "confidence": 1,
+          "source": "user_stated"
+        },
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@base",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-south",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Morgan Vale south"
+          },
+          "confidence": 1,
+          "source": "user_stated"
+        },
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@dream",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-north",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Glass keeper north"
+          },
+          "confidence": 1,
+          "source": "user_stated"
+        },
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@dream",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-south",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Glass keeper south"
+          },
+          "confidence": 1,
+          "source": "user_stated"
+        },
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@roleplay",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-north",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Paper captain north"
+          },
+          "confidence": 1,
+          "source": "user_stated"
+        },
+        {
+          "subjectType": "PERSON",
+          "subjectId": "@person-a",
+          "worldId": "@roleplay",
+          "scopeFacetId": "@facet-work",
+          "scopeRelationshipId": "all",
+          "scopeProjectId": "@project-south",
+          "predicate": "profile.name",
+          "value": {
+            "kind": "string",
+            "value": "Paper captain south"
+          },
+          "confidence": 1,
+          "source": "user_stated"
+        }
+      ],
+      "expected": {
+        "allWorldsValuesByPartition": {
+          "@base": [
+            "Morgan Vale north",
+            "Morgan Vale south"
+          ],
+          "@dream": [
+            "Glass keeper north",
+            "Glass keeper south"
+          ],
+          "@roleplay": [
+            "Paper captain north",
+            "Paper captain south"
+          ]
+        },
+        "firstWorldPartition": "@base",
+        "allWorldsAndProjectsClaims": 6,
+        "oneExplicitWorldAndProjectClaims": 1,
+        "nonBaseExactSelectionDeclinesBase": true,
+        "samePredicateAcrossProjectsDoesNotSupersede": true,
+        "missingClaimScopeDoesNotMeanBase": true,
+        "guestCeilingCases": [
+          {
+            "name": "empty-world-ceiling",
+            "worlds": [],
+            "facets": [
+              "@facet-work"
+            ],
+            "expectedReadableClaims": 0
+          },
+          {
+            "name": "omitted-world-ceiling",
+            "facets": [
+              "@facet-work"
+            ],
+            "expectedReadableClaims": 0
+          },
+          {
+            "name": "empty-facet-ceiling",
+            "worlds": [
+              "@dream"
+            ],
+            "facets": [],
+            "expectedReadableClaims": 0
+          },
+          {
+            "name": "omitted-facet-ceiling",
+            "worlds": [
+              "@dream"
+            ],
+            "expectedReadableClaims": 0
+          }
+        ],
+        "requestAndGrantDiffer": "An empty requested axis adds no narrowing, but the grant ceiling still bounds it. An empty or omitted grant axis is bottom. Do not test that by narrowing the owner in their own root."
+      }
+    }
+  ]
+}
