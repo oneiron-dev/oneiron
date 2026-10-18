@@ -101,6 +101,8 @@ both bindings and their export-census tests in one change.
 - `vault.packs.setup.answer`
 - `vault.packs.setup.verify`
 - `vault.authority.audit`
+- `vault.authority.history.export`
+- `vault.authority.history.import`
 - `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`

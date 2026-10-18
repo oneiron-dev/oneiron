@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 394 facade rows, 1547 declarations.
-Inputs: 351 of 394 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 349 of 394 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 396 facade rows, 1549 declarations.
+Inputs: 353 of 396 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 351 of 396 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -2750,6 +2750,10 @@ class AuthorityAuditPage(TypedDict):
     order: AuthorityAuditOrder
     scanned: int
     cold_attested: NotRequired[list[ColdAuthorityAuditRow]]
+class SignedAuthorityHistory(TypedDict):
+    entries: list[str]
+class AuthorityHistoryImported(TypedDict):
+    entry_refs: list[str]
 class MeshPathReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
 MeshPathDirection = Literal["inbound", "outbound"]
