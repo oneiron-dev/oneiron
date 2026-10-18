@@ -369,6 +369,10 @@ pub enum LinearSyncError {
     /// Missing or revoked actor/host grant, or an unattributed TASK write.
     #[error("linear external effect lacks current actor and host authority")]
     AuthorizationDenied,
+    /// A webhook delivery id already consumed with another body (OF-427 C4):
+    /// a delivery id names one body for good.
+    #[error("linear webhook delivery id already names another body")]
+    DeliveryReused,
     /// Engine storage or invariant failure.
     #[error(transparent)]
     Store(#[from] crate::error::Error),

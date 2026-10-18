@@ -47,10 +47,14 @@ pub trait GraphQlExecutor {
     fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError>;
 }
 
+/// Linear's own GraphQL API, the endpoint unless the host names another.
+pub const LINEAR_GRAPHQL_ENDPOINT: &str = "https://api.linear.app/graphql";
+
 /// Production Linear API transport. Keep this on the credential-bearing host.
 #[derive(Clone)]
 pub struct HttpLinearClient {
     client: reqwest::blocking::Client,
+    endpoint: reqwest::Url,
 }
 
 impl HttpLinearClient {
@@ -65,6 +69,18 @@ impl HttpLinearClient {
 
     /// Constructs the same transport with the host's resolved request policy.
     pub fn with_timeout(api_key: &str, timeout: Duration) -> Result<Self, LinearSyncError> {
+        let endpoint = reqwest::Url::parse(LINEAR_GRAPHQL_ENDPOINT)
+            .map_err(|_| invalid("Linear GraphQL endpoint is invalid"))?;
+        Self::with_endpoint(api_key, endpoint, timeout)
+    }
+
+    /// The same transport against `endpoint`, a GraphQL endpoint the host
+    /// configured and validated (OF-427 C10). Redirects stay off.
+    pub fn with_endpoint(
+        api_key: &str,
+        endpoint: reqwest::Url,
+        timeout: Duration,
+    ) -> Result<Self, LinearSyncError> {
         if timeout.is_zero() {
             return Err(invalid("Linear request timeout is zero"));
         }
@@ -82,7 +98,7 @@ impl HttpLinearClient {
             .timeout(timeout)
             .build()
             .map_err(|_| invalid("Linear HTTP client setup failed"))?;
-        Ok(Self { client })
+        Ok(Self { client, endpoint })
     }
 }
 
@@ -90,7 +106,7 @@ impl GraphQlExecutor for HttpLinearClient {
     fn execute(&mut self, call: &GraphQlCall) -> Result<Value, GraphQlTransportError> {
         let response = self
             .client
-            .post("https://api.linear.app/graphql")
+            .post(self.endpoint.clone())
             .json(&call.body())
             .send()
             .map_err(|error| {

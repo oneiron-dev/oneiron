@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 405 facade rows, 1491 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 373.
+// UniFFI census: 408 facade rows, 1504 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 376.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -4179,6 +4179,13 @@ pub enum TaskReportBody {
     },
     #[serde(rename = "brief")]
     Brief(QueueTaskBrief),
+    #[serde(rename = "edit")]
+    Edit {
+        #[serde(rename = "expected_revision")]
+        expected_revision: u64,
+        #[serde(rename = "title")]
+        title: String,
+    },
 }
 
 /// `oneiron::task_verb::sdk::TaskUpdateRequest`.
@@ -23504,6 +23511,268 @@ pub struct NoteDefaultsView {
     pub overrides: NoteOverrides,
     #[serde(rename = "defaults")]
     pub defaults: NoteKindDescriptor,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearMappingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearMappingRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+}
+
+/// `oneiron::linear_sync::model::LinearIssueRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearIssueRef {
+    #[serde(rename = "issue_id")]
+    pub issue_id: String,
+    #[serde(rename = "team_id")]
+    pub team_id: String,
+    #[serde(rename = "identifier")]
+    pub identifier: String,
+}
+
+/// `oneiron::linear_sync::model::LinearFieldConflict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearFieldConflict {
+    #[serde(rename = "field")]
+    pub field: String,
+    #[serde(
+        rename = "task_value",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub task_value: Option<String>,
+    #[serde(
+        rename = "issue_value",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issue_value: Option<String>,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearLinkView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LinearLinkView {
+    #[serde(rename = "issue")]
+    pub issue: LinearIssueRef,
+    #[serde(rename = "link_revision")]
+    pub link_revision: u64,
+    #[serde(rename = "task_revision")]
+    pub task_revision: u64,
+    #[serde(rename = "issue_updated_at_ms")]
+    pub issue_updated_at_ms: u64,
+    #[serde(rename = "unresolved_conflicts")]
+    pub unresolved_conflicts: Vec<LinearFieldConflict>,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearMappingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LinearMappingView {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "task_revision")]
+    pub task_revision: u64,
+    #[serde(rename = "link", default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<LinearLinkView>,
+    #[serde(rename = "opted_out")]
+    pub opted_out: bool,
+    #[serde(rename = "mapping_revision")]
+    pub mapping_revision: u64,
+    #[serde(
+        rename = "dirty_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dirty_revision: Option<u64>,
+    #[serde(rename = "newest_event_refs")]
+    pub newest_event_refs: Vec<String>,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearMappingOp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum LinearMappingOp {
+    #[serde(rename = "link")]
+    Link {
+        #[serde(rename = "issue_id")]
+        issue_id: String,
+        #[serde(rename = "identifier")]
+        identifier: String,
+    },
+    #[serde(rename = "unlink")]
+    Unlink,
+    #[serde(rename = "mirror")]
+    Mirror,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearMappingEdit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearMappingEdit {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "expected_mapping_revision")]
+    pub expected_mapping_revision: u64,
+    #[serde(rename = "intent_key")]
+    pub intent_key: String,
+    #[serde(rename = "op")]
+    pub op: LinearMappingOp,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearMappingEditReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LinearMappingEditReceipt {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "op")]
+    pub op: String,
+    #[serde(rename = "mapping_revision")]
+    pub mapping_revision: u64,
+    #[serde(rename = "opted_out")]
+    pub opted_out: bool,
+    #[serde(rename = "issue", default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<LinearIssueRef>,
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "replayed")]
+    pub replayed: bool,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearProvenanceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearProvenanceRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "limit", default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u32>,
+}
+
+/// `oneiron::linear_sync::webhook::LinearExternalActor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearExternalActor {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// `oneiron::linear_sync::mirror_event::LinearMirrorEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LinearMirrorEvent {
+    #[serde(rename = "direction")]
+    pub direction: String,
+    #[serde(rename = "task_ref", default, skip_serializing_if = "Option::is_none")]
+    pub task_ref: Option<String>,
+    #[serde(rename = "issue", default, skip_serializing_if = "Option::is_none")]
+    pub issue: Option<LinearIssueRef>,
+    #[serde(
+        rename = "delivery_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delivery_id: Option<String>,
+    #[serde(
+        rename = "operation_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub operation_id: Option<String>,
+    #[serde(
+        rename = "body_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub body_digest: Option<String>,
+    #[serde(
+        rename = "payload_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub payload_ref: Option<String>,
+    #[serde(
+        rename = "external_actor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub external_actor: Option<LinearExternalActor>,
+    #[serde(
+        rename = "webhook_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub webhook_id: Option<String>,
+    #[serde(
+        rename = "organization_id",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub organization_id: Option<String>,
+    #[serde(
+        rename = "webhook_timestamp_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub webhook_timestamp_ms: Option<u64>,
+    #[serde(rename = "changed_fields")]
+    pub changed_fields: Vec<String>,
+    #[serde(rename = "status")]
+    pub status: String,
+    #[serde(rename = "conflicts")]
+    pub conflicts: Vec<LinearFieldConflict>,
+    #[serde(
+        rename = "writer_actor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub writer_actor: Option<String>,
+    #[serde(
+        rename = "writer_class",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub writer_class: Option<String>,
+    #[serde(rename = "gate_ref", default, skip_serializing_if = "Option::is_none")]
+    pub gate_ref: Option<String>,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearProvenanceEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LinearProvenanceEntry {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "event")]
+    pub event: LinearMirrorEvent,
+}
+
+/// `oneiron::linear_sync::facade_types::LinearProvenancePage`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LinearProvenancePage {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "events")]
+    pub events: Vec<LinearProvenanceEntry>,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
 }
 
 /// `oneiron::code_run::fold_api::RunAttachRequest`.

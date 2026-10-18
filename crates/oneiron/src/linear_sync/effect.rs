@@ -255,7 +255,10 @@ impl Vault {
             if !previously_authorized {
                 self.store.vault_meta.put(txn, &key, &digest)?;
             }
-            Ok(Some(format!("gate:{}", id.to_hex())))
+            let gate_ref = format!("gate:{}", id.to_hex());
+            // The push's provenance row keeps this admission (OF-427 C9).
+            super::mirror_event::note_outbound_admitted_in(self, txn, request, writer, &gate_ref)?;
+            Ok(Some(gate_ref))
         })?;
         admitted.ok_or(LinearSyncError::AuthorizationDenied)
     }

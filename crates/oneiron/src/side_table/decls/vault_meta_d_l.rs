@@ -732,6 +732,17 @@ side_tables! {
     LENS_SLOT: VaultMeta b"lens/slot/v1\0" Named;
     /// Tracker issue id to task id. Key: string.
     LINEAR_ISSUE_REVERSE: VaultMeta b"linear.issue.v1/" Raw;
+    /// One TASK's mirror control (OF-427 C6): whether it is opted out, its mapping revision and
+    /// its last mapping edit. Key: id16 (TASK).
+    LINEAR_MIRROR_CONTROL: VaultMeta b"linear.mirror_control.v1/" Named Engine
+        => crate::linear_sync::erase_mirror_control_actor_in_txn;
+    /// One mirror event (OF-427): a webhook delivery, a sent push, a mapping edit or a title
+    /// edit, with its external evidence and receipt. Key: direction byte + 32-byte digest.
+    LINEAR_MIRROR_EVENT: VaultMeta b"linear.mirror_event.v1/" Named
+        => crate::linear_sync::erase_mirror_event_actor_in_txn;
+    /// One TASK's mirror events by time; the value is empty. Key: id16 (TASK) + u64be (at) +
+    /// 33-byte event key.
+    LINEAR_MIRROR_EVENT_BY_TASK: VaultMeta b"linear.mirror_event_by_task.v1/" Raw;
     /// Tracker pull-page cursor. Key: ().
     LINEAR_PULL_CURSOR: VaultMeta b"linear.pull_cursor.v1" Raw Authored;
     /// Tracker-mirror outbox marker. Key: id16.

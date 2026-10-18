@@ -70,15 +70,30 @@
 mod codec;
 mod effect;
 mod engine;
+mod facade;
+mod facade_types;
+mod mirror_event;
 mod model;
 mod served;
 mod storage_codec;
+mod webhook;
 
 pub(crate) use self::codec::LINEAR_LINKS;
 pub use self::codec::{linear_event_digest, linear_operation_id};
 pub(crate) use self::effect::linear_effect_writer_in_txn;
 pub use self::effect::{LinearEffectKind, LinearEffectRequest};
 pub use self::engine::LinearSyncAdapter;
+pub use self::facade_types::{
+    LINEAR_PROVENANCE_PAGE_DEFAULT, LINEAR_PROVENANCE_PAGE_MAX, LinearLinkView, LinearMappingEdit,
+    LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView,
+    LinearProvenanceEntry, LinearProvenancePage, LinearProvenanceRequest,
+};
+pub(crate) use self::mirror_event::{
+    EventDirection, erase_mirror_control_actor_in_txn, erase_mirror_event_actor_in_txn, event_in,
+    forget_mirror_control_in, mirror_opted_out_in, put_event_in, record_outbound, request_digest,
+    task_edit_key,
+};
+pub use self::mirror_event::{LinearMirrorEvent, LinearMirrorRecord};
 pub use self::model::{
     LINEAR_ENGINE_AUTHORITATIVE_FIELDS, LINEAR_FIELD_ASSIGNEE_REF, LINEAR_FIELD_DESCRIPTION,
     LINEAR_FIELD_PRIORITY, LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE, LINEAR_MIRRORED_FIELDS,
@@ -90,6 +105,10 @@ pub use self::model::{
     MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
 pub use self::served::ServedLinearEgress;
+pub use self::webhook::{
+    LinearExternalActor, LinearWebhookEvent, LinearWebhookKind, LinearWebhookReceipt,
+    LinearWebhookStatus,
+};
 
 #[cfg(test)]
 mod tests;

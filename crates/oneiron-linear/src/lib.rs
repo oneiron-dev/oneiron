@@ -11,11 +11,16 @@ mod egress;
 mod http;
 mod journal;
 mod source;
+mod webhook;
 
 pub use dispatch::VaultLinearOutboundDoor;
 pub use egress::{LinearHostEgress, LinearMutation, LinearOutboundDoor};
-pub use http::{GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient};
+pub use http::{
+    GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient, LINEAR_GRAPHQL_ENDPOINT,
+};
+pub use oneiron::linear_sync::{LinearExternalActor, LinearWebhookEvent, LinearWebhookKind};
 pub use source::{LinearHostChangeSource, LinearTrackerConfig};
+pub use webhook::normalize_issue_webhook;
 
 use oneiron::LinearSyncError;
 use serde_json::Value;

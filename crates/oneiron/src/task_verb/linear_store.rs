@@ -203,6 +203,16 @@ impl<'v> VaultLinearTaskStore<'v> {
             Ok(false)
         })
     }
+    /// Whether a pass holds `task`'s push (OF-427 C6): the TASK is opted out
+    /// of the mirror, or a mapping edit linked it and no tracker event has
+    /// witnessed the issue since, so no remote precondition exists for a
+    /// conditional update. Its dirty revision waits.
+    fn holds_push(&self, task: EntityId) -> Result<bool> {
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(mirror_opted_out_in(self.vault, &txn, task)?
+            || read_link(self.vault, &txn, task)?
+                .is_some_and(|link| link.remote_field_hashes.is_empty()))
+    }
 }
 impl LinearTaskStore for VaultLinearTaskStore<'_> {
     fn task_snapshot(&self, task: EntityId) -> LinearSyncResult<TaskMirrorSnapshot> {
@@ -370,8 +380,26 @@ impl<I: LinearChangeSource, O: LinearEgress> LinearSyncAdapter<VaultLinearTaskSt
         let mut pushed = Vec::new();
         let mut first_failure = None;
         for (task, revision) in self.tasks().dirty_tasks()? {
+            match self.tasks().holds_push(task) {
+                Ok(false) => {}
+                Ok(true) => continue,
+                Err(error) => {
+                    first_failure.get_or_insert(error.into());
+                    continue;
+                }
+            }
+            // Evidence for the push's row only; the effect door re-proves it.
+            let writer = self.tasks().dirty_writer(task).ok().flatten();
             match self.push_task(task, now) {
                 Ok(receipt) => {
+                    // Each push this pass sent keeps its row (OF-427 C9).
+                    if matches!(
+                        receipt.status,
+                        LinearMirrorStatus::Linked | LinearMirrorStatus::Applied
+                    ) && let Err(error) = record_outbound(self.tasks().vault, &receipt, writer)
+                    {
+                        first_failure.get_or_insert_with(|| error.into());
+                    }
                     if receipt.status != LinearMirrorStatus::Conflict
                         && let Err(error) = self.tasks().acknowledge_push(task, revision)
                     {
@@ -398,9 +426,60 @@ pub(crate) fn forget_task_mirror(
 ) -> Result<()> {
     DIRTY.delete(store, txn, &id)?;
     WRITER.delete(store, txn, &id)?;
+    forget_mirror_control_in(store, txn, id)?;
     if let Some(link) = LINEAR_LINKS.get(store, txn, &id)? {
         ISSUE_REVERSE.delete(store, txn, &issue_key(&link.issue))?;
         LINEAR_LINKS.delete(store, txn, &id)?;
     }
     Ok(())
+}
+
+/// The TASK `issue_id` is linked to, if any.
+pub(crate) fn linear_issue_task_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    issue_id: &str,
+) -> Result<Option<EntityId>> {
+    ISSUE_REVERSE.get(&vault.store, txn, &issue_id.to_owned())
+}
+
+/// Writes a mapping edit's link and its reverse (OF-427 C6). The caller
+/// checked in `txn` that neither the TASK nor the issue is linked.
+pub(crate) fn put_mirror_link_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    link: &TaskIssueLink,
+) -> Result<()> {
+    LINEAR_LINKS.put(vault, txn, &link.task_ref, link)?;
+    ISSUE_REVERSE.put(&vault.store, txn, &issue_key(&link.issue), &link.task_ref)?;
+    Ok(())
+}
+
+/// Removes `task`'s link and its reverse (OF-427 C6). The TASK, the issue
+/// and the mirror's history stay.
+pub(crate) fn drop_mirror_link_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+) -> Result<()> {
+    if let Some(link) = LINEAR_LINKS.get(&vault.store, txn, &task)? {
+        ISSUE_REVERSE.delete(&vault.store, txn, &issue_key(&link.issue))?;
+        LINEAR_LINKS.delete(&vault.store, txn, &task)?;
+    }
+    Ok(())
+}
+
+/// Queues `task`'s current revision for the next pass as written by
+/// `actor`, the owner who asked to mirror it (OF-427 C6): with no link, the
+/// pass creates a fresh issue through the admitted-effect door.
+pub(crate) fn mark_mirror_dirty_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+    actor: EntityId,
+    class: EdgeActorClass,
+) -> Result<()> {
+    let current = revision(&vault.store, txn, task)?;
+    DIRTY.put(&vault.store, txn, &task, &current)?;
+    note_task_writer_in_txn(&vault.store, txn, task, actor, class)
 }

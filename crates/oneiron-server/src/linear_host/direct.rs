@@ -1,6 +1,6 @@
 //! The server's direct Linear GraphQL mirror, using the production adapter.
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,8 +8,8 @@ use oneiron::LinearSyncError;
 use oneiron::linear_sync::ServedLinearEgress;
 use oneiron::outbound::{OutboundDispatchActor, OutboundDispatchGate, OutboundDispatchPolicyRisk};
 use oneiron_linear::{
-    HttpLinearClient, LinearHostChangeSource, LinearHostEgress, LinearTrackerConfig,
-    VaultLinearOutboundDoor,
+    HttpLinearClient, LINEAR_GRAPHQL_ENDPOINT, LinearHostChangeSource, LinearHostEgress,
+    LinearTrackerConfig, VaultLinearOutboundDoor,
 };
 use serde::Deserialize;
 
@@ -25,6 +25,9 @@ struct DirectConfig {
     assignee_ids: BTreeMap<String, String>,
     page_size: u32,
     response_dir: PathBuf,
+    /// The GraphQL endpoint; Linear's own when absent (OF-427 C10).
+    #[serde(default)]
+    graphql_endpoint: Option<String>,
 }
 
 impl DirectConfig {
@@ -36,6 +39,27 @@ impl DirectConfig {
             page_size: self.page_size,
         }
     }
+
+    /// The endpoint setup and every pass send to, checked as the bridge URL
+    /// is: HTTPS, or HTTP on a loopback host, with nothing embedded.
+    fn endpoint(&self) -> anyhow::Result<reqwest::Url> {
+        let endpoint = reqwest::Url::parse(
+            self.graphql_endpoint
+                .as_deref()
+                .unwrap_or(LINEAR_GRAPHQL_ENDPOINT),
+        )?;
+        super::check_host_url(&endpoint, "Linear GraphQL endpoint")?;
+        Ok(endpoint)
+    }
+}
+
+/// The checked tracker part of the direct config at `path`: the webhook's
+/// mapping in direct mode (OF-427 C11).
+pub(super) fn tracker_at(path: &Path) -> anyhow::Result<LinearTrackerConfig> {
+    let config: DirectConfig = serde_json::from_slice(&std::fs::read(path)?)?;
+    let tracker = config.tracker();
+    tracker.validate()?;
+    Ok(tracker)
 }
 
 pub(super) async fn spawn(
@@ -49,7 +73,7 @@ pub(super) async fn spawn(
         server.config.allow_unauthenticated,
     )?;
     let scheduler = super::scheduler_actor(std::env::var("ONEIRON_LINEAR_SCHEDULER_ACTOR").ok())?;
-    let config =
+    let (config, endpoint) =
         crate::logging::off_runtime("Linear direct setup", move || -> anyhow::Result<_> {
             let config: DirectConfig = serde_json::from_slice(&std::fs::read(config_path)?)?;
             config.tracker().validate()?;
@@ -57,14 +81,16 @@ pub(super) async fn spawn(
                 config.response_dir.is_absolute() && config.response_dir.is_dir(),
                 "Linear response_dir must name an existing absolute host-private directory"
             );
-            Ok(config)
+            let endpoint = config.endpoint()?;
+            Ok((config, endpoint))
         })
         .await??;
     let policy = server.vault().linear_mirror_policy()?;
     // Validate the credential and TLS client off the async runtime before start.
     let timeout = Duration::from_secs(policy.request_timeout_secs);
+    let setup_endpoint = endpoint.clone();
     let api_key = crate::logging::off_runtime("Linear direct client", move || {
-        HttpLinearClient::with_timeout(&api_key, timeout).map(|_| api_key)
+        HttpLinearClient::with_endpoint(&api_key, setup_endpoint, timeout).map(|_| api_key)
     })
     .await??;
     Ok(Some(tokio::spawn(async move {
@@ -76,13 +102,15 @@ pub(super) async fn spawn(
             let key = api_key.clone();
             let tracker = config.tracker();
             let responses = config.response_dir.clone();
+            let endpoint = endpoint.clone();
             let outcome = tokio::task::spawn_blocking(move || {
                 let policy = vault
                     .linear_mirror_policy()
                     .map_err(LinearSyncError::Store)?;
                 let budget = vault.linear_sync_budget().map_err(LinearSyncError::Store)?;
-                let client = HttpLinearClient::with_timeout(
+                let client = HttpLinearClient::with_endpoint(
                     &key,
+                    endpoint,
                     Duration::from_secs(policy.request_timeout_secs),
                 )?;
                 let inbound = LinearHostChangeSource::new(client.clone(), tracker.clone())?;

@@ -1259,6 +1259,15 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.tasks.linear.mapping" => remote_agent_verb_output::<
+                    oneiron::linear_sync::LinearMappingView,
+                >(client, verb, &input),
+                "vault.tasks.linear.mapping.edit" => remote_agent_verb_output::<
+                    oneiron::linear_sync::LinearMappingEditReceipt,
+                >(client, verb, &input),
+                "vault.tasks.linear.provenance" => remote_agent_verb_output::<
+                    oneiron::linear_sync::LinearProvenancePage,
+                >(client, verb, &input),
                 "self.run.attach" => remote_agent_verb_output::<
                     oneiron::code_run::fold_api::RunAttached,
                 >(client, verb, &input),
@@ -6243,6 +6252,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.defaults", value)
+    }
+    pub fn vault_tasks_linear_mapping(
+        &self,
+        input: &oneiron::linear_sync::LinearMappingRequest,
+    ) -> Result<oneiron::linear_sync::LinearMappingView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.linear.mapping", value)
+    }
+    pub fn vault_tasks_linear_mapping_edit(
+        &self,
+        input: &oneiron::linear_sync::LinearMappingEdit,
+    ) -> Result<oneiron::linear_sync::LinearMappingEditReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.linear.mapping.edit", value)
+    }
+    pub fn vault_tasks_linear_provenance(
+        &self,
+        input: &oneiron::linear_sync::LinearProvenanceRequest,
+    ) -> Result<oneiron::linear_sync::LinearProvenancePage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.linear.provenance", value)
     }
     pub fn self_run_attach(
         &self,
