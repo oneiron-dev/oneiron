@@ -148,6 +148,7 @@ class NotificationSource(TypedDict):
     attempt: NotRequired[str | None]
     run: NotRequired[str | None]
     result: NotRequired[str | None]
+    detail: NotRequired[str | None]
 class NotificationRow(TypedDict):
     id: str
     learned_at: int
