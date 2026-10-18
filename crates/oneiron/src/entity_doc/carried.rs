@@ -5,11 +5,17 @@
 //! machines installs it under the same head, so the text, a quote's pinned
 //! version and its citation floors resolve there as on the machine that
 //! wrote it.
+//!
+//! An owner purge on one machine changes no operation, only the version its
+//! history starts at. A head whose floor is newer than this vault's drops the
+//! history here to the same floor, as the purge door would (FIX 3552); an
+//! older floor never brings dropped history back.
 
+use super::document::decode_frontier;
 use super::storage::{self, ENTITY_DOC_HEAD, Head};
 use super::{EntityDoc, TextField};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::error::Result;
+use crate::error::{ArtifactError, Error, Result};
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, EntityStoreRead};
 use crate::side_table::HexId;
 use crate::{EntityId, Vault};
@@ -31,6 +37,33 @@ pub(crate) struct CarriedDocument {
     pub(crate) shallow: Vec<u8>,
 }
 
+/// What a head does here whose history floor is newer than this vault's, an
+/// owner purge on another machine (a call: canon rules no reconciliation of
+/// purge floors between machines).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemotePurgePolicy {
+    /// This vault drops its history to the same floor, where a purge here
+    /// could reach it.
+    AdvanceIfPinsPermit,
+}
+
+/// How a MESSAGE document takes another machine's purge.
+const MESSAGE_DOC_REMOTE_PURGE_POLICY: RemotePurgePolicy = RemotePurgePolicy::AdvanceIfPinsPermit;
+
+/// What such a head does when this vault cannot drop its history to exactly
+/// that floor: a pin, a citation floor, a receipt, a fork base or a legal
+/// hold here keeps older history, or the history here cuts elsewhere (a
+/// call).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PurgeConflictPolicy {
+    /// The history here stands, and the head stays in the window for a later
+    /// merge.
+    Defer,
+}
+
+/// How a MESSAGE document takes a purge it cannot reach.
+const MESSAGE_DOC_PURGE_CONFLICT_POLICY: PurgeConflictPolicy = PurgeConflictPolicy::Defer;
+
 /// What merging a carried document did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum DocumentMerge {
@@ -45,6 +78,9 @@ pub(crate) enum DocumentMerge {
     Waiting,
     /// The document does not merge here.
     Refused(&'static str),
+    /// The head is a purge this vault does not take yet
+    /// ([`MESSAGE_DOC_PURGE_CONFLICT_POLICY`]).
+    Deferred(&'static str),
 }
 
 impl CarriedDocument {
@@ -84,6 +120,23 @@ impl CarriedDocument {
                 .map_or(Some(None), |floor| floor.map(Some))
         };
         self.holds(other) && matches!((floor(self), floor(other)), (Some(a), Some(b)) if a == b)
+    }
+
+    /// Whether this head's history starts at a strictly newer version than
+    /// `other`'s: an owner purge `other` has not taken. A floor that does
+    /// not decode, or one neither includes, is none.
+    pub(crate) fn purges(&self, other: &Self) -> bool {
+        let floor = |carried: &Self| {
+            if carried.shallow.is_empty() {
+                Some(VersionVector::default())
+            } else {
+                VersionVector::decode(&carried.shallow).ok()
+            }
+        };
+        let (Some(mine), Some(theirs)) = (floor(self), floor(other)) else {
+            return false;
+        };
+        mine.includes_vv(&theirs) && !theirs.includes_vv(&mine)
     }
 }
 
@@ -161,8 +214,9 @@ impl Vault {
     /// this vault erased refuses it. Where this vault holds no document for
     /// the message, the carried one is installed under the carried head,
     /// so its pins and citation floors resolve here. Where it holds the same
-    /// document, the snapshot's operations join it. Where it holds another
-    /// document or incarnation, that one stands.
+    /// document, the snapshot's operations join it, and a newer history floor
+    /// drops its history to that floor ([`purged_at_carried_floor`]). Where it
+    /// holds another document or incarnation, that one stands.
     pub(crate) fn merge_carried_message_document_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
@@ -191,7 +245,7 @@ impl Vault {
             if held.document != carried.document || held.incarnation != carried.incarnation {
                 return Ok(DocumentMerge::Conflict);
             }
-            if held.holds(carried) {
+            if held.holds(carried) && !carried.purges(held) {
                 return Ok(DocumentMerge::Held);
             }
         }
@@ -225,7 +279,7 @@ impl Vault {
                     )?;
                 }
             }
-            Some((mut head, _)) => {
+            Some((mut head, held)) => {
                 let doc = storage::load(&self.store, txn, &head)?;
                 let before = doc.doc.oplog_vv();
                 let joined = doc
@@ -237,16 +291,94 @@ impl Vault {
                         "snapshot does not join this vault's document",
                     ));
                 }
-                if doc.doc.oplog_vv() == before {
-                    return Ok(DocumentMerge::Held);
+                let purge = match MESSAGE_DOC_REMOTE_PURGE_POLICY {
+                    RemotePurgePolicy::AdvanceIfPinsPermit if carried.purges(&held) => {
+                        Some(purged_at_carried_floor(
+                            self, txn, &message, &head, &doc, carried, &incoming,
+                        )?)
+                    }
+                    RemotePurgePolicy::AdvanceIfPinsPermit => None,
+                };
+                let moved = doc.doc.oplog_vv() != before;
+                match purge {
+                    // A replacement snapshot, its updates gone, and its
+                    // floor, as the purge door writes them.
+                    Some(Ok(shallow)) => {
+                        storage::persist(self, txn, &message, &mut head, &shallow, None)?;
+                        self.store.port_document_shallow_since_put(
+                            txn,
+                            slot,
+                            &shallow.doc.shallow_since_vv().encode(),
+                        )?;
+                    }
+                    // A purge that waits still takes the operations the
+                    // snapshot brought.
+                    Some(Err(waits)) if !moved => return Ok(waits),
+                    None if !moved => return Ok(DocumentMerge::Held),
+                    _ => storage::persist(self, txn, &message, &mut head, &doc, Some(&before))?,
                 }
-                storage::persist(self, txn, &message, &mut head, &doc, Some(&before))?;
             }
         }
         // The live mirror carries on what this vault held beyond the head.
         crate::batch::queue_committed_rows(self, txn, std::iter::once(message).collect());
         Ok(DocumentMerge::Written)
     }
+}
+
+/// `doc`, which has joined snapshot `incoming` of `carried`, with its history
+/// dropped to the floor an owner purge on another machine left `carried` at
+/// (FIX 3552). The floor reaches only as far as a purge here could: the
+/// purge door's own floor and checks, and a held record keeps its history.
+/// The operations this vault holds beyond the snapshot stay. Otherwise what
+/// the head does instead: a floor its snapshot does not start at is refused,
+/// and one this vault cannot reach exactly waits
+/// ([`MESSAGE_DOC_PURGE_CONFLICT_POLICY`]).
+fn purged_at_carried_floor(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    message: &EntityId,
+    head: &Head,
+    doc: &EntityDoc,
+    carried: &CarriedDocument,
+    incoming: &EntityDoc,
+) -> Result<std::result::Result<EntityDoc, DocumentMerge>> {
+    let floor = incoming.doc.shallow_since_vv().to_vv();
+    if !incoming.doc.is_shallow()
+        || VersionVector::decode(&carried.shallow).ok() != Some(floor.clone())
+    {
+        return Ok(Err(DocumentMerge::Refused(
+            "snapshot floor is not the one its head names",
+        )));
+    }
+    let waits = |reason| match MESSAGE_DOC_PURGE_CONFLICT_POLICY {
+        PurgeConflictPolicy::Defer => Ok(Err(DocumentMerge::Deferred(reason))),
+    };
+    if crate::store::legal_hold::held_in_txn(&vault.store, txn, message.as_bytes())? {
+        return waits("a legal hold keeps its history");
+    }
+    // The purge door's refusals are a floor this vault cannot reach.
+    let refused = |error: Error| match error {
+        Error::Artifact(ArtifactError::InvalidEditManifest(reason)) => waits(reason),
+        error => Err(error),
+    };
+    let requested = incoming.doc.shallow_since_frontiers().encode();
+    let applied = match super::pins::floor(vault, txn, message, &head.incarnation, doc, &requested)
+    {
+        Ok(applied) => applied,
+        Err(error) => return refused(error),
+    };
+    if decode_frontier(&applied)? != decode_frontier(&requested)? {
+        return waits("a pin here keeps older history");
+    }
+    let shallow =
+        match super::pins::shallow_at(vault, txn, message, &head.incarnation, doc, &applied) {
+            Ok(shallow) => shallow,
+            Err(error) => return refused(error),
+        };
+    if shallow.doc.shallow_since_vv().to_vv() != floor {
+        return waits("the history here does not cut at its floor");
+    }
+    Ok(Ok(shallow))
 }
 
 /// The document a pointer row names, when it is one.
