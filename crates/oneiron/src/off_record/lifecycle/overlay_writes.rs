@@ -87,7 +87,9 @@ impl OffRecordSession<'_> {
                     },
                 )?;
             }
-            let (short, _) = self.overlay().alloc_session_short_id(&row, row.as_bytes())?;
+            let (short, _) = self
+                .overlay()
+                .alloc_session_short_id(&row, row.as_bytes())?;
             Ok(short)
         })
     }
@@ -206,9 +208,12 @@ impl OffRecordSession<'_> {
             .memory(actor.entity_ref(), actor.actor_class())
             .with_host_origin(origin);
         let encode = |value: std::result::Result<serde_json::Value, serde_json::Error>| {
-            value.map_err(|_| MemoryError::bad_request(format!("{} answer encoding failed", verb.as_str())))
+            value.map_err(|_| {
+                MemoryError::bad_request(format!("{} answer encoding failed", verb.as_str()))
+            })
         };
-        let decode = |what: &str| MemoryError::bad_request(format!("{} input is not {what}", verb.as_str()));
+        let decode =
+            |what: &str| MemoryError::bad_request(format!("{} input is not {what}", verb.as_str()));
         Some(match verb.as_str() {
             "vault.notes.create" => serde_json::from_value::<CreateNoteRequest>(input.clone())
                 .map_err(|_| decode("a NOTE"))
