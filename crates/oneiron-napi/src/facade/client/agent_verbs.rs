@@ -2173,6 +2173,87 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_off_record_rooms_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.start", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_witness(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.witness", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_save_from_here(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.save_from_here", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_suggest_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.suggest_save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_confirm_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.confirm_save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_off_record_rooms_decline_save(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.off_record.rooms.decline_save", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_records_erase_preview(
         &self,
         input: serde_json::Value,

@@ -273,6 +273,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.off_record.notes.create", post(facade_route))
         .route("/vault.off_record.claims.upsert", post(facade_route))
         .route("/self.off_record.execute", post(facade_route))
+        .route("/vault.off_record.rooms.status", post(facade_route))
+        .route("/vault.off_record.rooms.start", post(facade_route))
+        .route("/vault.off_record.rooms.witness", post(facade_route))
+        .route("/vault.off_record.rooms.save", post(facade_route))
+        .route("/vault.off_record.rooms.save_from_here", post(facade_route))
+        .route(
+            "/vault.off_record.rooms.export",
+            post(vault_off_record_rooms_export_attachment),
+        )
+        .route("/vault.off_record.rooms.suggest_save", post(facade_route))
+        .route("/vault.off_record.rooms.confirm_save", post(facade_route))
+        .route("/vault.off_record.rooms.decline_save", post(facade_route))
         .route("/vault.records.erase_preview", post(facade_route))
         .route("/vault.records.erase_confirm", post(facade_route))
         .route("/vault.research.create_child", post(facade_route))
@@ -836,6 +848,22 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
+}
+async fn vault_off_record_rooms_export_attachment(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    payload: Result<Json<serde_json::Value>, JsonRejection>,
+) -> Result<impl IntoResponse, FacadeApiError> {
+    let answer = facade_route(auth, State(server), uri, headers, payload).await?;
+    Ok((
+        [(
+            axum::http::header::CONTENT_DISPOSITION,
+            "attachment; filename=\"off-record-talk.json\"",
+        )],
+        answer,
+    ))
 }
 pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
     Router::new().route(

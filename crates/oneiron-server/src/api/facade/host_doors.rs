@@ -98,6 +98,7 @@ pub(crate) use super::support_grant_doors::*;
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::off_record_room_doors::*;
 pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
@@ -1477,6 +1478,17 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.claims.upsert"
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
+        }
+        "vault.off_record.rooms.start"
+        | "vault.off_record.rooms.status"
+        | "vault.off_record.rooms.witness"
+        | "vault.off_record.rooms.save"
+        | "vault.off_record.rooms.save_from_here"
+        | "vault.off_record.rooms.suggest_save"
+        | "vault.off_record.rooms.confirm_save"
+        | "vault.off_record.rooms.decline_save"
+        | "vault.off_record.rooms.export" => {
+            super::off_record_room_doors::off_record_room_admits(auth, verb)
         }
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),

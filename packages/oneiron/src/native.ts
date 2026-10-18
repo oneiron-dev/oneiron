@@ -280,6 +280,15 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+vaultOffRecordRoomsStatus(input: unknown): unknown
+vaultOffRecordRoomsStart(input: unknown): unknown
+vaultOffRecordRoomsWitness(input: unknown): unknown
+vaultOffRecordRoomsSave(input: unknown): unknown
+vaultOffRecordRoomsSaveFromHere(input: unknown): unknown
+vaultOffRecordRoomsExport(input: unknown): unknown
+vaultOffRecordRoomsSuggestSave(input: unknown): unknown
+vaultOffRecordRoomsConfirmSave(input: unknown): unknown
+vaultOffRecordRoomsDeclineSave(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown

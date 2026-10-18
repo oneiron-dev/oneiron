@@ -3999,6 +3999,144 @@
       "openapi": true
     },
     {
+      "name": "vault.off_record.rooms.status",
+      "description": "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.status\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.start",
+      "description": "A person starts an off-record stretch in a room they belong to, on their own credential.",
+      "input": "crate::task_verb::sdk::OffRecordRoomStartRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.start\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.witness",
+      "description": "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant.",
+      "input": "crate::task_verb::sdk::OffRecordRoomWitnessRequest",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.witness\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.save",
+      "description": "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomSaved",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.save_from_here",
+      "description": "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.save_from_here\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.export",
+      "description": "A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomExport",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.export\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "attachment": "off-record-talk.json"
+    },
+    {
+      "name": "vault.off_record.rooms.suggest_save",
+      "description": "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.suggest_save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "proposes": true,
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.off_record.rooms.confirm_save",
+      "description": "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomSaved",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.confirm_save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.rooms.decline_save",
+      "description": "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits.",
+      "input": "crate::task_verb::sdk::OffRecordRoomRequest",
+      "output": "crate::task_verb::sdk::OffRecordRoomView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.decline_save\", &input)?",
+      "host_door": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.records.erase_preview",
       "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
       "input": "crate::task_verb::sdk::RecordEraseRequest",

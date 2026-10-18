@@ -1104,6 +1104,15 @@ fn mcp_agent_verb_input(
         "vault.off_record.notes.create" => a.spec.clone().ok_or_else(invalid),
         "vault.off_record.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "self.off_record.execute" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.start" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.witness" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.save" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.save_from_here" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.suggest_save" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.confirm_save" => a.spec.clone().ok_or_else(invalid),
+        "vault.off_record.rooms.decline_save" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_preview" => a.spec.clone().ok_or_else(invalid),
         "vault.records.erase_confirm" => a.spec.clone().ok_or_else(invalid),
         "vault.research.create_child" => a.spec.clone().ok_or_else(invalid),
@@ -2558,6 +2567,33 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.off_record.execute" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.start" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.witness" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.save" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.save_from_here" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.suggest_save" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.confirm_save" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.off_record.rooms.decline_save" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.records.erase_preview" => {
@@ -8589,6 +8625,130 @@ async fn execute_agent_verb_row(
                     .flatten(),
             );
             let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.status" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.status", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_off_record_rooms_status(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.start" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.start", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomStartRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_off_record_rooms_start(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.witness" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.witness", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomWitnessRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_off_record_rooms_witness(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.save" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.save", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_off_record_rooms_save(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.save_from_here" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.off_record.rooms.save_from_here",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_off_record_rooms_save_from_here(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.export" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.export", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_off_record_rooms_export(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.suggest_save" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.suggest_save", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_off_record_rooms_suggest_save(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.confirm_save" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.confirm_save", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_off_record_rooms_confirm_save(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.off_record.rooms.decline_save" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.off_record.rooms.decline_save", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::vault_off_record_rooms_decline_save(
+                server, auth, input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

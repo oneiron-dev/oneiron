@@ -133,6 +133,11 @@ for row in ROWS:
     # that route.
     if row.get('openapi') and row.get('context', 'memory') != 'memory':
         raise ValueError(f'{row["name"]}: only a facade row is published in OpenAPI')
+    # A JSON attachment keeps the row's typed body and its declared filename.
+    if 'attachment' in row and (row.get('context', 'memory') != 'memory'
+            or not isinstance(row['attachment'], str)
+            or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*', row['attachment'])):
+        raise ValueError(f'{row["name"]}: an attachment names a facade JSON response file')
     # DOOR-127: `no_record` marks a facade row no transport keeps a call
     # receipt of (`NO_RECORD_ROWS`): an off-record session's own rows, as
     # ARCH-0052 keeps no wire receipt that a session ran. Every reply states
@@ -1190,7 +1195,22 @@ def facade_dispatch(facade_rows):
     routes = HEADER + 'use super::*;\npub(super) fn routes() -> Router<Arc<SyncServer>> { Router::new()\n'
     # G10: anonymous chat uses the existing standalone handler, never the
     # facade's invocation claim, hook chains or retained call-receipt layer.
-    routes += ''.join(f'.route("/{r["name"]}", post(facade_route))\n' for r in facade_rows if r['name'] != 'ai.anonymous_chat') + '}\n'
+    for r in facade_rows:
+        if r['name'] == 'ai.anonymous_chat': continue
+        handler = r['name'].replace('.', '_') + '_attachment' if 'attachment' in r else 'facade_route'
+        routes += f'.route("/{r["name"]}", post({handler}))\n'
+    routes += '}\n'
+    for r in facade_rows:
+        if 'attachment' not in r: continue
+        handler = r['name'].replace('.', '_') + '_attachment'
+        disposition = json.dumps(f'attachment; filename="{r["attachment"]}"')
+        routes += f'''async fn {handler}(
+            auth: CoreAuth, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
+            headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>,
+        ) -> Result<impl IntoResponse, FacadeApiError> {{
+            let answer = facade_route(auth, State(server), uri, headers, payload).await?;
+            Ok(([(axum::http::header::CONTENT_DISPOSITION, {disposition})], answer))
+        }}\n'''
     routes += 'pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> { Router::new().route("/v1/core/facade/ai.anonymous_chat", post(crate::api::anonymous_chat::chat)) }\n'
     dispatch = HEADER + DISPATCH_DOC + 'use super::*;\n'
     for r in facade_rows:
@@ -1286,7 +1306,10 @@ def facade_dispatch(facade_rows):
                 Ok(FacadeCallOutput {{ value: facade_hooks_post(server, hooks, output).await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let output = facade_output({door}?)?;{landed}
                 Ok(FacadeCallOutput::unlisted(facade_hooks_post(server, hooks, output).await?))''')
-            dispatch += head + f'''auth.require(CoreScope::{r["scope"]})?;
+            scope_guard = ('auth.require_granted(if auth.has_scope(CoreScope::Write) { CoreScope::Write } else { CoreScope::Propose })?;'
+                           if r.get('proposes') and r.get('admission', {}).get('credential_record_scope')
+                           else f'auth.require(CoreScope::{r["scope"]})?;')
+            dispatch += head + f'''{scope_guard}
                 {record_scope_guard(r)}
                 facade_outside_room_turn(call, {json.dumps(name)})?;{" let caller = facade_actor(server, auth)?;" if r.get("host_door_caller") else ""}{" let landed_by = facade_actor(server, auth)?;" if lands else ""}
                 let value = input?;

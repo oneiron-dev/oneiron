@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 805 code-mode rows (782 host rows, 23 run rows), 2746 declarations.
-// Replies: 718 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 814 code-mode rows (791 host rows, 23 run rows), 2761 declarations.
+// Replies: 727 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1011,6 +1011,22 @@ declare namespace Sdk {
   type OffRecordExecuteRequest = { session_ref: string; run_ref: string; task: string };
   type OffRecordRunStatus = "complete" | "waiting" | "yielded" | "window_full";
   type OffRecordExecuted = { run_ref: string; run_id: string; status: OffRecordRunStatus; next_step_seq?: number | null; steps_run: number; bridge_calls: number };
+  type OffRecordRoomRequest = { room: string; session_ref: string };
+  type OffRecordNoticeAct = "saved_talk" | "saved_turn" | "saving_from_here" | "saving_stopped" | "exported" | "save_suggested" | "save_declined";
+  type OffRecordRoomNotice = { act: OffRecordNoticeAct; by: string; at: string };
+  type OffRecordRoomSuggestion = { by: string; at: string };
+  type OffRecordRoomView = { session_ref: string; room?: string | null; started_by?: string | null; mode: OffRecordMode; backend: OffRecordBackendClass; entered_at: string; closing: boolean; notices: OffRecordRoomNotice[]; waiting_suggestions: OffRecordRoomSuggestion[] };
+  type OffRecordRoomStartRequest = { room: string; session_ref: string; backend: OffRecordBackendClass };
+  type OffRecordRoomWitnessRequest = { room: string; session_ref: string; turn: WitnessTurn; summary?: string | null };
+  type OffRecordRoomShortIdPair = { room: string; vault: string };
+  type OffRecordRoomSavedTurn = { turn: string; replayed: string[]; short_ids: OffRecordRoomShortIdPair[] };
+  type OffRecordRoomSaved = { saved: OffRecordRoomSavedTurn[] };
+  type MessageResultSource = { run_id: EntityId; occurrence: EntityId; path: string };
+  type ResultFacet = "slice" | "search" | "query" | "chunks";
+  type MessageResultAttachment = { source: MessageResultSource; handle: string; bytes: number; kind: string; lines: number; complete: boolean; preview: string; preview_truncated: boolean; more: ResultFacet[] };
+  type OffRecordTalkMessage = { author: string; message_type: string; content: string; order: number; result?: MessageResultAttachment | null };
+  type OffRecordRoomExportTurn = { turn: string; speaker?: string | null; occurred_at: string; saved: boolean; messages: OffRecordTalkMessage[] };
+  type OffRecordRoomExport = { session_ref: string; room?: string | null; exported_at: string; turns: OffRecordRoomExportTurn[] };
   type RecordEraseRequest = { record: EntityId };
   type EraseShare = { grant: string; recipient: string };
   type EraseHeldBytes = { content_hash: string; other_holders: string[] };
@@ -1616,7 +1632,6 @@ declare namespace Sdk {
   type ResultOccurrenceManifest = { run_id: EntityId; occurrence: EntityId; path: string; handle: string; blake3: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; taint: ResultTaint; taint_refs: ResultTaintReference[]; source_rows?: EntityId[] | null };
   type ResultRunStatus = { run_id: EntityId; replay_present: boolean; checkpoint_count: number; effects: ResultEffectRecord[]; bodies: ResultBodyStatus[]; occurrences: ResultOccurrenceManifest[] };
   type ResultOccurrenceRequest = { run_id: EntityId; occurrence: EntityId };
-  type ResultFacet = "slice" | "search" | "query" | "chunks";
   type ResultCard = { handle: string; bytes: number; kind: ResultBodyKind; lines: number; complete: boolean; preview: string; name?: string | null; taint: ResultTaint; more: ResultFacet[] };
   type ResultReadRefusal = { denied: string; reasonCodes: string[]; error?: string | null; bytes?: number | null };
   type ResultReadView = { status: "available"; manifest: ResultOccurrenceManifest; card: ResultCard } | { status: "denied"; refusal: ResultReadRefusal };
@@ -4043,6 +4058,26 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
     recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
+    rooms: {
+      /** A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits. */
+      confirm_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
+      /** A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits. */
+      decline_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
+      /** A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault. */
+      export(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomExport | StoredResult>;
+      /** A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential. */
+      save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomSaved | StoredResult>;
+      /** A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live. */
+      save_from_here(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
+      /** A person starts an off-record stretch in a room they belong to, on their own credential. */
+      start(input: Sdk.OffRecordRoomStartRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
+      /** Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk. */
+      status(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
+      /** An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms. */
+      suggest_save(input: Sdk.OffRecordRoomRequest): Promise<Sdk.OffRecordRoomView | StoredResult>;
+      /** Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant. */
+      witness(input: Sdk.OffRecordRoomWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
+    };
     /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
     start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
     /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */

@@ -315,6 +315,7 @@ mod sdk_live_voice;
 mod sdk_mesh;
 mod sdk_note_history;
 mod sdk_off_record;
+mod sdk_off_record_rooms;
 mod sdk_persona;
 mod sdk_record_erase;
 mod sdk_reply;

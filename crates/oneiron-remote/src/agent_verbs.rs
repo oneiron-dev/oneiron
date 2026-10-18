@@ -811,6 +811,33 @@ impl OneironClient {
                 "self.off_record.execute" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::OffRecordExecuted,
                 >(client, verb, &input),
+                "vault.off_record.rooms.status" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomView,
+                >(client, verb, &input),
+                "vault.off_record.rooms.start" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomView,
+                >(client, verb, &input),
+                "vault.off_record.rooms.witness" => remote_agent_verb_output::<
+                    oneiron::memory::WitnessReceipt,
+                >(client, verb, &input),
+                "vault.off_record.rooms.save" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomSaved,
+                >(client, verb, &input),
+                "vault.off_record.rooms.save_from_here" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomView,
+                >(client, verb, &input),
+                "vault.off_record.rooms.export" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomExport,
+                >(client, verb, &input),
+                "vault.off_record.rooms.suggest_save" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomView,
+                >(client, verb, &input),
+                "vault.off_record.rooms.confirm_save" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomSaved,
+                >(client, verb, &input),
+                "vault.off_record.rooms.decline_save" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::OffRecordRoomView,
+                >(client, verb, &input),
                 "vault.records.erase_preview" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordErasePreview,
                 >(client, verb, &input),
@@ -5532,6 +5559,114 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.off_record.execute", value)
+    }
+    pub fn vault_off_record_rooms_status(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.status", value)
+    }
+    pub fn vault_off_record_rooms_start(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomStartRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.start", value)
+    }
+    pub fn vault_off_record_rooms_witness(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomWitnessRequest,
+    ) -> Result<oneiron::memory::WitnessReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.witness", value)
+    }
+    pub fn vault_off_record_rooms_save(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomSaved, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.save", value)
+    }
+    pub fn vault_off_record_rooms_save_from_here(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.save_from_here", value)
+    }
+    pub fn vault_off_record_rooms_export(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomExport, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.export", value)
+    }
+    pub fn vault_off_record_rooms_suggest_save(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.suggest_save", value)
+    }
+    pub fn vault_off_record_rooms_confirm_save(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomSaved, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.confirm_save", value)
+    }
+    pub fn vault_off_record_rooms_decline_save(
+        &self,
+        input: &oneiron::task_verb::sdk::OffRecordRoomRequest,
+    ) -> Result<oneiron::task_verb::sdk::OffRecordRoomView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.off_record.rooms.decline_save", value)
     }
     pub fn vault_records_erase_preview(
         &self,

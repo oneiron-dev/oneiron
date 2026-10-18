@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 769 facade rows, 2702 declarations.
-Inputs: 717 of 769 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 689 of 769 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 778 facade rows, 2715 declarations.
+Inputs: 725 of 778 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 698 of 778 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -4926,6 +4926,77 @@ class OffRecordExecuted(TypedDict):
     next_step_seq: NotRequired[int | None]
     steps_run: int
     bridge_calls: int
+class OffRecordRoomRequest(TypedDict):
+    room: str
+    session_ref: str
+OffRecordNoticeAct = Literal["saved_talk", "saved_turn", "saving_from_here", "saving_stopped", "exported", "save_suggested", "save_declined"]
+class OffRecordRoomNotice(TypedDict):
+    act: OffRecordNoticeAct
+    by: str
+    at: str
+class OffRecordRoomSuggestion(TypedDict):
+    by: str
+    at: str
+class OffRecordRoomView(TypedDict):
+    session_ref: str
+    room: NotRequired[str | None]
+    started_by: NotRequired[str | None]
+    mode: OffRecordMode
+    backend: OffRecordBackendClass
+    entered_at: str
+    closing: bool
+    notices: list[OffRecordRoomNotice]
+    waiting_suggestions: list[OffRecordRoomSuggestion]
+class OffRecordRoomStartRequest(TypedDict):
+    room: str
+    session_ref: str
+    backend: OffRecordBackendClass
+class OffRecordRoomWitnessRequest(TypedDict):
+    room: str
+    session_ref: str
+    turn: WitnessTurn
+    summary: NotRequired[str | None]
+class OffRecordRoomShortIdPair(TypedDict):
+    room: str
+    vault: str
+class OffRecordRoomSavedTurn(TypedDict):
+    turn: str
+    replayed: list[str]
+    short_ids: list[OffRecordRoomShortIdPair]
+class OffRecordRoomSaved(TypedDict):
+    saved: list[OffRecordRoomSavedTurn]
+class MessageResultSource(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+    path: str
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class MessageResultAttachment(TypedDict):
+    source: MessageResultSource
+    handle: str
+    bytes: int
+    kind: str
+    lines: int
+    complete: bool
+    preview: str
+    preview_truncated: bool
+    more: list[ResultFacet]
+class OffRecordTalkMessage(TypedDict):
+    author: str
+    message_type: str
+    content: str
+    order: int
+    result: NotRequired[MessageResultAttachment | None]
+class OffRecordRoomExportTurn(TypedDict):
+    turn: str
+    speaker: NotRequired[str | None]
+    occurred_at: str
+    saved: bool
+    messages: list[OffRecordTalkMessage]
+class OffRecordRoomExport(TypedDict):
+    session_ref: str
+    room: NotRequired[str | None]
+    exported_at: str
+    turns: list[OffRecordRoomExportTurn]
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -7772,7 +7843,6 @@ class ResultRunStatus(TypedDict):
 class ResultOccurrenceRequest(TypedDict):
     run_id: EntityId
     occurrence: EntityId
-ResultFacet = Literal["slice", "search", "query", "chunks"]
 class ResultCard(TypedDict):
     handle: str
     bytes: int
@@ -13838,20 +13908,6 @@ class GeneratedUiActionEvent(TypedDict):
     actionId: str
     patch: NotRequired[list[GeneratedUiStatePatch]]
     occurredAt: int
-class MessageResultSource(TypedDict):
-    run_id: EntityId
-    occurrence: EntityId
-    path: str
-class MessageResultAttachment(TypedDict):
-    source: MessageResultSource
-    handle: str
-    bytes: int
-    kind: str
-    lines: int
-    complete: bool
-    preview: str
-    preview_truncated: bool
-    more: list[ResultFacet]
 class TranscriptMessage(TypedDict):
     id: str
     short_id: NotRequired[str | None]

@@ -1251,6 +1251,51 @@ export_facade! {
     let output = client.self_off_record_execute(&input)?;
     crate::codec::lift_record("self.off_record.execute", &output)
 };
+"vault.off_record.rooms.status" => fn vault_off_record_rooms_status(&self, input: OffRecordRoomRequest) -> OffRecordRoomView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.status", input)?;
+    let output = client.vault_off_record_rooms_status(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.status", &output)
+};
+"vault.off_record.rooms.start" => fn vault_off_record_rooms_start(&self, input: OffRecordRoomStartRequest) -> OffRecordRoomView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomStartRequest = crate::codec::lower_record("vault.off_record.rooms.start", input)?;
+    let output = client.vault_off_record_rooms_start(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.start", &output)
+};
+"vault.off_record.rooms.witness" => fn vault_off_record_rooms_witness(&self, input: OffRecordRoomWitnessRequest) -> WitnessReceipt = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomWitnessRequest = crate::codec::lower_record("vault.off_record.rooms.witness", input)?;
+    let output = client.vault_off_record_rooms_witness(&input)?;
+    Lift::lift(output)
+};
+"vault.off_record.rooms.save" => fn vault_off_record_rooms_save(&self, input: OffRecordRoomRequest) -> OffRecordRoomSaved = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.save", input)?;
+    let output = client.vault_off_record_rooms_save(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.save", &output)
+};
+"vault.off_record.rooms.save_from_here" => fn vault_off_record_rooms_save_from_here(&self, input: OffRecordRoomRequest) -> OffRecordRoomView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.save_from_here", input)?;
+    let output = client.vault_off_record_rooms_save_from_here(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.save_from_here", &output)
+};
+"vault.off_record.rooms.export" => fn vault_off_record_rooms_export(&self, input: OffRecordRoomRequest) -> OffRecordRoomExport = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.export", input)?;
+    let output = client.vault_off_record_rooms_export(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.export", &output)
+};
+"vault.off_record.rooms.suggest_save" => fn vault_off_record_rooms_suggest_save(&self, input: OffRecordRoomRequest) -> OffRecordRoomView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.suggest_save", input)?;
+    let output = client.vault_off_record_rooms_suggest_save(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.suggest_save", &output)
+};
+"vault.off_record.rooms.confirm_save" => fn vault_off_record_rooms_confirm_save(&self, input: OffRecordRoomRequest) -> OffRecordRoomSaved = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.confirm_save", input)?;
+    let output = client.vault_off_record_rooms_confirm_save(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.confirm_save", &output)
+};
+"vault.off_record.rooms.decline_save" => fn vault_off_record_rooms_decline_save(&self, input: OffRecordRoomRequest) -> OffRecordRoomView = |client| {
+    let input: oneiron::task_verb::sdk::OffRecordRoomRequest = crate::codec::lower_record("vault.off_record.rooms.decline_save", input)?;
+    let output = client.vault_off_record_rooms_decline_save(&input)?;
+    crate::codec::lift_record("vault.off_record.rooms.decline_save", &output)
+};
 "vault.records.erase_preview" => fn vault_records_erase_preview(&self, input: RecordEraseRequest) -> RecordErasePreview = |client| {
     let input: oneiron::task_verb::sdk::RecordEraseRequest = crate::codec::lower_record("vault.records.erase_preview", input)?;
     let output = client.vault_records_erase_preview(&input)?;

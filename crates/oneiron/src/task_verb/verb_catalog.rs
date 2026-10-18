@@ -254,6 +254,15 @@ pub enum AgentVerb {
     VaultOffRecordNotesCreate,
     VaultOffRecordClaimsUpsert,
     SelfOffRecordExecute,
+    VaultOffRecordRoomsStatus,
+    VaultOffRecordRoomsStart,
+    VaultOffRecordRoomsWitness,
+    VaultOffRecordRoomsSave,
+    VaultOffRecordRoomsSaveFromHere,
+    VaultOffRecordRoomsExport,
+    VaultOffRecordRoomsSuggestSave,
+    VaultOffRecordRoomsConfirmSave,
+    VaultOffRecordRoomsDeclineSave,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultResearchCreateChild,
@@ -1049,6 +1058,15 @@ impl AgentVerb {
         Self::VaultOffRecordNotesCreate,
         Self::VaultOffRecordClaimsUpsert,
         Self::SelfOffRecordExecute,
+        Self::VaultOffRecordRoomsStatus,
+        Self::VaultOffRecordRoomsStart,
+        Self::VaultOffRecordRoomsWitness,
+        Self::VaultOffRecordRoomsSave,
+        Self::VaultOffRecordRoomsSaveFromHere,
+        Self::VaultOffRecordRoomsExport,
+        Self::VaultOffRecordRoomsSuggestSave,
+        Self::VaultOffRecordRoomsConfirmSave,
+        Self::VaultOffRecordRoomsDeclineSave,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultResearchCreateChild,
@@ -1851,6 +1869,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
             Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
             Self::SelfOffRecordExecute => "self.off_record.execute",
+            Self::VaultOffRecordRoomsStatus => "vault.off_record.rooms.status",
+            Self::VaultOffRecordRoomsStart => "vault.off_record.rooms.start",
+            Self::VaultOffRecordRoomsWitness => "vault.off_record.rooms.witness",
+            Self::VaultOffRecordRoomsSave => "vault.off_record.rooms.save",
+            Self::VaultOffRecordRoomsSaveFromHere => "vault.off_record.rooms.save_from_here",
+            Self::VaultOffRecordRoomsExport => "vault.off_record.rooms.export",
+            Self::VaultOffRecordRoomsSuggestSave => "vault.off_record.rooms.suggest_save",
+            Self::VaultOffRecordRoomsConfirmSave => "vault.off_record.rooms.confirm_save",
+            Self::VaultOffRecordRoomsDeclineSave => "vault.off_record.rooms.decline_save",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultResearchCreateChild => "vault.research.create_child",
@@ -2663,6 +2690,15 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
@@ -3485,6 +3521,15 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
@@ -4110,6 +4155,7 @@ impl AgentVerb {
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
+                | Self::VaultOffRecordRoomsSuggestSave
                 | Self::VaultCommit
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
@@ -4375,6 +4421,14 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStatus
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsExport
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
@@ -5043,6 +5097,13 @@ impl AgentVerb {
                 | Self::VaultOffRecordNotesCreate
                 | Self::VaultOffRecordClaimsUpsert
                 | Self::SelfOffRecordExecute
+                | Self::VaultOffRecordRoomsStart
+                | Self::VaultOffRecordRoomsWitness
+                | Self::VaultOffRecordRoomsSave
+                | Self::VaultOffRecordRoomsSaveFromHere
+                | Self::VaultOffRecordRoomsSuggestSave
+                | Self::VaultOffRecordRoomsConfirmSave
+                | Self::VaultOffRecordRoomsDeclineSave
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchCreateChild
@@ -5372,6 +5433,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultOffRecordRoomsSuggestSave
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -5658,6 +5720,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::VaultOffRecordRoomsStatus => &["spec"],
+            Self::VaultOffRecordRoomsStart => &["spec"],
+            Self::VaultOffRecordRoomsWitness => &["spec"],
+            Self::VaultOffRecordRoomsSave => &["spec"],
+            Self::VaultOffRecordRoomsSaveFromHere => &["spec"],
+            Self::VaultOffRecordRoomsExport => &["spec"],
+            Self::VaultOffRecordRoomsSuggestSave => &["spec"],
+            Self::VaultOffRecordRoomsConfirmSave => &["spec"],
+            Self::VaultOffRecordRoomsDeclineSave => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
@@ -6454,6 +6525,15 @@ impl AgentVerb {
             Self::VaultOffRecordNotesCreate => &["spec"],
             Self::VaultOffRecordClaimsUpsert => &["spec"],
             Self::SelfOffRecordExecute => &["spec"],
+            Self::VaultOffRecordRoomsStatus => &["spec"],
+            Self::VaultOffRecordRoomsStart => &["spec"],
+            Self::VaultOffRecordRoomsWitness => &["spec"],
+            Self::VaultOffRecordRoomsSave => &["spec"],
+            Self::VaultOffRecordRoomsSaveFromHere => &["spec"],
+            Self::VaultOffRecordRoomsExport => &["spec"],
+            Self::VaultOffRecordRoomsSuggestSave => &["spec"],
+            Self::VaultOffRecordRoomsConfirmSave => &["spec"],
+            Self::VaultOffRecordRoomsDeclineSave => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchCreateChild => &["spec"],
@@ -7732,6 +7812,33 @@ impl AgentVerb {
             }
             Self::SelfOffRecordExecute => {
                 "The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
+            }
+            Self::VaultOffRecordRoomsStatus => {
+                "Reads a room's off-record notices and waiting save suggestions as the caller's membership shows them, without the talk."
+            }
+            Self::VaultOffRecordRoomsStart => {
+                "A person starts an off-record stretch in a room they belong to, on their own credential."
+            }
+            Self::VaultOffRecordRoomsWitness => {
+                "Witnesses a turn into a room's off-record stretch as the caller, under their live membership and the current saving grant."
+            }
+            Self::VaultOffRecordRoomsSave => {
+                "A holder of this vault's write grant saves the visible whole talk so far into this vault, on their own credential."
+            }
+            Self::VaultOffRecordRoomsSaveFromHere => {
+                "A holder puts a room's stretch on record for later turns while their vault write grant and room membership stay live."
+            }
+            Self::VaultOffRecordRoomsExport => {
+                "A person exports only their visible room talk as a JSON attachment, posts a content-free notice and writes no vault."
+            }
+            Self::VaultOffRecordRoomsSuggestSave => {
+                "An agent suggests saving a room's off-record talk on a write or propose credential; nothing is saved until a holder confirms."
+            }
+            Self::VaultOffRecordRoomsConfirmSave => {
+                "A holder confirms the room's waiting save suggestions with their own save of the visible whole talk; refuses when none waits."
+            }
+            Self::VaultOffRecordRoomsDeclineSave => {
+                "A holder declines the room's waiting save suggestions, posts a content-free notice and saves nothing; refuses when none waits."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."
