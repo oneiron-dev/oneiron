@@ -37,6 +37,7 @@ mod channel_doors;
 mod claim_settle_doors;
 mod consolidation_doors;
 mod code_doors;
+mod code_run_doors;
 mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
