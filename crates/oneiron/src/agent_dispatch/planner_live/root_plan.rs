@@ -13,7 +13,7 @@
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::skill::{LoadedSkillPack, SkillRole, resident_of, skill_loadable};
+use crate::skill::{LoadedSkillPack, resident_of, skill_loadable};
 use crate::task_type::{PlacementDecisions, TaskTypeRef};
 use crate::team::PatternSkillRef;
 
@@ -119,41 +119,14 @@ impl AgentDispatcher<'_> {
     /// A plan's pattern skill as the root reads an admitted package, on the
     /// caller's snapshot: the exact revision the plan froze, still a live
     /// shared workflow skill, active and approved, its instructions the
-    /// runtime package the hub verified against the record. A planned
-    /// launch reads it before its runner runs and again in its writer.
+    /// runtime package the hub verified against the record. The owner's
+    /// planned launch reads it before its runner runs.
     pub(super) fn root_pattern_pack_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         pattern: &PatternSkillRef,
     ) -> Result<LoadedSkillPack> {
-        let skill = &pattern.skill;
-        if !crate::vault::live_entity_row_in_txn(&self.vault.store, txn, skill)?.is_live() {
-            return Err(Error::EntityNotFound);
-        }
-        let record = self.vault.read_skill_record_in_txn(txn, skill)?;
-        if resident_of(&record)?.is_some() {
-            return Err(Error::InvalidClaimBody(
-                "a root plan reads shared skills, not a resident's",
-            ));
-        }
-        if !skill_loadable(&record) || record.role != SkillRole::Workflow {
-            return Err(Error::InvalidClaimBody(
-                "a pattern launch runs an active approved workflow skill",
-            ));
-        }
-        if record.version != pattern.version {
-            return Err(Error::InvalidClaimBody(
-                "the pattern skill moved off the revision its plan froze",
-            ));
-        }
-        let source_files = self
-            .vault
-            .runtime_skill_package_in_txn(txn, skill, &record)?
-            .map(|package| package.files);
-        Ok(LoadedSkillPack {
-            entity: *skill,
-            record,
-            source_files,
-        })
+        self.vault
+            .exact_workflow_pack_in_txn(txn, &pattern.skill, &pattern.version)
     }
 }

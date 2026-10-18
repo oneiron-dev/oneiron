@@ -15,8 +15,9 @@
 //!
 //! The owner's root plan (DOOR-111, `root_plan`) reads the same evidence in
 //! the root's launch context, and `intent` reserves it under the owner's
-//! intent key and freezes what it placed and planned. `team_launch` then
-//! launches the plan as one group, a team through its pattern skill.
+//! intent key, or a leased agent's under its real parent attempt, and
+//! freezes what it placed and planned. `team_launch` then launches the plan
+//! as one group, a team through its pattern skill.
 
 mod intent;
 mod root_plan;
@@ -41,9 +42,9 @@ use super::planner::{
 };
 use super::task_type_tree::{load_team_type_tree, place_in_tree};
 use super::team_shape::{CoordinationPattern, team_shape_skill};
-use super::types::{AgentDispatchTarget, SpawnNeed};
+use super::types::{AgentDispatchInput, AgentDispatchTarget, SpawnNeed};
 use super::widen_record::invalid;
-use super::{AgentDispatcher, SpawnSpend, decode_agent_dispatch_input};
+use super::{AgentDispatcher, SpawnSpend, agent_dispatch_actor, decode_agent_dispatch_input};
 
 /// Host configuration: the skills the planner reads and runs. The
 /// team-shape skill's content and tree are the planner's lessons and type
@@ -277,6 +278,42 @@ impl AgentDispatcher<'_> {
             return Err(invalid("the planner requires the parent's current lease"));
         }
         Ok(live)
+    }
+
+    /// The dispatch input of a parent that still holds the lease it names
+    /// and runs as `actor`, read on the caller's transaction: a writer
+    /// proves the lease and the actor it acts under itself, never through a
+    /// prior read.
+    pub(crate) fn live_planner_lease_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        leased: &AttemptRecord,
+        actor: &EntityId,
+    ) -> Result<AgentDispatchInput> {
+        let live = AttemptQueue::new(self.vault)
+            .get_in_txn(txn, leased.id)?
+            .ok_or_else(|| invalid("planner parent attempt is missing"))?;
+        if live.state != AttemptState::Leased
+            || live.lease_owner.is_none()
+            || live.lease_owner != leased.lease_owner
+            || live.attempt_count != leased.attempt_count
+        {
+            return Err(invalid("the planner requires the parent's current lease"));
+        }
+        let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&live.payload)?;
+        if payload.attempt_type != super::AGENT_DISPATCH_ATTEMPT_TYPE {
+            return Err(invalid(
+                "the planner's parent is no agent dispatch; spawn from a leased agent's own \
+                 attempt",
+            ));
+        }
+        let input = decode_agent_dispatch_input(&payload.input)?;
+        if agent_dispatch_actor(&input)?.entity_ref() != *actor {
+            return Err(invalid(
+                "the planner's parent runs as another actor; spawn as the agent its lease runs",
+            ));
+        }
+        Ok(input)
     }
 
     /// Everything one plan reads, from the vault, in the launch context the
