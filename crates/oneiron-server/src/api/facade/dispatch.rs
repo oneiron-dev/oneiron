@@ -9161,6 +9161,114 @@ async fn vault_lenses_list(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_lenses_select(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    {
+        let (worlds, facets) = auth.verified_slip().map_or(
+            (
+                oneiron::federation::ScopeAxis::All,
+                oneiron::federation::ScopeAxis::All,
+            ),
+            |proof| (proof.scope().worlds.clone(), proof.scope().facets.clone()),
+        );
+        auth.require_record_scope_carried(worlds, facets)?;
+    }
+    facade_outside_room_turn(call, "vault.lenses.select")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.lenses.select", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.lenses.select", value).await?;
+    let (output, listed) = super::host_doors::vault_lenses_select(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_lenses_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    {
+        let (worlds, facets) = auth.verified_slip().map_or(
+            (
+                oneiron::federation::ScopeAxis::All,
+                oneiron::federation::ScopeAxis::All,
+            ),
+            |proof| (proof.scope().worlds.clone(), proof.scope().facets.clone()),
+        );
+        auth.require_record_scope_carried(worlds, facets)?;
+    }
+    facade_outside_room_turn(call, "vault.lenses.resolve")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.lenses.resolve", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.lenses.resolve", value).await?;
+    let (output, listed) = super::host_doors::vault_lenses_resolve(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_lenses_result_set_action(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    {
+        let (worlds, facets) = auth.verified_slip().map_or(
+            (
+                oneiron::federation::ScopeAxis::All,
+                oneiron::federation::ScopeAxis::All,
+            ),
+            |proof| (proof.scope().worlds.clone(), proof.scope().facets.clone()),
+        );
+        auth.require_record_scope_carried(worlds, facets)?;
+    }
+    facade_outside_room_turn(call, "vault.lenses.result_set.action")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.lenses.result_set.action", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.lenses.result_set.action", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_lenses_result_set_action(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn vault_lenses_default(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -19719,6 +19827,11 @@ pub(crate) async fn call_verb(
         "vault.lenses.activate" => vault_lenses_activate(server, call, input).await,
         "vault.lenses.deactivate" => vault_lenses_deactivate(server, call, input).await,
         "vault.lenses.list" => vault_lenses_list(server, call, input).await,
+        "vault.lenses.select" => vault_lenses_select(server, call, input).await,
+        "vault.lenses.resolve" => vault_lenses_resolve(server, call, input).await,
+        "vault.lenses.result_set.action" => {
+            vault_lenses_result_set_action(server, call, input).await
+        }
         "vault.lenses.default" => vault_lenses_default(server, call, input).await,
         "vault.disclosure.offer" => vault_disclosure_offer(server, call, input).await,
         "reveal" => reveal(server, call, input).await,
