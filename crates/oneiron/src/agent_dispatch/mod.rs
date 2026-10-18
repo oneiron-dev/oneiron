@@ -36,6 +36,11 @@ pub(crate) use self::comm_widen::{
     comm_widen_in, comm_widen_recipient_in_txn, put_comm_widen_in,
 };
 mod context;
+mod continuation;
+pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
+pub(crate) use self::continuation::{
+    PromptInjectApproval, apply_prompt_inject_in_txn, continuation_checkpoint,
+};
 mod dispatch;
 mod fanout_statement;
 mod healer_context;

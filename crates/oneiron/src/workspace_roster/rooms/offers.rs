@@ -34,7 +34,7 @@ use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::{
-    ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject,
+    ConsentNeed, JoinDecision, JoinRefusal, JoinRequest, JoinSubject, RosterActor,
     join_subject_for_actor_in_txn, rooms_join_in_txn,
 };
 use crate::{EntityId, Vault, WriteActor};
@@ -160,8 +160,9 @@ pub(crate) struct StoredOffer {
     /// The digest of the draft the card was minted from: the same intent asked
     /// with another draft refuses.
     pub(super) draft_digest: String,
-    /// The actor that minted it: the agent or its principal.
-    pub(super) minted_by: EntityId,
+    /// The actor that minted it: the agent or its principal; no one once
+    /// that actor was erased.
+    pub(super) minted_by: RosterActor,
     pub(super) answer: Option<super::offer_settle::RecordedOfferAnswer>,
     /// The room's advisory ballots on a room-wide card, one per voter: they
     /// keep it open and decide nothing; only the host's answer admits.
@@ -502,7 +503,7 @@ fn mint_in_txn(
         &StoredOffer {
             card: card.clone(),
             draft_digest,
-            minted_by: caller.entity_ref(),
+            minted_by: RosterActor::Actor(caller.entity_ref()),
             answer: None,
             votes: BTreeMap::new(),
             reopen_epoch: 0,
