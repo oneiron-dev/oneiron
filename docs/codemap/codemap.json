@@ -9019,9 +9019,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/campaign/enrollment/manual.rs",
+     "purpose": "Manual enrollment beside the saved-query MACRO ingress",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/campaign/enrollment/mod.rs",
      "purpose": "CA-03 enrollment consequence writer: the leader-only MACRO job that turns a detected SAVED_QUERY membership…",
      "surface": {
+      "crate-vis": 1,
       "re-export": 8
      }
     },
@@ -9201,6 +9212,7 @@
      "path": "src/campaign/stage/external.rs",
      "purpose": "External-evidence hook ingress with the owner-attestation proposal-boundary gate",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -9236,6 +9248,7 @@
      "path": "src/campaign/stage/mod.rs",
      "purpose": "CA-04 stage-ladder machinery: the mechanism, never the content",
      "surface": {
+      "crate-vis": 1,
       "re-export": 7
      }
     },
@@ -9265,7 +9278,7 @@
      "path": "src/campaign/stage/projector.rs",
      "purpose": "The single `crm.stage` writer plus shared claim-scan and error helpers",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 2,
       "struct": 1
      }
@@ -9300,6 +9313,29 @@
      "surface": {
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CampaignActionProvenance",
+      "CampaignEnrollRequest",
+      "CampaignEnrollmentReceipt",
+      "CampaignEnrollmentState",
+      "CampaignMemberChannelSpec",
+      "CampaignStageEvidence",
+      "CampaignStageEvidenceOutcome",
+      "CampaignStageEvidenceReceipt",
+      "CampaignStageEvidenceRequest",
+      "CampaignUnsubscribeReceipt",
+      "CampaignUnsubscribeRequest"
+     ],
+     "path": "src/campaign/surface/actions.rs",
+     "purpose": "Typed campaign enrollment, earned evidence and immediate unsubscribe",
+     "surface": {
+      "enum": 2,
+      "struct": 9
      }
     },
     {
@@ -9357,7 +9393,7 @@
      "purpose": "CA-07's SDK surface: one `self.*` verb vocabulary over the CRM pack",
      "surface": {
       "crate-vis": 2,
-      "re-export": 5
+      "re-export": 6
      }
     },
     {
@@ -31386,6 +31422,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/campaign_actions.rs",
+     "purpose": "Caller-bound campaign actions",
+     "surface": {
+      "fn": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -51125,7 +51171,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 708
+      "fn": 711
      }
     },
     {
@@ -57073,7 +57119,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 46,
+     "files": 48,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -57773,7 +57819,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 177,
+     "files": 178,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58454,7 +58500,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3565,
+   "source_files": 3568,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66984,7 +67030,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 672
+      "fn": 675
      }
     },
     {
@@ -68033,7 +68079,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 673
+      "fn": 676
      }
     },
     {
@@ -71023,6 +71069,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/campaign_doors.rs",
+     "purpose": "The stage-evidence host door binds an owner attestation to the request's verified owner proof",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/campaign_split_doors.rs",
      "purpose": "The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores…",
      "surface": {
@@ -71356,7 +71412,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 122
+      "crate-vis": 123
      }
     },
     {
@@ -79075,7 +79131,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 384,
+     "files": 385,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79497,7 +79553,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 722,
+   "source_files": 723,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79944,6 +80000,7 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignActionProvenance",
       "CampaignArchiveAdmission",
       "CampaignArchiveBest",
       "CampaignArchiveCoverage",
@@ -79958,10 +80015,14 @@
       "CampaignConfig",
       "CampaignCost",
       "CampaignDatasetRef",
+      "CampaignEnrollRequest",
+      "CampaignEnrollmentReceipt",
+      "CampaignEnrollmentState",
       "CampaignEvaluationSplit",
       "CampaignExecutableArm",
       "CampaignGoldAnchor",
       "CampaignKnobs",
+      "CampaignMemberChannelSpec",
       "CampaignProgramAudienceSpec",
       "CampaignProgramDefinitionView",
       "CampaignProgramLifecycle",
@@ -79975,7 +80036,13 @@
       "CampaignSplitReport",
       "CampaignSplitWire",
       "CampaignSplits",
+      "CampaignStageEvidence",
+      "CampaignStageEvidenceOutcome",
+      "CampaignStageEvidenceReceipt",
+      "CampaignStageEvidenceRequest",
       "CampaignTaste",
+      "CampaignUnsubscribeReceipt",
+      "CampaignUnsubscribeRequest",
       "CancelForceReceipt",
       "CancelForceRequest",
       "CancelMode",
@@ -80444,6 +80511,7 @@
       "EvalRelease",
       "EvalSeat",
       "EvalSourceGroup",
+      "EvidenceBasis",
       "EvidenceFloors",
       "EvidenceKind",
       "EvidenceRef",
@@ -80886,6 +80954,7 @@
       "NarrowConnect",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
+      "NoShowRecoveryRule",
       "NodeKind",
       "NodeMove",
       "NodePayload",
@@ -81184,6 +81253,7 @@
       "PromotionBasis",
       "PromotionDisposition",
       "PromotionEvidenceReason",
+      "PromotionMode",
       "ProposalAsk",
       "ProposalAskRefusal",
       "ProposalBundle",
@@ -81269,6 +81339,9 @@
       "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
+      "ReplyCode",
+      "ReplyDisposition",
+      "ReplyRouteRule",
       "ReplyStripsPage",
       "ReplyStripsRequest",
       "RepoProposalStatus",
@@ -81764,6 +81837,10 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StageDefinition",
+      "StageEvidenceClass",
+      "StageLadderDefinition",
+      "StageTransitionRule",
       "StandingBlockConfigureRequest",
       "StandingBlockEditReceipt",
       "StandingBlockEditRequest",
@@ -82105,8 +82182,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 613,
-      "struct": 1797
+      "enum": 620,
+      "struct": 1811
      }
     },
     {
