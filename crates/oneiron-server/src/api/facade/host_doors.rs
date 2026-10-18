@@ -134,6 +134,7 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::consent_doors::*;
+pub(crate) use super::graduation_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
@@ -1086,7 +1087,11 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.booking.constraint_turn" => {
+        "vault.booking.constraint_turn"
+        | "vault.booking.availability"
+        | "vault.booking.book"
+        | "vault.booking.reschedule"
+        | "vault.booking.cancel" => {
             crate::api::host_action::require_host_owner_act(server, auth)
                 .map(drop)
                 .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
@@ -1196,6 +1201,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
         | "vault.affect.claims.consolidate"
+        | "vault.affect.coping.record"
+        | "vault.affect.coping.update"
+        | "vault.affect.coping.aggregate"
+        | "vault.affect.wellness.policy.get"
+        | "vault.affect.wellness.policy.configure"
+        | "vault.affect.wellness.derive"
+        | "vault.affect.wellness.get"
         | "vault.slim.policy"
         | "vault.slim.state"
         | "vault.slim.resume_step"
@@ -1288,6 +1300,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.consent.create_standing_grant"
         | "vault.consent.registry"
         | "vault.consent.revoke"
+        | "vault.consent.graduation.policy"
+        | "vault.consent.graduation.policy.set"
+        | "vault.consent.graduation.policy.clear"
+        | "vault.consent.graduation.stats"
+        | "vault.consent.graduation.outcome"
+        | "vault.consent.graduation.offers"
+        | "vault.consent.graduation.answer"
+        | "vault.consent.graduation.trust_table"
+        | "vault.consent.graduation.settings.unpin"
+        | "vault.consent.graduation.demote"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"

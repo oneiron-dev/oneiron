@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 771 facade rows, 2674 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 727.
+// UniFFI census: 793 facade rows, 2727 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 749.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -6055,6 +6055,244 @@ pub struct AffectClaimConsolidation {
     pub created_state_ref: Option<String>,
     #[serde(rename = "superseded_state_refs")]
     pub superseded_state_refs: Vec<String>,
+}
+
+/// `oneiron::affect::coping::CopingStrategy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CopingStrategy {
+    #[serde(rename = "SitSel")]
+    SitSel,
+    #[serde(rename = "SitMod")]
+    SitMod,
+    #[serde(rename = "AttDep")]
+    AttDep,
+    #[serde(rename = "CogChg")]
+    CogChg,
+    #[serde(rename = "ResMod")]
+    ResMod,
+    #[serde(rename = "ERFlex")]
+    ERFlex,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeRecordRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CopingOutcomeRecordRequest {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "baseline_turn_ref")]
+    pub baseline_turn_ref: String,
+    #[serde(rename = "later_turn_ref")]
+    pub later_turn_ref: String,
+    #[serde(rename = "strategy")]
+    pub strategy: CopingStrategy,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "scope")]
+    pub scope: ClaimScope,
+    #[serde(
+        rename = "sensitivity",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sensitivity: Option<u8>,
+}
+
+/// `oneiron::memory::coping_doors::CopingVadDelta`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingVadDelta {
+    #[serde(rename = "valence")]
+    pub valence: f64,
+    #[serde(rename = "arousal")]
+    pub arousal: f64,
+    #[serde(rename = "dominance")]
+    pub dominance: f64,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingOutcomeView {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "strategy_ref")]
+    pub strategy_ref: String,
+    #[serde(rename = "strategy")]
+    pub strategy: CopingStrategy,
+    #[serde(rename = "vad_delta")]
+    pub vad_delta: CopingVadDelta,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "successful")]
+    pub successful: bool,
+    #[serde(rename = "observed_n")]
+    pub observed_n: u64,
+    #[serde(rename = "scope")]
+    pub scope: ClaimScope,
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(
+        rename = "valid_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub valid_from: Option<u64>,
+    #[serde(rename = "valid_to", default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<u64>,
+    #[serde(rename = "evidence_refs")]
+    pub evidence_refs: Vec<String>,
+    #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<MadeBy>,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingOutcomeReceipt {
+    #[serde(rename = "outcome")]
+    pub outcome: CopingOutcomeView,
+    #[serde(rename = "superseded_claim_refs")]
+    pub superseded_claim_refs: Vec<String>,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeUpdateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CopingOutcomeUpdateRequest {
+    #[serde(rename = "prior_claim_ref")]
+    pub prior_claim_ref: String,
+    #[serde(rename = "baseline_turn_ref")]
+    pub baseline_turn_ref: String,
+    #[serde(rename = "later_turn_ref")]
+    pub later_turn_ref: String,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+}
+
+/// `oneiron::memory::coping_doors::CopingAggregateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CopingAggregateRequest {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ClaimScope>,
+}
+
+/// `oneiron::memory::coping_doors::CopingAggregate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingAggregate {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "outcomes")]
+    pub outcomes: Vec<CopingOutcomeView>,
+    #[serde(rename = "observed_n")]
+    pub observed_n: u64,
+}
+
+/// `oneiron::affect::state_inputs::StateWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StateWindow {
+    #[serde(rename = "window_secs")]
+    pub window_secs: u64,
+    #[serde(rename = "expected_goal_completions")]
+    pub expected_goal_completions: u32,
+    #[serde(rename = "expected_engaged_days")]
+    pub expected_engaged_days: u32,
+}
+
+/// `oneiron::dreamer_runner::maintenance::action_mode::ActionModeRule`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModeRule {
+    #[serde(rename = "mode")]
+    pub mode: String,
+    #[serde(rename = "min_index")]
+    pub min_index: f64,
+    #[serde(rename = "max_index")]
+    pub max_index: f64,
+}
+
+/// `oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModePolicy {
+    #[serde(rename = "window")]
+    pub window: StateWindow,
+    #[serde(rename = "rules")]
+    pub rules: Vec<ActionModeRule>,
+}
+
+/// `oneiron::memory::wellness_doors::WellnessPolicyConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WellnessPolicyConfigureRequest {
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ActionModePolicy>,
+}
+
+/// `oneiron::memory::wellness_doors::WellnessPersonRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WellnessPersonRequest {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+}
+
+/// `oneiron::affect::state_index::ModeGateInputs`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModeGateInputs {
+    #[serde(rename = "affect")]
+    pub affect: f64,
+    #[serde(rename = "goal_velocity")]
+    pub goal_velocity: f64,
+    #[serde(rename = "engagement")]
+    pub engagement: f64,
+}
+
+/// `oneiron::affect::state_index::StateIndex`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StateIndex {
+    #[serde(rename = "value")]
+    pub value: f64,
+    #[serde(rename = "inputs", default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<ModeGateInputs>,
+    #[serde(rename = "claim", default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+    #[serde(
+        rename = "observed_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_at: Option<u64>,
+}
+
+/// `oneiron::memory::wellness_doors::WellnessProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WellnessProjection {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ActionModePolicy>,
+    #[serde(rename = "state_index")]
+    pub state_index: StateIndex,
+    #[serde(rename = "mode", default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ActionModeRule>,
+    #[serde(rename = "coping")]
+    pub coping: CopingAggregate,
+    #[serde(rename = "source_refs")]
+    pub source_refs: Vec<String>,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
 }
 
 /// `oneiron::memory::recall::call_mode::RecallEffort`.
@@ -20079,6 +20317,243 @@ pub struct RevokeGrantRequest {
     pub grant: String,
 }
 
+/// `oneiron::consent_graduation::api::GraduationScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationScope {
+    #[serde(rename = "op_kind")]
+    pub op_kind: String,
+    #[serde(rename = "target_class")]
+    pub target_class: String,
+    #[serde(rename = "actor")]
+    pub actor: String,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicyRequest {
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<GraduationScope>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicy {
+    #[serde(rename = "scope_pattern")]
+    pub scope_pattern: String,
+    #[serde(rename = "required_streak")]
+    pub required_streak: u32,
+    #[serde(rename = "posterior_guard")]
+    pub posterior_guard: f64,
+    #[serde(rename = "snooze_backoff_seconds")]
+    pub snooze_backoff_seconds: Vec<u64>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicies`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationPolicies {
+    #[serde(rename = "rows")]
+    pub rows: Vec<GraduationPolicy>,
+    #[serde(rename = "effective", default, skip_serializing_if = "Option::is_none")]
+    pub effective: Option<GraduationPolicy>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicySetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicySetRequest {
+    #[serde(rename = "policy")]
+    pub policy: GraduationPolicy,
+}
+
+/// `oneiron::consent_graduation::api::GraduationChanged`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationChanged {
+    #[serde(rename = "changed")]
+    pub changed: bool,
+}
+
+/// `oneiron::consent_graduation::api::GraduationPolicyClearRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationPolicyClearRequest {
+    #[serde(rename = "scope_pattern")]
+    pub scope_pattern: String,
+}
+
+/// `oneiron::consent_graduation::api::GraduationScopeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationScopeRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+}
+
+/// `oneiron::consent_graduation::api::GraduationOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationOutcome {
+    #[serde(rename = "approved_untouched")]
+    ApprovedUntouched,
+    #[serde(rename = "approved_amended")]
+    ApprovedAmended,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::consent_graduation::api::GraduationMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationMode {
+    #[serde(rename = "propose")]
+    Propose,
+    #[serde(rename = "offered")]
+    Offered,
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+/// `oneiron::consent_graduation::api::GraduationStats`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationStats {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "untouched_streak")]
+    pub untouched_streak: u32,
+    #[serde(rename = "amended")]
+    pub amended: u32,
+    #[serde(rename = "rejected")]
+    pub rejected: u32,
+    #[serde(
+        rename = "last_outcome",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_outcome: Option<GraduationOutcome>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: u64,
+    #[serde(rename = "state")]
+    pub state: GraduationMode,
+}
+
+/// `oneiron::consent_graduation::api::GraduationOutcomeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationOutcomeRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "outcome")]
+    pub outcome: GraduationOutcome,
+}
+
+/// `oneiron::consent_graduation::api::GraduationOffer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationOffer {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "stats")]
+    pub stats: GraduationStats,
+    #[serde(rename = "threshold")]
+    pub threshold: GraduationPolicy,
+    #[serde(rename = "reach")]
+    pub reach: ShapePlanReach,
+}
+
+/// `oneiron::consent_graduation::api::GraduationAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationAnswer {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "not-now")]
+    NotNow,
+    #[serde(rename = "manual_pinned")]
+    ManualPinned,
+}
+
+/// `oneiron::consent_graduation::api::GraduationAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationAnswerRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "answer")]
+    pub answer: GraduationAnswer,
+}
+
+/// `oneiron::consent_graduation::api::GraduationSnooze`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum GraduationSnooze {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "snoozed")]
+    Snoozed {
+        #[serde(rename = "count")]
+        count: u8,
+        #[serde(rename = "next_eligible_at")]
+        next_eligible_at: u64,
+    },
+    #[serde(rename = "manual_pinned")]
+    ManualPinned,
+}
+
+/// `oneiron::consent_graduation::api::GraduationAnswerReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationAnswerReceipt {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "answer")]
+    pub answer: GraduationAnswer,
+    #[serde(rename = "grant", default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<ConsentActReceipt>,
+    #[serde(rename = "snooze")]
+    pub snooze: GraduationSnooze,
+}
+
+/// `oneiron::consent_graduation::api::GraduationTrustRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraduationTrustRow {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "stats")]
+    pub stats: GraduationStats,
+    #[serde(rename = "threshold")]
+    pub threshold: GraduationPolicy,
+    #[serde(rename = "snooze")]
+    pub snooze: GraduationSnooze,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(rename = "offer_is_earned")]
+    pub offer_is_earned: bool,
+    #[serde(
+        rename = "offer_reach",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub offer_reach: Option<String>,
+}
+
+/// `oneiron::consent_graduation::api::GraduationDemotionReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraduationDemotionReason {
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "amended")]
+    Amended,
+    #[serde(rename = "agent_judgment")]
+    AgentJudgment,
+}
+
+/// `oneiron::consent_graduation::api::GraduationDemoteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraduationDemoteRequest {
+    #[serde(rename = "scope")]
+    pub scope: GraduationScope,
+    #[serde(rename = "reason")]
+    pub reason: GraduationDemotionReason,
+}
+
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestRead`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -33950,6 +34425,321 @@ pub enum WireCommitOutcome {
     },
 }
 
+/// `oneiron::booking::agent_api::TimeRangeWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TimeRangeWire {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::booking::constraint::ConstraintWeekday`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConstraintWeekday {
+    #[serde(rename = "monday")]
+    Monday,
+    #[serde(rename = "tuesday")]
+    Tuesday,
+    #[serde(rename = "wednesday")]
+    Wednesday,
+    #[serde(rename = "thursday")]
+    Thursday,
+    #[serde(rename = "friday")]
+    Friday,
+    #[serde(rename = "saturday")]
+    Saturday,
+    #[serde(rename = "sunday")]
+    Sunday,
+}
+
+/// `oneiron::booking::constraint::LocalMinuteWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LocalMinuteWindow {
+    #[serde(rename = "start_minute")]
+    pub start_minute: u16,
+    #[serde(rename = "end_minute")]
+    pub end_minute: u16,
+}
+
+/// `oneiron::booking::constraint::TimeRangeWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConstraintTimeRangeWire {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::booking::constraint::ConstraintObject`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConstraintObject {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u16,
+    #[serde(rename = "weekdays", default, skip_serializing_if = "Option::is_none")]
+    pub weekdays: Option<Vec<ConstraintWeekday>>,
+    #[serde(
+        rename = "local_time_windows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub local_time_windows: Option<Vec<LocalMinuteWindow>>,
+    #[serde(rename = "utc_window", default)]
+    pub utc_window: Option<ConstraintTimeRangeWire>,
+    #[serde(rename = "allow_flex_pool")]
+    pub allow_flex_pool: bool,
+}
+
+/// `oneiron::booking::agent_api::BookingConstraintInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "value")]
+pub enum BookingConstraintInput {
+    #[serde(rename = "object")]
+    Object(ConstraintObject),
+    #[serde(rename = "free_text")]
+    FreeText(String),
+}
+
+/// `oneiron::booking::agent_api::BookingAvailabilityInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingAvailabilityInput {
+    #[serde(rename = "event_type")]
+    pub event_type: String,
+    #[serde(rename = "window")]
+    pub window: TimeRangeWire,
+    #[serde(rename = "visitor_tz")]
+    pub visitor_tz: String,
+    #[serde(
+        rename = "constraint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub constraint: Option<BookingConstraintInput>,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingAvailabilityRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingAvailabilityRequest {
+    #[serde(rename = "availability")]
+    Availability {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingAvailabilityInput,
+    },
+}
+
+/// `oneiron::booking::constraint::RankedSlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RankedSlot {
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+    #[serde(rename = "rank")]
+    pub rank: f64,
+}
+
+/// `oneiron::booking::agent_api::SelectedSlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedSlot {
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+}
+
+/// `oneiron::booking::agent_api::BookingBookResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "stage", content = "result")]
+pub enum BookingBookResult {
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "hold_token")]
+        hold_token: String,
+        #[serde(rename = "selected_slot")]
+        selected_slot: SelectedSlot,
+        #[serde(rename = "expires_at")]
+        expires_at: u64,
+    },
+    #[serde(rename = "confirmed")]
+    Confirmed {
+        #[serde(rename = "reschedule_token")]
+        reschedule_token: String,
+        #[serde(rename = "cancel_token")]
+        cancel_token: String,
+    },
+    #[serde(rename = "slot_taken")]
+    SlotTaken {
+        #[serde(rename = "alternatives")]
+        alternatives: Vec<RankedSlot>,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingOperationResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op", content = "result")]
+pub enum BookingOperationResponse {
+    #[serde(rename = "availability")]
+    Availability {
+        #[serde(rename = "slots")]
+        slots: Vec<RankedSlot>,
+        #[serde(rename = "flex_used")]
+        flex_used: bool,
+    },
+    #[serde(rename = "book")]
+    Book(BookingBookResult),
+    #[serde(rename = "reschedule")]
+    Reschedule {
+        #[serde(rename = "reschedule_token")]
+        reschedule_token: String,
+    },
+    #[serde(rename = "cancel")]
+    Cancel {
+        #[serde(rename = "cancel_token")]
+        cancel_token: String,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingHoldInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingHoldInput {
+    #[serde(rename = "event_type")]
+    pub event_type: String,
+    #[serde(rename = "selected_slot")]
+    pub selected_slot: SelectedSlot,
+    #[serde(rename = "visitor_tz")]
+    pub visitor_tz: String,
+    #[serde(
+        rename = "constraint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub constraint: Option<ConstraintObject>,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(
+        rename = "checkout_lease_token",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkout_lease_token: Option<String>,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::booking::agent_api::BookingIntakeAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingIntakeAnswer {
+    #[serde(rename = "field_key")]
+    pub field_key: String,
+    #[serde(rename = "value")]
+    pub value: String,
+}
+
+/// `oneiron::booking::agent_api::BookingConfirmInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConfirmInput {
+    #[serde(rename = "hold_token")]
+    pub hold_token: String,
+    #[serde(rename = "booker_email")]
+    pub booker_email: String,
+    #[serde(rename = "intake")]
+    pub intake: Vec<BookingIntakeAnswer>,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::booking::agent_api::BookingBookInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "stage", content = "input")]
+pub enum BookingBookInput {
+    #[serde(rename = "hold")]
+    Hold(BookingHoldInput),
+    #[serde(rename = "confirm")]
+    Confirm(BookingConfirmInput),
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingBookRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingBookRequest {
+    #[serde(rename = "book")]
+    Book {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingBookInput,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingRescheduleInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingRescheduleInput {
+    #[serde(rename = "reschedule_token")]
+    pub reschedule_token: String,
+    #[serde(rename = "selected_slot")]
+    pub selected_slot: SelectedSlot,
+    #[serde(rename = "visitor_tz")]
+    pub visitor_tz: String,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingRescheduleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingRescheduleRequest {
+    #[serde(rename = "reschedule")]
+    Reschedule {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingRescheduleInput,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingCancelInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingCancelInput {
+    #[serde(rename = "cancel_token")]
+    pub cancel_token: String,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingCancelRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingCancelRequest {
+    #[serde(rename = "cancel")]
+    Cancel {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingCancelInput,
+    },
+}
+
 /// `oneiron::task_verb::sdk_calendar::BookingConstraintTurnWindow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34001,64 +34791,6 @@ pub struct GeneratedUiCard {
     pub actions: Vec<GeneratedUiActionDeclaration>,
     #[serde(rename = "$state")]
     pub state: std::collections::HashMap<String, SelfUiStateValue>,
-}
-
-/// `oneiron::booking::constraint::ConstraintWeekday`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ConstraintWeekday {
-    #[serde(rename = "monday")]
-    Monday,
-    #[serde(rename = "tuesday")]
-    Tuesday,
-    #[serde(rename = "wednesday")]
-    Wednesday,
-    #[serde(rename = "thursday")]
-    Thursday,
-    #[serde(rename = "friday")]
-    Friday,
-    #[serde(rename = "saturday")]
-    Saturday,
-    #[serde(rename = "sunday")]
-    Sunday,
-}
-
-/// `oneiron::booking::constraint::LocalMinuteWindow`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LocalMinuteWindow {
-    #[serde(rename = "start_minute")]
-    pub start_minute: u16,
-    #[serde(rename = "end_minute")]
-    pub end_minute: u16,
-}
-
-/// `oneiron::booking::constraint::TimeRangeWire`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TimeRangeWire {
-    #[serde(rename = "start")]
-    pub start: u64,
-    #[serde(rename = "end")]
-    pub end: u64,
-}
-
-/// `oneiron::booking::constraint::ConstraintObject`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConstraintObject {
-    #[serde(rename = "schema_version")]
-    pub schema_version: u16,
-    #[serde(rename = "weekdays", default, skip_serializing_if = "Option::is_none")]
-    pub weekdays: Option<Vec<ConstraintWeekday>>,
-    #[serde(
-        rename = "local_time_windows",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub local_time_windows: Option<Vec<LocalMinuteWindow>>,
-    #[serde(rename = "utc_window", default)]
-    pub utc_window: Option<TimeRangeWire>,
-    #[serde(rename = "allow_flex_pool")]
-    pub allow_flex_pool: bool,
 }
 
 /// `oneiron::task_verb::sdk_calendar::BookingConstraintHoldContext`.

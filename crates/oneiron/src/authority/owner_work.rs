@@ -22,6 +22,9 @@
 //! requests its parents carry. A replaced request with no result is still
 //! its executor's to answer.
 //!
+//! A root request's `seen` is [`AuthorityFold::root_work_revision`]: the
+//! owner roots and the target's standing, as the deciding surface saw them.
+//!
 //! As for every act kind, an owner the request's parents hold removed carries
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
 //! writer and the executor each check the owner live in their own
@@ -88,6 +91,21 @@ struct FoldedWorkRequest {
     counts: bool,
 }
 
+/// The heads a root request's revision is over (CALLS ROOT_WORK_REVISION).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootRevisionHeads {
+    /// Every valid owner root, each by its id (two entries of one root carry
+    /// the same keys, so the id stands for its record on every replica), and
+    /// the target's roster revision, its accepted roster revision and the
+    /// head of each anchor's chain of it. The root the change binds, and its
+    /// anchor's chain of the target, are left out: their arrival is what a
+    /// pin waits for and what a restore or an anchoring writes, never a
+    /// change the owner did not see. The pin is local, so it is never a head.
+    RootsAndTargetStanding,
+}
+
+const ROOT_WORK_REVISION: RootRevisionHeads = RootRevisionHeads::RootsAndTargetStanding;
+
 /// Every owner work request and result, as this install folds them.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct FoldedOwnerWork {
@@ -138,6 +156,46 @@ impl AuthorityFold {
     /// Owner work requests and results that are valid without effect.
     pub(crate) fn refused_owner_work(&self) -> &BTreeSet<AuthorityEntryHash> {
         &self.owner_work.refused
+    }
+
+    /// The revision a root request's `change` on `target` is for (CALLS
+    /// ROOT_WORK_REVISION): [`act_revision`] under
+    /// [`ROOT_WORK_REVISION_CONTEXT`] over the fold's live entries the change
+    /// depends on. The recorder states it as the act's `seen`, and the target
+    /// computes it again in its own writer transaction: a different value is
+    /// a change the owner did not see. The request itself is never a head,
+    /// so no request makes itself stale.
+    pub(crate) fn root_work_revision(&self, target: EntityId, change: RootChange) -> [u8; 32] {
+        match ROOT_WORK_REVISION {
+            RootRevisionHeads::RootsAndTargetStanding => {
+                let bound = change.root().and_then(|root| {
+                    self.root_anchors
+                        .iter()
+                        .find(|(_, roots)| roots.contains(&root))
+                        .map(|(anchor, _)| *anchor)
+                });
+                let roots = self
+                    .root_anchors
+                    .iter()
+                    .filter(|(anchor, _)| Some(**anchor) != bound)
+                    .flat_map(|(_, roots)| roots.iter().map(|root| root.0));
+                let standing = self.machine(target).into_iter().flat_map(move |machine| {
+                    machine
+                        .roster
+                        .iter()
+                        .chain(&machine.roster_trusted)
+                        .chain(
+                            machine
+                                .anchored
+                                .iter()
+                                .filter(move |(anchor, _)| Some(**anchor) != bound)
+                                .map(|(_, revision)| revision),
+                        )
+                        .map(|revision| revision.entry)
+                });
+                act_revision(ROOT_WORK_REVISION_CONTEXT, roots.chain(standing))
+            }
+        }
     }
 
     /// The parents a new request names: the main-log heads, the rows the

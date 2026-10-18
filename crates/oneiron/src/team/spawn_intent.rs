@@ -7,11 +7,18 @@
 //! [`crate::agent_dispatch::AgentDispatcher::launch_reserved_spawn_as_owner`]
 //! then launches the plan, a team through its pattern skill, and a replay
 //! returns what launched.
+//!
+//! A leased agent's planned spawn reads the same way under its real parent
+//! attempt (DOOR-111 S4c):
+//! [`crate::agent_dispatch::AgentDispatcher::plan_reserved_spawn_for_attempt`]
+//! reserves, places and plans it over the parent's lease, and
+//! [`crate::agent_dispatch::AgentDispatcher::launch_planned_spawn_for_attempt`]
+//! launches it under that attempt.
 
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, SpawnSpend,
+    AgentSpawnContext, PlannerDecisions, PlannerSeat, PlannerSkills, SpawnPlanReceipt, SpawnSpend,
 };
 use crate::attempt_queue::AttemptId;
 use crate::code_run::SelfSpawnAsk;
@@ -37,11 +44,30 @@ pub struct PlannedSpawnRequest {
     pub requested_type: Option<TaskTypeRef>,
 }
 
-/// What the host serves one owner's planned spawn: its seats, the planner's
-/// skills, the executor it plans on (`model@revision`), its ladders for the
-/// type placement and the shape pick, the root spend scope it opened, and
-/// the placement adapter that places and plans the ask. Host configuration,
-/// borrowed for one call.
+/// One planned spawn a leased agent asks for (DOOR-111 S4c): the key that
+/// names it under the agent's real parent attempt, the ask the planner
+/// reads, and the context the agent asks its child to run in. The same key
+/// with the same request names the same intent; the same key with another
+/// request is refused.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LeasedSpawnRequest {
+    /// The agent's key for this spawn.
+    pub intent_key: String,
+    /// What the agent needs, with the knobs seeded or pinned. The planner
+    /// routes on it.
+    pub ask: SelfSpawnAsk,
+    /// The context the agent asks for: its briefing and projection, sibling
+    /// results, scope, comm, room, objectives, depth, project, type and
+    /// carve. The launch keeps it whole and stamps the plan, the type the
+    /// plan read and the one cap on the leader.
+    pub context: AgentSpawnContext,
+}
+
+/// What the host serves one planned spawn, the owner's or a leased
+/// agent's: its seats, the planner's skills, the executor it plans on
+/// (`model@revision`), its ladders for the type placement and the shape
+/// pick, the root spend scope it opened, and the placement adapter that
+/// places and plans the ask. Host configuration, borrowed for one call.
 pub struct PlannedSpawnHost<'a> {
     /// The seats the spawn may run on: a model and its AGENT_DEF each.
     pub seats: &'a [PlannerSeat],
@@ -57,6 +83,7 @@ pub struct PlannedSpawnHost<'a> {
     /// answers.
     pub planner: Option<&'a PlannerDecisions<'a>>,
     /// The root spend scope the launch is stated under; unset, unmetered.
+    /// A leased spawn spends under its parent's scope and names none.
     pub spend: Option<&'a SpawnSpend>,
     /// The adapter that places and plans the ask.
     pub placement_adapter: &'a str,

@@ -121,6 +121,25 @@ impl Memory<'_> {
         input: &ScopedClaimInput,
         proposed: bool,
     ) -> MemoryResult<CommitReceipt> {
+        self.commit_scoped_one_guarded(input, proposed, !proposed, &|_| Ok(()))
+    }
+
+    /// A family-owned first record uses the same scoped admission without closing peers.
+    pub(super) fn claim_record_scoped_guarded(
+        &self,
+        input: &ScopedClaimInput,
+        guard: &dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()>,
+    ) -> MemoryResult<CommitReceipt> {
+        self.commit_scoped_one_guarded(input, false, false, guard)
+    }
+
+    fn commit_scoped_one_guarded(
+        &self,
+        input: &ScopedClaimInput,
+        proposed: bool,
+        replace: bool,
+        guard: &dyn Fn(&heed::RoTxn<'_>) -> crate::Result<()>,
+    ) -> MemoryResult<CommitReceipt> {
         let world = self.resolve_ref(&input.scope.world_id)?;
         let facet = self.resolve_ref(&input.scope.scope_facet_id)?;
         let project = self.resolve_ref(&input.scope.scope_project_id)?;
@@ -203,10 +222,11 @@ impl Memory<'_> {
         })?;
         self.commit_one_guarded_with_birth(
             &claim,
-            !proposed,
+            replace,
             proposed.then_some(ClaimApprovalStatus::Proposed),
             || {},
             &|txn| {
+                guard(txn)?;
                 self.admit_claim_position(txn, world, facet, project, input.sensitivity)?;
                 if self.vault.get_entity_type_in_txn(txn, &facet)?
                     != Some(crate::registry::ENTITY_TYPE_FACET)
