@@ -1145,7 +1145,7 @@ declare namespace Sdk {
   type CodeDiffRequest = { before: CodeStateRequest; after: CodeStateRequest };
   type CodeStateView = { document_ref: string; repo: string; path: string; revision_ref?: string | null; text_hash: string };
   type CodeUnitVersionView = { content_hash: string; text: string; start_line: number; end_line: number };
-  type CodeOperationView = { operation_ref: string; sequence: number; session_ref: string; actor_ref: string; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
+  type CodeOperationView = { operation_ref: string; sequence: number; session_ref?: string | null; actor_ref?: string | null; actor_class: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null };
   type CodeChangeView = { path: string; symbol: string; before?: CodeUnitVersionView | null; after?: CodeUnitVersionView | null; inserted_by: CodeOperationView[]; deleted_by: CodeOperationView[] };
   type CodeDiffView = { before: CodeStateView; after: CodeStateView; changes: CodeChangeView[]; rendered: string };
   type CodeSpanView = { start: number; end: number; op?: CodeOperationView | null };
