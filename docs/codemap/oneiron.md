@@ -348,7 +348,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/base_apply/validation.rs` | src | s | 5 crate-vis | — | — |
 | `src/batch/builder/apply.rs` | src | s | 1 fn · 3 crate-vis | — | Caller-transaction terminal: stages the batch into a transaction the caller owns and commits |
 | `src/batch/builder/claims.rs` | src | s | 5 fn · 1 crate-vis | — | Claim-candidate builder doors plus the gap-decay op constructor |
-| `src/batch/builder/commit.rs` | src | m | 2 fn · 3 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
+| `src/batch/builder/commit.rs` | src | m | 2 fn · 4 crate-vis | — | Committing terminal: builder-time checks, index preparation, its share of the group commit, preflight… |
 | `src/batch/builder/edges.rs` | src | m | 14 fn · 1 crate-vis | — | Edge/vector/text/phonetic/delete doors plus edge-kind gate helpers |
 | `src/batch/builder/mod.rs` | src | s | 1 struct · 6 crate-vis | BatchBuilder | The atomic multi-database write-batch builder and its two terminals |
 | `src/batch/builder/ops.rs` | src | s | 3 crate-vis | — | Batch op vocabulary and shared op constructors |
@@ -3938,11 +3938,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault/entity_revision/types.rs` | src | s | 7 struct · 1 enum · 1 trait · 4 fn | EntityRevisionChange, IndexedPublication, IndexedRefreshReport, IndexedRevisionEmbedder, IndexedRevisionInput, PinnedCitation, ReadMode, ResolvedCitation +1 | Exact read frontiers and idle refresh contracts for editable entity text |
 | `src/vault/entity_revision/vector_refill.rs` | src | s | 3 crate-vis | — | Published revisions whose vectors an embedding-space swap dropped, waiting to be embedded again at idle |
 | `src/vault/identity.rs` | src | s | 4 crate-vis | — | One vault identity, resolved once at open and held on the handle |
-| `src/vault/mod.rs` | src | s | 1 struct · 7 re-export · 13 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
+| `src/vault/mod.rs` | src | s | 1 struct · 8 re-export · 13 crate-vis | Vault | Top-level `Vault` API: the crate's main entry point for all LMDB-backed entity / vector / edge / text /… |
 | `src/vault/open/config_validation.rs` | src | s | 1 crate-vis | — | — |
 | `src/vault/open/lease_door.rs` | src | s | 3 crate-vis | — | The open a restore uses for its copy: under the writer lease the restore took when it made the copy's… |
 | `src/vault/open/mod.rs` | src | L | 13 fn · 9 crate-vis | — | Vault open and bootstrap: open doors, privacy posture and live-window attachment |
 | `src/vault/places.rs` | src | s | 5 fn | — | Geographic entity doors consume PlaceStore, never concrete database handles |
+| `src/vault/raw_writes.rs` | src | s | 1 struct · 5 fn | RawEntityPut | The raw storage writes a bound caller makes (OF-063, FIX 3387) |
 | `src/vault/read_fixture.rs` | src | s | 3 fn | — | Explicit actor-bound read policy and foreign Grants for cross-crate integration fixtures |
 | `src/vault/reader_table.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | ReaderTableShortfall | The LMDB reader table a vault's environment got, against what it asked for |
 | `src/vault/retrieval_trace_key.rs` | src | s | 5 crate-vis | — | The per-vault key over every stored retrieval-trace fork hash |
