@@ -427,23 +427,31 @@ pub(crate) fn maintain_machine_history_index(
     Ok(())
 }
 
+/// Every control id in `target`'s index. The index grows with the claim's
+/// history, so the read counts its rows against a threshold row and reads on
+/// past it (rule 5): no history is too long to index.
 pub(crate) fn machine_history_ids_for_target(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<Vec<EntityId>> {
     let prefix = target_prefix(target);
+    let mut count = crate::scan_check::ScanCount::start(
+        store,
+        txn,
+        crate::scan_check::EngineScan::MachineHistoryTargetRows,
+        target.as_bytes(),
+    )?;
     let mut ids = Vec::new();
     for row in store.vault_meta.prefix_iter(txn, &prefix)? {
+        count.row();
         let (key, _) = row?;
         let bytes: [u8; 16] = key[prefix.len()..]
             .try_into()
             .map_err(|_| Error::CorruptedIndex("machine history target index"))?;
         ids.push(EntityId::from_bytes(bytes)?);
-        if ids.len() > 8192 {
-            return Err(Error::IndexOverflow("machine claim history"));
-        }
     }
+    count.defer(store);
     Ok(ids)
 }
 
@@ -535,10 +543,11 @@ pub(crate) fn close_machine_history_for_successor(
     Ok(())
 }
 
-/// Stage the immutable birth and the first host-authenticated complete
-/// history handoff in the same LMDB writer as the signed candidate. A retry
-/// may only replay the IDENTICAL birth. The stored pin is local host trust;
-/// a fresh peer must receive its own challenge-bound pin at pairing.
+/// Stage the immutable birth and the genesis handoff (the chain's first
+/// packet, whose root is the birth) in the same LMDB writer as the signed
+/// candidate. A retry may only replay the IDENTICAL birth. The stored pin is
+/// local host trust; a fresh peer must receive its own challenge-bound pin at
+/// pairing.
 #[expect(
     clippy::too_many_arguments,
     reason = "birth, handoff and candidate share one LMDB writer and materialization context"
@@ -698,6 +707,7 @@ pub(crate) fn stage_machine_birth_after_candidate(
         expected_signer: &packet.signer,
         scope: &packet.scope,
         previous_handoff_hash: None,
+        previous_heads: &[],
         challenge: &packet.challenge,
     };
     if !matches!(

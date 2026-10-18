@@ -2,6 +2,10 @@
 //!
 //! The mutable claim row is a projection, never evidence of its own current
 //! authority. Missing bytes or a pin with unproved ancestry withhold reads.
+//! A pin is the tip of a handoff chain whose packets each carry one delta;
+//! the claim's whole history is the union of the chain's deltas.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::authority::{AuthorityFold, AuthorityKey, ROLE_OWNER};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -11,12 +15,14 @@ use crate::claim::transition::{
     machine_claim_transition_event_hash, machine_claim_transition_event_id,
 };
 use crate::error::{ClaimError, Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use rand_core::RngCore;
 use rmpv::Value;
 
+use super::history_handoff::{DeltaClosure, handoff_delta_closure};
 use super::history_store::{
     MachineHistoryKind, machine_history_ids_for_target, machine_history_kind,
     machine_history_shape_matches,
@@ -49,32 +55,62 @@ pub(crate) const CARRY: SideTable<EntityId, Vec<u8>, Raw> =
 pub(crate) struct MachineHistoryRows {
     pub(crate) birth: SignedClaimBirth,
     pub(crate) events: Vec<SignedClaimTransitionEvent>,
+    /// The tip's handoff chain, oldest first, ending at the tip.
+    pub(crate) chain: Vec<ClaimHistoryHandoff>,
+    /// The whole history: every transition of every delta in the chain, by
+    /// hash, with its predecessors ([`chain_transitions`]).
+    pub(crate) transitions: BTreeMap<[u8; 32], Vec<[u8; 32]>>,
 }
 
-/// Verified navigation from the target-local projection index. A malformed
-/// index/record refuses; absence is typed incomplete, never an empty history.
+impl MachineHistoryRows {
+    /// Heads of the packet before the tip, read from that verified packet:
+    /// the tip's pinned previous heads. Empty at genesis.
+    pub(crate) fn previous_heads(&self) -> &[[u8; 32]] {
+        self.chain
+            .iter()
+            .rev()
+            .nth(1)
+            .map_or(&[][..], |packet| packet.heads.as_slice())
+    }
+}
+
+/// Verified navigation from the target-local projection index, for the
+/// history the trusted pin names. A malformed index/record refuses; absence
+/// is typed incomplete, never an empty history.
 pub(crate) fn machine_history_rows(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
 ) -> Result<MachineHistoryRows> {
+    let pin = trusted_machine_handoff(store, txn, target)?;
+    machine_history_rows_at(store, txn, target, &pin)
+}
+
+/// [`machine_history_rows`] for the history `tip`'s chain names, where `tip`
+/// is a candidate not pinned yet (adoption). Its ancestors are read from
+/// stored packets; an absent one is incomplete.
+pub(crate) fn machine_history_rows_at(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+    tip: &ClaimHistoryHandoff,
+) -> Result<MachineHistoryRows> {
     // The target index is an UNTRUSTED navigation hint. It may contain
     // additional self-signed, unbound peer events. Only IDs named by the
-    // previously authenticated handoff pin can affect a claim's fold; a
-    // stray event cannot permanently poison a legitimate target.
-    let pin = trusted_machine_handoff(store, txn, target)?;
-    if pin.births.len() != 1 || pin.births[0].id != target {
+    // authenticated tip's chain can affect a claim's fold; a stray event
+    // cannot permanently poison a legitimate target.
+    if tip.births.len() != 1 || tip.births[0].id != target {
         return Err(bad());
     }
-    let mut expected = std::collections::BTreeSet::new();
-    for hash in
-        std::iter::once(pin.births[0].digest).chain(pin.transitions.iter().map(|event| event.hash))
-    {
+    let chain = read_handoff_chain(store, txn, tip)?;
+    let transitions = chain_transitions(&chain)?;
+    let mut expected = BTreeSet::new();
+    for hash in std::iter::once(tip.births[0].digest).chain(transitions.keys().copied()) {
         expected.insert(
             EntityId::from_bytes(hash[..16].try_into().map_err(|_| bad())?).map_err(|_| bad())?,
         );
     }
-    if expected.len() != pin.transitions.len() + 1 {
+    if expected.len() != transitions.len() + 1 {
         return Err(bad());
     }
     let mut birth = None;
@@ -141,7 +177,7 @@ pub(crate) fn machine_history_rows(
         return Err(missing());
     }
     let birth = birth.ok_or_else(missing)?;
-    if birth.digest != pin.births[0].digest {
+    if birth.digest != tip.births[0].digest {
         return Err(bad());
     }
     let original = super::decode_claim_body(&birth.initial_body, true)?;
@@ -163,53 +199,49 @@ pub(crate) fn machine_history_rows(
             return Err(bad());
         }
     }
-    Ok(MachineHistoryRows { birth, events })
+    Ok(MachineHistoryRows {
+        birth,
+        events,
+        chain,
+        transitions,
+    })
 }
 
-/// Require an exact signed predecessor chain for all archived handoff pins.
-/// The present pin may advance only from an authenticated previously accepted
-/// closure; a peer cannot splice an older/re-rooted packet into a new head.
-pub(crate) fn verified_handoff_chain(
+/// The handoff chain behind `tip`, oldest first, ending at `tip`: the one
+/// reader of a claim's stored packets. Each link must name its parent's exact
+/// content hash, and every packet must repeat the tip's birth anchor, vault,
+/// genesis and scope. Each delta must close over the heads of the packet
+/// before it ([`handoff_delta_closure`]), and no transition may appear in two
+/// packets or repeat a birth digest. An absent ancestor is incomplete; a
+/// present but wrong chain refuses. The walk counts its packets against a
+/// threshold row and reads on: no chain is too long to read (rule 5).
+pub(crate) fn read_handoff_chain(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     tip: &ClaimHistoryHandoff,
-    fold: &AuthorityFold,
 ) -> Result<Vec<ClaimHistoryHandoff>> {
+    let scope = tip
+        .births
+        .first()
+        .map_or_else(Vec::new, |birth| birth.id.as_bytes().to_vec());
+    let mut count = ScanCount::start(store, txn, EngineScan::MachineHandoffChain, &scope)?;
     let mut current = tip.clone();
     let mut chain = Vec::new();
-    let mut seen = std::collections::BTreeSet::new();
+    let mut seen = BTreeSet::new();
     loop {
+        count.row();
         let hash = current.content_hash().map_err(|_| bad())?;
-        if !seen.insert(hash) || chain.len() > 1024 {
+        if !seen.insert(hash) {
             return Err(Error::InvalidClaimBody("handoff-chain loop"));
         }
-        if current.vault_id != fold.vault_id.ok_or_else(missing)? {
+        if current.vault_id != tip.vault_id || current.genesis_hash != tip.genesis_hash {
             return Err(Error::InvalidClaimBody("handoff-chain vault mismatch"));
-        }
-        if !fold.valid_entries.contains(&current.authority_head)
-            && !crate::authority::machine_history_authority_descends(
-                store,
-                txn,
-                &current.authority_head,
-                &tip.authority_head,
-            )?
-        {
-            return Err(Error::InvalidClaimBody(
-                if hash == tip.content_hash().map_err(|_| bad())? {
-                    "handoff-chain tip authority head missing"
-                } else {
-                    "handoff-chain prior authority head missing"
-                },
-            ));
         }
         if current.births != tip.births {
             return Err(Error::InvalidClaimBody("handoff-chain birth mismatch"));
         }
         if current.scope != tip.scope {
             return Err(Error::InvalidClaimBody("handoff-chain scope mismatch"));
-        }
-        if !verify_handoff_signature(&current) {
-            return Err(Error::InvalidClaimBody("handoff-chain signature mismatch"));
         }
         let parent = current.previous_handoff_hash;
         chain.push(current);
@@ -235,15 +267,79 @@ pub(crate) fn verified_handoff_chain(
             return Err(Error::InvalidClaimBody("handoff-chain bad parent hash"));
         }
     }
+    count.defer(store);
     chain.reverse();
-    for pair in chain.windows(2) {
-        if pair[1].transitions.len() < pair[0].transitions.len()
-            || !pair[0]
-                .transitions
-                .iter()
-                .all(|prior| pair[1].transitions.contains(prior))
+    // Closure across the chain: each delta extends the heads before it with
+    // transitions no earlier packet carried.
+    let mut carried: BTreeSet<[u8; 32]> = tip.births.iter().map(|birth| birth.digest).collect();
+    let mut previous_heads: &[[u8; 32]] = &[];
+    for packet in &chain {
+        if handoff_delta_closure(packet, previous_heads) != DeltaClosure::Closed {
+            return Err(Error::InvalidClaimBody("handoff-chain delta closure"));
+        }
+        if !packet
+            .transitions
+            .iter()
+            .all(|transition| carried.insert(transition.hash))
         {
-            return Err(Error::InvalidClaimBody("handoff-chain nonmonotone closure"));
+            return Err(Error::InvalidClaimBody("handoff-chain replayed transition"));
+        }
+        previous_heads = packet.heads.as_slice();
+    }
+    Ok(chain)
+}
+
+/// The whole history a handoff chain carries: every transition of every
+/// delta, by hash, with its predecessors. A plain map, never a synthetic
+/// packet, so no packet bound applies to a long history.
+pub(crate) fn chain_transitions(
+    chain: &[ClaimHistoryHandoff],
+) -> Result<BTreeMap<[u8; 32], Vec<[u8; 32]>>> {
+    let mut transitions = BTreeMap::new();
+    for transition in chain.iter().flat_map(|packet| &packet.transitions) {
+        if transitions
+            .insert(transition.hash, transition.predecessors.clone())
+            .is_some()
+        {
+            return Err(Error::InvalidClaimBody("handoff-chain replayed transition"));
+        }
+    }
+    Ok(transitions)
+}
+
+/// Require an exact signed predecessor chain for all archived handoff pins.
+/// The present pin may advance only from an authenticated previously accepted
+/// closure; a peer cannot splice an older/re-rooted packet into a new head.
+/// On top of [`read_handoff_chain`]'s shape, every packet must be signed and
+/// name an authority head this vault holds or that the tip's descends from.
+pub(crate) fn verified_handoff_chain(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    tip: &ClaimHistoryHandoff,
+    fold: &AuthorityFold,
+) -> Result<Vec<ClaimHistoryHandoff>> {
+    let chain = read_handoff_chain(store, txn, tip)?;
+    let vault_id = fold.vault_id.ok_or_else(missing)?;
+    for (index, current) in chain.iter().enumerate() {
+        if current.vault_id != vault_id {
+            return Err(Error::InvalidClaimBody("handoff-chain vault mismatch"));
+        }
+        if !fold.valid_entries.contains(&current.authority_head)
+            && !crate::authority::machine_history_authority_descends(
+                store,
+                txn,
+                &current.authority_head,
+                &tip.authority_head,
+            )?
+        {
+            return Err(Error::InvalidClaimBody(if index + 1 == chain.len() {
+                "handoff-chain tip authority head missing"
+            } else {
+                "handoff-chain prior authority head missing"
+            }));
+        }
+        if !verify_handoff_signature(current) {
+            return Err(Error::InvalidClaimBody("handoff-chain signature mismatch"));
         }
     }
     Ok(chain)
@@ -337,7 +433,7 @@ pub(crate) fn restricts_held_machine_history(
 
 /// The verified, folded history of `target`, and the ids of every carrier it
 /// was folded from: the birth, the present pin, each handoff in its chain
-/// and each transition.
+/// and each transition of the chain's union.
 fn machine_history(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -351,7 +447,7 @@ fn machine_history(
         || packet.births.len() != 1
         || packet.births[0].id != target
         || packet.births[0].digest != rows.birth.digest
-        || packet.transitions.len() != rows.events.len()
+        || rows.transitions.len() != rows.events.len()
     {
         return Err(missing());
     }
@@ -363,14 +459,14 @@ fn machine_history(
     hashes.sort_unstable();
     if !hashes
         .iter()
-        .zip(&packet.transitions)
-        .all(|(hash, event)| hash == &event.hash)
+        .zip(rows.transitions.keys())
+        .all(|(hash, listed)| hash == listed)
     {
         return Err(missing());
     }
     let handoff_chain = verified_handoff_chain(store, txn, &packet, fold)?;
     let mut hashes = vec![rows.birth.digest, packet.content_hash().map_err(|_| bad())?];
-    hashes.extend(packet.transitions.iter().map(|event| event.hash));
+    hashes.extend(rows.transitions.keys().copied());
     for handoff in &handoff_chain {
         hashes.push(handoff.content_hash().map_err(|_| bad())?);
     }
@@ -423,16 +519,15 @@ fn machine_history(
                 return true;
             }
             // The successor's in-chain ReRoot is the causal witness, not a
-            // timestamp. An old event absent from the exact predecessor
-            // packet cannot be inserted after the root has been retired.
+            // timestamp. Every later packet carries the event in its
+            // ancestry, since its delta extends the introducing packet's
+            // heads; its own delta never repeats the event. An old event
+            // absent from the exact introducing packet cannot be inserted
+            // after the root has been retired.
             handoff_chain.iter().skip(index + 1).any(|successor| {
                 fold.roster
                     .get(&successor.signer)
                     .is_some_and(|root| !root.revoked && root.roles & ROLE_OWNER != 0)
-                    && successor
-                        .transitions
-                        .iter()
-                        .any(|row| Some(row.hash) == event_hash)
                     && crate::authority::machine_history_authority_descends(
                         store,
                         txn,
@@ -465,7 +560,8 @@ fn machine_history(
 /// Pin a challenge-bound host packet before receiving any claim bytes.
 /// Its rows may still be missing; the pin only WITHHOLDS that target until
 /// the full signed closure is fetched and adopted. A peer cannot assert an
-/// empty history or select its own signer through this door.
+/// empty history or select its own signer through this door. A successor of
+/// the stored pin must name that pin's heads as its previous heads.
 impl Vault {
     pub fn pin_machine_history_handoff_pending(
         &self,
@@ -512,8 +608,10 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         if let Some(raw) = self.store.vault_meta.get(&txn, &pin_key(target))? {
             let previous = ClaimHistoryHandoff::decode(&raw).map_err(|_| bad())?;
-            if hash != previous.content_hash().map_err(|_| bad())?
-                && packet.previous_handoff_hash != Some(previous.content_hash().map_err(|_| bad())?)
+            let previous_hash = previous.content_hash().map_err(|_| bad())?;
+            if hash != previous_hash
+                && (packet.previous_handoff_hash != Some(previous_hash)
+                    || pin.previous_heads != previous.heads.as_slice())
             {
                 return Err(bad());
             }
@@ -529,8 +627,9 @@ impl Vault {
 }
 
 /// Adopt a host/pairing-authenticated exact closure. The untrusted packet
-/// cannot select its own signer, scope, predecessor pin or challenge. All
-/// referenced signed CLAIM controls must already be resident and verified.
+/// cannot select its own signer, scope, predecessor pin, previous heads or
+/// challenge. Its whole chain and every signed CLAIM control the chain names
+/// must already be resident and verified.
 impl Vault {
     pub fn adopt_machine_history_handoff(
         &self,
@@ -539,7 +638,9 @@ impl Vault {
         pin: &ClaimHistoryHandoffPin<'_>,
     ) -> Result<VerifiedClaimHistoryHandoff> {
         let mut txn = self.store.env.write_txn()?;
-        let rows = machine_history_rows(&self.store, &txn, target)?;
+        // The candidate's own chain names the rows: its whole history, not
+        // its delta and not the old pin's.
+        let rows = machine_history_rows_at(&self.store, &txn, target, packet)?;
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let original = super::decode_claim_body(&rows.birth.initial_body, true)?;
         let exact = packet.births.len() == 1
@@ -547,7 +648,7 @@ impl Vault {
             && packet.births[0].digest == rows.birth.digest
             && packet.vault_id == rows.birth.vault_id
             && packet.scope == super::history_store::machine_history_scope_bytes(&original)?
-            && packet.transitions.len() == rows.events.len()
+            && rows.transitions.len() == rows.events.len()
             && rows.events.iter().all(|event| {
                 let Ok(hash) = machine_claim_transition_event_hash(event) else {
                     return false;
@@ -557,10 +658,7 @@ impl Vault {
                 } else {
                     event.predecessors.clone()
                 };
-                packet
-                    .transitions
-                    .iter()
-                    .any(|listed| listed.hash == hash && listed.predecessors == expected_parents)
+                rows.transitions.get(&hash) == Some(&expected_parents)
             });
         let verdict = verify_claim_history_handoff(packet, pin, |handoff| {
             if !exact
@@ -569,6 +667,8 @@ impl Vault {
             {
                 return HandoffStanding::MissingParents;
             }
+            // The chain's shape already proved itself above: a wrong chain
+            // refused there. What fails here is authority not yet held.
             let Ok(chain) = verified_handoff_chain(&self.store, &txn, handoff, &fold) else {
                 return HandoffStanding::MissingParents;
             };
@@ -599,7 +699,8 @@ impl Vault {
             .ok_or_else(missing)?;
         let prior = ClaimHistoryHandoff::decode(&previous).map_err(|_| bad())?;
         if packet.encode().map_err(|_| bad())?.as_slice() != previous.as_ref()
-            && packet.previous_handoff_hash != Some(prior.content_hash().map_err(|_| bad())?)
+            && (packet.previous_handoff_hash != Some(prior.content_hash().map_err(|_| bad())?)
+                || pin.previous_heads != prior.heads.as_slice())
         {
             return Err(bad());
         }
@@ -656,11 +757,12 @@ impl Vault {
     }
 }
 
-/// Explicit in-chain re-root carry-forward: the current host signs the exact
-/// previously trusted scoped closure under its NEW authority head. An event
-/// authored later by the retired root is outside this packet and cannot gain
-/// historical standing by claiming an old timestamp/frontier. The packet is a
-/// plain `Handoff`: only `re_root_host` signs a `ReRootCarry`.
+/// Explicit in-chain re-root carry-forward: the current host signs an empty
+/// delta on the exact previously trusted chain under its NEW authority head,
+/// with the same birth anchor and heads. An event authored later by the
+/// retired root is outside this chain and cannot gain historical standing by
+/// claiming an old timestamp/frontier. The packet is a plain `Handoff`: only
+/// `re_root_host` signs a `ReRootCarry`, the same empty delta.
 impl Vault {
     pub fn carry_machine_history_after_re_root(
         &self,
@@ -702,11 +804,11 @@ impl Vault {
             || prior.births.len() != 1
             || prior.births[0].id != target
             || prior.births[0].digest != rows.birth.digest
-            || prior.transitions.len() != rows.events.len()
+            || rows.transitions.len() != rows.events.len()
             || rows.events.iter().any(|event| {
                 machine_claim_transition_event_hash(event)
                     .ok()
-                    .is_none_or(|hash| !prior.transitions.iter().any(|row| row.hash == hash))
+                    .is_none_or(|hash| !rows.transitions.contains_key(&hash))
             })
         {
             return Err(missing());
@@ -728,8 +830,11 @@ impl Vault {
         }
         let mut nonce = [0; 32];
         rand_core::OsRng.fill_bytes(&mut nonce);
+        let previous_heads = prior.heads.clone();
+        // An empty delta: the carry adds no transition, so the heads stay.
         let mut next = prior;
         next.kind = kind;
+        next.transitions = Vec::new();
         next.authority_head = authority_head;
         next.previous_handoff_hash = Some(prior_hash);
         next.nonce = nonce;
@@ -743,6 +848,7 @@ impl Vault {
             expected_signer: &next.signer,
             scope: &next.scope,
             previous_handoff_hash: Some(prior_hash),
+            previous_heads: &previous_heads,
             challenge: &challenge,
         };
         if !matches!(
