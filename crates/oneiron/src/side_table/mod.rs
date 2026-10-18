@@ -195,6 +195,11 @@ pub(crate) enum SidePayload {
     Custody,
 }
 
+/// How a table that records an actor forgets one: run over its rows in the erase's own
+/// transaction (FIX 3520).
+pub(crate) type ActorScrub =
+    fn(&crate::Vault, &mut RwTxn<'_>, &crate::entity_id::EntityId) -> Result<()>;
+
 /// One entry of the declaration list: where a table lives, how its rows are encoded and what
 /// they carry.
 #[derive(Debug)]
@@ -204,6 +209,8 @@ pub(crate) struct SideTableDecl {
     pub(crate) prefix: &'static [u8],
     pub(crate) codec: CodecName,
     pub(crate) payload: SidePayload,
+    /// The scrub an actor's erase runs over this table's rows.
+    pub(crate) actor: Option<ActorScrub>,
 }
 
 impl SideTableDecl {

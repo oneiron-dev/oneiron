@@ -357,28 +357,37 @@ pub fn retired_workflows(vault: &Vault, site: &str) -> Result<Vec<RetiredWorkflo
     Ok(retired)
 }
 
-/// Erasing `actor`: every program its run filed, and every retire at its
-/// word, keeps its row, its times and its reason, and states
-/// [`ERASED_CALL_IDENTITY`] for the actor. One-way, in the erase's own
-/// transaction. An id whose entity is no actor scans nothing.
-///
-/// # Errors
-///
-/// Storage errors, or a library row that cannot be read.
-pub(crate) fn erase_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    if let Some(raw) = vault.get_raw_in(wtxn, actor)?
+/// Whether `actor` names an entity that is no actor, so erasing it scans
+/// nothing. An id with no record, or one whose header does not parse, still
+/// scans.
+fn is_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &EntityId) -> Result<bool> {
+    if let Some(raw) = vault.get_raw_in(txn, actor)?
         && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
-        && !matches!(
+    {
+        return Ok(!matches!(
             header.entity_type,
             crate::registry::ENTITY_TYPE_PERSON
                 | crate::registry::ENTITY_TYPE_MACHINE
                 | crate::registry::ENTITY_TYPE_AGENT_DEF
-        )
-    {
+        ));
+    }
+    Ok(false)
+}
+
+/// Erasing `actor` from the filed programs: every program its run filed
+/// keeps its row and its times, and states [`ERASED_CALL_IDENTITY`] for the
+/// actor. One-way, in the erase's own transaction. An id whose entity is no
+/// actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a library row that cannot be read.
+pub(crate) fn erase_workflow_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if is_no_actor(vault, wtxn, actor)? {
         return Ok(());
     }
     let mut filed = Vec::new();
@@ -390,6 +399,25 @@ pub(crate) fn erase_actor_in_txn(
     }
     for (key, record) in filed {
         WORKFLOWS.put(vault, wtxn, &key, &record)?;
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from what retires took out: every retire at its word, and
+/// every retired program its run filed, keeps its row, its times and its
+/// reason, and states [`ERASED_CALL_IDENTITY`] for the actor. One-way, in the
+/// erase's own transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a library row that cannot be read.
+pub(crate) fn erase_retired_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if is_no_actor(vault, wtxn, actor)? {
+        return Ok(());
     }
     let mut retired = Vec::new();
     for (id, mut trace) in RETIRED.scan(&vault.store, wtxn)? {
