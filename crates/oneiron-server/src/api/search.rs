@@ -124,21 +124,31 @@ impl From<oneiron::sync::ResidenceSearch> for ResidenceAnswer {
 
 /// Asks the home a text search an opened machine cannot answer locally
 /// (ARCH-0023b partial sync). `None` on a machine that holds every window.
-/// The home scopes its answer to this device's own grants, so only an
-/// owner-grade caller gets its hits; a narrower one gets the local page,
-/// marked incomplete. A deadline bounds the ask as it bounds the page.
+/// An owner-grade caller is the device's paired owner, so the home answers
+/// it within this device's own grants. A narrower caller is judged at the
+/// home on its own holder proof, `forwarded` (FIX 2907); one with none to
+/// forward gets the local page, marked incomplete. A deadline bounds the ask
+/// as it bounds the page.
 async fn ask_home(
     home: Option<Arc<oneiron::sync::HomeSearch>>,
     owner_grade: bool,
+    forwarded: Option<oneiron::authority::ForwardedCallerProof>,
     query: String,
     limit: usize,
     due: Option<Instant>,
 ) -> Option<ResidenceAnswer> {
     let home = home?;
-    if !owner_grade {
-        return Some(ResidenceAnswer::local_only());
-    }
-    let search = home.search(&query, limit);
+    let forwarded = match (owner_grade, forwarded) {
+        (true, _) => None,
+        (false, Some(caller)) => Some(caller),
+        (false, None) => return Some(ResidenceAnswer::local_only()),
+    };
+    let search = async {
+        match &forwarded {
+            Some(caller) => home.search_for(&query, limit, caller).await,
+            None => home.search(&query, limit).await,
+        }
+    };
     let answer = match due {
         Some(due) => tokio::time::timeout_at(due.into(), search).await.ok(),
         None => Some(search.await),
@@ -501,6 +511,9 @@ pub(crate) async fn search_text(
     let home = ask_home(
         server.vault().home_search(),
         auth.is_owner_grade(),
+        (!auth.is_owner_grade())
+            .then(|| auth.forwarded_caller_proof(&headers))
+            .flatten(),
         params.query.clone(),
         page_limit,
         deadline.map(|budget| arrived + budget),

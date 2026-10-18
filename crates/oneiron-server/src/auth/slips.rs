@@ -51,6 +51,25 @@ pub(crate) fn parse_signature(value: &str) -> Result<Vec<u8>, ApiError> {
         .collect()
 }
 impl CoreAuth {
+    /// The caller's own holder proof as its device forwards it to the home
+    /// (FIX 2907): the slip token and the `x-oneiron-binding` fields this
+    /// request was admitted on, unchanged and never signed again. `None`
+    /// for a request admitted on no holder-bound slip.
+    pub(crate) fn forwarded_caller_proof(
+        &self,
+        headers: &HeaderMap,
+    ) -> Option<oneiron::authority::ForwardedCallerProof> {
+        self.verified_slip()?;
+        let token = bearer_token(headers).ok().flatten()?;
+        let proof = BindingProof::from_headers(headers).ok()?;
+        Some(oneiron::authority::ForwardedCallerProof {
+            token: token.to_owned(),
+            timestamp: proof.timestamp,
+            nonce: proof.nonce,
+            signature: proof.signature,
+        })
+    }
+
     pub(crate) fn from_slip_token(
         token: &str,
         proof: &BindingProof,
