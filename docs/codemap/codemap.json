@@ -31523,7 +31523,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/campaign_actions.rs",
@@ -31683,7 +31683,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/memory/checkout_doors/operations.rs",
@@ -71211,7 +71211,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/browser_doors.rs",
@@ -74109,7 +74109,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/calendar_host/caldav.rs",
@@ -79410,7 +79410,7 @@
     "calendar_host": {
      "files": 3,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "The calendar host's real CalDAV wire and iMIP submission transport"
     },
