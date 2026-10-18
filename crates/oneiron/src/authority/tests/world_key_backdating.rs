@@ -57,12 +57,13 @@ fn a_removed_machines_backdated_key_never_becomes_current() {
         .vault
         .set_world_privacy_as(
             &graph.a.owner,
-            HERE,
+            ActSurface::ThisInstall,
             world,
             WorldPrivacy {
                 sealed: SealedCopies::MyMachines,
                 ..settings(ReadLocation::MyMachines)
             },
+            None,
         )
         .unwrap();
     set_on(&graph.a, world, ReadLocation::MyMachines);
