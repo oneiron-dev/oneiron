@@ -6034,13 +6034,25 @@
       "EsignIssuedLink",
       "EsignLinksIssueRequest",
       "EsignLinksView",
+      "EsignSealAttemptView",
+      "EsignSealGetRequest",
+      "EsignSealView",
+      "EsignSealedItemView",
+      "EsignSealedView",
+      "EsignSigningImageRequest",
+      "EsignSigningImageView",
+      "EsignSigningPdfRequest",
+      "EsignSigningPdfView",
+      "EsignSigningRequest",
+      "EsignSigningSignatureRequest",
+      "EsignSigningSignatureView",
       "EsignVoidRequest"
      ],
      "path": "src/blob_artifact/esign/door.rs",
      "purpose": "The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02)",
      "surface": {
-      "fn": 6,
-      "struct": 10
+      "fn": 11,
+      "struct": 22
      }
     },
     {
@@ -49660,7 +49672,7 @@
      "path": "src/sync/machine_history.rs",
      "purpose": "Machine-claim history this machine is owed (FIX 3820, FIX 4293)",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -52712,7 +52724,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 939
+      "fn": 944
      }
     },
     {
@@ -68964,7 +68976,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 908
+      "fn": 913
      }
     },
     {
@@ -70027,7 +70039,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 909
+      "fn": 914
      }
     },
     {
@@ -72900,7 +72912,7 @@
      "path": "src/api/esign/presentation.rs",
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 8
      }
     },
     {
@@ -74701,6 +74713,16 @@
      "purpose": "Security-scheme wiring and schema property-description helper",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/openapi/signing_paths.rs",
+     "purpose": "The public signing ceremony routes (`/sign/*`, DOOR-117): their request and answer schemas are the verb…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -81490,7 +81512,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 414,
+     "files": 415,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81919,7 +81941,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 764,
+   "source_files": 765,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -83107,6 +83129,18 @@
       "EsignLinksView",
       "EsignNoticeSwitches",
       "EsignRecipient",
+      "EsignSealAttemptView",
+      "EsignSealGetRequest",
+      "EsignSealView",
+      "EsignSealedItemView",
+      "EsignSealedView",
+      "EsignSigningImageRequest",
+      "EsignSigningImageView",
+      "EsignSigningPdfRequest",
+      "EsignSigningPdfView",
+      "EsignSigningRequest",
+      "EsignSigningSignatureRequest",
+      "EsignSigningSignatureView",
       "EsignVoidRequest",
       "EstimateLabels",
       "EstimateWindow",
@@ -83202,8 +83236,10 @@
       "FeedbackSubjectPreview",
       "FeedbackSubjectSent",
       "FetchResult",
+      "FieldControl",
       "FieldGeometry",
       "FieldMeta",
+      "FieldPresentation",
       "FieldValue",
       "FindInput",
       "FindOutput",
@@ -84698,6 +84734,9 @@
       "SignalExtractionTicket",
       "SignatureRow",
       "SignedAuthorityHistory",
+      "SigningAction",
+      "SigningOutcome",
+      "SigningPage",
       "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillCallInput",
@@ -85210,8 +85249,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 762,
-      "struct": 2331
+      "enum": 765,
+      "struct": 2345
      }
     },
     {
