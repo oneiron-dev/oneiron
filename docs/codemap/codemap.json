@@ -31025,6 +31025,30 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_run_doors/mod.rs",
+     "purpose": "The typed per-model code-run heal count door (DOOR-093)",
+     "surface": {
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeRunModelHealCountRequest",
+      "CodeRunModelHealCountView"
+     ],
+     "path": "src/memory/code_run_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -31486,7 +31510,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 8,
+      "mod": 9,
       "re-export": 43
      }
     },
@@ -49810,7 +49834,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 554
+      "fn": 555
      }
     },
     {
@@ -56074,7 +56098,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 165,
+     "files": 167,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56755,7 +56779,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3459,
+   "source_files": 3461,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65169,7 +65193,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 504
+      "fn": 505
      }
     },
     {
@@ -66218,7 +66242,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 505
+      "fn": 506
      }
     },
     {
@@ -69188,6 +69212,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_run_doors.rs",
+     "purpose": "The credential-bound host projection of the typed per-model code-run heal count door (DOOR-093)",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -69401,7 +69435,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 98
+      "crate-vis": 99
      }
     },
     {
@@ -76846,7 +76880,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 356,
+     "files": 357,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77261,7 +77295,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 682,
+   "source_files": 683,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77741,6 +77775,8 @@
       "CodeRepoDiffView",
       "CodeRepoPointer",
       "CodeRepoRequest",
+      "CodeRunModelHealCountRequest",
+      "CodeRunModelHealCountView",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -79271,7 +79307,7 @@
      "purpose": "—",
      "surface": {
       "enum": 475,
-      "struct": 1336
+      "struct": 1338
      }
     },
     {
