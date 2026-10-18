@@ -40,8 +40,7 @@ const BENCHMARK: SideTable<String, SelectionBenchmark, Named> =
 
 /// A rung of the cold-start ladder, in the order it seeds a new posterior.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PriorRung {

@@ -1,18 +1,33 @@
 //! Typed checkout custody calls. Holder identity and time come from the credential and vault.
-use serde::{Deserialize, Serialize};
 use crate::EntityId;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckoutClass { Edit, Build, Verify, Effect }
+pub enum CheckoutClass {
+    Edit,
+    Build,
+    Verify,
+    Effect,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckoutState { Active, Settling, Settled, Retained }
+pub enum CheckoutState {
+    Active,
+    Settling,
+    Settled,
+    Retained,
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckoutAction { Select, Apply, Release, Discard }
+pub enum CheckoutAction {
+    Select,
+    Apply,
+    Release,
+    Discard,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -30,7 +45,9 @@ pub struct CheckoutClaimInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct CheckoutGetInput { pub checkout: String }
+pub struct CheckoutGetInput {
+    pub checkout: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -129,12 +146,22 @@ pub struct CheckoutTeardownInput {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckoutRetention {
-    MissingPushedHeadReceipt, ReceiptMismatch, LiveOccupant, DirtyOrUncertain,
+    MissingPushedHeadReceipt,
+    ReceiptMismatch,
+    LiveOccupant,
+    DirtyOrUncertain,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CheckoutTornDown {
-    Collected { checkout: String, epoch: u64 },
-    Retained { checkout: String, epoch: u64, reason: CheckoutRetention },
+    Collected {
+        checkout: String,
+        epoch: u64,
+    },
+    Retained {
+        checkout: String,
+        epoch: u64,
+        reason: CheckoutRetention,
+    },
 }

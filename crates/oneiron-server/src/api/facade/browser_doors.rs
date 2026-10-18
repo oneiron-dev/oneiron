@@ -35,7 +35,10 @@ where
             let dispatcher = HostSelfDispatcher::for_live_run(server.vault(), writer, &binding)?;
             let origin = dispatcher.browser_origin_from_host(verb)?;
             let memory = crate::api::credential_memory(
-                server.vault(), Some(&auth), writer.entity_ref(), writer.actor_class(),
+                server.vault(),
+                Some(&auth),
+                writer.entity_ref(),
+                writer.actor_class(),
             )
             .at(auth.locality())
             .with_host_origin(origin.clone());
@@ -60,18 +63,28 @@ where
             )?;
             // Release no result to a credential revoked while the guest acted.
             let proof = auth.verified_slip().ok_or_else(|| {
-                MemoryError::new(oneiron::memory::MEMORY_CODE_FORBIDDEN, "a browser call requires its live credential", &[])
+                MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                    "a browser call requires its live credential",
+                    &[],
+                )
             })?;
             server.vault().credential_read_key(proof)?.ok_or_else(|| {
-                MemoryError::new(oneiron::memory::MEMORY_CODE_FORBIDDEN, "the browser credential no longer holds", &[])
+                MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                    "the browser credential no longer holds",
+                    &[],
+                )
             })?;
             drop(held);
-            let answer = answer.map_err(|refusal| MemoryError::new(&refusal.code, &refusal.code, &[]))?;
+            let answer =
+                answer.map_err(|refusal| MemoryError::new(&refusal.code, &refusal.code, &[]))?;
             serde_json::from_value(answer.output).map_err(|_| internal(verb.as_str()))
         })
         .await
         .map_err(|_| internal(verb.as_str()))?
-    }.await;
+    }
+    .await;
     // The page is foreign data, not a listing of vault entity rows.
     (answer, Vec::new())
 }
@@ -84,7 +97,15 @@ pub(crate) async fn self_browser_open(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserOpenInput>,
 ) -> Listed<sdk::BrowserObservationPage> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserOpen, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserOpen,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_observe(
@@ -95,7 +116,15 @@ pub(crate) async fn self_browser_observe(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserObserveInput>,
 ) -> Listed<sdk::BrowserObservationPage> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserObserve, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserObserve,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_find(
@@ -106,7 +135,15 @@ pub(crate) async fn self_browser_find(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserFindInput>,
 ) -> Listed<sdk::BrowserFindOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserFind, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserFind,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_click(
@@ -117,7 +154,15 @@ pub(crate) async fn self_browser_click(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserClickInput>,
 ) -> Listed<sdk::BrowserObservationPage> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserClick, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserClick,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_click_at(
@@ -128,7 +173,15 @@ pub(crate) async fn self_browser_click_at(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserPointInput>,
 ) -> Listed<sdk::BrowserObservationPage> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserClickAt, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserClickAt,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_type(
@@ -139,7 +192,15 @@ pub(crate) async fn self_browser_type(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserTypeInput>,
 ) -> Listed<sdk::BrowserObservationPage> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserType, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserType,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_select(
@@ -150,7 +211,15 @@ pub(crate) async fn self_browser_select(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserSelectInput>,
 ) -> Listed<sdk::BrowserObservationPage> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserSelect, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserSelect,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_wait_for(
@@ -161,7 +230,15 @@ pub(crate) async fn self_browser_wait_for(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserWaitForInput>,
 ) -> Listed<sdk::BrowserWaitForOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserWaitFor, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserWaitFor,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_expect(
@@ -172,7 +249,15 @@ pub(crate) async fn self_browser_expect(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserExpectInput>,
 ) -> Listed<sdk::BrowserExpectOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserExpect, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserExpect,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_screenshot(
@@ -183,7 +268,15 @@ pub(crate) async fn self_browser_screenshot(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserScreenshotInput>,
 ) -> Listed<sdk::BrowserScreenshotOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserScreenshot, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserScreenshot,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_view(
@@ -194,7 +287,15 @@ pub(crate) async fn self_browser_view(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserViewInput>,
 ) -> Listed<sdk::BrowserImageOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserView, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserView,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_crop(
@@ -205,7 +306,15 @@ pub(crate) async fn self_browser_crop(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserCropInput>,
 ) -> Listed<sdk::BrowserImageOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserCrop, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserCrop,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_zoom(
@@ -216,7 +325,15 @@ pub(crate) async fn self_browser_zoom(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserZoomInput>,
 ) -> Listed<sdk::BrowserImageOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserZoom, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserZoom,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_batch(
@@ -227,7 +344,15 @@ pub(crate) async fn self_browser_batch(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserBatchInput>,
 ) -> Listed<sdk::BrowserBatchOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserBatch, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserBatch,
+        input,
+    )
+    .await
 }
 
 pub(crate) async fn self_browser_handover(
@@ -238,6 +363,13 @@ pub(crate) async fn self_browser_handover(
     invocation: Option<InvocationId>,
     input: LiveRunRequest<sdk::BrowserHandoverInput>,
 ) -> Listed<sdk::BrowserHandoverOutput> {
-    on_browser(server, auth, session, invocation, AgentVerb::SelfBrowserHandover, input).await
+    on_browser(
+        server,
+        auth,
+        session,
+        invocation,
+        AgentVerb::SelfBrowserHandover,
+        input,
+    )
+    .await
 }
-

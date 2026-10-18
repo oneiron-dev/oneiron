@@ -57,8 +57,7 @@ pub fn outcome_labels(
     for (_, label) in
         QUESTION_LABEL.scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
     {
-        if !kept.is_empty()
-            && kept_any(vault, &txn, &kept, &[question, label.answer, label.fact])?
+        if !kept.is_empty() && kept_any(vault, &txn, &kept, &[question, label.answer, label.fact])?
         {
             continue;
         }

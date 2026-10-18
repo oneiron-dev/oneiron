@@ -122,7 +122,9 @@ pub(super) fn author_take(
 ) -> MemoryResult<crate::memory::EntityRefReceipt> {
     let resolve = |reference: &str| crate::memory::resolve_entity_ref(memory.vault(), reference);
     let target = match input.target {
-        AuthorTakeTarget::Subject(reference) => crate::note::TakeTarget::Subject(resolve(&reference)?),
+        AuthorTakeTarget::Subject(reference) => {
+            crate::note::TakeTarget::Subject(resolve(&reference)?)
+        }
         AuthorTakeTarget::Claim(reference) => crate::note::TakeTarget::Claim(resolve(&reference)?),
     };
     memory.author_take(target, input.markdown)

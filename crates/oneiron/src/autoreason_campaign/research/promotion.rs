@@ -230,7 +230,9 @@ pub(crate) fn promotion_basis_in_txn(
             }
             let retained = super::super::archive::records::read_in_txn(vault, txn, root)?;
             if retained.pin != *pin {
-                return Err(invalid("the archive pin is not the installed campaign descriptor"));
+                return Err(invalid(
+                    "the archive pin is not the installed campaign descriptor",
+                ));
             }
             Some(pin.version().map_err(campaign_error)?)
         }
@@ -262,21 +264,33 @@ pub(crate) fn promotion_basis_in_txn(
     let mut incumbent_held_out = before.measurement.clone();
     let mut candidate_held_out = after.measurement.clone();
     if coverage_floor {
-        let pin = archive.as_ref().ok_or(invalid("a coverage floor needs the campaign's archive pin"))?;
+        let pin = archive
+            .as_ref()
+            .ok_or(invalid("a coverage floor needs the campaign's archive pin"))?;
         let coverage = super::super::archive::records::promotion_coverage_in_txn(
             vault, txn, root, incumbent, candidate, pin,
         )?;
-        let axis = binding.config.metric_set.axes.iter()
+        let axis = binding
+            .config
+            .metric_set
+            .axes
+            .iter()
             .find(|axis| axis.name == "coverage")
             .ok_or(invalid("the campaign has no coverage axis"))?;
         let (before, after) = match axis.direction {
-            super::super::general::MetricDirection::Higher => (1.0, if coverage.admitted { 1.0 } else { 0.0 }),
-            super::super::general::MetricDirection::Lower => (0.0, if coverage.admitted { 0.0 } else { 1.0 }),
+            super::super::general::MetricDirection::Higher => {
+                (1.0, if coverage.admitted { 1.0 } else { 0.0 })
+            }
+            super::super::general::MetricDirection::Lower => {
+                (0.0, if coverage.admitted { 0.0 } else { 1.0 })
+            }
         };
         incumbent_held_out.scores.insert("coverage".into(), before);
         candidate_held_out.scores.insert("coverage".into(), after);
     }
-    let decision = binding.config.decide_held_out(&incumbent_held_out, &candidate_held_out)
+    let decision = binding
+        .config
+        .decide_held_out(&incumbent_held_out, &candidate_held_out)
         .map_err(campaign_error)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?
         .experiment_selection_policy(&binding.config.campaign_id, binding.holder.as_deref())

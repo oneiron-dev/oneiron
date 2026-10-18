@@ -4,9 +4,9 @@ use super::codec::LEASE;
 use super::types::{
     CheckoutClaimRequest, CheckoutError, CheckoutFactMutation, CheckoutFactSink, CheckoutId,
     CheckoutLeaseAct, CheckoutLeaseFence, CheckoutLeaseGrant, CheckoutLiveness,
-    CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult,
-    CheckoutSettlementDisposition, CheckoutSettlementReceipt, CheckoutSettlementRequest,
-    CheckoutTeardownOutcome, PushedHeadReceipt,
+    CheckoutLivenessPulse, CheckoutRepoOps, CheckoutResult, CheckoutSettlementDisposition,
+    CheckoutSettlementReceipt, CheckoutSettlementRequest, CheckoutTeardownOutcome,
+    PushedHeadReceipt,
 };
 
 use crate::Vault;
@@ -86,7 +86,15 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
         let a = self
             .vault
             .try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
-                super::transactions::reclaim_in_txn(self.vault, t, id, new.clone(), now, None, false)
+                super::transactions::reclaim_in_txn(
+                    self.vault,
+                    t,
+                    id,
+                    new.clone(),
+                    now,
+                    None,
+                    false,
+                )
             })?;
         if a.1 {
             self.facts
@@ -175,18 +183,17 @@ impl<F: CheckoutFactSink, L: CheckoutLiveness> CheckoutLeaseService<'_, F, L> {
                     .ok_or(CheckoutError::Invalid("checkout missing"))?;
                 drop(t);
                 facts.apply_checkout_fact(CheckoutFactMutation::Released {
-                    task_ref: act.task_ref, epoch: act.epoch,
+                    task_ref: act.task_ref,
+                    epoch: act.epoch,
                 })?;
             }
-            vault.try_with_write_txn_grouped::<_, _, CheckoutError>(|t| {
-                match step {
-                    super::teardown::TeardownStep::Prepare => super::teardown::prepare_teardown_in_txn(
-                        vault, t, &f, receipt, ops, live, now,
-                    ),
-                    super::teardown::TeardownStep::Finish => {
-                        super::transactions::finish_teardown_in_txn(vault, t, &f, now)
-                            .map(|act| (act, None))
-                    },
+            vault.try_with_write_txn_grouped::<_, _, CheckoutError>(|t| match step {
+                super::teardown::TeardownStep::Prepare => {
+                    super::teardown::prepare_teardown_in_txn(vault, t, &f, receipt, ops, live, now)
+                }
+                super::teardown::TeardownStep::Finish => {
+                    super::transactions::finish_teardown_in_txn(vault, t, &f, now)
+                        .map(|act| (act, None))
                 }
             })
         })

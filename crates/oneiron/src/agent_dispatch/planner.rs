@@ -48,8 +48,7 @@ use super::widen_record::invalid;
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
 /// strong rung is reserved for xhigh/max care or big plans.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum PlannerRung {

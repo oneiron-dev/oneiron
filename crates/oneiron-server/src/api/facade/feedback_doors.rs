@@ -17,7 +17,9 @@
 use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::feedback::{FeedbackPreview, ReportIssue, UnredactedFeedback, prepare_feedback_preview};
+use oneiron::feedback::{
+    FeedbackPreview, ReportIssue, UnredactedFeedback, prepare_feedback_preview,
+};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{
     self, FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview,
@@ -43,9 +45,7 @@ pub(crate) async fn vault_reports_disclosure(
         server,
         auth,
         "vault.reports.disclosure",
-        move |server, owner| {
-            sdk::decide_report_disclosure_as_owner(server.vault(), owner, input)
-        },
+        move |server, owner| sdk::decide_report_disclosure_as_owner(server.vault(), owner, input),
         |issue| hex_rows([&issue.issue_ref]),
     )
     .await

@@ -31,9 +31,11 @@ impl<'a> HostSelfDispatcher<'a> {
         if !verb.is_browser() {
             return Err(MemoryError::bad_request("a browser verb is required"));
         }
-        Ok(crate::memory::HostWriteOrigin::new(self.agent_verb_envelope(verb, None)?)
-            .with_task_host(self.task_host_binding()?)
-            .with_model_provider(self.model_provider()))
+        Ok(
+            crate::memory::HostWriteOrigin::new(self.agent_verb_envelope(verb, None)?)
+                .with_task_host(self.task_host_binding()?)
+                .with_model_provider(self.model_provider()),
+        )
     }
 
     /// The host door's `self.agents.spawn`, after its credential and hooks

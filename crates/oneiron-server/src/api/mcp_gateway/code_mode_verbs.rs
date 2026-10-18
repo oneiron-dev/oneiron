@@ -369,10 +369,11 @@ impl RoutineDecider for LadderDecider {
                 self.runtime.spawn(HELD_IMAGE.scope(held, async move {
                     let id = InvocationId::mint().to_hex();
                     let call = crate::api::facade::FacadeCall::bound(&auth, None, Some(&id), None);
-                    let answer = crate::api::facade::call_verb(&server, &call, "ai.verdict", Ok(input))
-                        .await
-                        .map(|answer| (answer.value, answer.rows.unwrap_or_default()))
-                        .map_err(|error| super::mcp_facade_error(error.into_memory_error()));
+                    let answer =
+                        crate::api::facade::call_verb(&server, &call, "ai.verdict", Ok(input))
+                            .await
+                            .map(|answer| (answer.value, answer.rows.unwrap_or_default()))
+                            .map_err(|error| super::mcp_facade_error(error.into_memory_error()));
                     let _ = sender.send(answer);
                 }));
             }
@@ -675,11 +676,17 @@ impl RunGuests {
 
     /// Binds only this attached run's browser for a public host call.
     pub(crate) fn browser(server: &SyncServer, run_id: oneiron::EntityId) -> Self {
-        Self { browser: RunBrowser::new(server, run_id), desktop: None }
+        Self {
+            browser: RunBrowser::new(server, run_id),
+            desktop: None,
+        }
     }
 
     /// A code-mode call fires the row's hooks once around the shared guest door.
-    #[expect(clippy::too_many_arguments, reason = "each argument is one axis of the caller's door")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each argument is one axis of the caller's door"
+    )]
     pub(crate) fn call(
         &self,
         server: &Arc<SyncServer>,
@@ -694,25 +701,38 @@ impl RunGuests {
             return Ok(Err(refusal));
         }
         let hooks = match oneiron::task_verb::verb_hook_boundary::browser_row_pre(
-            memory, call.verb.as_str(), call.input.clone(),
+            memory,
+            call.verb.as_str(),
+            call.input.clone(),
         ) {
             Ok(hooks) => hooks,
             Err(error) => return refused(super::mcp_facade_error(error)),
         };
-        let admitted = SelfAgentVerbCall { verb: call.verb, input: hooks.args.clone() };
-        let answer = match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
-            Ok(answer) => answer,
-            Err(refusal) => return Ok(Err(refusal)),
+        let admitted = SelfAgentVerbCall {
+            verb: call.verb,
+            input: hooks.args.clone(),
         };
-        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output) {
-            Ok(output) => Ok(Ok(AgentVerbAnswer { output, rows: answer.rows })),
+        let answer =
+            match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
+                Ok(answer) => answer,
+                Err(refusal) => return Ok(Err(refusal)),
+            };
+        match oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
+        {
+            Ok(output) => Ok(Ok(AgentVerbAnswer {
+                output,
+                rows: answer.rows,
+            })),
             Err(error) => refused(super::mcp_facade_error(error)),
         }
     }
 
     /// The facade and MCP host doors already crossed the row's hooks. They
     /// take this same guest admission and driver without firing hooks twice.
-    #[expect(clippy::too_many_arguments, reason = "the admitted caller and run are separate axes")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the admitted caller and run are separate axes"
+    )]
     pub(crate) fn call_admitted(
         &self,
         server: &Arc<SyncServer>,
@@ -732,7 +752,10 @@ impl RunGuests {
             self.desktop.as_ref().map(|guest| guest.run_id)
         } else {
             self.browser.as_ref().map(|guest| guest.run_id)
-        }.ok_or(oneiron::Error::InvariantViolation("admitted guest has no run"))?;
+        }
+        .ok_or(oneiron::Error::InvariantViolation(
+            "admitted guest has no run",
+        ))?;
         let browser_refused = |error: BrowserError| AgentVerbRefusal {
             code: error.code().to_owned(),
         };
@@ -766,7 +789,10 @@ impl RunGuests {
         if let Some(receipts) = output.get("receipts") {
             tracing::info!(verb, ?receipts, "browser batch receipts");
         }
-        Ok(Ok(AgentVerbAnswer { output, rows: Some(Vec::new()) }))
+        Ok(Ok(AgentVerbAnswer {
+            output,
+            rows: Some(Vec::new()),
+        }))
     }
 
     fn admits(&self, verb: AgentVerb, server: &SyncServer) -> Result<(), AgentVerbRefusal> {
@@ -799,7 +825,9 @@ impl RunGuests {
             self.browser.as_ref().map(|browser| browser.run_id)
         };
         if run_id.is_none() {
-            return Err(AgentVerbRefusal { code: BrowserError::Unbound.code().to_owned() });
+            return Err(AgentVerbRefusal {
+                code: BrowserError::Unbound.code().to_owned(),
+            });
         }
         Ok(())
     }

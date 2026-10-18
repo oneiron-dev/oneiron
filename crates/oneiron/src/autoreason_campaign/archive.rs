@@ -12,20 +12,21 @@ use super::{CampaignError, CampaignResult};
 
 mod axes;
 pub(crate) mod records;
-pub use records::{
-    CampaignArchiveAdmission, CampaignArchiveBest, CampaignArchiveCoverage,
-    CampaignArchiveInstall, CampaignArchiveOutput, CampaignArchivePlacement,
-    CampaignArchiveRecord, CampaignArchiveReproposal, CampaignArchiveRequest,
-    CampaignArchiveView,
-};
 pub use axes::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor,
     CoachArchiveAxesRecipe, propose_campaign_archive,
 };
+pub use records::{
+    CampaignArchiveAdmission, CampaignArchiveBest, CampaignArchiveCoverage, CampaignArchiveInstall,
+    CampaignArchiveOutput, CampaignArchivePlacement, CampaignArchiveRecord,
+    CampaignArchiveReproposal, CampaignArchiveRequest, CampaignArchiveView,
+};
 
 /// A specific output revision. References must resolve to immutable content,
 /// not a mutable entity's current body.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveOutputRef {
     pub entity: EntityId,
@@ -40,7 +41,9 @@ impl ArchiveOutputRef {
 
 /// Coordinates use the axis order in the pinned definition. Cluster cells are
 /// deliberately unnamed and cannot mix with categorical cells.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ArchiveCell {
     Axes { bins: Vec<String> },

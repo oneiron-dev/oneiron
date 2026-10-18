@@ -99,8 +99,7 @@ pub fn checkpoint_as_owner(
         Some(limit) => limit.min(CHECKPOINT_READ_MAX_LIMIT),
         None => CHECKPOINT_READ_DEFAULT_LIMIT,
     };
-    let Some((view, sources)) = project(vault, run, input.from_step, limit).map_err(engine)?
-    else {
+    let Some((view, sources)) = project(vault, run, input.from_step, limit).map_err(engine)? else {
         return Ok(None);
     };
     for source in sources {

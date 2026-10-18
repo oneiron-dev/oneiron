@@ -3,10 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    ArchiveAxesProposal, ArchiveAxesRequest, ArchiveCell, ArchiveCellJudgment,
-    ArchiveCellJudge, ArchiveDescriptor, ArchiveOutputRef, ArchiveOutputScore,
-    ArchiveQualityMetric, CampaignArchivePin, CoachArchiveAxesRecipe, OutputArchive,
-    propose_campaign_archive,
+    ArchiveAxesProposal, ArchiveAxesRequest, ArchiveCell, ArchiveCellJudge, ArchiveCellJudgment,
+    ArchiveDescriptor, ArchiveOutputRef, ArchiveOutputScore, ArchiveQualityMetric,
+    CampaignArchivePin, CoachArchiveAxesRecipe, OutputArchive, propose_campaign_archive,
 };
 use crate::autoreason_campaign::coverage::project_output_coverage;
 use crate::autoreason_campaign::research::{self, ResearchBinding};
@@ -59,7 +58,9 @@ pub struct CampaignArchiveReproposal {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CampaignArchivePlacement {
-    Judgment { judgment: ArchiveCellJudgment },
+    Judgment {
+        judgment: ArchiveCellJudgment,
+    },
     Embedding {
         output: ArchiveOutputRef,
         receipt: EntityId,
@@ -143,17 +144,27 @@ fn campaign_error(error: CampaignError) -> Error {
 /// proposal function validates and freezes both descriptor kinds.
 struct ReceiptedRecipe(ArchiveAxesProposal);
 impl CoachArchiveAxesRecipe for ReceiptedRecipe {
-    fn propose_axes(&self, _: &ArchiveAxesRequest<'_>) -> CampaignResult<Option<ArchiveAxesProposal>> {
+    fn propose_axes(
+        &self,
+        _: &ArchiveAxesRequest<'_>,
+    ) -> CampaignResult<Option<ArchiveAxesProposal>> {
         Ok(matches!(&self.0.descriptor, ArchiveDescriptor::Axes { .. }).then(|| self.0.clone()))
     }
-    fn embedding_clusters(&self, _: &ArchiveAxesRequest<'_>) -> CampaignResult<ArchiveAxesProposal> {
+    fn embedding_clusters(
+        &self,
+        _: &ArchiveAxesRequest<'_>,
+    ) -> CampaignResult<ArchiveAxesProposal> {
         Ok(self.0.clone())
     }
 }
 
 struct ReceiptedPlacement(ArchiveCellJudgment);
 impl ArchiveCellJudge for ReceiptedPlacement {
-    fn place(&self, _: &CampaignArchivePin, _: &ArchiveOutputRef) -> CampaignResult<ArchiveCellJudgment> {
+    fn place(
+        &self,
+        _: &CampaignArchivePin,
+        _: &ArchiveOutputRef,
+    ) -> CampaignResult<ArchiveCellJudgment> {
         Ok(self.0.clone())
     }
 }
@@ -166,12 +177,18 @@ fn goal_in_txn(
     goal_ref: EntityId,
 ) -> Result<GoalRecord> {
     research::check_goal_current_in_txn(vault, txn, binding)?;
-    let (current, goal) = vault.project_intake_goal_in_txn(txn, project)?
+    let (current, goal) = vault
+        .project_intake_goal_in_txn(txn, project)?
         .ok_or(invalid("an archive requires an authenticated project goal"))?;
-    if current != goal_ref || binding.goal.as_ref().is_some_and(|pin| {
-        pin.project != Some((project, goal_ref))
-    }) {
-        return Err(invalid("the archive must use the campaign's current human goal"));
+    if current != goal_ref
+        || binding
+            .goal
+            .as_ref()
+            .is_some_and(|pin| pin.project != Some((project, goal_ref)))
+    {
+        return Err(invalid(
+            "the archive must use the campaign's current human goal",
+        ));
     }
     let goal_has_coverage = goal.floor_axes.iter().any(|axis| axis.name == "coverage");
     let campaign_has_coverage = binding.config.metric_set.axes.iter().any(|axis| {
@@ -179,16 +196,14 @@ fn goal_in_txn(
             && axis.role == crate::autoreason_campaign::general::MetricRole::Floor
     });
     if goal_has_coverage && !campaign_has_coverage {
-        return Err(invalid("the campaign ruler must retain the human goal's coverage floor"));
+        return Err(invalid(
+            "the campaign ruler must retain the human goal's coverage floor",
+        ));
     }
     Ok(goal)
 }
 
-fn entity_type_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    entity: &EntityId,
-) -> Result<u8> {
+fn entity_type_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, entity: &EntityId) -> Result<u8> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, txn, entity)?.is_live() {
         return Err(Error::EntityNotFound);
     }
@@ -199,13 +214,11 @@ fn entity_type_in_txn(
     Ok(header.entity_type)
 }
 
-fn output_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    output: &ArchiveOutputRef,
-) -> Result<()> {
+fn output_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, output: &ArchiveOutputRef) -> Result<()> {
     if entity_type_in_txn(vault, txn, &output.entity)? == crate::registry::ENTITY_TYPE_SKILL {
-        return Err(invalid("the campaign archive holds outputs, never skill variants"));
+        return Err(invalid(
+            "the campaign archive holds outputs, never skill variants",
+        ));
     }
     Ok(())
 }
@@ -215,7 +228,8 @@ pub(crate) fn read_in_txn(
     txn: &heed::RoTxn<'_>,
     root: AttemptId,
 ) -> Result<CampaignArchiveRecord> {
-    ARCHIVES.get(&vault.store, txn, root.as_bytes())?
+    ARCHIVES
+        .get(&vault.store, txn, root.as_bytes())?
         .ok_or(invalid("the campaign has no installed output archive"))
 }
 
@@ -229,13 +243,16 @@ pub(crate) fn view(record: &CampaignArchiveRecord) -> Result<CampaignArchiveView
     Ok(CampaignArchiveView {
         descriptor_revision: record.pin.version().map_err(campaign_error)?,
         pin: record.pin.clone(),
-        best: archive.kept_outputs().map(|entry| CampaignArchiveBest {
-            cell: entry.placement.cell.clone(),
-            output: entry.score.output.clone(),
-            score: entry.score.quality,
-            placement_receipt: entry.placement.receipt,
-            scoring_receipt: entry.score.receipt,
-        }).collect(),
+        best: archive
+            .kept_outputs()
+            .map(|entry| CampaignArchiveBest {
+                cell: entry.placement.cell.clone(),
+                output: entry.score.output.clone(),
+                score: entry.score.quality,
+                placement_receipt: entry.placement.receipt,
+                scoring_receipt: entry.score.receipt,
+            })
+            .collect(),
         needs_axes_reproposal: archive.needs_axes_reproposal(),
     })
 }
@@ -255,12 +272,17 @@ pub(crate) fn install_in_txn(
         output_in_txn(vault, txn, output)?;
     }
     let pin = propose_campaign_archive(
-        &binding.config.campaign_id, input.quality_metric,
+        &binding.config.campaign_id,
+        input.quality_metric,
         &ArchiveAxesRequest {
-            task: input.task, goal_ref: input.goal_ref, goal: &goal,
+            task: input.task,
+            goal_ref: input.goal_ref,
+            goal: &goal,
             sample_outputs: &input.sample_outputs,
-        }, &ReceiptedRecipe(input.proposal),
-    ).map_err(campaign_error)?;
+        },
+        &ReceiptedRecipe(input.proposal),
+    )
+    .map_err(campaign_error)?;
     install_pin(vault, txn, root, input.project, pin)
 }
 
@@ -272,9 +294,16 @@ fn install_pin(
     pin: CampaignArchivePin,
 ) -> Result<CampaignArchiveView> {
     if ARCHIVES.contains(&vault.store, txn, root.as_bytes())? {
-        return Err(invalid("an archive descriptor is immutable; bind a new campaign"));
+        return Err(invalid(
+            "an archive descriptor is immutable; bind a new campaign",
+        ));
     }
-    let record = CampaignArchiveRecord { project, pin, placements: Vec::new(), scores: Vec::new() };
+    let record = CampaignArchiveRecord {
+        project,
+        pin,
+        placements: Vec::new(),
+        scores: Vec::new(),
+    };
     let answer = view(&record)?;
     ARCHIVES.put(&vault.store, txn, root.as_bytes(), &record)?;
     Ok(answer)
@@ -292,9 +321,13 @@ pub(crate) fn repropose_in_txn(
     let goal = goal_in_txn(vault, txn, &old_binding, old.project, old.pin.goal_ref())?;
     let new_binding = research::binding_in_txn(vault, txn, new_root)?;
     goal_in_txn(vault, txn, &new_binding, old.project, old.pin.goal_ref())?;
-    let pin = rebuild(&old)?.propose_next_campaign(
-        &new_binding.config.campaign_id, &goal, &ReceiptedRecipe(input.proposal),
-    ).map_err(campaign_error)?;
+    let pin = rebuild(&old)?
+        .propose_next_campaign(
+            &new_binding.config.campaign_id,
+            &goal,
+            &ReceiptedRecipe(input.proposal),
+        )
+        .map_err(campaign_error)?;
     install_pin(vault, txn, new_root, old.project, pin)
 }
 
@@ -309,24 +342,41 @@ pub(crate) fn record_in_txn(
     let goal = goal_in_txn(vault, txn, &binding, record.project, record.pin.goal_ref())?;
     record.pin.check_goal(&goal).map_err(campaign_error)?;
     if record.pin.version().map_err(campaign_error)? != input.descriptor_revision {
-        return Err(invalid("the output names another archive descriptor revision"));
+        return Err(invalid(
+            "the output names another archive descriptor revision",
+        ));
     }
     let placement = match input.placement {
         CampaignArchivePlacement::Judgment { judgment } => {
             let output = judgment.output.clone();
-            record.pin.judge_output(&output, &ReceiptedPlacement(judgment))
+            record
+                .pin
+                .judge_output(&output, &ReceiptedPlacement(judgment))
         }
-        CampaignArchivePlacement::Embedding { output, receipt, model_revision, embedding } =>
-            record.pin.place_embedding(output, receipt, &model_revision, &embedding),
-    }.map_err(campaign_error)?;
+        CampaignArchivePlacement::Embedding {
+            output,
+            receipt,
+            model_revision,
+            embedding,
+        } => record
+            .pin
+            .place_embedding(output, receipt, &model_revision, &embedding),
+    }
+    .map_err(campaign_error)?;
     if placement.output != input.score.output {
-        return Err(invalid("placement and scoring must name the same output revision"));
+        return Err(invalid(
+            "placement and scoring must name the same output revision",
+        ));
     }
     output_in_txn(vault, txn, &placement.output)?;
     // Exact retries keep one copy of each original receipt. Rebuild refuses
     // any conflicting placement, score, cell or definition before the write.
-    if !record.placements.contains(&placement) { record.placements.push(placement); }
-    if !record.scores.contains(&input.score) { record.scores.push(input.score); }
+    if !record.placements.contains(&placement) {
+        record.placements.push(placement);
+    }
+    if !record.scores.contains(&input.score) {
+        record.scores.push(input.score);
+    }
     let answer = view(&record)?;
     ARCHIVES.put(&vault.store, txn, root.as_bytes(), &record)?;
     Ok(answer)
@@ -359,7 +409,9 @@ pub(crate) fn coverage_in_txn(
     let candidate = attempt(input.candidate)?;
     let incumbent = research::research_incumbent_in_txn(vault, txn, root)?;
     if incumbent != attempt(input.incumbent)? || candidate == incumbent {
-        return Err(invalid("coverage must compare the candidate with the current incumbent"));
+        return Err(invalid(
+            "coverage must compare the candidate with the current incumbent",
+        ));
     }
     let nodes = research::nodes_in_txn(vault, txn, root)?;
     if !nodes.contains_key(candidate.as_bytes()) || !nodes.contains_key(incumbent.as_bytes()) {
@@ -371,16 +423,32 @@ pub(crate) fn coverage_in_txn(
     let record = read_in_txn(vault, txn, root)?;
     let answer = project_in_txn(vault, txn, root, input.candidate, &record, &before, &after)?;
     if answer.descriptor_revision != input.descriptor_revision {
-        return Err(invalid("coverage names another archive descriptor revision"));
+        return Err(invalid(
+            "coverage names another archive descriptor revision",
+        ));
     }
     before.sort();
     after.sort();
-    put_replay(vault, txn, root, incumbent, &ArchiveReplayOutputs {
-        pin_version: answer.descriptor_revision.clone(), outputs: before,
-    })?;
-    put_replay(vault, txn, root, candidate, &ArchiveReplayOutputs {
-        pin_version: answer.descriptor_revision.clone(), outputs: after,
-    })?;
+    put_replay(
+        vault,
+        txn,
+        root,
+        incumbent,
+        &ArchiveReplayOutputs {
+            pin_version: answer.descriptor_revision.clone(),
+            outputs: before,
+        },
+    )?;
+    put_replay(
+        vault,
+        txn,
+        root,
+        candidate,
+        &ArchiveReplayOutputs {
+            pin_version: answer.descriptor_revision.clone(),
+            outputs: after,
+        },
+    )?;
     Ok(answer)
 }
 
@@ -396,8 +464,8 @@ fn project_in_txn(
     let binding = research::binding_in_txn(vault, txn, root)?;
     let goal = goal_in_txn(vault, txn, &binding, record.project, record.pin.goal_ref())?;
     let archive = rebuild(record)?;
-    let (required, covered) = project_output_coverage(&goal, &archive, before, after)
-        .map_err(campaign_error)?;
+    let (required, covered) =
+        project_output_coverage(&goal, &archive, before, after).map_err(campaign_error)?;
     Ok(CampaignArchiveAdmission {
         descriptor_revision: record.pin.version().map_err(campaign_error)?,
         candidate,
@@ -419,17 +487,29 @@ pub(crate) fn promotion_coverage_in_txn(
 ) -> Result<CampaignArchiveAdmission> {
     let record = read_in_txn(vault, txn, root)?;
     if record.pin != *pin {
-        return Err(invalid("promotion must reference the installed archive descriptor"));
+        return Err(invalid(
+            "promotion must reference the installed archive descriptor",
+        ));
     }
     let version = pin.version().map_err(campaign_error)?;
     let read = |node: AttemptId| -> Result<ArchiveReplayOutputs> {
-        let replay = REPLAYS.get(&vault.store, txn, &(*root.as_bytes(), *node.as_bytes()))?
-            .ok_or(invalid("coverage admission needs both measured replay arms"))?;
+        let replay = REPLAYS
+            .get(&vault.store, txn, &(*root.as_bytes(), *node.as_bytes()))?
+            .ok_or(invalid(
+                "coverage admission needs both measured replay arms",
+            ))?;
         if replay.pin_version != version {
             return Err(invalid("replay outputs use another descriptor revision"));
         }
         Ok(replay)
     };
-    project_in_txn(vault, txn, root, EntityId::from_bytes(*candidate.as_bytes())?,
-        &record, &read(incumbent)?.outputs, &read(candidate)?.outputs)
+    project_in_txn(
+        vault,
+        txn,
+        root,
+        EntityId::from_bytes(*candidate.as_bytes())?,
+        &record,
+        &read(incumbent)?.outputs,
+        &read(candidate)?.outputs,
+    )
 }

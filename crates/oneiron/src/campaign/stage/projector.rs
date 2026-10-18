@@ -122,7 +122,10 @@ pub(super) fn project_stage_transition_in_txn(
     }
     let mut body = stage_claim_body(input, mode)?;
     if let Some(envelope) = envelope {
-        body.evidence = Some(crate::write_envelope::write_envelope_evidence(envelope, body.evidence.take()));
+        body.evidence = Some(crate::write_envelope::write_envelope_evidence(
+            envelope,
+            body.evidence.take(),
+        ));
     }
     let new_id = vault.store.clock.entity_id()?;
     let recorded_at = input.value.recorded_at;
@@ -131,10 +134,20 @@ pub(super) fn project_stage_transition_in_txn(
     }
     vault.put_claim_in_txn(txn, &new_id, &body, at(recorded_at), recorded_at)?;
     match mode {
-        PromotionMode::Propose => Ok(StageProjectResult::Proposed { proposed_claim_ref: new_id }),
+        PromotionMode::Propose => Ok(StageProjectResult::Proposed {
+            proposed_claim_ref: new_id,
+        }),
         PromotionMode::Auto => {
-            supersede_crm_stage_in_txn(vault, txn, &new_id, input.previous_stage_claim_ref.as_ref(), recorded_at)?;
-            Ok(StageProjectResult::Advanced { new_claim_ref: new_id })
+            supersede_crm_stage_in_txn(
+                vault,
+                txn,
+                &new_id,
+                input.previous_stage_claim_ref.as_ref(),
+                recorded_at,
+            )?;
+            Ok(StageProjectResult::Advanced {
+                new_claim_ref: new_id,
+            })
         }
     }
 }

@@ -5,7 +5,8 @@ use super::ladder::{
     proposal_boundary_index, stage_index, transition_rule, validate_ladder,
 };
 use super::projector::{
-    StageProjectResult, StageProjectorInput, invalid, project_stage_transition_in_txn, live_stage_head_in,
+    StageProjectResult, StageProjectorInput, invalid, live_stage_head_in,
+    project_stage_transition_in_txn,
 };
 use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageKey};
 use crate::{EntityId, Result, Vault};
@@ -78,7 +79,9 @@ pub(crate) fn apply_external_stage_evidence_in_txn(
         return Ok(StageProjectResult::NoChange);
     };
     if hook.evidence.class != rule.evidence_class {
-        return Err(invalid("external stage evidence class does not match the transition"));
+        return Err(invalid(
+            "external stage evidence class does not match the transition",
+        ));
     }
     if hook.evidence.basis == EvidenceBasis::OwnerAttested {
         require_owner_attestable(definition, rule)?;

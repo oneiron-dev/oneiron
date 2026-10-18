@@ -14,8 +14,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::Vault;
 use crate::calendar_host::CalendarChannelSink;
+use oneiron::Vault;
 
 use super::core::SyncServer;
 use super::housekeeping::HousekeepingAdmission;

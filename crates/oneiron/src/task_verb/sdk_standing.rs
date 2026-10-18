@@ -161,9 +161,7 @@ pub fn read_own_standing_block(
     Ok(block_view(&handle))
 }
 
-pub fn list_own_standing_blocks(
-    memory: &Memory<'_>,
-) -> MemoryResult<Vec<StandingBlockView>> {
+pub fn list_own_standing_blocks(memory: &Memory<'_>) -> MemoryResult<Vec<StandingBlockView>> {
     Ok(memory
         .vault()
         .standing_blocks(memory.actor())?
