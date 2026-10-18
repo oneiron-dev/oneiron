@@ -21,7 +21,9 @@ struct Introduction {
     introducer_class: u8,
     confirmed_auto: bool,
     owner: [u8; 16],
-    // A successful explicit widening is invalidated by any policy-frontier change.
+    // A successful explicit widening to Auto is invalidated by any
+    // policy-frontier change; a request for Proposed pins the actor there
+    // across frontiers, so a manifest change never lifts it.
     widen: Option<([u8; 32], bool)>,
 }
 /// Per-actor foreign-introduction ceiling and widen state for an owner-bound agent
@@ -94,7 +96,7 @@ fn resolve_chain(
         return Ok(Some(PolicyApprovalCeiling::Proposed));
     }
     if let Some((frontier, auto)) = row.widen
-        && frontier == policy.read_frontier_hash()?
+        && (!auto || frontier == policy.read_frontier_hash()?)
     {
         return Ok(Some(ceiling(auto)));
     }
