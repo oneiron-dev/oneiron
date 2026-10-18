@@ -173,6 +173,12 @@ pub(crate) fn facade_routes() -> Router<Arc<SyncServer>> {
         .layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
 }
 
+/// The anonymous-chat SDK route, mounted with the existing standalone
+/// handler outside invocation claims, wire telemetry and call receipts.
+pub(crate) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
+    agent_verbs::anonymous_chat_routes().layer(DefaultBodyLimit::max(FACADE_MAX_BODY_BYTES))
+}
+
 /// [`facade_routes`] with every reply's call receipt (OF-538): one layer
 /// around the generated routes and the unknown-verb fallback alike. Inside
 /// it, a request that names its invocation claims it for the whole route.

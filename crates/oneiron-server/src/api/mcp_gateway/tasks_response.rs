@@ -1376,6 +1376,7 @@ fn mcp_agent_verb_input(
         "ai.voice.tool" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.end" => a.spec.clone().ok_or_else(invalid),
         "ai.voice.close" => a.spec.clone().ok_or_else(invalid),
+        "ai.anonymous_chat" => a.spec.clone().ok_or_else(invalid),
         "ai.options" => a.spec.clone().ok_or_else(invalid),
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
@@ -2895,6 +2896,9 @@ pub(crate) fn mcp_agent_verb_arguments(
         "ai.voice.close" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
+        "ai.anonymous_chat" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "ai.options" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -3492,6 +3496,15 @@ async fn execute_agent_verb_listing(
         .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_mcp)
     {
         return Err(invalid());
+    }
+    // G10: MCP and code mode retain envelopes and results. Do not run a
+    // memory-free turn on either, or fire a hook that could retain its text.
+    if tool == "ai.anonymous_chat" {
+        return Err(McpGatewayError::new(
+            -32020,
+            "model_unavailable",
+            "anonymous chat requires its standalone HTTP SDK route",
+        ));
     }
     // A narrowed connector's TASKs are born in its own world and in the
     // facet its writes land in (its session's, or its own write facet).

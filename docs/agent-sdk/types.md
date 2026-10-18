@@ -2422,6 +2422,8 @@ class Oneiron:
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         @property
         def voice(self) -> "Oneiron._AiVoiceVerbs": ...
+        def anonymous_chat(self, spec: Facade.AnonymousChatRequest) -> Facade.AnonymousChatResponse:
+            """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:

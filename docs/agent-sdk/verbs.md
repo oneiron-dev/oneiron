@@ -421,6 +421,7 @@ both bindings and their export-census tests in one change.
 - `ai.voice.tool`
 - `ai.voice.end`
 - `ai.voice.close`
+- `ai.anonymous_chat`
 - `ai.options`
 - `ai.image`
 - `ai.speech`

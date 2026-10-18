@@ -3120,6 +3120,9 @@ class Oneiron:
         @property
         def voice(self) -> "Oneiron._AiVoiceVerbs":
             return Oneiron._AiVoiceVerbs(self._client)
+        def anonymous_chat(self, spec):
+            """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
+            return json.loads(_translate(lambda: self._client.ai_anonymous_chat(json.dumps(spec))))
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))

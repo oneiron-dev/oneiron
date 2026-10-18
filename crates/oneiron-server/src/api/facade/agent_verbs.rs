@@ -626,3 +626,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
 }
+pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
+    Router::new().route(
+        "/v1/core/facade/ai.anonymous_chat",
+        post(crate::api::anonymous_chat::chat),
+    )
+}
