@@ -8527,6 +8527,37 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar/meeting/facts.rs",
+     "purpose": "Hydration under the caller's lane, shared by prep, check-in and transcript linking",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarCheckInAnswer",
+      "CalendarCheckInDue",
+      "CalendarCheckInReceipt",
+      "CalendarCheckInRequest",
+      "CalendarEventOutcome",
+      "CalendarMeetingRequest",
+      "CalendarOutcomePolicy"
+     ],
+     "path": "src/calendar/meeting/mod.rs",
+     "purpose": "Typed meeting prep, outcome observation and the owner's check-in policy",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -8537,7 +8568,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 1,
-      "mod": 18,
+      "mod": 19,
       "re-export": 15
      }
     },
@@ -8583,7 +8614,7 @@
      "purpose": "CAL-07 event outcome: evidence ladder, outcome head, post-end check-in",
      "surface": {
       "const": 3,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 5,
       "fn": 17,
       "struct": 6
@@ -8596,7 +8627,7 @@
      "path": "src/calendar/outcome/conditional.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -8646,6 +8677,7 @@
      "path": "src/calendar/prep/mod.rs",
      "purpose": "CAL-06 prep pack: the render-time context pack a meeting earns at T-45",
      "surface": {
+      "crate-vis": 1,
       "re-export": 4
      }
     },
@@ -8663,6 +8695,7 @@
      "purpose": "Ranked prep-pack assembly under the word ceiling",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 1,
       "struct": 4
@@ -52531,7 +52564,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 908
+      "fn": 914
      }
     },
     {
@@ -58764,7 +58797,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 67,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60152,7 +60185,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3671,
+   "source_files": 3673,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68727,7 +68760,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 877
+      "fn": 883
      }
     },
     {
@@ -69790,7 +69823,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 878
+      "fn": 884
      }
     },
     {
@@ -72813,7 +72846,7 @@
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -82108,6 +82141,10 @@
       "BypassExtent",
       "BypassScope",
       "CadencePrecedence",
+      "CalendarCheckInAnswer",
+      "CalendarCheckInDue",
+      "CalendarCheckInReceipt",
+      "CalendarCheckInRequest",
       "CalendarConnectorConfigureRequest",
       "CalendarConnectorKillRequest",
       "CalendarConnectorKillSwitchState",
@@ -82118,6 +82155,7 @@
       "CalendarConnectorWriteRequest",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
+      "CalendarEventOutcome",
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
@@ -82135,8 +82173,10 @@
       "CalendarInstanceMoveRequest",
       "CalendarInviteSurfaceInput",
       "CalendarInviteSurfaceMethod",
+      "CalendarMeetingRequest",
       "CalendarOccurrenceView",
       "CalendarOccurrencesRequest",
+      "CalendarOutcomePolicy",
       "CalendarPassportDirection",
       "CalendarPassportPresence",
       "CalendarPassportReadRequest",
@@ -82818,6 +82858,9 @@
       "EvalSeat",
       "EvalSeatRequest",
       "EvalSourceGroup",
+      "EventOutcome",
+      "EventOutcomeBasis",
+      "EventOutcomeClaimValue",
       "EvidenceBasis",
       "EvidenceFloors",
       "EvidenceKind",
@@ -83722,6 +83765,10 @@
       "PptxInspection",
       "PptxShapeIdentity",
       "PptxSlideIdentity",
+      "PrepItem",
+      "PrepPack",
+      "PrepSection",
+      "PrepSectionKind",
       "Preset",
       "PriorOrigin",
       "PriorRung",
@@ -84129,6 +84176,8 @@
       "ScopedReadResultDiagnosticEventViewList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
+      "ScopedReadResultOptionalCalendarCheckInDue",
+      "ScopedReadResultOptionalCalendarEventOutcome",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalCalendarPassportRevision",
       "ScopedReadResultOptionalClaimView",
@@ -84138,6 +84187,7 @@
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
       "ScopedReadResultOptionalNoteVersionTree",
+      "ScopedReadResultOptionalPrepPack",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalRecordPosition",
       "ScopedReadResultOptionalSharedBriefCitation",
@@ -84834,8 +84884,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 737,
-      "struct": 2257
+      "enum": 742,
+      "struct": 2269
      }
     },
     {
