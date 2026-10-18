@@ -93,6 +93,9 @@ mod entity;
 mod error_map;
 mod esign;
 pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
+pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::SealConfig as EsignSealConfig;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 #[cfg(unix)]
@@ -190,7 +193,7 @@ pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
 use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
 pub(crate) use self::scoped_auth::{
-    credential_memory, credential_read_key, scoped_read_for_core_auth,
+    credential_memory, credential_read_key, mcp_credential_memory, scoped_read_for_core_auth,
 };
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;
@@ -275,6 +278,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     let core_routes = Router::new()
         // A consumed approval must never replay a cached 200, even with an idempotency key.
         .route("/consent/widen/accept", post(core_accept_widen))
+        .route("/consent/widen/reject", post(core_reject_widen))
         .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))

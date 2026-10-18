@@ -16,7 +16,11 @@
 //!   from its world's key and filed under a tag only a holder of that key can
 //!   compute, so a reader of the outer layer opens only the worlds it holds keys
 //!   for. A publisher carries a section it cannot read unchanged.
-//! - The pads of every cloud-bound world's keys ride their own object (purpose
+//! - Which worlds a bundle carries depends on its holder ([`bundle_carries`]):
+//!   every private world whose sealed copies go to "Cloud + my machines", and, for
+//!   a holder that is a machine of the owner's, those on "My machines" too. "Off"
+//!   stays out everywhere.
+//! - The pads of every carried world's keys ride their own object (purpose
 //!   `SealedKeyPads`): same generation, same readers, padded to 64 KiB steps. A
 //!   world key is a root wrap from the base section's authority joined with its
 //!   pad, so the kit alone restores. The base section therefore carries no pad
@@ -263,8 +267,8 @@ impl SealedVaultBundle {
     }
 }
 
-/// The sealed pads of one generation: every key of every cloud-bound world whose
-/// pad was on the publisher.
+/// The sealed pads of one generation: every key of every carried world whose pad
+/// was on the publisher.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedKeyPads(SealedObject);
 
@@ -607,33 +611,36 @@ struct SealPlan {
 
 impl Vault {
     /// Seals this vault's bundle for upload `slot` ([`sealed_bundle_slot`]) and
-    /// the pad object beside it, to every machine mine here and the pinned root.
+    /// the pad object beside it, to every machine mine here and the pinned root,
+    /// for `holder`, the home that keeps it.
     ///
     /// `base` is the base section. It must hold no world key pad row: pads ride
     /// only the pad object, or erase would not reach old bundles. Each of `worlds`
-    /// is sealed under its current key; this machine must read it now, and its
-    /// sealed copies must go to the cloud (owner ruling Q1). `carried` are
-    /// sections of an earlier generation, kept unchanged unless one of `worlds`
-    /// replaces it. The pad object holds the pad of every key here of every
-    /// cloud-bound world.
+    /// is sealed under its current key; this machine must read it now, and the
+    /// bundle must carry it for `holder` ([`bundle_carries`]; owner ruling Q1).
+    /// `carried` are sections of an earlier generation, kept unchanged unless one
+    /// of `worlds` replaces it. The pad object holds the pad of every key here of
+    /// every world the bundle carries for `holder`.
     pub fn seal_vault_bundle(
         &self,
         slot: u64,
+        holder: Destination,
         base: &[u8],
         worlds: &[(EntityId, &[u8])],
         carried: &[SealedBundleSection],
     ) -> Result<SealedVaultUpload> {
-        self.seal_vault_bundle_carrying(slot, base, worlds, carried, None)
+        self.seal_vault_bundle_carrying(slot, holder, base, worlds, carried, None)
     }
 
     /// [`Self::seal_vault_bundle`] for a publisher that carries `carried` on
     /// from the generation whose pad object is `latest`: the new pad object
     /// also holds each pad of `latest` this machine has no row for, of a world
-    /// still cloud-bound whose keys were not destroyed here, so a carried
-    /// section's key still restores with the kit.
+    /// the bundle still carries for `holder` whose keys were not destroyed here,
+    /// so a carried section's key still restores with the kit.
     pub(crate) fn seal_vault_bundle_carrying(
         &self,
         slot: u64,
+        holder: Destination,
         base: &[u8],
         worlds: &[(EntityId, &[u8])],
         carried: &[SealedBundleSection],
@@ -647,7 +654,7 @@ impl Vault {
             }
             keys.push((self.world_key(world)?, payload));
         }
-        let plan = self.seal_plan(&secret, &keys, latest)?;
+        let plan = self.seal_plan(&secret, holder, &keys, latest)?;
         let generation = SealedBundleGeneration::fresh(slot)?;
         let mut sections = Vec::with_capacity(keys.len() + carried.len());
         for (key, payload) in &keys {
@@ -676,6 +683,7 @@ impl Vault {
     fn seal_plan(
         &self,
         secret: &MachineSecret,
+        holder: Destination,
         keys: &[(Arc<WorldKey>, &[u8])],
         latest: Option<&OpenedKeyPads>,
     ) -> Result<SealPlan> {
@@ -693,8 +701,10 @@ impl Vault {
         }
         for (key, _) in keys {
             let world = key.id().world;
-            if !cloud_bound(&fold, world) {
-                return Err(refused("the world's sealed copies do not go to the cloud"));
+            if !bundle_carries(&fold, world, holder) {
+                return Err(refused(
+                    "the world's sealed copies may not rest on the holder",
+                ));
             }
             if fold
                 .current_world_key(world)
@@ -718,16 +728,17 @@ impl Vault {
         }
         let mut pads = Vec::new();
         for key in fold.all_world_keys() {
-            if cloud_bound(&fold, key.id.world)
+            if bundle_carries(&fold, key.id.world, holder)
                 && let Some(pad) = pad_in_txn(&self.store, &txn, &key.id)?
             {
                 pads.push((key.id, Zeroizing::new(*pad.bytes())));
             }
         }
         // A carried section's key keeps the pad the latest generation held for
-        // it, unless its world left the cloud or its keys were destroyed here.
+        // it, unless the bundle no longer carries its world for this holder or
+        // its keys were destroyed here.
         for (key, pad) in latest.map_or(&[][..], |latest| &latest.entries[..]) {
-            if cloud_bound(&fold, key.world)
+            if bundle_carries(&fold, key.world, holder)
                 && !pads.iter().any(|(held, _)| held == key)
                 && !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
             {
@@ -780,9 +791,9 @@ impl Vault {
         Ok(opened)
     }
 
-    /// Every world that rides the cloud bundle now ([`cloud_bound`]).
+    /// Every world a bundle for `holder` carries now ([`bundle_carries`]).
     #[cfg(feature = "sync")]
-    pub(crate) fn sealed_bundle_worlds(&self) -> Result<BTreeSet<EntityId>> {
+    pub(crate) fn sealed_bundle_worlds(&self, holder: Destination) -> Result<BTreeSet<EntityId>> {
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(fold
@@ -790,7 +801,7 @@ impl Vault {
             .keys()
             .copied()
             .chain(fold.all_world_keys().map(|key| key.id.world))
-            .filter(|world| cloud_bound(&fold, *world))
+            .filter(|world| bundle_carries(&fold, *world, holder))
             .collect())
     }
 
@@ -943,14 +954,23 @@ impl Vault {
     }
 }
 
-/// Whether `world` rides the cloud bundle (owner ruling Q1): private, with sealed
-/// copies on "cloud and my machines". Base reality and worlds read everywhere
-/// ride the base section; "my machines" and "off" stay out.
-fn cloud_bound(fold: &AuthorityFold, world: EntityId) -> bool {
+/// Whether a bundle `holder` keeps carries `world` (owner ruling Q1, FIX 922):
+/// a private world whose sealed copies go to "Cloud + my machines", or to "My
+/// machines" when the holder is a machine trusted as the owner's here. Any other
+/// holder (unknown, hosted, not mine) gets only the first. Base reality and
+/// worlds read everywhere ride the base section; "Off" stays out everywhere.
+fn bundle_carries(fold: &AuthorityFold, world: EntityId, holder: Destination) -> bool {
     let privacy = fold.world_privacy(world);
     world != base_world()
         && privacy.read != EffectiveRead::Everywhere
-        && privacy.sealed == SealedCopies::CloudAndMyMachines
+        && match privacy.sealed {
+            SealedCopies::Off => false,
+            SealedCopies::MyMachines => matches!(
+                holder,
+                Destination::Machine(machine) if fold.trusted_machine(machine).is_some()
+            ),
+            SealedCopies::CloudAndMyMachines => true,
+        }
 }
 
 fn open_sections(

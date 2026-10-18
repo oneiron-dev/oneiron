@@ -166,6 +166,32 @@ pub struct LibraryRetireOutput {
     pub retired: LibraryCard,
 }
 
+/// Lists the programs retires took out of the library for a site: `site`
+/// (a host, as `www.example.com`), or the open page's.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryRetiredInput {
+    #[serde(default)]
+    pub site: Option<String>,
+}
+
+/// One retired program: the card it had when a retire took it out, when,
+/// and why.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RetiredCard {
+    pub card: LibraryCard,
+    pub retired_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// A site's retired programs, the newest retire first.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LibraryRetiredOutput {
+    pub site: String,
+    pub retired: Vec<RetiredCard>,
+}
+
 /// Where library programs are kept: the engine's vault, behind the session.
 pub trait WorkflowLibrary: Send {
     /// The programs filed for `site`, those whose subgoal holds `subgoal`.
@@ -188,6 +214,12 @@ pub trait WorkflowLibrary: Send {
         workflow: &str,
         reason: Option<&str>,
     ) -> Result<Option<LibraryCard>, BrowserError>;
+    /// The programs retires took out for `site`, the newest first.
+    fn retired(&mut self, _site: &str) -> Result<Vec<RetiredCard>, BrowserError> {
+        Err(BrowserError::Library(
+            "this library keeps no retired programs".to_owned(),
+        ))
+    }
 }
 
 impl WorkflowProgram {

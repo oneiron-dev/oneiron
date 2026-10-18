@@ -22,6 +22,7 @@ pub mod detectors;
 mod evaluation;
 pub mod honesty;
 pub mod identity;
+pub mod judge_label_rechecks;
 pub(crate) mod optimize;
 pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 mod person_threshold;
@@ -40,6 +41,7 @@ pub mod seal_checks;
 pub mod stewardship;
 #[cfg(test)]
 mod tests;
+mod type_tree_gate;
 pub mod type_tree_upkeep;
 use super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,

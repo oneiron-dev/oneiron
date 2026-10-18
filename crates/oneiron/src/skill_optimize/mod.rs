@@ -196,11 +196,14 @@ pub(crate) use self::judge_swap::{
     judge_retest_flips, retest_flip_ask, run_judge_swap, swap_case_ask, swap_case_retest_picked,
 };
 pub use self::labels::{
-    JudgeAsk, JudgeAskReason, JudgeLabel, ask_judge_disagreement, ask_judge_uncertainty,
-    judge_digest_minutes, judge_label_anchor, record_judge_pick, set_judge_digest_minutes,
+    JudgeAsk, JudgeAskReason, JudgeLabel, JudgeLabelChecker, JudgeLabelFit, JudgeLabelRecheck,
+    JudgeLabelRecheckReport, JudgeLabelRecheckRequest, JudgeLabelRegrade, JudgeRegrade,
+    JudgeRubric, ask_judge_disagreement, ask_judge_uncertainty, judge_digest_minutes,
+    judge_label_anchor, judge_rubric, record_judge_label_regrade, record_judge_pick,
+    set_judge_digest_minutes,
 };
 pub(crate) use self::labels::{
-    judge_ask_room, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
+    judge_ask_room, recheck_judge_labels, take_digest_asks_in_txn, take_digest_eval_asks_in_txn,
 };
 pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
@@ -209,6 +212,7 @@ pub use self::offer::{
     pending_training_offers, record_offer_check, record_training_offer, settle_training_offer,
     training_offer, training_offer_checks, training_offer_skill_id, training_offers,
 };
+pub(crate) use self::offer::{pending_training_offer_in_txn, settle_training_offer_in_txn};
 pub use self::offer_switch::{
     OfferSwitchReceipt, OfferSwitchUndo, model_role_seat, seat_model_role, training_offer_switch,
     undo_training_offer_switch,

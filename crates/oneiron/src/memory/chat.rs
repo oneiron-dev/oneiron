@@ -29,6 +29,8 @@
 //! composed answer that stands is read for its prose record links
 //! (`oneiron://`) before it is returned, and each link that does not resolve
 //! for the caller leaves an `unlinked` receipt; the text is kept as written.
+//! [`Memory::admit_answer`] holds that boundary, for chat's pack here and
+//! for a host route's own evidence alike.
 //!
 //! The engine carries no composition. [`ChatComposer`] is implemented
 //! host-side, like `LlmBackend`, so no SDK, model id, prompt text, persona, or
@@ -55,8 +57,6 @@ pub type ChatDepth = Effort;
 /// The row the answer boundary's receipts name: chat has no verb-table row,
 /// so its receipts name the engine's `.chat` door.
 const CHAT_ANSWER_ROW: &str = "memory.chat";
-/// The field a composed answer's prose links are receipted at.
-const CHAT_ANSWER_FIELD: &str = "/answer";
 
 impl Effort {
     /// The retrieval effort priced by a chat request.
@@ -372,32 +372,29 @@ impl Memory<'_> {
                 receipt_ref: None,
             });
         }
-        let Some(source_short_ids) = validate_answer_sources(&pack, &proposed) else {
-            // A citation the pack does not carry is a refused answer: typed,
-            // and receipted on its own write (Engine ruling 1231).
-            let refusal = uncarried_source(&pack, &proposed).map(answer_refusal);
-            let receipt_ref = refusal
-                .as_ref()
-                .and_then(|refusal| refusal.receipt(self, CHAT_ANSWER_ROW));
-            return Ok(ChatResponse::Abstained {
-                reason: ChatAbstentionReason::InsufficientEvidence,
-                gaps,
-                tokens_used,
+        // The answer boundary: a citation the pack does not carry is a
+        // refused answer, typed and receipted on its own write (Engine ruling
+        // 1231); a composed answer that stands has its prose links read,
+        // receipt-only, and is returned as written.
+        let composed = composer.is_some().then_some(answer.as_str());
+        let admitted = self.admit_answer(CHAT_ANSWER_ROW, &proposed, composed, |cited| {
+            pack_source(&pack, cited)
+        });
+        let source_short_ids = match admitted {
+            AnswerAdmission::Admitted(source_short_ids) => source_short_ids,
+            AnswerAdmission::Refused {
                 refusal,
                 receipt_ref,
-            });
+            } => {
+                return Ok(ChatResponse::Abstained {
+                    reason: ChatAbstentionReason::InsufficientEvidence,
+                    gaps,
+                    tokens_used,
+                    refusal,
+                    receipt_ref,
+                });
+            }
         };
-        // The composed answer stands: its prose links are read at this
-        // boundary, receipt-only, and the text is returned as written.
-        if composer.is_some() {
-            crate::gate::record_references::admit_prose_text(
-                self,
-                CHAT_ANSWER_ROW,
-                CHAT_ANSWER_FIELD,
-                &answer,
-                0,
-            );
-        }
 
         Ok(ChatResponse::Answered {
             answer,
@@ -582,66 +579,15 @@ fn extractive_answer(pack: &MemoryPack) -> String {
     }
 }
 
-/// The citation gate: every proposed short id must be one the supplied pack
-/// actually carries, and at least one must remain. `None` means "this answer
-/// cannot be shown", and the caller abstains.
-///
-/// All-or-nothing on purpose. An unknown or blank citation is not quietly
-/// dropped to salvage the rest, because a composer citing something the pack
-/// never contained has already shown that its sourcing cannot be trusted for
-/// the citations that happen to match. Survivors keep first appearance and
-/// duplicates collapse.
-fn validate_answer_sources(pack: &MemoryPack, proposed: &[String]) -> Option<Vec<String>> {
-    let items = &pack.items;
-    let mut sources: Vec<String> = Vec::new();
-    for candidate in proposed {
-        if candidate.trim().is_empty() {
-            return None;
-        }
-        // A composer may cite the bare short id the item shows; the source
-        // keeps the item's pin so it hydrates the revision that was read.
-        let item = items
-            .iter()
-            .find(|item| item.short_id == *candidate || item.reference() == *candidate)?;
-        let source = item.reference();
-        if !sources.contains(&source) {
-            sources.push(source);
-        }
-    }
-    if sources.is_empty() {
-        return None;
-    }
-    Some(sources)
-}
-
-/// The index in `proposed` of the first source the pack does not carry: a
-/// nonblank citation of no item in it. `None` when every citation is
-/// carried, or the answer failed the gate only by citing nothing or a blank.
-fn uncarried_source(pack: &MemoryPack, proposed: &[String]) -> Option<usize> {
-    proposed.iter().position(|candidate| {
-        !candidate.trim().is_empty()
-            && !pack
-                .items
-                .iter()
-                .any(|item| item.short_id == *candidate || item.reference() == *candidate)
-    })
-}
-
-/// The typed refusal of an answer whose citation at `index` its pack does
-/// not carry: the citation's pointer, never the cited ref.
-fn answer_refusal(index: usize) -> RecordRefusal {
-    let field = format!("/source_short_ids/{index}");
-    RecordRefusal {
-        reason: RefusalReason::InventedReference,
-        code: MEMORY_CODE_INVENTED_REFERENCE.to_owned(),
-        message: format!(
-            "the answer cites a source at `{field}` that the evidence it was composed from does not carry; the answer was refused"
-        ),
-        suggestions: vec![
-            "Cite only the short ids of items in the pack the answer was composed from.".to_owned(),
-        ],
-        field,
-    }
+/// The source the pack keeps for `cited`: the pinned reference of the item
+/// it names, `None` for a citation of no item in it. A composer may cite the
+/// bare short id the item shows; the source keeps the item's pin so it
+/// hydrates the revision that was read.
+fn pack_source(pack: &MemoryPack, cited: &str) -> Option<String> {
+    pack.items
+        .iter()
+        .find(|item| item.short_id == cited || item.reference() == cited)
+        .map(MemoryItem::reference)
 }
 
 /// Every short id the pack carries, in pack order: what an extractive answer

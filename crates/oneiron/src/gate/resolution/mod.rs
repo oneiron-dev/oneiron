@@ -3,6 +3,7 @@ mod evaluation;
 mod frontier_hash;
 mod manifest_fold;
 mod manifest_memo;
+mod manifest_narrowing;
 mod manifest_types;
 mod weave_reach;
 
@@ -13,6 +14,7 @@ pub(crate) use self::manifest_fold::{
     resolve_project_depth_max, retention_edit_target,
 };
 pub(crate) use self::manifest_memo::ManifestDecodeMemo;
+pub(crate) use self::manifest_narrowing::manifest_resolution_narrows;
 pub(super) use self::manifest_types::CommOptOutPosture;
 pub(in crate::gate) use self::manifest_types::TeacherProbeRow;
 pub(crate) use self::manifest_types::{

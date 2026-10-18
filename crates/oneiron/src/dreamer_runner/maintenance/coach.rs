@@ -67,6 +67,10 @@ pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
 /// Autoresearch (OF-351): one selection round for each bound campaign whose
 /// measured evidence moved, under the campaign's lease.
 pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
+/// Autoresearch execution (FIX 886): each campaign bound with an execution
+/// spec has its host continuations advanced through
+/// [`Vault::run_coach_research`]. The host queues it while work is pending.
+pub const COACH_RESEARCH_RUN_FACET: &str = "coach.research_run";
 /// Observe, learning upkeep: the cell re-projection that keeps the window
 /// fading runs no new evidence reached, and the coordination re-derivation
 /// of every labeled or projected run.
@@ -96,6 +100,11 @@ pub const COACH_SEAL_CHECKS_FACET: &str = "coach.seal_checks";
 /// `attribution_unclear_floor` fitter reads model answers (see
 /// [`super::attribution_audits`]).
 pub const COACH_ATTRIBUTION_AUDITS_FACET: &str = "coach.attribution_audits";
+/// Judge-label re-checks (ARCH-0042 judge re-pin, OF-420): after an edit of
+/// the judge's rubric, each pick it stamped pending is put to the Coach's
+/// model; one that no longer fits, or that the model cannot judge, waits for
+/// its person's re-grade (see [`super::judge_label_rechecks`]).
+pub const COACH_JUDGE_LABEL_RECHECKS_FACET: &str = "coach.judge_label_rechecks";
 /// Type-tree upkeep (ARCH-0079 #task-type, OF-541): the vault tree recounted
 /// from its receipts, split and merged on anchored decisions, its new types
 /// named on the host, and a changed tree put in force (see
@@ -128,6 +137,7 @@ const HOST_FACETS: [&str; 10] = [
     COACH_SEAL_CHECKS_FACET,
     COACH_TYPE_TREE_UPKEEP_FACET,
     COACH_ATTRIBUTION_AUDITS_FACET,
+    COACH_JUDGE_LABEL_RECHECKS_FACET,
 ];
 /// The Coach's closed-form nightly jobs, which the wake driver runs.
 const MAINTENANCE_FACETS: [&str; 10] = [
@@ -234,6 +244,30 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(COACH_HOST_QUEUE_KIND, input)
+    }
+
+    /// Queues the host's research job, keyed as the nightly host jobs are: an
+    /// unleased one absorbs the next request.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own enqueue errors.
+    pub fn enqueue_coach_research_run(&self, now: u64) -> Result<()> {
+        self.vault.with_write_txn_grouped(|txn| {
+            self.enqueue_kind_in_txn(
+                txn,
+                COACH_HOST_QUEUE_KIND,
+                DreamerAttemptPayload {
+                    attempt_type: COACH_RESEARCH_RUN_FACET.into(),
+                    input: Value::Nil,
+                    parent_attempt: None,
+                },
+                Some(COACH_RESEARCH_RUN_FACET.into()),
+                None,
+                now,
+            )?;
+            Ok(())
+        })
     }
 }
 
@@ -425,6 +459,7 @@ impl Vault {
             let owners = crate::policy_model::owners_in_txn(self, &*txn)?;
             notify_offer_in_txn(self, txn, &owners, &offer)
         })?;
+        crate::task_verb::issue_training_offer_asks(self, now);
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
@@ -451,6 +486,18 @@ impl Vault {
             skill,
             plan,
             inventory,
+            now,
+        )
+    }
+
+    /// Advances the autoresearch host continuations as the Coach, under a
+    /// leased `coach.research_run` attempt. Selection stays the nightly
+    /// `coach.research_select` job's.
+    pub fn run_coach_research(&self, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
+        self.require_coach_attempt(attempt, COACH_RESEARCH_RUN_FACET)?;
+        crate::autoreason_campaign::research::advance_research_continuations(
+            self,
+            attempt.status.attempt.id,
             now,
         )
     }
@@ -641,7 +688,9 @@ pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
             )?;
         }
         Ok(())
-    })
+    })?;
+    crate::task_verb::issue_training_offer_asks(vault, now);
+    Ok(())
 }
 
 /// The autoresearch tick: one selection round for each bound campaign the

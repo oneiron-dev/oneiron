@@ -19,6 +19,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
+use crate::authority::{Destination, PeerMachine};
 use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::sync::client::{SyncClientConfig, SyncResidenceMode};
 use crate::sync::manager::WindowManager;
@@ -50,6 +51,17 @@ const STALE_PARENT_RETRIES: usize = 1;
 /// that syncs everything, not an opened-item machine or a federation lane.
 fn may_publish(config: &SyncClientConfig) -> bool {
     config.residence_mode != SyncResidenceMode::Opened && config.federation_peer.is_none()
+}
+
+/// The home that keeps the bundle, as a world-privacy destination: the
+/// machine it proved on this socket while that proof still stands here, else
+/// unknown. A home that is a machine of the owner's also keeps the worlds
+/// whose sealed copies go to "My machines" (`world_keys::bundle`).
+fn holder_destination(vault: &Vault, home: PeerMachine) -> Destination {
+    match vault.peer_machine_stands(home) {
+        PeerMachine::Proven { machine, .. } => Destination::Machine(machine),
+        PeerMachine::Unknown => Destination::Unknown,
+    }
 }
 
 /// What one bundle relay moved.
@@ -294,9 +306,11 @@ impl SlotRelay<'_> {
             }
             let manager = Arc::clone(self.manager);
             let slot = self.slot;
+            let holder = holder_destination(vault, rpc.home);
             let (upload, back) = tokio::task::spawn_blocking(move || {
                 let upload = manager.assemble_sealed_bundle(
                     slot,
+                    holder,
                     held.as_ref().map(|(bundle, pads)| (bundle, pads)),
                 );
                 (upload, held)

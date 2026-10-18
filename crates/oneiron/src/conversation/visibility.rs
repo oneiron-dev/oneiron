@@ -318,8 +318,31 @@ pub(crate) fn private_threads_readable_raw_in(
     raw: &[u8],
     viewers: &[EntityId],
 ) -> Result<bool> {
+    private_threads_readable_with_read_in(vault, &vault.store.read(), txn, id, raw, viewers)
+}
+
+/// [`private_threads_readable_raw_in`] walking the ancestry `dbs` reads: a
+/// session's composed view, so a MESSAGE a stretch stages under a private
+/// TURN, or a TURN of a thread it opened, meets that thread's audience
+/// (FIX 3122). Both the row base holds now and the one the view composes
+/// are walked, so an overlay row never stands in for a base restriction.
+/// Task bindings, summary covers and the audience itself read base.
+pub(crate) fn private_threads_readable_with_read_in(
+    vault: &Vault,
+    dbs: &crate::store::StoreRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    raw: &[u8],
+    viewers: &[EntityId],
+) -> Result<bool> {
     let mut pending = vec![(id, Some(raw.to_vec()))];
     if let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+        && live.as_slice() != raw
+    {
+        pending.push((id, Some(live)));
+    }
+    if crate::store::ManifestDbs::is_union(dbs)
+        && let Some(live) = crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)?
         && live.as_slice() != raw
     {
         pending.push((id, Some(live)));
@@ -330,7 +353,7 @@ pub(crate) fn private_threads_readable_raw_in(
         let bytes = match revision {
             Some(bytes) => bytes,
             None if !seen.insert(id) => continue,
-            None => match crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
+            None => match crate::ports::EntityStoreRead::port_entity_raw(dbs, txn, &id)? {
                 Some(bytes) => bytes,
                 None => continue,
             },
@@ -354,7 +377,7 @@ pub(crate) fn private_threads_readable_raw_in(
                 Err(e) => return Err(e),
             };
             for turn in bound {
-                if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &turn)?.is_live() {
+                if !crate::vault::live_entity_row_in_txn(dbs, txn, &turn)?.is_live() {
                     return Ok(false);
                 }
                 pending.push((turn, None));
@@ -381,7 +404,7 @@ pub(crate) fn private_threads_readable_raw_in(
             ]
         };
         for kind in kinds {
-            let next = edge_ids(&vault.store, txn, &id, *kind, false, MAX_ANCESTOR_DEPTH)?;
+            let next = edge_ids(dbs, txn, &id, *kind, false, MAX_ANCESTOR_DEPTH)?;
             pending.extend(next.into_iter().map(|id| (id, None)));
         }
         let mut covers = vec![crate::scope_summary::body_covers_in_txn(
@@ -410,7 +433,9 @@ pub(crate) fn private_threads_readable_raw_in(
         }
     }
     for root in roots {
-        if !crate::workspace_roster::thread_root_readable_in(vault, txn, root, viewers)? {
+        if !crate::workspace_roster::thread_root_readable_with_read_in(
+            vault, dbs, txn, root, viewers,
+        )? {
             return Ok(false);
         }
     }
