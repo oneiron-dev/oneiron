@@ -40,6 +40,7 @@ pub mod seal_checks;
 pub mod stewardship;
 #[cfg(test)]
 mod tests;
+mod type_tree_gate;
 pub mod type_tree_upkeep;
 use super::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerAttemptPayload,

@@ -31,6 +31,7 @@
 
 pub mod bridge;
 pub mod carrier;
+pub(crate) mod carrier_parts;
 pub mod chunks;
 pub mod client;
 pub mod connection;
@@ -47,6 +48,7 @@ mod local_claims;
 pub(crate) mod loro_support;
 pub mod manager;
 pub mod mesh_path;
+pub(crate) mod message_docs;
 pub(crate) mod note;
 pub(crate) mod pack_sync;
 pub mod quarantine;
@@ -75,8 +77,8 @@ pub(crate) mod withdrawn_cutoffs;
 pub use carrier::{SyncDial, SyncDialer, SyncIo, SyncStream};
 pub use client::{
     EphemeralChangeOrigin, OpenedItem, ResidenceHit, ResidenceHomeRoute, ResidenceIndexWindow,
-    ResidenceSearch, SealedBundleRelay, SealedRelay, SearchSource, SyncClient, SyncClientConfig,
-    SyncEvent, SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
+    ResidenceSearch, SealedBundleRelay, SearchSource, SyncClient, SyncClientConfig, SyncEvent,
+    SyncResidenceMode, SyncStatus, SyncTransportCredential, ThinItem,
 };
 pub use connection::{
     ConnectionConfig, HomeNodeTopology, HomeSearch, LocalUpdate, ResidenceModeChange,
