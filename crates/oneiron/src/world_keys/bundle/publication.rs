@@ -154,7 +154,9 @@ pub(super) fn asks(
                 asked.executor == machine
                     && holder.is_none_or(|holder| holder == Destination::Machine(home))
             }
-            OwnerWorkBody::WorldKey { .. } | OwnerWorkBody::Root { .. } => false,
+            OwnerWorkBody::WorldKey { .. }
+            | OwnerWorkBody::Root { .. }
+            | OwnerWorkBody::Custody { .. } => false,
         })
 }
 
@@ -267,7 +269,9 @@ impl Vault {
             .pending_owner_work_for(me)
             .filter_map(|(hash, asked)| match asked.work {
                 OwnerWorkBody::PublishBundle { home } => Some((hash, home)),
-                OwnerWorkBody::WorldKey { .. } | OwnerWorkBody::Root { .. } => None,
+                OwnerWorkBody::WorldKey { .. }
+                | OwnerWorkBody::Root { .. }
+                | OwnerWorkBody::Custody { .. } => None,
             })
             .collect())
     }

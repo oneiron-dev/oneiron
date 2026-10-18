@@ -118,6 +118,9 @@ pub enum AgentVerb {
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
+    VaultAssetsIngest,
+    VaultAssetsResolve,
+    VaultSearchVector,
     VaultImagesView,
     VaultReceiptsGet,
     SelfAdmissionStatus,
@@ -1018,6 +1021,9 @@ impl AgentVerb {
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
+        Self::VaultAssetsIngest,
+        Self::VaultAssetsResolve,
+        Self::VaultSearchVector,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
         Self::SelfAdmissionStatus,
@@ -1921,6 +1927,9 @@ impl AgentVerb {
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
+            Self::VaultAssetsIngest => "vault.assets.ingest",
+            Self::VaultAssetsResolve => "vault.assets.resolve",
+            Self::VaultSearchVector => "vault.search.vector",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
             Self::SelfAdmissionStatus => "self.admission.status",
@@ -2842,6 +2851,9 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
+                | Self::VaultAssetsIngest
+                | Self::VaultAssetsResolve
+                | Self::VaultSearchVector
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::SelfAdmissionStatus
@@ -3769,6 +3781,9 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
+                | Self::VaultAssetsIngest
+                | Self::VaultAssetsResolve
+                | Self::VaultSearchVector
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::SelfAdmissionStatus
@@ -4648,6 +4663,8 @@ impl AgentVerb {
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
+                | Self::VaultAssetsResolve
+                | Self::VaultSearchVector
                 | Self::ExecuteCode
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
@@ -4778,6 +4795,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultAssetsIngest
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::SelfAdmissionStatus
@@ -5592,6 +5610,7 @@ impl AgentVerb {
                 | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultAssetsIngest
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultCampaignComplianceInstall
@@ -6220,6 +6239,9 @@ impl AgentVerb {
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultAssetsIngest => &["spec"],
+            Self::VaultAssetsResolve => &["spec"],
+            Self::VaultSearchVector => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::SelfAdmissionStatus => &["spec"],
@@ -7121,6 +7143,9 @@ impl AgentVerb {
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultAssetsIngest => &["spec"],
+            Self::VaultAssetsResolve => &["spec"],
+            Self::VaultSearchVector => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::SelfAdmissionStatus => &["spec"],
@@ -8245,6 +8270,15 @@ impl AgentVerb {
             Self::VaultReceipts => {
                 "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."
             }
+            Self::VaultAssetsIngest => {
+                "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate."
+            }
+            Self::VaultAssetsResolve => {
+                "Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs."
+            }
+            Self::VaultSearchVector => {
+                "Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt."
+            }
             Self::VaultImagesView => {
                 "The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull."
             }
@@ -8729,7 +8763,7 @@ impl AgentVerb {
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {
-                "The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device."
+                "The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device, with an optional signed comm cap (below vault, owners only)."
             }
             Self::VaultSupportGrantsMint => {
                 "The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."

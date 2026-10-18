@@ -627,6 +627,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.assets.ingest",
+                crate::code_run::vault_read::request_schema::<crate::memory::AssetIngestRequest>(),
+            ),
+            (
+                "vault.assets.resolve",
+                crate::code_run::vault_read::request_schema::<crate::memory::AssetResolveRequest>(),
+            ),
+            (
+                "vault.search.vector",
+                crate::code_run::vault_read::request_schema::<crate::memory::VectorSearchRequest>(),
+            ),
+            (
                 "vault.images.view",
                 crate::code_run::vault_read::request_schema::<crate::memory::ImageViewRequest>(),
             ),
@@ -5014,6 +5026,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.assets.ingest",
+    "vault.assets.resolve",
+    "vault.search.vector",
     "self.admission.status",
     "self.admission.receipts",
     "vault.campaign.compliance.install",
@@ -5695,6 +5710,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.assets.ingest" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::AssetIngestReceipt>()
+        }
+        "vault.assets.resolve" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::AssetResolved>,
+        >(),
+        "vault.search.vector" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>,
+        >(),
         "self.admission.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::admission::AdmissionReceipt>,
         >(),
@@ -7970,6 +7994,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.assets.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.assets.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.search.vector" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13682,6 +13727,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
         }
+        "vault.assets.ingest" => {
+            let _input: crate::memory::AssetIngestRequest = decode(value.clone())?;
+        }
+        "vault.assets.resolve" => {
+            let _input: crate::memory::AssetResolveRequest = decode(value.clone())?;
+        }
+        "vault.search.vector" => {
+            let input: crate::memory::VectorSearchRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.images.view" => {
             let _input: crate::memory::ImageViewRequest = decode(value.clone())?;
         }
@@ -16584,6 +16639,9 @@ pub fn invoke(
         "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
         "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.assets.ingest" => encode(vault_assets_ingest(memory, decode(value)?)?),
+        "vault.assets.resolve" => encode(vault_assets_resolve(memory, decode(value)?)?),
+        "vault.search.vector" => encode(vault_search_vector(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "self.admission.status" => encode(self_admission_status(memory, decode(value)?)?),
@@ -19181,6 +19239,25 @@ pub fn vault_receipts(
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
         &input.kinds,
     )
+}
+pub fn vault_assets_ingest(
+    memory: &Memory<'_>,
+    input: crate::memory::AssetIngestRequest,
+) -> MemoryResult<crate::memory::AssetIngestReceipt> {
+    memory.ingest_asset(&input)
+}
+pub fn vault_assets_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::AssetResolveRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::AssetResolved>> {
+    memory.resolve_asset_form(&input)
+}
+pub fn vault_search_vector(
+    memory: &Memory<'_>,
+    input: crate::memory::VectorSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>> {
+    input.validate()?;
+    memory.query_vector(&input)
 }
 pub fn vault_images_view(
     memory: &Memory<'_>,

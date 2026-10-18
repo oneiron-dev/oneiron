@@ -97,6 +97,7 @@ pub(crate) fn joined_turn_text(messages: &[(EntityId, String)]) -> Option<String
 ///   truthful vector for them.
 pub(crate) fn embeddable_payload(entity_type: u8, body: &[u8]) -> Option<PendingEmbeddingPayload> {
     match entity_type {
+        crate::registry::ENTITY_TYPE_ASSET => super::media::asset_text(body).map(PendingEmbeddingPayload::SummaryText),
         crate::registry::ENTITY_TYPE_CLAIM => {
             let claim = crate::claim::decode_claim_body(body, true).ok()?;
             (claim.predicate != crate::claim::PREDICATE_LEXICAL_QUERY_HINT
