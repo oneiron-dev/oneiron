@@ -944,9 +944,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/consent/recipe.rs` | src | s | 1 struct · 1 fn | CodeConsentRecipe | Configured consent explanation |
 | `src/code_run/consent_wait/binding.rs` | src | m | 11 crate-vis | — | The binding: minted beside the held effect's pending row, in its writer; sealed with the parked checkpoint… |
 | `src/code_run/consent_wait/host.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | CodeConsentEffectHost | The one host seam a code consent wait needs: the served host that drives an already-answered effect through… |
-| `src/code_run/consent_wait/mod.rs` | src | s | 2 re-export · 3 crate-vis | — | Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03) |
+| `src/code_run/consent_wait/mod.rs` | src | s | 2 re-export · 4 crate-vis | — | Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03) |
+| `src/code_run/consent_wait/replay.rs` | src | m | 7 crate-vis | — | The parked run's side of a code consent wait (DOOR-079 1b) |
 | `src/code_run/consent_wait/settle.rs` | src | m | 3 fn · 10 crate-vis | — | The answer and the settlement (DOOR-079 1a) |
-| `src/code_run/consent_wait/types.rs` | src | m | 3 struct · 3 enum · 3 fn · 19 crate-vis | CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView | The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row… |
+| `src/code_run/consent_wait/types.rs` | src | m | 3 struct · 3 enum · 3 fn · 20 crate-vis | CodeConsentAnswerInput, CodeConsentChoice, CodeConsentSavedCredential, CodeConsentSettleOutcome, CodeConsentWaitState, CodeConsentWaitView | The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row… |
 | `src/code_run/contribution.rs` | src | m | 3 struct · 2 enum · 2 trait · 4 fn | ContributionForkModel, ContributionForkReceipt, ContributionForkScorer, ContributionReplayUnavailable, ForkTreatment, ReplayAnchor, ScoredFork | The matched-fork contribution runner (FIX 3028, ARCH-0037 #lineage-credit, ARCH-0053): one sampled credited… |
 | `src/code_run/coordination_codec.rs` | src | s | 8 crate-vis | — | Replay encoding for the typed coordination calls |
 | `src/code_run/dispatcher/agent_verb.rs` | src | m | 4 crate-vis | — | Code mode's verb-table calls: the run's write origin and the receipt a write keeps |
@@ -996,7 +997,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 13 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
 | `src/code_run/storage/routing.rs` | src | L | 33 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/speech_identity.rs` | src | s | 12 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
-| `src/code_run/storage/wait_delivery.rs` | src | m | 3 struct · 9 fn · 10 crate-vis | WaitDeliveries, WaitDelivery, WaitKey | Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it |
+| `src/code_run/storage/wait_delivery.rs` | src | m | 3 struct · 9 fn · 11 crate-vis | WaitDeliveries, WaitDelivery, WaitKey | Replies to parked code runs: a run whose step parked on a durable wait resumes from the reply delivered to it |
 | `src/code_run/support.rs` | src | s | 28 crate-vis | — | — |
 | `src/code_run/team_submit.rs` | src | s | 2 struct · 5 crate-vis | TeamSubmitAnswer, TeamSubmitInput | `self.team.submit` (OF-540): what a team's leader submits for the owner's review, and what the host answers |
 | `src/code_run/tests.rs` | test | XL | 1 crate-vis | — | — |
@@ -1771,7 +1772,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/history.rs` | src | s | 3 struct · 2 fn | FoldHistory, FoldHistoryEpoch, FoldHistoryStep | Durable steps and landed compaction boundaries of an attached run |
 | `src/engine_executor/host.rs` | src | XL | 11 crate-vis | — | JS host bridge: recording dispatcher, sandbox contract, and prompt sites |
 | `src/engine_executor/mod.rs` | src | s | 2 mod · 5 re-export · 2 crate-vis | — | Engine-native JS code-mode executor |
-| `src/engine_executor/record.rs` | src | m | 21 crate-vis | — | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/record.rs` | src | m | 25 crate-vis | — | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
 | `src/engine_executor/repl.rs` | src | L | 2 fn · 2 crate-vis | — | Durable REPL loop: run(), persistence helpers, and LLM request building |
 | `src/engine_executor/skill_call.rs` | src | s | 1 fn | — | One callable bridge entry between turns of an attached, leased run |
 | `src/engine_executor/stack_floor.rs` | src | s | 2 crate-vis | — | The native stack a callable skill's call leaves its thread (FIX 600) |
