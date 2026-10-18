@@ -758,6 +758,8 @@ fn mcp_agent_verb_input(
         )
     };
     match tool {
+        "fetch" => a.spec.clone().ok_or_else(invalid),
+        "crawl" => a.spec.clone().ok_or_else(invalid),
         "report" => a.spec.clone().ok_or_else(invalid),
         "feedback.preview" => a.spec.clone().ok_or_else(invalid),
         "feedback.send" => a.spec.clone().ok_or_else(invalid),
@@ -1774,6 +1776,12 @@ pub(crate) fn mcp_agent_verb_arguments(
     };
     let mut arguments = serde_json::Map::new();
     match tool {
+        "fetch" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "crawl" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
         "report" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
@@ -4430,6 +4438,52 @@ async fn execute_agent_verb_row(
         )
     };
     match tool {
+        "fetch" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("fetch", &input).map_err(mcp_facade_error)?;
+            let input: oneiron::web_fetch::WebFetchRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::fetch(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "crawl" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("crawl", &input).map_err(mcp_facade_error)?;
+            let input: oneiron::web_fetch::WebCrawlRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::crawl(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
         "report" => {
             oneiron::task_verb::sdk::validate_input("report", &input).map_err(mcp_facade_error)?;
             let input: oneiron::feedback::ReportRequest =

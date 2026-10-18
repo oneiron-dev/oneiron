@@ -364,6 +364,10 @@ class Oneiron:
     def close_lens_frame(self, card_id: str) -> CloseLensFrameReply:
         """Closes a lens card the connected server rendered and frees its frame."""
 # BEGIN GENERATED FACADE VERBS
+    def fetch(self, spec: Facade.WebFetchRequest) -> Facade.FetchResult:
+        """Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links."""
+    def crawl(self, spec: Facade.WebCrawlRequest) -> Facade.CrawlResult:
+        """Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion."""
     def report(self, spec: Facade.ReportRequest) -> Facade.ReportReceipt:
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
     @property

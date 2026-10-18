@@ -27686,7 +27686,7 @@
      "path": "src/ingest/admission.rs",
      "purpose": "Imported-evidence admission: typed claim and entity intake with JSON-to-MessagePack bridging",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 7,
       "struct": 2
      }
@@ -33738,6 +33738,16 @@
      "path": "src/memory/transcript/tests.rs",
      "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/web_fetch.rs",
+     "purpose": "Actor-bound web acquisition and import",
+     "surface": {
+      "fn": 2
+     }
     },
     {
      "bucket": "s",
@@ -51878,7 +51888,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 822
+      "fn": 824
      }
     },
     {
@@ -55304,9 +55314,24 @@
       "const": 2,
       "enum": 6,
       "fn": 22,
+      "re-export": 1,
       "struct": 13,
       "trait": 2,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WebCrawlRequest",
+      "WebFetchRequest"
+     ],
+     "path": "src/web_fetch/door.rs",
+     "purpose": "Typed inputs for the two acquisition doors",
+     "surface": {
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -58639,7 +58664,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 189,
+     "files": 190,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59283,7 +59308,7 @@
      "purpose": "Durable code-mode wave orchestration over TASK entities and the C9 run tree (ONE-1905, CSTDY-05)"
     },
     "web_fetch": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -59320,7 +59345,7 @@
    },
    "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3620,
+   "source_files": 3622,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67853,7 +67878,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 791
+      "fn": 793
      }
     },
     {
@@ -68902,7 +68927,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 792
+      "fn": 794
      }
     },
     {
@@ -72315,7 +72340,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 133
+      "crate-vis": 134
      }
     },
     {
@@ -72784,6 +72809,16 @@
      "purpose": "The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or…",
      "surface": {
       "crate-vis": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/web_fetch_doors.rs",
+     "purpose": "Distinct typed fetch and crawl doors, shared by HTTP, SDK and MCP",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -79346,6 +79381,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/web_fetch.rs",
+     "purpose": "The host owns renderer configuration; acquisition itself stays in the engine",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/windows.rs",
      "purpose": "Window serving: snapshots, exports, and the local-change broadcast bridge",
      "surface": {
@@ -80114,7 +80160,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 396,
+     "files": 397,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80471,7 +80517,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 39,
+     "files": 40,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80543,7 +80589,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 739,
+   "source_files": 741,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81412,6 +81458,10 @@
       "CraftCandidatesView",
       "CraftVerdict",
       "CraftVerdictView",
+      "CrawlCompletion",
+      "CrawlPageFailure",
+      "CrawlResult",
+      "CrawlScope",
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
@@ -81671,6 +81721,7 @@
       "FeedbackSendSubjectRequest",
       "FeedbackSubjectPreview",
       "FeedbackSubjectSent",
+      "FetchResult",
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
@@ -82550,6 +82601,7 @@
       "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
+      "RendererKind",
       "ReplyCode",
       "ReplyDisposition",
       "ReplyRouteRule",
@@ -83381,6 +83433,8 @@
       "WeaveSectionView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
+      "WebCrawlRequest",
+      "WebFetchRequest",
       "WellnessPersonRequest",
       "WellnessPolicyConfigureRequest",
       "WellnessProjection",
@@ -83460,8 +83514,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 672,
-      "struct": 2047
+      "enum": 675,
+      "struct": 2052
      }
     },
     {

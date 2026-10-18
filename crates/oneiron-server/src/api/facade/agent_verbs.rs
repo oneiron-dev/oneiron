@@ -2,6 +2,8 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/fetch", post(facade_route))
+        .route("/crawl", post(facade_route))
         .route("/report", post(facade_route))
         .route("/feedback.preview", post(facade_route))
         .route("/feedback.send", post(facade_route))

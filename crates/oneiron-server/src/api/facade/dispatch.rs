@@ -6,6 +6,60 @@
 //! the row admits the call and runs it, and its answer names the rows it was
 //! derived from.
 use super::*;
+async fn fetch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "fetch")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("fetch", &value)?;
+    let hooks = facade_hooks_pre(server, call, "fetch", value).await?;
+    let (output, listed) = super::host_doors::fetch(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn crawl(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "crawl")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("crawl", &value)?;
+    let hooks = facade_hooks_pre(server, call, "crawl", value).await?;
+    let (output, listed) = super::host_doors::crawl(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn report(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18679,6 +18733,8 @@ pub(crate) async fn call_verb(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     match verb {
+        "fetch" => fetch(server, call, input).await,
+        "crawl" => crawl(server, call, input).await,
         "report" => report(server, call, input).await,
         "feedback.preview" => feedback_preview(server, call, input).await,
         "feedback.send" => feedback_send(server, call, input).await,
