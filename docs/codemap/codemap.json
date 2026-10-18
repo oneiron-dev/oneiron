@@ -28590,7 +28590,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
