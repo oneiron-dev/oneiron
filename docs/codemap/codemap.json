@@ -1009,6 +1009,26 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/intent.rs",
+     "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/root_plan.rs",
+     "purpose": "The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [
       "ProjectConversationSkills"
      ],
@@ -51657,7 +51677,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 10,
-      "re-export": 10
+      "re-export": 11
      }
     },
     {
@@ -51776,6 +51796,22 @@
       "crate-vis": 1,
       "fn": 7,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PlannedIntentPhase",
+      "PlannedIntentView",
+      "PlannedSpawnHost",
+      "PlannedSpawnRequest"
+     ],
+     "path": "src/team/spawn_intent.rs",
+     "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
+     "surface": {
+      "enum": 1,
+      "struct": 3
      }
     },
     {
@@ -56250,7 +56286,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 45,
+     "files": 47,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57594,7 +57630,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 12,
+     "files": 13,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57757,7 +57793,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3519,
+   "source_files": 3522,
    "test_files": 902
   },
   "oneiron-android": {

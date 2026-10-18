@@ -91,6 +91,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/agent_dispatch/origin.rs` | src | s | 3 crate-vis | — | OF-221: the conversation that started a dispatch |
 | `src/agent_dispatch/planner.rs` | src | L | 13 struct · 1 enum · 13 fn · 1 const · 4 crate-vis | AvailableModel, CostEnvelope, MeasuredRate, PatternCandidate, PlanBudget, PlannerDecisions, PlannerEvidence, PlannerQuestionContext +6 | The spawn planner (ARCH-0079 #planner, OF-541): turns a [`SpawnNeed`] into a launch-ready plan — which… |
 | `src/agent_dispatch/planner_live.rs` | src | m | 3 struct · 5 fn · 1 crate-vis | LivePlanRequest, PlannerSeat, PlannerSkills | The live spawn planner (ARCH-0079 #planner, OF-541): the one vault-backed service a spawn door and the CEO's… |
+| `src/agent_dispatch/planner_live/intent.rs` | src | m | 1 fn | — | The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key |
+| `src/agent_dispatch/planner_live/root_plan.rs` | src | s | 3 crate-vis | — | The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the… |
 | `src/agent_dispatch/project_conversation.rs` | src | m | 1 struct · 3 fn | ProjectConversationSkills | The skill a project conversation's run loads before it starts (OF-501, ARCH-0067) |
 | `src/agent_dispatch/project_proposal.rs` | src | s | 1 struct · 1 enum · 1 fn · 1 crate-vis | ProjectDetection, ProjectDetectionRun | The house mind's one typed question on a conversation (OF-501, ARCH-0067): does this sound like a project? |
 | `src/agent_dispatch/resident.rs` | src | m | 2 struct · 1 enum · 8 fn · 3 crate-vis | ResidentAgentSpec, ResidentGoalRecord, ResidentWakeMode | Persistent resident bindings |
@@ -4038,7 +4040,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/door_reads.rs` | src | m | 1 crate-vis | — | The joins behind the owner's spawn observation (DOOR-111, S6): what the stores hold for one spawned agent… |
 | `src/team/doors.rs` | src | m | 23 struct · 4 enum · 3 fn · 1 const | BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation, LaunchedMember, LearningCellView, LearningEvidenceView, LearningObservation +19 | The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and… |
 | `src/team/market.rs` | src | m | 6 struct · 3 enum · 8 fn · 1 const | LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee +1 | The MARKET pattern's ledger (ARCH-0079 #market, OF-540) |
-| `src/team/mod.rs` | src | s | 10 mod · 10 re-export · 1 crate-vis | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
+| `src/team/mod.rs` | src | s | 10 mod · 11 re-export · 1 crate-vis | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `src/team/observations.rs` | src | s | 1 struct · 1 fn | TeamRunObservations | OF-540: what the host measured of a team run, for its receipt |
 | `src/team/owner_outcome.rs` | src | s | 1 struct · 1 enum · 3 fn · 1 crate-vis | DeliverableReview, TeamDeliverableBinding | OF-540: the owner's verdict on a team's deliverable settles the team |
 | `src/team/pattern.rs` | src | s | 1 struct · 2 enum · 7 fn · 3 const · 1 crate-vis | PatternSkill, TeamAxis, TeamPattern | Coordination patterns as skills (ARCH-0079 #coordination-patterns) |
@@ -4046,6 +4048,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/team/receipt.rs` | src | m | 5 struct · 1 enum · 8 fn · 2 crate-vis | Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape | The team receipt contract (ARCH-0079 #scoring): one receipt per team run, the input of the payoff table and… |
 | `src/team/run.rs` | src | m | 5 struct · 3 enum · 4 crate-vis | SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput, TeamRecordInput, TeamRunAnswer, TeamStartInput | OF-540: a pattern-skill run's own team, from code mode |
 | `src/team/run_binding.rs` | src | s | 1 struct · 7 fn · 1 crate-vis | TeamRunBinding | OF-540: what the host saw a team start do, and the team a run works in |
+| `src/team/spawn_intent.rs` | src | s | 3 struct · 1 enum | PlannedIntentPhase, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest | The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask… |
 | `src/team/stack.rs` | src | s | 2 struct · 1 fn | BranchResult, NodeComparison | Stacking (ARCH-0079 #stacking): a sub-project may run a different pattern from its parent, and every node… |
 | `src/temporal.rs` | src | s | 1 enum · 1 re-export | TemporalAnchorMode | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
 | `src/test_support.rs` | src | s | 8 fn · 1 crate-vis | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
