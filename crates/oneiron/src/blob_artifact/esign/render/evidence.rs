@@ -5,25 +5,20 @@ use qrcode::{Color, QrCode};
 
 pub(super) fn evidence(request: &PdfPreparation<'_>) -> Result<([u8; 32], Vec<String>)> {
     reference(request.document_ref).map_err(|_| PdfPreparationError::InvalidEvidence)?;
+    // The trail is as long as the document made it: no row count or encoded
+    // size refuses a seal (Rule 5); the certificate pages it instead.
     if request.audit.is_empty()
-        || request.audit.len() > 10_000
         || request.item as usize >= request.state.document.items.len()
         || !request.state.ready_to_seal()
     {
         return Err(PdfPreparationError::InvalidEvidence);
     }
-    // Bound canonical encoding before cloning or replaying caller data.
-    let mut remaining = 4 * 1024 * 1024;
-    let mut encoded_rows = Vec::new();
-    for row in request.audit {
-        let mut buffer = AuditBuffer {
-            bytes: Vec::new(),
-            remaining,
-        };
-        serde_json::to_writer(&mut buffer, row).map_err(|_| PdfPreparationError::Limit)?;
-        remaining -= buffer.bytes.len();
-        encoded_rows.push(buffer.bytes);
-    }
+    let encoded_rows = request
+        .audit
+        .iter()
+        .map(serde_json::to_vec)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| PdfPreparationError::Encoding)?;
     let EsignEvent::Drafted { document } = &request.audit[0].event else {
         return Err(PdfPreparationError::InvalidEvidence);
     };
@@ -61,22 +56,6 @@ pub(super) fn evidence(request: &PdfPreparation<'_>) -> Result<([u8; 32], Vec<St
         return Err(PdfPreparationError::InvalidEvidence);
     }
     Ok((previous, lines))
-}
-struct AuditBuffer {
-    bytes: Vec<u8>,
-    remaining: usize,
-}
-impl std::io::Write for AuditBuffer {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > self.remaining.saturating_sub(self.bytes.len()) {
-            return Err(std::io::Error::other("audit limit"));
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
-    }
 }
 fn hex(value: &[u8; 32]) -> String {
     value.iter().map(|v| format!("{v:02x}")).collect()
@@ -128,9 +107,6 @@ fn append_lines(
                 .collect::<Vec<_>>()
         })
         .collect();
-    if wrapped.len() > 50_000 {
-        return Err(PdfPreparationError::Limit);
-    }
     for group in wrapped.chunks(56) {
         let mut ops = Vec::new();
         for (i, line) in group.iter().enumerate() {

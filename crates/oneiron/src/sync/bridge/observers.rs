@@ -572,6 +572,26 @@ pub(crate) fn register_document_pins_observer(
     )
 }
 
+/// Observer B for the base window's MESSAGE document map (FIX 853): each
+/// document an import brings is installed here.
+pub(crate) fn register_message_docs_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let message_docs_map = doc.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP);
+    subscribe_map_observer(
+        doc,
+        &message_docs_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::message_docs::materialize_message_docs_from_delta,
+        ("message_docs", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(

@@ -8,6 +8,7 @@ mod admission;
 mod authority_tail;
 mod bundle;
 mod bundle_payload;
+mod directives;
 mod discover;
 mod policy;
 mod prune;
@@ -15,7 +16,8 @@ pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
 pub use authority_tail::{
     AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, AuthorityCheckpointPart,
     AuthorityPageImport, authority_append_for, authority_checkpoint_part_for, authority_range_for,
-    authority_tail_for, authority_wanted, held_authority_entries, import_authority_page,
+    authority_tail_for, authority_wanted, held_authority_entries, held_authority_history,
+    import_authority_page,
 };
 pub use bundle::{
     SEALED_BUNDLE_PUT_PART_MAX, SEALED_BUNDLE_READ_PART_MAX, SealedBundleEntry, SealedBundleObject,
@@ -25,12 +27,18 @@ pub use bundle::{
 };
 pub use bundle_payload::SealedBundleTake;
 pub use bundle_payload::SealedKitRestore;
+pub use directives::ResidenceDirectiveState;
+pub(crate) use directives::{
+    finish_residence_directive_in_txn, pending_residence_directives, residence_refusal_reason,
+};
 pub use discover::discover_local_window_keys;
+pub(crate) use policy::set_device_sync_preference_in_txn;
 pub use policy::{
     DeviceSyncPreference, effective_residence_mode, load_device_sync_preference,
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
+pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
 
@@ -83,6 +91,24 @@ pub fn home_search_candidates(
         results.push((hit.id, hit.score, residence_window_for_blob(&raw)?));
     }
     Ok(results)
+}
+
+/// The forwarded `residence.search` a device signs and its home verifies
+/// (FIX 2907): the query, the limit as a big-endian `u64` and the device
+/// selector's wire bytes, in that order. Both ends build it here, from the
+/// values the request carries, so the two never sign different bytes.
+pub fn with_forwarded_search<R>(
+    query: &str,
+    limit: usize,
+    selector_wire: &[u8],
+    with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
+) -> R {
+    let limit = (limit as u64).to_be_bytes();
+    let fields: [&[u8]; 3] = [query.as_bytes(), &limit, selector_wire];
+    with(&crate::authority::ForwardedRequest {
+        method: "residence.search",
+        fields: &fields,
+    })
 }
 
 /// The canonical window that holds one entity: a CLAIM that names a world
@@ -474,8 +500,9 @@ pub fn promotion_covers_full_window(
 /// machine of this vault's that proved itself also covers the window's
 /// custody transitions (OF-422), each sealed to the owner's machines, its
 /// room turn rows (OF-522), its room side rows (FIX 1794), its document
-/// quote pins (FIX 853), this vault's embedding setup rows (OF-370) and its
-/// withdrawn cutoffs (OF-013); the selector copies none of them. Any other
+/// quote pins and MESSAGE documents (FIX 853), this vault's embedding setup
+/// rows (OF-370) and its withdrawn cutoffs (OF-013); the selector copies
+/// none of them. Any other
 /// destination does not, so a window that carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
@@ -498,6 +525,7 @@ pub fn promotion_covers_full_window_for(
             super::room_turns::ROOM_TURNS_MAP,
             super::room_facts::ROOM_FACTS_MAP,
             super::document_pins::DOCUMENT_PINS_MAP,
+            super::message_docs::MESSAGE_DOCS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;

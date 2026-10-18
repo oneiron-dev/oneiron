@@ -212,6 +212,7 @@ both bindings and their export-census tests in one change.
 - `vault.projects.roster.write`
 - `vault.projects.goal.intake`
 - `vault.rooms.join`
+- `vault.rooms.invite`
 - `vault.rooms.consent`
 - `vault.rooms.offer`
 - `vault.rooms.offer.answer`
@@ -279,6 +280,11 @@ both bindings and their export-census tests in one change.
 - `vault.claims.admit`
 - `vault.artifacts.create`
 - `vault.esign.create`
+- `vault.esign.get`
+- `vault.esign.links.issue`
+- `vault.esign.send_for_signature`
+- `vault.esign.remind`
+- `vault.esign.void`
 - `vault.conversations.create`
 - `vault.conversations.turns.create`
 - `vault.conversations.records.append`

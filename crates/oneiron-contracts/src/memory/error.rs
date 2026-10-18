@@ -363,6 +363,17 @@ impl From<Error> for MemoryError {
             return Self::verb_hook(*stop);
         }
         let message = err.to_string();
+        // FIX 3194: an outage keeps when to call again as its field.
+        if let Error::ProviderUnavailable { retry_after } = err {
+            return Self {
+                retry_after: Some(retry_after),
+                ..Self::new(
+                    MEMORY_CODE_MODEL_UNAVAILABLE,
+                    message,
+                    &["Call again once retry_after seconds have passed."],
+                )
+            };
+        }
         // ONE-1936: the successor ref travels as a FIELD, not as prose. A
         // stale target is an INVALID_STATE refusal like the rest of the
         // refresh-and-retry family, but this one names exactly what to

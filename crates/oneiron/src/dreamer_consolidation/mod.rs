@@ -41,6 +41,7 @@ mod gap;
 mod judge_context;
 mod neighbourhood;
 pub(crate) mod nightly_merge;
+mod note_parts;
 mod note_review;
 mod open_conflict;
 mod parallel;
@@ -71,6 +72,7 @@ mod weave_lens;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
 pub use gap::*;

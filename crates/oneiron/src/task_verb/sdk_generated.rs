@@ -1108,6 +1108,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.invite",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::JoinRequest>(
+                ),
+            ),
+            (
                 "vault.rooms.consent",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::ConsentAnswer>(
                 ),
@@ -1578,6 +1583,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.esign.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::esign::EsignCreateRequest,
+                >(),
+            ),
+            (
+                "vault.esign.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignGetRequest,
+                >(),
+            ),
+            (
+                "vault.esign.links.issue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignLinksIssueRequest,
+                >(),
+            ),
+            (
+                "vault.esign.send_for_signature",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignDispatchRequest,
+                >(),
+            ),
+            (
+                "vault.esign.remind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignDispatchRequest,
+                >(),
+            ),
+            (
+                "vault.esign.void",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignVoidRequest,
                 >(),
             ),
             (
@@ -3349,6 +3384,17 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.rooms.invite" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
         "vault.rooms.consent" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3814,6 +3860,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.esign.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.links.issue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.send_for_signature" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.remind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.void" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4749,6 +4830,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.join" => {
             let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
         }
+        "vault.rooms.invite" => {
+            let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
+        }
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
@@ -5087,6 +5171,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.esign.create" => {
             let _input: crate::blob_artifact::esign::EsignCreateRequest = decode(value.clone())?;
+        }
+        "vault.esign.get" => {
+            let _input: crate::blob_artifact::esign::EsignGetRequest = decode(value.clone())?;
+        }
+        "vault.esign.links.issue" => {
+            let _input: crate::blob_artifact::esign::EsignLinksIssueRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.send_for_signature" => {
+            let _input: crate::blob_artifact::esign::EsignDispatchRequest = decode(value.clone())?;
+        }
+        "vault.esign.remind" => {
+            let _input: crate::blob_artifact::esign::EsignDispatchRequest = decode(value.clone())?;
+        }
+        "vault.esign.void" => {
+            let _input: crate::blob_artifact::esign::EsignVoidRequest = decode(value.clone())?;
         }
         "vault.conversations.create" => {
             let _input: crate::core_write::ConversationCreateInput = decode(value.clone())?;
@@ -5549,6 +5649,7 @@ pub fn invoke(
         }
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
+        "vault.rooms.invite" => encode(vault_rooms_invite(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.rooms.offer" => encode(vault_rooms_offer(memory, decode(value)?)?),
         "vault.rooms.offer.answer" => encode(vault_rooms_offer_answer(memory, decode(value)?)?),
@@ -5636,6 +5737,13 @@ pub fn invoke(
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
         "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
+        "vault.esign.get" => encode(vault_esign_get(memory, decode(value)?)?),
+        "vault.esign.links.issue" => encode(vault_esign_links_issue(memory, decode(value)?)?),
+        "vault.esign.send_for_signature" => {
+            encode(vault_esign_send_for_signature(memory, decode(value)?)?)
+        }
+        "vault.esign.remind" => encode(vault_esign_remind(memory, decode(value)?)?),
+        "vault.esign.void" => encode(vault_esign_void(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
         "vault.conversations.turns.create" => {
             encode(vault_conversations_turns_create(memory, decode(value)?)?)
@@ -7564,6 +7672,12 @@ pub fn vault_rooms_join(
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_join(&input)
 }
+pub fn vault_rooms_invite(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::JoinRequest,
+) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
+    memory.rooms_invite(&input)
+}
 pub fn vault_rooms_consent(
     memory: &Memory<'_>,
     input: crate::workspace_roster::ConsentAnswer,
@@ -8316,6 +8430,66 @@ pub fn vault_esign_create(
         &["/document_ref", "/draft/items/*/artifact_ref"],
     )?;
     memory.esign_create(&input)
+}
+pub fn vault_esign_get(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignGetRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignDocumentView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.get",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_get(&input)
+}
+pub fn vault_esign_links_issue(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignLinksIssueRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignLinksView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.links.issue",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_links_issue(&input)
+}
+pub fn vault_esign_send_for_signature(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignDispatchRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignDispatchView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.send_for_signature",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_send_for_signature(&input)
+}
+pub fn vault_esign_remind(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignDispatchRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignDispatchView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.remind",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_remind(&input)
+}
+pub fn vault_esign_void(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignVoidRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignDispatchView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.void",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_void(&input)
 }
 pub fn vault_conversations_create(
     memory: &Memory<'_>,
