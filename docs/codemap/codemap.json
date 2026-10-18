@@ -42737,6 +42737,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/skill_archive.rs",
+     "purpose": "A skill archive from an agentskills.io discovery index (`type: \"archive\"`): a `.tar.gz` or `.zip` of the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -54596,7 +54606,7 @@
      "purpose": "Message-to-skill conversion — the user-initiated middle road into the skill library (ARCH-0017, registry…"
     },
     "skill_hub": {
-     "files": 80,
+     "files": 81,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54864,7 +54874,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3338,
+   "source_files": 3339,
    "test_files": 902
   },
   "oneiron-android": {
@@ -60142,7 +60152,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 1
      }
     },
