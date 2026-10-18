@@ -290,6 +290,7 @@ suite.test(test, "AUTHORITY-08", "Same-build re-root handoff should work", async
     && row.holder_ref === engine.pairedActor.principalRef);
   expect(ownerMints.length).toBeGreaterThan(0);
   const vaultId = ownerMints[0]!.vault_ref;
+  if (typeof vaultId !== "string") throw new Error("Minted owner slip has no vault reference");
   expect(vaultId).toMatch(/^[a-f0-9]{64}$/);
 
   const destination = await handoffHost(engine);

@@ -228,7 +228,7 @@ export function defineFile(meta: ImportMeta, declaration: FileDeclaration) {
       if (selected.size && !selected.has(id)) return;
       register(id);
       results.set(id, {id,outcome:"BLOCKED",durationMs:0,reason});
-      test.todo(`${id} ${reason}`);
+      test.todo(`${id} ${reason}`, () => {});
       // Bun afterAll is supplied by the file so registration-only TODO files flush too.
     },
     flush,
