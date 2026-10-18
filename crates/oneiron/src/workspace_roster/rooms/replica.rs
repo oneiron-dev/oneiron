@@ -529,18 +529,19 @@ pub(crate) fn merge_replicated_side_row_in_txn(
 /// out. Where one voter's two ballots differ the later stamp stands. The
 /// Ready and current-card indexes are rebuilt from what merged; nothing is
 /// decided again, and no seat, companion, participation, acceptance or
-/// diary effect runs. Returns what the merge did, and whether the carried
-/// copy now holds everything this vault's does.
+/// diary effect runs. Returns what the merge did, whether the carried copy
+/// now holds everything this vault's does, and the other card of its agent
+/// there that the merge replaced (FIX 3322), whose window copy lacks that.
 pub(crate) fn merge_replicated_shared_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &RoomSideRow,
-) -> Result<(SideMerge, bool)> {
+) -> Result<(SideMerge, bool, Option<String>)> {
     let Some((room, branch)) = row.place().filter(|_| row.well_formed()) else {
-        return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true));
+        return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true, None));
     };
     if let Some(refusal) = side_refusal_in(vault, txn, room, branch)? {
-        return Ok((SideMerge::Refused(refusal), true));
+        return Ok((SideMerge::Refused(refusal), true, None));
     }
     merge_shared_in_txn(vault, txn, row)
 }
@@ -550,7 +551,7 @@ fn merge_shared_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     row: &RoomSideRow,
-) -> Result<(SideMerge, bool)> {
+) -> Result<(SideMerge, bool, Option<String>)> {
     let store = &vault.store;
     let held = match row {
         RoomSideRow::Join { receipt } => JOINS
@@ -559,16 +560,17 @@ fn merge_shared_in_txn(
         RoomSideRow::Offer { offer } => OFFERS
             .get_lenient(store, txn, &offer.card.offer_id)?
             .map(|offer| RoomSideRow::Offer { offer }),
-        _ => return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true)),
+        _ => return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true, None)),
     };
     let merged = match held {
         None => row.clone(),
         Some(held) => match merged_shared_row(row, &held) {
-            Ok(merged) if merged == held => return Ok((SideMerge::Held, merged == *row)),
+            Ok(merged) if merged == held => return Ok((SideMerge::Held, merged == *row, None)),
             Ok(merged) => merged,
-            Err(refusal) => return Ok((SideMerge::Refused(refusal), true)),
+            Err(refusal) => return Ok((SideMerge::Refused(refusal), true, None)),
         },
     };
+    let mut replaced = None;
     match &merged {
         RoomSideRow::Join { receipt } => {
             JOINS.put(store, txn, &receipt.join_ref, receipt)?;
@@ -576,11 +578,19 @@ fn merge_shared_in_txn(
         }
         RoomSideRow::Offer { offer } => {
             OFFERS.put(store, txn, &offer.card.offer_id, offer)?;
-            index_current_offer_in_txn(vault, txn, offer)?;
+            replaced = index_current_offer_in_txn(vault, txn, offer)?;
         }
         _ => {}
     }
-    Ok((SideMerge::Written, merged == *row))
+    // FIX 3322: a carried card that lost currency is replaced here, which
+    // the window's copy lacks; another card it displaced is handed back.
+    let own = row.merged_place().map(|(_, reference)| reference);
+    let holds = merged == *row && replaced.as_deref() != own;
+    Ok((
+        SideMerge::Written,
+        holds,
+        replaced.filter(|id| Some(id.as_str()) != own),
+    ))
 }
 
 /// The window's copy `theirs` of a join or offer card merged with this
@@ -785,31 +795,55 @@ fn index_ready_in_txn(
 /// latest open or current mint for its agent in its room or thread (FIX
 /// 1794): the latest `created_at` stands, and the greater offer id breaks a
 /// tie. A replaced card never becomes current, and the index is never
-/// carried.
+/// carried. Of the two mints the one that loses is replaced while it is
+/// open, as a local mint replaces the card it follows, in whichever order
+/// the two arrived (FIX 3322); an answered or aged-out card keeps its
+/// state. Returns the id of the card it replaced.
 fn index_current_offer_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     offer: &StoredOffer,
-) -> Result<()> {
+) -> Result<Option<String>> {
     let card = &offer.card;
     if matches!(card.state, OfferState::Superseded { .. }) {
-        return Ok(());
+        return Ok(None);
     }
     let store = &vault.store;
     let key = current_key(card.room, card.branch, card.agent);
+    let mut replaced = None;
     if let Some(standing) = OFFER_CURRENT.get_lenient(store, txn, &key)? {
         if standing == card.offer_id {
-            return Ok(());
+            return Ok(None);
         }
         if let Some(standing) = OFFERS.get_lenient(store, txn, &standing)?
             && !matches!(standing.card.state, OfferState::Superseded { .. })
-            && (standing.card.created_at, &standing.card.offer_id)
-                > (card.created_at, &card.offer_id)
         {
-            return Ok(());
+            if (standing.card.created_at, &standing.card.offer_id)
+                > (card.created_at, &card.offer_id)
+            {
+                return supersede_open_in_txn(vault, txn, offer.clone(), &standing.card.offer_id);
+            }
+            replaced = supersede_open_in_txn(vault, txn, standing, &card.offer_id)?;
         }
     }
-    OFFER_CURRENT.put(store, txn, &key, &card.offer_id)
+    OFFER_CURRENT.put(store, txn, &key, &card.offer_id)?;
+    Ok(replaced)
+}
+
+/// Marks `offer` replaced by card `by` while it is open (FIX 3322), as a
+/// local mint marks the card it follows. Returns its id when it did.
+fn supersede_open_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    mut offer: StoredOffer,
+    by: &str,
+) -> Result<Option<String>> {
+    if !matches!(offer.card.state, OfferState::Open { .. }) {
+        return Ok(None);
+    }
+    offer.card.state = OfferState::Superseded { by: by.to_owned() };
+    OFFERS.put(&vault.store, txn, &offer.card.offer_id, &offer)?;
+    Ok(Some(offer.card.offer_id))
 }
 
 /// The order two payloads under one fact key settle by: the earlier

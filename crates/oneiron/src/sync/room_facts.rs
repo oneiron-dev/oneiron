@@ -123,8 +123,14 @@ fn carrier_key(row: &RoomSideRow, bytes: &[u8]) -> String {
 fn shared_key(table: &str, row: &RoomSideRow) -> String {
     row.merged_place()
         .map_or_else(String::new, |(carrier, reference)| {
-            format!("{table}{}/{reference}", carrier.to_hex())
+            shared_key_at(table, carrier, reference)
         })
+}
+
+/// [`shared_key`] of the row of `table` under `reference` that `carrier`'s
+/// window carries.
+fn shared_key_at(table: &str, carrier: EntityId, reference: &str) -> String {
+    format!("{table}{}/{reference}", carrier.to_hex())
 }
 
 /// What `map_key` names when it is a join's or an offer card's key: whether
@@ -463,7 +469,8 @@ fn responses_for(doc: &LoroDoc, parents: &BTreeSet<EntityId>) -> Vec<(EntityId, 
 /// window carries for it, since a response stands by the claim. A join or
 /// card whose window copy lacks part of this machine's is marked, so the
 /// next mirror of its carrier writes the merge back; the mark clears once
-/// the window's copy holds all of it.
+/// the window's copy holds all of it. So is a card this machine replaced as
+/// a carried one became current (FIX 3322).
 fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Option<Vec<u8>>)>) {
     let mut carried = Vec::new();
     let mut cleared = Vec::new();
@@ -502,11 +509,16 @@ fn merge_rows(vault: &Vault, doc: &LoroDoc, window: &str, rows: Vec<(String, Opt
         }
         for (map_key, row) in &carried {
             if is_shared(map_key) {
-                let (merge, holds) = merge_replicated_shared_row_in_txn(vault, wtxn, row)?;
+                let (merge, holds, replaced) =
+                    merge_replicated_shared_row_in_txn(vault, wtxn, row)?;
                 if holds {
                     DIRTY.delete(&vault.store, wtxn, map_key)?;
                 } else {
                     DIRTY.put(&vault.store, wtxn, map_key, &())?;
+                }
+                if let (Some(replaced), Some((carrier, _))) = (replaced, row.merged_place()) {
+                    let replaced = shared_key_at(OFFER, carrier, &replaced);
+                    DIRTY.put(&vault.store, wtxn, &replaced, &())?;
                 }
                 merged += logged(window, map_key, merge);
                 continue;
