@@ -9,13 +9,21 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 827 code-mode rows (804 host rows, 23 run rows), 2799 declarations.
-// Replies: 740 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 829 code-mode rows (806 host rows, 23 run rows), 2807 declarations.
+// Replies: 742 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
+  type WebFetchRequest = { url: string };
+  type RendererKind = "readability" | "headless" | "firecrawl";
+  type FetchResult = { markdown: string; title: string; canonical_url: string; fetched_at: number; content_hash: string; renderer: RendererKind };
+  type CrawlScope = "same_site" | "cross_site";
+  type WebCrawlRequest = { seed_url: string; page_budget: number; scope?: CrawlScope };
+  type CrawlPageFailure = { url: string; reason: string };
+  type CrawlCompletion = { status: "complete" } | { status: "budget_exhausted"; unvisited_urls: string[] };
+  type CrawlResult = { pages: FetchResult[]; failed: CrawlPageFailure[]; completion: CrawlCompletion };
   type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ReportKind = "problem" | "proposal";
   type FeedbackProposal = { problem: string; fix: string };
@@ -2920,6 +2928,8 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   /** One catalogued connector by name, removed ones included. */
   status(input: Sdk.ConnectorNameRequest): Promise<Sdk.ConnectorView | null | StoredResult>;
 };
+/** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
+declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | StoredResult>;
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
@@ -2929,6 +2939,8 @@ declare const feedback: {
   /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
   send(input: Sdk.FeedbackSendSubjectRequest): Promise<Sdk.FeedbackSubjectSent | StoredResult>;
 };
+/** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
+declare function fetch(input: Sdk.WebFetchRequest): Promise<Sdk.FetchResult | StoredResult>;
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */

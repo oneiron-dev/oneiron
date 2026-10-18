@@ -214,8 +214,8 @@ pub(super) struct CrawlWalk {
     completed_finals: BTreeSet<String>,
     pub(super) pages: Vec<FetchResult>,
     pub(super) failed: Vec<CrawlPageFailure>,
-    /// Host of the seed page's response-final URL, pinned after the seed succeeds.
-    pub(super) pinned_host: Option<String>,
+    /// Origin of the seed page's response-final URL, pinned after the seed succeeds.
+    pub(super) pinned_origin: Option<String>,
     pub(super) remaining_budget: usize,
 }
 
@@ -232,7 +232,7 @@ impl CrawlWalk {
             completed_finals: BTreeSet::new(),
             pages: Vec::new(),
             failed: Vec::new(),
-            pinned_host: None,
+            pinned_origin: None,
             remaining_budget: page_budget,
         }
     }
@@ -259,15 +259,15 @@ impl CrawlWalk {
         final_url: &Url,
         scope: CrawlScope,
     ) {
-        let final_host = final_url.host_str().unwrap_or_default().to_string();
-        // Seed success pins containment to the seed page's own final host. A
-        // cross-host metadata canonical cannot move it.
-        let is_seed = self.pinned_host.is_none();
-        let pinned_host = self.pinned_host.as_ref().unwrap_or(&final_host).clone();
+        let final_origin = final_url.origin().ascii_serialization();
+        // Seed success pins containment to the navigation-final origin, never
+        // to a page's metadata canonical URL.
+        let is_seed = self.pinned_origin.is_none();
+        let pinned_origin = self.pinned_origin.as_ref().unwrap_or(&final_origin).clone();
 
         if !is_seed {
-            if scope == CrawlScope::SameSite && final_host != pinned_host {
-                // A same-host link that redirected onto a foreign host. The
+            if scope == CrawlScope::SameSite && final_origin != pinned_origin {
+                // A same-origin link that redirected onto a foreign origin. The
                 // attempt is already counted; the page and every link it
                 // carries are not admitted.
                 self.failed.push(CrawlPageFailure {
@@ -290,7 +290,7 @@ impl CrawlWalk {
             }
         }
 
-        let fresh = self.fresh_links(links, scope, &pinned_host);
+        let fresh = self.fresh_links(links, scope, &pinned_origin);
         if self.frontier.len().saturating_add(fresh.len()) > MAX_CRAWL_FRONTIER_URLS {
             // The bound is over URLs still held in memory, not every URL the
             // walk ever queued. A long one-link chain therefore remains a
@@ -306,7 +306,7 @@ impl CrawlWalk {
         }
 
         if is_seed {
-            self.pinned_host = Some(final_host);
+            self.pinned_origin = Some(final_origin);
         }
         self.admit_page(page, fresh, final_url);
     }
@@ -317,7 +317,7 @@ impl CrawlWalk {
     /// Measuring the ceiling against this — rather than against raw peer text —
     /// is what keeps the bound about frontier growth instead of about how
     /// verbosely a page spells links the walk would discard anyway.
-    fn fresh_links(&self, links: &[String], scope: CrawlScope, pinned_host: &str) -> Vec<Url> {
+    fn fresh_links(&self, links: &[String], scope: CrawlScope, pinned_origin: &str) -> Vec<Url> {
         let mut seen = BTreeSet::new();
         let mut fresh = Vec::new();
         for raw in links {
@@ -328,8 +328,10 @@ impl CrawlWalk {
             if !is_web_url(&normalized) {
                 continue;
             }
-            // Exact host equality. Sibling subdomains are a different site.
-            if scope == CrawlScope::SameSite && normalized.host_str() != Some(pinned_host) {
+            // The same fence applies to discovered links and final redirects.
+            if scope == CrawlScope::SameSite
+                && normalized.origin().ascii_serialization() != pinned_origin
+            {
                 continue;
             }
             let identity = normalized.to_string();
@@ -452,7 +454,7 @@ fn is_content_hash_shaped(hex: &str) -> bool {
 /// The re-derived value never replaces the supplied one. A door that quietly
 /// substituted would turn a stale or forged pair into a well-formed-looking one,
 /// which is the opposite of what a rematerialization door is for.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct FetchResultWire {
     markdown: String,

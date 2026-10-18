@@ -31,6 +31,7 @@ mod run_host_door;
 mod space_move;
 mod tagging;
 mod wave_door;
+mod web_fetch;
 mod windows;
 
 pub(crate) use self::artifact_previews::ArtifactPreviews;

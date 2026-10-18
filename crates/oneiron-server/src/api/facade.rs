@@ -124,6 +124,7 @@ mod vault_shape_doors;
 mod voice_bank_doors;
 mod wave_doors;
 mod weave_doors;
+mod web_fetch_doors;
 mod widen_proposal_doors;
 
 pub(crate) use asr_doors::AsrSessions;

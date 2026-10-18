@@ -7,6 +7,14 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn fetch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("fetch", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn crawl(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("crawl", input).map_err(facade_error)
+    }
+    #[napi]
     pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("report", input).map_err(facade_error)
     }
