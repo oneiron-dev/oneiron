@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 901 facade rows, 3080 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 854.
+// UniFFI census: 908 facade rows, 3093 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 861.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -5369,6 +5369,100 @@ pub struct RunSettlementsView {
     pub metering_enabled: bool,
     #[serde(rename = "settlements")]
     pub settlements: Vec<RunRungSettlement>,
+}
+
+/// `oneiron::llm::budget::rsi::RsiBudgetShare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiBudgetShare {
+    #[serde(rename = "units")]
+    pub units: u64,
+    #[serde(rename = "pinned")]
+    pub pinned: bool,
+}
+
+/// `oneiron::llm::budget::rsi::RsiBudgetConfig`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RsiBudgetConfig {
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(rename = "exploration_exposure_limit")]
+    pub exploration_exposure_limit: u64,
+    #[serde(rename = "shares")]
+    pub shares: std::collections::HashMap<String, RsiBudgetShare>,
+}
+
+/// `oneiron::llm::budget::rsi_doors::RsiWorkLineView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiWorkLineView {
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(rename = "spent")]
+    pub spent: u64,
+    #[serde(rename = "reserved")]
+    pub reserved: u64,
+}
+
+/// `oneiron::llm::budget::rsi_doors::RsiShareView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiShareView {
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "units")]
+    pub units: u64,
+    #[serde(rename = "pinned")]
+    pub pinned: bool,
+}
+
+/// `oneiron::llm::budget::rsi_doors::RsiExposureLineView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiExposureLineView {
+    #[serde(rename = "unit")]
+    pub unit: String,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(rename = "spent")]
+    pub spent: u64,
+    #[serde(rename = "reserved")]
+    pub reserved: u64,
+}
+
+/// `oneiron::llm::budget::rsi_doors::RsiLineView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiLineView {
+    #[serde(rename = "work_line")]
+    pub work_line: RsiWorkLineView,
+    #[serde(rename = "shares")]
+    pub shares: Vec<RsiShareView>,
+    #[serde(rename = "exposure_line")]
+    pub exposure_line: RsiExposureLineView,
+    #[serde(rename = "suspended")]
+    pub suspended: bool,
+}
+
+/// `oneiron::llm::budget::rsi::RsiTopUp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "line")]
+pub enum RsiTopUp {
+    #[serde(rename = "tokens")]
+    Tokens {
+        #[serde(rename = "units")]
+        units: u64,
+    },
+    #[serde(rename = "exploration")]
+    Exploration {
+        #[serde(rename = "units")]
+        units: u64,
+    },
+    #[serde(rename = "share")]
+    Share {
+        #[serde(rename = "share")]
+        share: String,
+        #[serde(rename = "units")]
+        units: u64,
+    },
 }
 
 /// `oneiron::task_verb::sdk_fanout_launch::FanoutLaunchRuling`.
@@ -21184,6 +21278,93 @@ pub struct ResearchRefundWire {
     pub root: String,
     #[serde(rename = "reservation")]
     pub reservation: String,
+}
+
+/// `oneiron::task_verb::sdk_research::ResearchExplorationWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchExplorationWire {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "units")]
+    pub units: u64,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+}
+
+/// `oneiron::llm::budget::rsi::RsiOverdraftReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiOverdraftReceipt {
+    #[serde(rename = "share")]
+    pub share: String,
+    #[serde(rename = "units")]
+    pub units: u64,
+}
+
+/// `oneiron::task_verb::sdk_research::ResearchReservationWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResearchReservationWire {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "line")]
+    pub line: ResearchReservationLine,
+    #[serde(rename = "units")]
+    pub units: u64,
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<String>,
+    #[serde(
+        rename = "settlement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settlement: Option<RsiSettlement>,
+    #[serde(rename = "overdraft", default, skip_serializing_if = "Option::is_none")]
+    pub overdraft: Option<RsiOverdraftReceipt>,
+    #[serde(rename = "reserved_at")]
+    pub reserved_at: u64,
+}
+
+/// `oneiron::llm::budget::rsi::RsiBudgetRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiBudgetRead {
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(rename = "spent")]
+    pub spent: u64,
+    #[serde(rename = "reserved")]
+    pub reserved: u64,
+    #[serde(rename = "suspended")]
+    pub suspended: bool,
+}
+
+/// `oneiron::llm::budget::rsi::RsiExplorationRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RsiExplorationRead {
+    #[serde(rename = "exposure_limit")]
+    pub exposure_limit: u64,
+    #[serde(rename = "spent_exposure")]
+    pub spent_exposure: u64,
+    #[serde(rename = "reserved_exposure")]
+    pub reserved_exposure: u64,
+    #[serde(rename = "suspended")]
+    pub suspended: bool,
+}
+
+/// `oneiron::task_verb::sdk_research::ResearchBudgetView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResearchBudgetView {
+    #[serde(rename = "budget")]
+    pub budget: ResearchBudgetRead,
+    #[serde(rename = "reservations")]
+    pub reservations: Vec<ResearchReservationWire>,
+    #[serde(rename = "rsi_work", default, skip_serializing_if = "Option::is_none")]
+    pub rsi_work: Option<RsiBudgetRead>,
+    #[serde(
+        rename = "rsi_exploration",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rsi_exploration: Option<RsiExplorationRead>,
 }
 
 /// `oneiron::task_verb::sdk_research::ResearchBenchmarkWire`.

@@ -93,6 +93,11 @@ vaultBudgetsHold(input: unknown): unknown
 vaultBudgetsHoldResume(input: unknown): unknown
 vaultBudgetsLocal(input: unknown): unknown
 vaultBudgetsSettlements(input: unknown): unknown
+vaultBudgetsRsiConfigure(input: unknown): unknown
+vaultBudgetsRsi(input: unknown): unknown
+vaultBudgetsRsiTopUp(input: unknown): unknown
+vaultBudgetsRsiHold(input: unknown): unknown
+vaultBudgetsRsiHoldResume(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -391,6 +396,8 @@ vaultResearchPromote(input: unknown): unknown
 vaultResearchReserveWork(input: unknown): unknown
 vaultResearchSettleWork(input: unknown): unknown
 vaultResearchRefundWork(input: unknown): unknown
+vaultResearchReserveExploration(input: unknown): unknown
+vaultResearchBudget(input: unknown): unknown
 vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
