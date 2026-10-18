@@ -26,7 +26,7 @@ use serde_json::{Value as JsonValue, json};
 
 use super::refusal;
 use crate::auth::CoreAuth;
-use crate::models::HostedCloner;
+use crate::models::MediaRuntime;
 use crate::server::SyncServer;
 
 #[derive(Deserialize)]
@@ -152,16 +152,12 @@ pub(super) async fn render_consent(
         Err(error) => return bank_refusal(error),
     };
     let mut dropped = Vec::with_capacity(evicted.len());
+    let media = server.ai.model_runtime().media();
     for record in &evicted {
-        let cloner = server
-            .ai
-            .model_runtime()
-            .media()
-            .voice_cloner(&record.target);
         dropped.push(json!({
             "target": record.target,
             "vendor_voice_id": record.vendor_voice_id,
-            "vendor": delete_at_vendor(cloner, record).await,
+            "vendor": delete_at_vendor(media, record).await,
         }));
     }
     Json(json!({
@@ -185,7 +181,8 @@ pub(super) async fn provision(
     if let Err(refused) = owner_only(&auth) {
         return refused;
     }
-    let Some(cloner) = server.ai.model_runtime().media().voice_cloner(&target) else {
+    let media = server.ai.model_runtime().media();
+    let Some(cloner) = media.voice_cloner(&target) else {
         return refusal(
             StatusCode::NOT_FOUND,
             "no_clone_target",
@@ -219,11 +216,16 @@ pub(super) async fn provision(
         };
     // The vendor sees a name from the refs' digest, never the voice's id.
     let name = format!("oneiron-{}", &hex(&clone.ref_digest)[..16]);
-    let vendor_voice_id = match cloner
-        .create(&name, &clone.clips, body.language.as_deref())
-        .await
-    {
-        Ok(id) => id,
+    // Each vendor call goes out on its own permit of this run (FIX 3009).
+    let created = match media.clone_run() {
+        Ok(run) => cloner
+            .create(&run, &name, &clone.clips, body.language.as_deref())
+            .await
+            .map(|id| (run, id)),
+        Err(error) => Err(error),
+    };
+    let (run, vendor_voice_id) = match created {
+        Ok(created) => created,
         Err(error) => {
             tracing::warn!(%target, %error, "vendor voice clone failed");
             return refusal(
@@ -240,7 +242,7 @@ pub(super) async fn provision(
         Ok(record) => {
             // Another provisioning recorded a current clone first: ours is spare.
             if record.vendor_voice_id != vendor_voice_id
-                && let Err(error) = cloner.delete(&vendor_voice_id).await
+                && let Err(error) = cloner.delete(&run, &vendor_voice_id).await
             {
                 tracing::warn!(%target, %error, "spare vendor clone not deleted");
             }
@@ -249,7 +251,7 @@ pub(super) async fn provision(
         Err(error) => {
             // The refs or the render consent changed while they uploaded:
             // the new vendor voice is no current clone of this identity.
-            if let Err(error) = cloner.delete(&vendor_voice_id).await {
+            if let Err(error) = cloner.delete(&run, &vendor_voice_id).await {
                 tracing::warn!(%target, %error, "stale vendor clone not deleted");
             }
             bank_refusal(error)
@@ -271,10 +273,7 @@ pub(super) async fn evict(
         Err(error) => return bank_refusal(error),
     };
     let vendor = match &evicted {
-        Some(record) => {
-            let cloner = server.ai.model_runtime().media().voice_cloner(&target);
-            delete_at_vendor(cloner, record).await
-        }
+        Some(record) => delete_at_vendor(server.ai.model_runtime().media(), record).await,
         None => "absent",
     };
     Json(json!({
@@ -286,16 +285,18 @@ pub(super) async fn evict(
     .into_response()
 }
 
-/// Deletes an evicted record's clone at its vendor, best effort: what
-/// happened, for the owner to see.
-async fn delete_at_vendor(
-    cloner: Option<Arc<HostedCloner>>,
-    record: &VoiceTargetRecord,
-) -> &'static str {
-    let Some(cloner) = cloner else {
+/// Deletes an evicted record's clone at its vendor, best effort, on a paid
+/// permit of a run of its own (FIX 3009): what happened, for the owner to
+/// see.
+async fn delete_at_vendor(media: &MediaRuntime, record: &VoiceTargetRecord) -> &'static str {
+    let Some(cloner) = media.voice_cloner(&record.target) else {
         return "no_clone_wire";
     };
-    match cloner.delete(&record.vendor_voice_id).await {
+    let deleted = match media.clone_run() {
+        Ok(run) => cloner.delete(&run, &record.vendor_voice_id).await,
+        Err(error) => Err(error),
+    };
+    match deleted {
         Ok(()) => "deleted",
         Err(error) => {
             tracing::warn!(target = %record.target, %error, "vendor clone not deleted");

@@ -6,7 +6,7 @@
 //! characters it spoke. Each answers raw 24 kHz PCM16, handed back as a WAV
 //! so the caller reads its rate from the header. Each provider also clones:
 //! [`HostedCloner`] makes the provider voice a banked identity renders as,
-//! and deletes it.
+//! and deletes it, each call on its own paid permit.
 use std::collections::BTreeMap;
 
 use oneiron::llm::media::wav::pcm16_wav;
@@ -14,6 +14,7 @@ use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaUsage,
     MediaVoice,
 };
+use oneiron::llm::run_admission::{CallOutcome, PaidConnector, RunAdmission};
 use oneiron::voice_identity::ref_bank::VoiceRegisterClip;
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId, ModelLocality};
 use reqwest::multipart::{Form, Part};
@@ -158,6 +159,8 @@ pub struct HostedCloner {
     pub(super) http: ProviderHttp,
     pub(super) wire: HostedWire,
     pub(super) locality: ModelLocality,
+    /// What each clone call is admitted as on its caller's run (FIX 3009).
+    pub(super) connector: PaidConnector,
 }
 
 impl HostedCloner {
@@ -174,11 +177,12 @@ impl HostedCloner {
         self.wire == HostedWire::Cartesia
     }
 
-    /// Makes a provider voice named `name` from `clips`. Cartesia clones
-    /// from one clip, the first, and must be told its `language`;
+    /// Makes a provider voice named `name` from `clips`, on `run`. Cartesia
+    /// clones from one clip, the first, and must be told its `language`;
     /// ElevenLabs takes them all.
     pub async fn create(
         &self,
+        run: &RunAdmission,
         name: &str,
         clips: &[VoiceRegisterClip],
         language: Option<&str>,
@@ -203,19 +207,24 @@ impl HostedCloner {
                 ("/v1/voices/add", form, "voice_id")
             }
         };
-        let reply = self
-            .http
-            .send_media(path, MediaSend::Multipart(form))
-            .await
-            .map_err(transport)?;
-        let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
-        if !(200..300).contains(&reply.status) {
-            return Err(oneiron_llm_openai::classify_openai_status(
-                reply.status,
-                &reply.headers,
-                &body,
-            ));
-        }
+        let http = &self.http;
+        let body = self
+            .paid(run, async move {
+                let reply = http
+                    .send_media(path, MediaSend::Multipart(form))
+                    .await
+                    .map_err(transport)?;
+                let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
+                if !(200..300).contains(&reply.status) {
+                    return Err(oneiron_llm_openai::classify_openai_status(
+                        reply.status,
+                        &reply.headers,
+                        &body,
+                    ));
+                }
+                Ok(body)
+            })
+            .await?;
         // The id is later interpolated into URL paths.
         body.get(id_field)
             .and_then(JsonValue::as_str)
@@ -224,9 +233,9 @@ impl HostedCloner {
             .ok_or_else(|| FatalLlmError::EmptyResponse.into())
     }
 
-    /// Deletes the provider voice `vendor_voice_id`; one already gone
-    /// counts as deleted.
-    pub async fn delete(&self, vendor_voice_id: &str) -> LlmResult<()> {
+    /// Deletes the provider voice `vendor_voice_id`, on `run`; one already
+    /// gone counts as deleted.
+    pub async fn delete(&self, run: &RunAdmission, vendor_voice_id: &str) -> LlmResult<()> {
         if !url_safe(vendor_voice_id) {
             return Err(FatalLlmError::InvalidRequest.into());
         }
@@ -234,20 +243,46 @@ impl HostedCloner {
             HostedWire::Cartesia => format!("/voices/{vendor_voice_id}"),
             HostedWire::ElevenLabs => format!("/v1/voices/{vendor_voice_id}"),
         };
-        let reply = self
-            .http
-            .send_media(&path, MediaSend::Delete)
-            .await
-            .map_err(transport)?;
-        if (200..300).contains(&reply.status) || reply.status == 404 {
-            return Ok(());
+        let http = &self.http;
+        self.paid(run, async move {
+            let reply = http
+                .send_media(&path, MediaSend::Delete)
+                .await
+                .map_err(transport)?;
+            if (200..300).contains(&reply.status) || reply.status == 404 {
+                return Ok(());
+            }
+            let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
+            Err(oneiron_llm_openai::classify_openai_status(
+                reply.status,
+                &reply.headers,
+                &body,
+            ))
+        })
+        .await
+    }
+
+    /// One clone call, `send`, on `run` (FIX 3009): admitted as this
+    /// provider's clone connector before it goes out, its permit started
+    /// just before the send and settled after, one unit an answered call. A
+    /// refused call sends nothing.
+    async fn paid<T>(
+        &self,
+        run: &RunAdmission,
+        send: impl std::future::Future<Output = LlmResult<T>>,
+    ) -> LlmResult<T> {
+        let permit = run.admit_paid(&self.connector, 1)?;
+        run.dispatch_paid(permit.lease(), &self.connector)?;
+        let sent = send.await;
+        // The request went out: a failed one keeps its reservation as spend.
+        let outcome = match &sent {
+            Ok(_) => CallOutcome::Used(1),
+            Err(_) => CallOutcome::Failed,
+        };
+        if let Err(denied) = permit.settle(outcome) {
+            tracing::error!(%denied, "a voice clone call's settlement was refused");
         }
-        let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
-        Err(oneiron_llm_openai::classify_openai_status(
-            reply.status,
-            &reply.headers,
-            &body,
-        ))
+        sent
     }
 }
 
