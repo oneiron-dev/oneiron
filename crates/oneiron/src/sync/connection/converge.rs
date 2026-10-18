@@ -11,7 +11,8 @@ use crate::sync::queue::QueuedUpdate;
 
 use super::SyncConnection;
 use super::session::{
-    ConvergenceSession, FullResyncMarker, MAX_CONVERGENCE_ROUNDS, PumpBudget, WsSink, WsSource,
+    ConvergenceSession, FullResyncMarker, ITEM11_REBOOTSTRAP_UNREADABLE, MAX_CONVERGENCE_ROUNDS,
+    PumpBudget, WsSink, WsSource,
 };
 
 impl SyncConnection {
@@ -217,8 +218,18 @@ impl SyncConnection {
             .map_err(encode)?;
         // Each forced window is fetched whole from the server, which answers with its
         // replacement: the dropped document reloads from the same durable state that could not
-        // come level.
-        frames.extend(client.replacement_requests(force_resync).map_err(encode)?);
+        // come level. One whose world the home may not read is not asked of it: the convergence
+        // round settles it for this home (FIX 922 item 11).
+        let fetched: BTreeSet<String> = force_resync
+            .iter()
+            .filter(|key| {
+                !ITEM11_REBOOTSTRAP_UNREADABLE
+                    || crate::sync::types::WindowKey::try_new(key.as_str())
+                        .is_none_or(|window| client.home_may_request(&window))
+            })
+            .cloned()
+            .collect();
+        frames.extend(client.replacement_requests(&fetched).map_err(encode)?);
         Ok(frames)
     }
 

@@ -11,6 +11,7 @@ mod delivery;
 mod entity;
 mod order;
 mod peer_import;
+mod promotion;
 mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
@@ -26,4 +27,5 @@ pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
 pub(in crate::sync) use self::peer_import::{
     forget_peer_rows, peer_row_in_txn, peer_rows, record_peer_rows,
 };
+pub(in crate::sync) use self::promotion::with_promotion;
 pub(in crate::sync) use self::tombstone::{TombstoneStep, classify_tombstone};

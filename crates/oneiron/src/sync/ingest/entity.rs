@@ -11,6 +11,7 @@ use crate::registry::{
     ENTITY_TYPE_REDACTION_AUDIT,
 };
 use crate::sync::bridge::ingest_replicated_identity_topology_event_in_txn;
+use crate::sync::ingest::promotion::{owe_landed_turn_in_txn, promoting};
 use crate::sync::loro_support::TombstoneIndex;
 use crate::sync::pack_sync;
 use crate::sync::quarantine::{
@@ -191,6 +192,13 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
     value: Option<&[u8]>,
 ) -> Result<EntityStep> {
     let mut savepoint = ctx.vault.store.env.nested_write_txn(parent)?;
+    // A row a promotion on this thread lands where none is stored (OF-534).
+    let landed = match EntityId::from_hex(key) {
+        Ok(id) if promoting(ctx.vault) => {
+            !EntityStoreRead::port_entity_present(&ctx.vault.store, &savepoint, &id)?
+        }
+        _ => false,
+    };
     let step = ingest_entity_in_txn(ctx, &mut savepoint, key, value)?;
     if let EntityStep::Quarantine(refusal) = &step {
         drop(savepoint);
@@ -216,6 +224,10 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
                 doc,
                 &id,
             )?;
+        }
+        // What the promotion owes a TURN it brings back lands with the row.
+        if landed && let (Some(id), Some(blob)) = (step.written(), value) {
+            owe_landed_turn_in_txn(ctx.vault, &mut savepoint, id, blob)?;
         }
         savepoint.commit()?;
     }

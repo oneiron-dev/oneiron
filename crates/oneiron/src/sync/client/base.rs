@@ -529,6 +529,16 @@ pub(super) fn home_reads_window(
             .is_ok_and(|withheld| !withheld)
 }
 
+/// The worlds `home` may not read, judged now by the rule
+/// [`home_reads_window`] judges a world window by; `None` when the settings
+/// cannot be judged, which keeps every world off it (FIX 922 item 11).
+pub(super) fn home_withheld_worlds(
+    vault: &Vault,
+    home: crate::authority::PeerMachine,
+) -> Option<BTreeSet<crate::EntityId>> {
+    Withhold::Peer(home).worlds(vault).ok()
+}
+
 /// Loads the persisted root doc: `d:root` snapshot + pending `u:root:*`
 /// replay (ARCH-0023b startup step 1). Fresh doc when nothing is persisted.
 pub(super) fn load_root_doc(vault: &Vault) -> Result<LoroDoc> {

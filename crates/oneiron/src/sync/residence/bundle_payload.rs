@@ -30,7 +30,9 @@ use zeroize::Zeroizing;
 use super::discover_local_window_keys;
 use super::policy::resolve_residence_mode;
 use crate::Vault;
-use crate::authority::{Destination, EditOrigin, EffectiveRead};
+use crate::authority::{
+    Destination, EditOrigin, EffectiveRead, decode_authority_log_entry_body, side_world,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
@@ -109,8 +111,7 @@ impl WindowManager {
             return Err(refused("an opened-item machine seals no bundle"));
         }
         let windows = discover_local_window_keys(vault)?;
-        let base = self.sealed_bundle_base(&windows)?;
-        let eligible = vault.sealed_bundle_worlds(holder)?;
+        let (base, eligible) = self.sealed_bundle_base(&windows, holder)?;
         let mut fresh = Vec::new();
         for &world in &eligible {
             // A world this machine does not read now keeps the section it has.
@@ -286,19 +287,42 @@ impl WindowManager {
 
     /// The base section ([`encode_base`]): the signed authority history, then
     /// each of `windows` that is a base window or a window of a world read
-    /// everywhere.
-    fn sealed_bundle_base(&self, windows: &[WindowKey]) -> Result<Zeroizing<Vec<u8>>> {
+    /// everywhere; and the worlds the bundle carries for `holder`
+    /// ([`Vault::sealed_bundle_worlds`]), read after the history. A world's side
+    /// branch (its settings edits and key wraps) rides only with a world read
+    /// everywhere or one the bundle carries for `holder` (FIX 922 item 11):
+    /// nothing outside the world names it.
+    fn sealed_bundle_base(
+        &self,
+        windows: &[WindowKey],
+        holder: Destination,
+    ) -> Result<(Zeroizing<Vec<u8>>, BTreeSet<EntityId>)> {
         let vault = self.vault();
         // The rows held here: a vault not yet hydrated holds no covered row.
-        let authority = super::held_authority_history(vault)?;
-        let public: BTreeSet<EntityId> = {
+        let history = super::held_authority_history(vault)?;
+        // Read after the history, so a settings edit it holds is judged too.
+        let eligible = vault.sealed_bundle_worlds(holder)?;
+        let (public, authority) = {
             let txn = vault.store.env.read_txn()?;
             let fold = vault.authority_view_readonly_in_txn(&txn)?;
-            windows
+            let everywhere =
+                |world: EntityId| fold.world_privacy(world).read == EffectiveRead::Everywhere;
+            let public: BTreeSet<EntityId> = windows
                 .iter()
                 .filter_map(WindowKey::world)
-                .filter(|world| fold.world_privacy(*world).read == EffectiveRead::Everywhere)
-                .collect()
+                .filter(|world| everywhere(*world))
+                .collect();
+            let mut authority = Vec::with_capacity(history.len());
+            for bytes in history {
+                if let Some(world) = side_world(&decode_authority_log_entry_body(&bytes)?.op)
+                    && !everywhere(world)
+                    && !eligible.contains(&world)
+                {
+                    continue;
+                }
+                authority.push(bytes);
+            }
+            (public, authority)
         };
         let mut snapshots = Vec::new();
         for key in windows {
@@ -309,7 +333,7 @@ impl WindowManager {
                 snapshots.push((key.clone(), snapshot));
             }
         }
-        encode_base(&authority, &snapshots)
+        Ok((encode_base(&authority, &snapshots)?, eligible))
     }
 
     /// `key`'s whole state as the export door cuts it for a machine that may

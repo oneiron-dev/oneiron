@@ -11,6 +11,7 @@ use crate::sync::loro_support::doc_version_vector;
 use crate::sync::queue::QueuedUpdate;
 use crate::sync::transport::TransportError;
 use crate::sync::transport::{self, window_sub_tags};
+use crate::sync::types::WindowKey;
 
 /// A write on the opened-item lane carries its durable queue sequence;
 /// the home replies only after the Loro import is persisted.
@@ -26,6 +27,10 @@ pub(super) fn residence_update_frame(
     payload.extend_from_slice(update);
     transport::encode_window_sync(window, window_sub_tags::RESIDENCE_UPDATE, &payload).into_result()
 }
+
+/// FIX 922 item 11 call: a forced world window the home may not read is settled for this home,
+/// which cannot hold it readably. No round names it, and the re-bootstrap does not wait on it.
+pub(super) const ITEM11_REBOOTSTRAP_UNREADABLE: bool = true;
 
 /// Maximum convergence rounds before forcing re-bootstrap
 /// (ARCH-0023b Fig. 2: "Max 5 rounds before force re-bootstrap").
@@ -73,6 +78,9 @@ pub(super) struct ConvergenceSession {
     /// they intentionally remain pending until the round budget forces
     /// re-bootstrap.
     pub(super) force_resync: BTreeSet<String>,
+    /// Forced windows no replayed row names. One whose world the home may not
+    /// read settles for this home, unnamed (`ITEM11_REBOOTSTRAP_UNREADABLE`).
+    pub(super) forced_unreplayed: BTreeSet<String>,
     /// Highest queue sequence covered by this replay — the
     /// `clear_through_confirmed` bound once ALL windows are confirmed.
     pub(super) max_seq: u64,
@@ -90,11 +98,13 @@ impl ConvergenceSession {
         force_resync: &BTreeSet<String>,
     ) -> Self {
         let mut pending: BTreeSet<String> = queued.iter().map(|u| u.window_key.clone()).collect();
+        let forced_unreplayed = force_resync.difference(&pending).cloned().collect();
         pending.extend(force_resync.iter().cloned());
         let max_seq = queued.iter().map(|u| u.seq).max().unwrap_or(0);
         Self {
             pending,
             force_resync: force_resync.clone(),
+            forced_unreplayed,
             max_seq,
             rounds_started: 0,
         }
@@ -105,6 +115,7 @@ impl ConvergenceSession {
     /// and the forced windows fetched whole, so each server witness is fresh.
     pub(super) fn confirming(queued: &[QueuedUpdate], windows: &BTreeSet<String>) -> Self {
         let mut session = Self::from_queued(queued);
+        session.forced_unreplayed = windows.difference(&session.pending).cloned().collect();
         session.pending.extend(windows.iter().cloned());
         session
     }
@@ -120,6 +131,7 @@ impl ConvergenceSession {
             return Ok(None);
         }
         self.rounds_started += 1;
+        self.settle_unreadable(client);
         let mut frames = Vec::with_capacity(self.pending.len());
         for key in &self.pending {
             let window = client.ensure_window(key)?;
@@ -142,6 +154,22 @@ impl ConvergenceSession {
         let force_resync = &self.force_resync;
         self.pending
             .retain(|key| force_resync.contains(key) || client.window_converged(key) != Some(true));
+        self.settle_unreadable(client);
+    }
+
+    /// Drops each forced window no replayed row names whose world the home
+    /// may not read: it is settled for this home, and its name never goes
+    /// there (FIX 922 item 11).
+    fn settle_unreadable(&mut self, client: &SyncClient) {
+        if !ITEM11_REBOOTSTRAP_UNREADABLE {
+            return;
+        }
+        let forced = &self.forced_unreplayed;
+        self.pending.retain(|key| {
+            !forced.contains(key)
+                || WindowKey::try_new(key.as_str())
+                    .is_none_or(|window| client.home_may_request(&window))
+        });
     }
 
     pub(super) fn all_converged(&self) -> bool {
