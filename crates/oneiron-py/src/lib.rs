@@ -2285,6 +2285,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_learning_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.learning.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.learning.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_learning_projection(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.learning.projection")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.learning.projection", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_settings_learning(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.settings.learning")?;
         let output = py

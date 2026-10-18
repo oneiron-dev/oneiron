@@ -3571,6 +3571,36 @@
       "openapi": true
     },
     {
+      "name": "vault.learning.read",
+      "description": "The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs.",
+      "input": "crate::learning::doors::LearningReadRequest",
+      "output": "crate::learning::doors::LearningCellView",
+      "call": "crate::learning::doors::read_learning_as_owner(memory.vault(), &memory.embedded_owner(\"vault.learning.read\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.learning.projection",
+      "description": "The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection.",
+      "input": "crate::learning::doors::LearningProjectionRequest",
+      "output": "crate::learning::doors::LearningProjectionView",
+      "call": "crate::learning::doors::learning_projection_as_owner(memory.vault(), &memory.embedded_owner(\"vault.learning.projection\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.settings.learning",
       "description": "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type.",
       "input": "crate::learning_setting_doors::LearningSettingsRequest",

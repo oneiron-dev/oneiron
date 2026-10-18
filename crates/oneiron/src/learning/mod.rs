@@ -24,6 +24,7 @@
 
 pub mod cell;
 pub mod coordination;
+pub mod doors;
 pub mod estimate;
 pub mod evidence;
 pub mod honesty;
