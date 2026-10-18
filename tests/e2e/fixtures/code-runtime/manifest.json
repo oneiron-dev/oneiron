@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "area": "code-runtime",
+  "assets": [
+    {
+      "id": "code-runtime-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-code-runtime-e2e-20261018",
+        "revision": "78adb5f1d4720aeff5b1304d8e3d4e39c129ad4142ffa9e173c8e50f29825f4b"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "78adb5f1d4720aeff5b1304d8e3d4e39c129ad4142ffa9e173c8e50f29825f4b",
+      "expectedFacts": {
+        "scenarioCount": 8,
+        "authoredContent": true,
+        "oracle": "Pinned canon/registry and independently authored scripts, protocol data and effects; not engine output.",
+        "bindingHead": "cf8d4ce473ddffb6bf278f11263ae0cf84461117",
+        "blockedIds": [
+          "CODE-RUNTIME-01",
+          "CODE-RUNTIME-02",
+          "CODE-RUNTIME-03",
+          "CODE-RUNTIME-04",
+          "CODE-RUNTIME-05",
+          "CODE-RUNTIME-06",
+          "CODE-RUNTIME-07",
+          "CODE-RUNTIME-08"
+        ],
+        "engineDefaultsChanged": false,
+        "prerequisiteHandling": "Per-ID suite.todo BLOCKED rows; no fake runtime capabilities, fallback implementations or fabricated executable hashes."
+      },
+      "scenarios": [
+        "CODE-RUNTIME-01",
+        "CODE-RUNTIME-02",
+        "CODE-RUNTIME-03",
+        "CODE-RUNTIME-04",
+        "CODE-RUNTIME-05",
+        "CODE-RUNTIME-06",
+        "CODE-RUNTIME-07",
+        "CODE-RUNTIME-08"
+      ],
+      "requires": []
+    }
+  ]
+}
