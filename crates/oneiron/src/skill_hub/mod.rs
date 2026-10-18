@@ -26,6 +26,7 @@ mod refinement_admission;
 mod refinement_custody;
 mod shared_delta;
 mod shared_gate;
+mod skill_archive;
 
 pub use admission::{HubAdmissionDisposition, HubAdmissionReceipt};
 pub(crate) use admission_guard::HubAdmissionProof;
