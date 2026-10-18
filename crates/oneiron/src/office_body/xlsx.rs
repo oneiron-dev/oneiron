@@ -29,8 +29,8 @@ use crate::error::Result;
 use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 use oneiron_docedit::xlsx_body::{
     SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxFormat, XlsxLock,
-    XlsxSheetPlan, XlsxStyle, XlsxTable, XlsxValue, a1, check_cell, check_format, check_name,
-    check_sheet_name, parse_a1, retarget_sheets, shift_axis_formula,
+    XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1, check_cell,
+    check_format, check_name, check_sheet_name, parse_a1, retarget_sheets, shift_axis_formula,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -41,8 +41,6 @@ const FORMATS: &str = "formats";
 /// The longest id of a cell format the body composes.
 const MAX_FORMAT_ID: usize = 64;
 pub(super) const SCHEMA: u32 = 2;
-/// The most stored cells a live body holds.
-const MAX_CELLS: usize = 200_000;
 
 /// A typed read of the body at one frontier.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +70,7 @@ pub struct BodySheet {
     /// Ranges no operation writes.
     pub locked: Vec<XlsxArea>,
     pub tables: Vec<XlsxTable>,
+    pub visibility: XlsxSheetVisibility,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -175,9 +174,19 @@ pub enum XlsxBodyOp {
         at: u32,
     },
     /// Delete a worksheet with its cells and its own defined names; formulas
-    /// that named it read `#REF!`. A workbook keeps one worksheet.
+    /// that named it read `#REF!`. A workbook keeps one worksheet, and one
+    /// visible sheet: deleting the last visible one shows the first hidden
+    /// one, and the edit names it.
     DeleteSheet {
         sheet: String,
+    },
+    /// Show or hide a worksheet's tab, as Excel's visible, hidden and very
+    /// hidden. Excel keeps one sheet visible: hiding the last visible one
+    /// shows another (the first hidden, then the first very hidden), or adds
+    /// an empty worksheet when there is none, and the edit names it.
+    SetSheetVisibility {
+        sheet: String,
+        visibility: XlsxSheetVisibility,
     },
     /// Insert `count` empty rows before row `at` (1-based). The rows below
     /// move down, and every formula, defined name and read-only range that
@@ -208,17 +217,8 @@ pub enum XlsxBodyOp {
     },
 }
 
-/// Write the imported workbook into a fresh document.
+/// Write the imported workbook into a fresh document, every cell of it.
 pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
-    if book
-        .sheets
-        .iter()
-        .map(|sheet| sheet.cells.len())
-        .sum::<usize>()
-        > MAX_CELLS
-    {
-        return Err(invalid("the workbook holds more cells than a live body"));
-    }
     let office = doc.get_map(OFFICE);
     office.insert("kind", "xlsx").map_err(loro)?;
     office.insert("schema", i64::from(SCHEMA)).map_err(loro)?;
@@ -229,6 +229,12 @@ pub(super) fn import(doc: &LoroDoc, book: &XlsxBook) -> Result<()> {
         .map(|sheet| (sheet.name.clone(), sheet.name.clone()))
         .collect();
     set_sheet_list(doc, &sheets)?;
+    let states: BTreeMap<String, XlsxSheetVisibility> = book
+        .sheets
+        .iter()
+        .map(|sheet| (sheet.name.clone(), sheet.visibility))
+        .collect();
+    set_sheet_states(doc, &states)?;
     let locked: HashMap<String, LoroValue> = book
         .sheets
         .iter()
@@ -327,6 +333,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
         Some(LoroValue::Map(tables)) => Some(tables),
         Some(_) => return Err(invalid("XLSX body tables")),
     };
+    let states = sheet_states(doc)?;
     let styles = list("styles")?
         .iter()
         .map(|style| match style {
@@ -380,6 +387,7 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             Some(_) => return Err(invalid("XLSX body tables")),
         };
         sheets.push(BodySheet {
+            visibility: states.get(&key).copied().unwrap_or_default(),
             key,
             name,
             cells,
@@ -434,7 +442,9 @@ pub(super) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
 }
 
 /// Apply one operation.
-pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
+/// Apply one operation; what it adapts so the workbook stays one Excel
+/// opens (a sheet shown or added) is named in `effects`.
+pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp, effects: &mut Vec<String>) -> Result<()> {
     match op {
         XlsxBodyOp::SetValue { sheet, cell, value } => {
             check_cell(value, None).map_err(|_| invalid("the value is not one a cell holds"))?;
@@ -575,14 +585,7 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
             if at > list.len() {
                 return Err(invalid("a sheet position past the last sheet"));
             }
-            let cells = doc.get_map(CELLS);
-            let mut key = format!("+{sheet}");
-            let mut n = 1;
-            while cells.get(&key).is_some() {
-                n += 1;
-                key = format!("+{sheet}#{n}");
-            }
-            cells.insert_container(&key, LoroMap::new()).map_err(loro)?;
+            let key = new_sheet(doc, sheet)?;
             list.insert(at, (key, sheet.clone()));
             set_sheet_list(doc, &list)
         }
@@ -632,6 +635,10 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
                     names.delete(held).map_err(loro)?;
                 }
             }
+            let mut states = sheet_states(doc)?;
+            states.remove(&key);
+            keep_one_visible(doc, &mut list, &mut states, None, effects)?;
+            set_sheet_states(doc, &states)?;
             let old = sheet.to_lowercase();
             retarget_body(doc, &order, &|held: &str| {
                 if held.to_lowercase() == old {
@@ -640,6 +647,18 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp) -> Result<()> {
                     SheetFate::Keep
                 }
             })
+        }
+        XlsxBodyOp::SetSheetVisibility { sheet, visibility } => {
+            let mut list = sheet_list(doc)?;
+            let key = list[sheet_at(&list, sheet)?].0.clone();
+            let mut states = sheet_states(doc)?;
+            states.insert(key.clone(), *visibility);
+            let sheets = list.len();
+            keep_one_visible(doc, &mut list, &mut states, Some(&key), effects)?;
+            if list.len() != sheets {
+                set_sheet_list(doc, &list)?;
+            }
+            set_sheet_states(doc, &states)
         }
         XlsxBodyOp::InsertRows { sheet, at, count } => shift(
             doc,
@@ -1027,6 +1046,7 @@ pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Re
             | XlsxBodyOp::RenameSheet { .. }
             | XlsxBodyOp::MoveSheet { .. }
             | XlsxBodyOp::DeleteSheet { .. }
+            | XlsxBodyOp::SetSheetVisibility { .. }
             | XlsxBodyOp::InsertRows { .. }
             | XlsxBodyOp::DeleteRows { .. }
             | XlsxBodyOp::InsertColumns { .. }
@@ -1041,11 +1061,11 @@ pub(super) fn admit_at(base: &LoroDoc, head: &LoroDoc, ops: &[XlsxBodyOp]) -> Re
     Ok(())
 }
 
-/// The body's worksheets in order, by key and name.
-fn layout(body: &XlsxBody) -> Vec<(&str, &str)> {
+/// The body's worksheets in order, by key, name and visibility.
+fn layout(body: &XlsxBody) -> Vec<(&str, &str, XlsxSheetVisibility)> {
     body.sheets
         .iter()
-        .map(|sheet| (sheet.key.as_str(), sheet.name.as_str()))
+        .map(|sheet| (sheet.key.as_str(), sheet.name.as_str(), sheet.visibility))
         .collect()
 }
 
@@ -1072,6 +1092,7 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
                 .sheets
                 .iter()
                 .map(|sheet| XlsxSheetPlan {
+                    visibility: sheet.visibility,
                     name: sheet.name.clone(),
                     source: base
                         .sheets
@@ -1193,28 +1214,18 @@ pub(super) fn changes(base: &XlsxBody, current: &XlsxBody) -> Result<Vec<XlsxCha
     Ok(changes)
 }
 
-/// `base` as `current`'s structural edits leave it: moved by the row and
-/// column edits `entries`, each matched by the sheet's name in `base` (an
-/// added sheet's in `current`), then retargeted to `current`'s sheet layout.
-/// What differs from `current` after that is cell and name writes.
+/// `base` as `current`'s structural edits leave it, in the order the export
+/// applies them: each base sheet's fate by its key (kept, renamed or
+/// deleted) first, then every row and column edit in `entries` under its
+/// sheet's final name. A sheet added since reuses no base sheet's edits,
+/// even under a name a base sheet had. What differs from `current` after
+/// that is cell and name writes.
 fn moved(
     base: &XlsxBody,
     current: &XlsxBody,
     entries: &[(String, XlsxAxisEdit)],
 ) -> Result<XlsxBody> {
     let mut moved = base.clone();
-    for (key, edit) in entries {
-        let name = base
-            .sheets
-            .iter()
-            .chain(&current.sheets)
-            .find(|sheet| sheet.key == *key)
-            .map(|sheet| sheet.name.clone());
-        if let Some(name) = name {
-            // The live body checked each edit as it made it.
-            axis(&mut moved, key, &name, edit, false)?;
-        }
-    }
     let fates: HashMap<String, SheetFate> = base
         .sheets
         .iter()
@@ -1235,6 +1246,22 @@ fn moved(
                 .cloned()
                 .unwrap_or(SheetFate::Keep)
         });
+    }
+    moved.sheets.retain_mut(|sheet| {
+        match current.sheets.iter().find(|held| held.key == sheet.key) {
+            Some(held) => {
+                sheet.name.clone_from(&held.name);
+                true
+            }
+            None => false,
+        }
+    });
+    // An edit to a sheet the body later deleted leaves with the sheet.
+    for (key, edit) in entries {
+        if let Some(sheet) = current.sheets.iter().find(|sheet| sheet.key == *key) {
+            // The live body checked each edit as it made it.
+            axis(&mut moved, key, &sheet.name, edit, false)?;
+        }
     }
     Ok(moved)
 }
@@ -1342,7 +1369,7 @@ pub(super) fn diff(
 enum State<'a> {
     Cell(Option<&'a BodyCell>),
     Name(Option<&'a BodyName>),
-    Sheets(Vec<(&'a str, &'a str)>),
+    Sheets(Vec<(&'a str, &'a str, XlsxSheetVisibility)>),
     Axes(&'a [(String, XlsxAxisEdit)]),
     Format(&'a XlsxFormat),
 }
@@ -1542,6 +1569,89 @@ fn sheet_key(doc: &LoroDoc, name: &str) -> Result<String> {
 }
 
 /// Refuse a sheet name another sheet holds, in any case.
+/// Each sheet key's visibility; a visible sheet's is not stored.
+fn sheet_states(doc: &LoroDoc) -> Result<BTreeMap<String, XlsxSheetVisibility>> {
+    match doc.get_map(OFFICE).get("visibility") {
+        None => Ok(BTreeMap::new()),
+        Some(ValueOrContainer::Value(LoroValue::Map(states))) => states
+            .iter()
+            .map(|(key, state)| match state {
+                LoroValue::String(state) => Ok((
+                    key.clone(),
+                    XlsxSheetVisibility::from_state(Some(state.to_string().as_str())),
+                )),
+                _ => Err(invalid("XLSX body sheet visibility")),
+            })
+            .collect(),
+        Some(_) => Err(invalid("XLSX body sheet visibility")),
+    }
+}
+
+fn set_sheet_states(doc: &LoroDoc, states: &BTreeMap<String, XlsxSheetVisibility>) -> Result<()> {
+    let held: HashMap<String, LoroValue> = states
+        .iter()
+        .filter_map(|(key, state)| Some((key.clone(), LoroValue::from(state.state()?))))
+        .collect();
+    doc.get_map(OFFICE).insert("visibility", held).map_err(loro)
+}
+
+/// Excel keeps one sheet visible. Where `list` would show none, the first
+/// hidden sheet other than `except` is shown, else the first very hidden
+/// one, else an empty worksheet is added; `effects` names it.
+fn keep_one_visible(
+    doc: &LoroDoc,
+    list: &mut Vec<(String, String)>,
+    states: &mut BTreeMap<String, XlsxSheetVisibility>,
+    except: Option<&str>,
+    effects: &mut Vec<String>,
+) -> Result<()> {
+    let state = |states: &BTreeMap<String, XlsxSheetVisibility>, key: &str| {
+        states.get(key).copied().unwrap_or_default()
+    };
+    if list
+        .iter()
+        .any(|(key, _)| state(states, key) == XlsxSheetVisibility::Visible)
+    {
+        return Ok(());
+    }
+    for wanted in [XlsxSheetVisibility::Hidden, XlsxSheetVisibility::VeryHidden] {
+        let shown = list
+            .iter()
+            .find(|(key, _)| Some(key.as_str()) != except && state(states, key) == wanted)
+            .cloned();
+        if let Some((key, name)) = shown {
+            states.remove(&key);
+            effects.push(format!(
+                "sheet {name:?} shown: a workbook keeps one visible sheet"
+            ));
+            return Ok(());
+        }
+    }
+    let name = (1..)
+        .map(|n| format!("Sheet{n}"))
+        .find(|name| free_name(list.as_slice(), name, None).is_ok())
+        .ok_or_else(|| invalid("no free worksheet name"))?;
+    let key = new_sheet(doc, &name)?;
+    list.push((key, name.clone()));
+    effects.push(format!(
+        "sheet {name:?} added: a workbook keeps one visible sheet"
+    ));
+    Ok(())
+}
+
+/// A new worksheet's key, minted from its name, with its empty grid.
+fn new_sheet(doc: &LoroDoc, sheet: &str) -> Result<String> {
+    let cells = doc.get_map(CELLS);
+    let mut key = format!("+{sheet}");
+    let mut n = 1;
+    while cells.get(&key).is_some() {
+        n += 1;
+        key = format!("+{sheet}#{n}");
+    }
+    cells.insert_container(&key, LoroMap::new()).map_err(loro)?;
+    Ok(key)
+}
+
 fn free_name(sheets: &[(String, String)], name: &str, except: Option<usize>) -> Result<()> {
     let lower = name.to_lowercase();
     if sheets

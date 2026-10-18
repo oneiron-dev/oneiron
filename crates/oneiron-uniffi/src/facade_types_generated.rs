@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 309 facade rows, 1122 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 277.
+// UniFFI census: 315 facade rows, 1140 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 283.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -480,6 +480,8 @@ pub struct NotificationSource {
     pub run: Option<String>,
     #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
     pub result: Option<String>,
+    #[serde(rename = "detail", default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 /// `oneiron::inbox::list::NotificationRow`.
@@ -15960,6 +15962,315 @@ pub struct EsignDraftView {
     pub fields: u64,
 }
 
+/// `oneiron::blob_artifact::esign::door::EsignGetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignGetRequest {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+}
+
+/// `oneiron::blob_artifact::esign::model::DeliveryStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum DeliveryStatus {
+    #[serde(rename = "unsent")]
+    Unsent,
+    #[serde(rename = "sent")]
+    Sent,
+    #[serde(rename = "viewed")]
+    Viewed,
+}
+
+/// `oneiron::blob_artifact::esign::model::SigningStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SigningStatus {
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "ready")]
+    Ready,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::blob_artifact::esign::model::AccessStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AccessStatus {
+    #[serde(rename = "unverified")]
+    Unverified,
+    #[serde(rename = "verified")]
+    Verified,
+}
+
+/// `oneiron::blob_artifact::esign::model::RecipientState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RecipientState {
+    #[serde(rename = "delivery")]
+    pub delivery: DeliveryStatus,
+    #[serde(rename = "signing")]
+    pub signing: SigningStatus,
+    #[serde(rename = "access")]
+    pub access: AccessStatus,
+    #[serde(rename = "expires_at")]
+    pub expires_at: u64,
+}
+
+/// `oneiron::blob_artifact::esign::model::FieldValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "value")]
+pub enum FieldValue {
+    #[serde(rename = "text")]
+    Text(String),
+    #[serde(rename = "checked")]
+    Checked(bool),
+    #[serde(rename = "signature")]
+    Signature {
+        #[serde(rename = "image_ref")]
+        image_ref: String,
+    },
+}
+
+/// `oneiron::blob_artifact::esign::model::SignatureRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SignatureRow {
+    #[serde(rename = "field")]
+    pub field: String,
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "value")]
+    pub value: FieldValue,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "event")]
+#[serde(deny_unknown_fields)]
+pub enum EsignEvent {
+    #[serde(rename = "drafted")]
+    Drafted {
+        #[serde(rename = "document")]
+        document: EsignDocument,
+    },
+    #[serde(rename = "sent")]
+    Sent,
+    #[serde(rename = "viewed")]
+    Viewed {
+        #[serde(rename = "recipient")]
+        recipient: String,
+    },
+    #[serde(rename = "field_saved")]
+    FieldSaved {
+        #[serde(rename = "signature")]
+        signature: SignatureRow,
+    },
+    #[serde(rename = "signed")]
+    Signed {
+        #[serde(rename = "recipient")]
+        recipient: String,
+        #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
+        next: Option<String>,
+    },
+    #[serde(rename = "declined")]
+    Declined {
+        #[serde(rename = "recipient")]
+        recipient: String,
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+    #[serde(rename = "voided")]
+    Voided {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+    #[serde(rename = "expired")]
+    Expired {
+        #[serde(rename = "recipient", default, skip_serializing_if = "Option::is_none")]
+        recipient: Option<String>,
+    },
+    #[serde(rename = "reminded")]
+    Reminded {
+        #[serde(rename = "recipient")]
+        recipient: String,
+        #[serde(rename = "rung")]
+        rung: u32,
+    },
+    #[serde(rename = "sealed")]
+    Sealed {
+        #[serde(rename = "rejected")]
+        rejected: bool,
+        #[serde(rename = "item_sha256")]
+        item_sha256: Vec<Vec<u8>>,
+    },
+    #[serde(rename = "reseal_requested")]
+    ResealRequested {
+        #[serde(rename = "owner")]
+        owner: String,
+        #[serde(rename = "authority")]
+        authority: String,
+    },
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignAuditActor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignAuditActor {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "ip", default, skip_serializing_if = "Option::is_none")]
+    pub ip: Option<String>,
+    #[serde(
+        rename = "user_agent",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub user_agent: Option<String>,
+}
+
+/// `oneiron::blob_artifact::esign::model::EsignEventRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignEventRow {
+    #[serde(rename = "sequence")]
+    pub sequence: u64,
+    #[serde(rename = "previous_sha256")]
+    pub previous_sha256: Vec<u8>,
+    #[serde(rename = "event")]
+    pub event: EsignEvent,
+    #[serde(rename = "actor")]
+    pub actor: EsignAuditActor,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignDocumentView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EsignDocumentView {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "status")]
+    pub status: DocumentStatus,
+    #[serde(rename = "awaits_owner_answer")]
+    pub awaits_owner_answer: bool,
+    #[serde(rename = "document")]
+    pub document: EsignDocument,
+    #[serde(rename = "recipients")]
+    pub recipients: std::collections::HashMap<String, RecipientState>,
+    #[serde(rename = "signatures")]
+    pub signatures: Vec<SignatureRow>,
+    #[serde(rename = "rejection", default, skip_serializing_if = "Option::is_none")]
+    pub rejection: Option<String>,
+    #[serde(rename = "sealed_sha256")]
+    pub sealed_sha256: Vec<String>,
+    #[serde(rename = "audit")]
+    pub audit: Vec<EsignEventRow>,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignLinksIssueRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignLinksIssueRequest {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "rotate", default, skip_serializing_if = "Option::is_none")]
+    pub rotate: Option<bool>,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignIssuedLink`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EsignIssuedLink {
+    #[serde(rename = "recipient")]
+    pub recipient: String,
+    #[serde(rename = "email")]
+    pub email: String,
+    #[serde(rename = "capability")]
+    pub capability: String,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignLinksView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EsignLinksView {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "issued")]
+    pub issued: Vec<EsignIssuedLink>,
+    #[serde(rename = "unchanged")]
+    pub unchanged: Vec<String>,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignDispatchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignDispatchRequest {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "recipient_count")]
+    pub recipient_count: u64,
+    #[serde(
+        rename = "on_behalf_of",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_behalf_of: Option<String>,
+    #[serde(
+        rename = "idempotency_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignDispatchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EsignDispatchView {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "intent_ref")]
+    pub intent_ref: String,
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "gate_outcome")]
+    pub gate_outcome: String,
+    #[serde(
+        rename = "gate_decision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub gate_decision_ref: Option<String>,
+    #[serde(rename = "gate_reason_codes")]
+    pub gate_reason_codes: Vec<String>,
+}
+
+/// `oneiron::blob_artifact::esign::door::EsignVoidRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EsignVoidRequest {
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "recipient_count")]
+    pub recipient_count: u64,
+    #[serde(rename = "reason")]
+    pub reason: String,
+    #[serde(
+        rename = "on_behalf_of",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_behalf_of: Option<String>,
+    #[serde(
+        rename = "idempotency_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub idempotency_key: Option<String>,
+}
+
 /// `oneiron::core_write::shape::CoreWriteTextField`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CoreWriteTextField {
@@ -16400,6 +16711,17 @@ pub struct XlsxTable {
     pub worksheet: bool,
 }
 
+/// `oneiron_docedit::xlsx_body::XlsxSheetVisibility`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum XlsxSheetVisibility {
+    #[serde(rename = "visible")]
+    Visible,
+    #[serde(rename = "hidden")]
+    Hidden,
+    #[serde(rename = "veryHidden")]
+    VeryHidden,
+}
+
 /// `oneiron::office_body::verbs::XlsxSheetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheetView {
@@ -16411,6 +16733,8 @@ pub struct XlsxSheetView {
     pub locked: Vec<XlsxArea>,
     #[serde(rename = "tables")]
     pub tables: Vec<XlsxTable>,
+    #[serde(rename = "visibility")]
+    pub visibility: XlsxSheetVisibility,
 }
 
 /// `oneiron::office_body::xlsx::BodyName`.
@@ -17169,6 +17493,13 @@ pub enum XlsxBodyOp {
         #[serde(rename = "sheet")]
         sheet: String,
     },
+    #[serde(rename = "set_sheet_visibility")]
+    SetSheetVisibility {
+        #[serde(rename = "sheet")]
+        sheet: String,
+        #[serde(rename = "visibility")]
+        visibility: XlsxSheetVisibility,
+    },
     #[serde(rename = "insert_rows")]
     InsertRows {
         #[serde(rename = "sheet")]
@@ -17338,6 +17669,8 @@ pub struct OfficeBodyEdit {
     pub minted: Vec<String>,
     #[serde(rename = "receipt")]
     pub receipt: TextCommitReceipt,
+    #[serde(rename = "effects")]
+    pub effects: Vec<String>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyForkOpenRequest`.
@@ -17819,6 +18152,8 @@ pub struct XlsxSheet {
     pub locked: Vec<XlsxArea>,
     #[serde(rename = "tables")]
     pub tables: Vec<XlsxTable>,
+    #[serde(rename = "visibility")]
+    pub visibility: XlsxSheetVisibility,
 }
 
 /// `oneiron_docedit::xlsx_body::XlsxName`.

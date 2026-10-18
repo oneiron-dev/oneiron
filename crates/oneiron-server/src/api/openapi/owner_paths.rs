@@ -20,13 +20,13 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "get",
         path: "/authority/handoff-alarms",
         summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",
-        row: None,
+        row: Some("vault.authority.handoff_alarms"),
     },
     OwnerRoute {
         method: "post",
         path: "/authority/handoff-alarms/acknowledge",
         summary: "The owner has seen one alarm.",
-        row: None,
+        row: Some("vault.authority.handoff_alarms.acknowledge"),
     },
     OwnerRoute {
         method: "get",
@@ -44,6 +44,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/backups/rehearse",
         summary: "Rehearse backup.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/browsers/stream",
+        summary: "The run browser's front tab as server-sent events while the owner watches or holds it, as the desktop stream sends its display: state, frame, error, ended and refused events, and tabs when the browser's tabs change.",
         row: None,
     },
     OwnerRoute {
@@ -98,6 +104,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         method: "post",
         path: "/coach/judge-asks/pick",
         summary: "The caller's pick on an ask their digest delivered, a final label in the judged skill's anchor.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/judge-asks/regrade",
+        summary: "The caller's re-grade of a pick a judge rubric edit left waiting: kept, or its case asked again.",
         row: None,
     },
     OwnerRoute {

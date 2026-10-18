@@ -222,6 +222,11 @@ pub struct SharedActExport {
 pub struct SharedActExecution {
     pub receipt: SharedActExecutionReceipt,
     pub delivery: Option<RemovalExportDelivery>,
+    /// The records this execution's removal export counted, which its
+    /// receipt's count and digest derive from (FIX 3412). `None` when this
+    /// execution built no export, a re-delivery included: that archive is
+    /// the one the first execution built.
+    pub export_records: Option<Vec<EntityId>>,
 }
 
 /// Where an export-first removal's archive went (FIX 1300): to the removed
@@ -588,7 +593,7 @@ impl Vault {
                     crate::edge::EdgeActorClass::Human,
                 );
                 self.export_records_archive(&ids, reader)
-                    .map(|archive| (member, records.len() as u64, archive))
+                    .map(|archive| (member, records.len() as u64, archive, ids))
             })
             .transpose()?;
         let mut txn = self.store.env.write_txn()?;
@@ -623,7 +628,11 @@ impl Vault {
                 None => None,
             };
             txn.commit()?;
-            return Ok(SharedActExecution { receipt, delivery });
+            return Ok(SharedActExecution {
+                receipt,
+                delivery,
+                export_records: None,
+            });
         }
         let creation = check_vault(self, &txn, act.vault_id)?;
         let now = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
@@ -757,7 +766,9 @@ impl Vault {
                 )?);
             }
         }
-        let export = export.take().map(|(member, records, archive)| {
+        let mut export_records = None;
+        let export = export.take().map(|(member, records, archive, ids)| {
+            export_records = Some(ids.into_iter().collect());
             let summary = SharedActExport {
                 member: member.to_hex(),
                 records,
@@ -802,7 +813,11 @@ impl Vault {
             _ => None,
         };
         txn.commit()?;
-        Ok(SharedActExecution { receipt, delivery })
+        Ok(SharedActExecution {
+            receipt,
+            delivery,
+            export_records,
+        })
     }
 
     /// The live Owners holding `act`'s verb at `now`, refused unless both

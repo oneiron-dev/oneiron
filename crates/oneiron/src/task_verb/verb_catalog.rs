@@ -210,6 +210,7 @@ pub enum AgentVerb {
     VaultProjectsRosterWrite,
     VaultProjectsGoalIntake,
     VaultRoomsJoin,
+    VaultRoomsInvite,
     VaultRoomsConsent,
     VaultRoomsOffer,
     VaultRoomsOfferAnswer,
@@ -317,6 +318,11 @@ pub enum AgentVerb {
     VaultClaimsAdmit,
     VaultArtifactsCreate,
     VaultEsignCreate,
+    VaultEsignGet,
+    VaultEsignLinksIssue,
+    VaultEsignSendForSignature,
+    VaultEsignRemind,
+    VaultEsignVoid,
     VaultConversationsCreate,
     VaultConversationsTurnsCreate,
     VaultConversationsRecordsAppend,
@@ -565,6 +571,7 @@ impl AgentVerb {
         Self::VaultProjectsRosterWrite,
         Self::VaultProjectsGoalIntake,
         Self::VaultRoomsJoin,
+        Self::VaultRoomsInvite,
         Self::VaultRoomsConsent,
         Self::VaultRoomsOffer,
         Self::VaultRoomsOfferAnswer,
@@ -672,6 +679,11 @@ impl AgentVerb {
         Self::VaultClaimsAdmit,
         Self::VaultArtifactsCreate,
         Self::VaultEsignCreate,
+        Self::VaultEsignGet,
+        Self::VaultEsignLinksIssue,
+        Self::VaultEsignSendForSignature,
+        Self::VaultEsignRemind,
+        Self::VaultEsignVoid,
         Self::VaultConversationsCreate,
         Self::VaultConversationsTurnsCreate,
         Self::VaultConversationsRecordsAppend,
@@ -927,6 +939,7 @@ impl AgentVerb {
             Self::VaultProjectsRosterWrite => "vault.projects.roster.write",
             Self::VaultProjectsGoalIntake => "vault.projects.goal.intake",
             Self::VaultRoomsJoin => "vault.rooms.join",
+            Self::VaultRoomsInvite => "vault.rooms.invite",
             Self::VaultRoomsConsent => "vault.rooms.consent",
             Self::VaultRoomsOffer => "vault.rooms.offer",
             Self::VaultRoomsOfferAnswer => "vault.rooms.offer.answer",
@@ -1034,6 +1047,11 @@ impl AgentVerb {
             Self::VaultClaimsAdmit => "vault.claims.admit",
             Self::VaultArtifactsCreate => "vault.artifacts.create",
             Self::VaultEsignCreate => "vault.esign.create",
+            Self::VaultEsignGet => "vault.esign.get",
+            Self::VaultEsignLinksIssue => "vault.esign.links.issue",
+            Self::VaultEsignSendForSignature => "vault.esign.send_for_signature",
+            Self::VaultEsignRemind => "vault.esign.remind",
+            Self::VaultEsignVoid => "vault.esign.void",
             Self::VaultConversationsCreate => "vault.conversations.create",
             Self::VaultConversationsTurnsCreate => "vault.conversations.turns.create",
             Self::VaultConversationsRecordsAppend => "vault.conversations.records.append",
@@ -1281,6 +1299,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -1348,6 +1367,11 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -1643,6 +1667,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -1710,6 +1735,11 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2031,6 +2061,7 @@ impl AgentVerb {
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultProjectsGoalIntake
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -2130,6 +2161,11 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignGet
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2302,6 +2338,7 @@ impl AgentVerb {
                 | Self::VaultProjectsConfirm
                 | Self::VaultProjectsRosterWrite
                 | Self::VaultRoomsJoin
+                | Self::VaultRoomsInvite
                 | Self::VaultRoomsConsent
                 | Self::VaultRoomsOffer
                 | Self::VaultRoomsOfferAnswer
@@ -2362,6 +2399,10 @@ impl AgentVerb {
                 | Self::VaultClaimsAdmit
                 | Self::VaultArtifactsCreate
                 | Self::VaultEsignCreate
+                | Self::VaultEsignLinksIssue
+                | Self::VaultEsignSendForSignature
+                | Self::VaultEsignRemind
+                | Self::VaultEsignVoid
                 | Self::VaultConversationsCreate
                 | Self::VaultConversationsTurnsCreate
                 | Self::VaultConversationsRecordsAppend
@@ -2627,6 +2668,7 @@ impl AgentVerb {
             Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
@@ -2734,6 +2776,11 @@ impl AgentVerb {
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
+            Self::VaultEsignGet => &["spec"],
+            Self::VaultEsignLinksIssue => &["spec"],
+            Self::VaultEsignSendForSignature => &["spec"],
+            Self::VaultEsignRemind => &["spec"],
+            Self::VaultEsignVoid => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -2983,6 +3030,7 @@ impl AgentVerb {
             Self::VaultProjectsRosterWrite => &["spec"],
             Self::VaultProjectsGoalIntake => &["spec"],
             Self::VaultRoomsJoin => &["spec", "room_ref"],
+            Self::VaultRoomsInvite => &["spec", "room_ref"],
             Self::VaultRoomsConsent => &["spec"],
             Self::VaultRoomsOffer => &["spec", "room_ref"],
             Self::VaultRoomsOfferAnswer => &["spec"],
@@ -3090,6 +3138,11 @@ impl AgentVerb {
             Self::VaultClaimsAdmit => &["spec"],
             Self::VaultArtifactsCreate => &["spec"],
             Self::VaultEsignCreate => &["spec"],
+            Self::VaultEsignGet => &["spec"],
+            Self::VaultEsignLinksIssue => &["spec"],
+            Self::VaultEsignSendForSignature => &["spec"],
+            Self::VaultEsignRemind => &["spec"],
+            Self::VaultEsignVoid => &["spec"],
             Self::VaultConversationsCreate => &["spec"],
             Self::VaultConversationsTurnsCreate => &["spec"],
             Self::VaultConversationsRecordsAppend => &["spec"],
@@ -3708,6 +3761,9 @@ impl AgentVerb {
             Self::VaultRoomsJoin => {
                 "Files and decides a request to take part in a room or one of its threads."
             }
+            Self::VaultRoomsInvite => {
+                "The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent."
+            }
             Self::VaultRoomsConsent => {
                 "One party's answer to a join that waits on it, after which the join is decided again."
             }
@@ -3828,7 +3884,9 @@ impl AgentVerb {
             Self::SelfBrowserObserve => {
                 "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page."
             }
-            Self::SelfBrowserFind => "Finds the page rows whose role and name match.",
+            Self::SelfBrowserFind => {
+                "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+            }
             Self::SelfBrowserClick => {
                 "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
             }
@@ -3842,7 +3900,7 @@ impl AgentVerb {
                 "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserWaitFor => {
-                "Waits until a page row its refs name, or else some row matching a role and name, is there."
+                "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
             }
             Self::SelfBrowserExpect => {
                 "Checks that a page row is present or absent, and holds a given value."
@@ -3875,25 +3933,37 @@ impl AgentVerb {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
             }
             Self::SelfDesktopOpen => {
-                "Opens an app of the run's own desktop guest by app:name and observes its window."
+                "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfDesktopObserve => "Observes the current window of the run's desktop guest.",
-            Self::SelfDesktopFind => "Finds the window rows whose role and name match.",
-            Self::SelfDesktopClick => "Clicks one window target and observes the result.",
+            Self::SelfDesktopObserve => {
+                "Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+            }
+            Self::SelfDesktopFind => {
+                "Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+            }
+            Self::SelfDesktopClick => {
+                "Clicks one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfDesktopClickAt => {
-                "Clicks a point of a held screenshot, mapped onto the window."
+                "Clicks a point of a held screenshot, mapped onto the window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfDesktopType => "Types text into one window target and observes the result.",
+            Self::SelfDesktopType => {
+                "Types text into one window target and observes the result; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfDesktopSelect => {
-                "Sets the value of a combo box or list target by its option label."
+                "Sets the value of a combo box or list target by its option label; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopKey => {
-                "Presses one key, with modifiers, on a window target or the window's focus."
+                "Presses one key, with modifiers, on a window target or the window's focus; a long window's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfDesktopHotkey => "Presses a key combination in the current window.",
-            Self::SelfDesktopScroll => "Scrolls a window target, or the window, by steps.",
+            Self::SelfDesktopHotkey => {
+                "Presses a key combination in the current window; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfDesktopScroll => {
+                "Scrolls a window target, or the window, by steps; a long window's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfDesktopWaitFor => {
-                "Waits until a window row its refs name, or else some row matching a role and name, is there."
+                "Waits until a window row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
             }
             Self::SelfDesktopExpect => {
                 "Checks that a window row is present or absent, and holds a given value."
@@ -3905,11 +3975,11 @@ impl AgentVerb {
             Self::SelfDesktopCrop => "Crops a held image to a rectangle.",
             Self::SelfDesktopZoom => "Zooms into a rectangle of a held image.",
             Self::SelfDesktopBatch => {
-                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails."
+                "Runs one batched program of desktop steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
             }
             Self::SelfDesktopWindows => "Lists the desktop guest's windows, or one app's.",
             Self::SelfDesktopWindow => {
-                "Moves the session onto another desktop window and observes it."
+                "Moves the session onto another desktop window and observes it; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopHandover => {
                 "Asks a person to take the desktop over, saying why; until they hand it back, every desktop verb refuses desktop_taken_over, and the answer after carries the takeover's record."
@@ -3966,6 +4036,21 @@ impl AgentVerb {
             }
             Self::VaultEsignCreate => {
                 "Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act."
+            }
+            Self::VaultEsignGet => {
+                "Reads one signing document as its trail folds: its status, recipients, filled fields and its hash-chained audit trail."
+            }
+            Self::VaultEsignLinksIssue => {
+                "The vault owner mints the signing links of a drafted document and receives each new one once, to deliver to its recipient."
+            }
+            Self::VaultEsignSendForSignature => {
+                "Sends a drafted signing document to its recipients through the outbound gate, as the caller; an agent sends only within its principal envelope."
+            }
+            Self::VaultEsignRemind => {
+                "Reminds the recipients whose turn it is to sign a pending document, through the outbound gate, as the caller."
+            }
+            Self::VaultEsignVoid => {
+                "Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller."
             }
             Self::VaultConversationsCreate => {
                 "Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller."

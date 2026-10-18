@@ -101,6 +101,16 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Comment edits one PowerPoint comment proposal carries: new threads,
+    /// replies and resolutions together. Past it the proposal is written
+    /// and served whole.
+    PptxCommentPatches,
+    /// Stored cells one workbook import writes into a live office body,
+    /// every sheet together. Past it the workbook is imported whole.
+    ImportXlsxLiveCells,
+    /// Bytes of the judge's rubric (the active shared `judge` skill's text)
+    /// one judgment or label re-check reads. Past it the rubric is read whole.
+    JudgeRubricBytes,
     /// Items one Dreamer-maintenance or Coach row holds: an owner policy's
     /// rules, aliases, groups, voices or evidence refs, a diagnostic's or
     /// card's evidence refs, a training offer's losses or refs. Past it the
@@ -117,7 +127,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 25] = [
+    pub const ALL: [Self; 28] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -140,6 +150,9 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::PptxCommentPatches,
+        Self::ImportXlsxLiveCells,
+        Self::JudgeRubricBytes,
         Self::MaintenanceRowItems,
         Self::MaintenanceTextBytes,
         Self::MaintenanceScanRows,
@@ -170,6 +183,9 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::PptxCommentPatches => "limits.pptx_comment_patches",
+            Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
             Self::MaintenanceRowItems => "limits.maintenance_row_items",
             Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
             Self::MaintenanceScanRows => "limits.maintenance_scan_rows",
@@ -202,6 +218,11 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::PptxCommentPatches => 10_000,
+            Self::ImportXlsxLiveCells => 200_000,
+            // The shipped rubric is about 1 KiB; the judgment's state holds
+            // at most 64 KiB in all.
+            Self::JudgeRubricBytes => 8_192,
             Self::MaintenanceRowItems => 256,
             Self::MaintenanceTextBytes => 65_536,
             Self::MaintenanceScanRows => 50_000,

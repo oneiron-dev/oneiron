@@ -4,8 +4,10 @@
 //! subject's own actor or its principal, and its filing is the subject's own
 //! yes. A board writer's roster write files an invitation instead (OF-417):
 //! the same join for a person it seats and cannot speak for, waiting on her
-//! yes. `rooms.consent` records one party's answer, from that party only, and
-//! decides again; the invitee accepts or declines there, as the subject. A Ready decision commits
+//! yes. `rooms.invite` files that invitation into an ordinary room for the
+//! vault's owner (OF-529), with the owner's admission yes. `rooms.consent`
+//! records one party's answer, from that party only, and decides again; the
+//! invitee accepts or declines there, as the subject. A Ready decision commits
 //! the participation and its receipt in one transaction; a Hold persists the
 //! intent and the parties it waits on, with no seat, launch or spend hold; a
 //! refusal is typed and final. Membership is never answered here: it is read
@@ -25,7 +27,7 @@ use super::join_receipt::{
 };
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState, payer_binds_in_txn};
 use crate::conversation::{
-    ContainerAttendee, ContainerAttendeeEvent, HistoryChoice, room_host_in_txn,
+    ContainerAttendee, ContainerAttendeeEvent, HistoryChoice, RoomHost, room_host_in_txn,
 };
 use crate::error::{ClaimError, Error, Result};
 use crate::memory::{
@@ -111,6 +113,28 @@ impl Memory<'_> {
         Ok(outcome)
     }
 
+    /// Invites a person into an ordinary room for the vault's owner (OF-529;
+    /// the ILDF2 owner notes of 09-23, "Inviting someone into a session").
+    /// Files her join with no subject's yes, as the roster's invitation does,
+    /// and the owner's admission yes, in one transaction: the join holds
+    /// until she, or her principal, answers the subject part through
+    /// `rooms.consent`, and a missing vault membership holds it for the
+    /// membership doors. Her first entry sees the room's own history rule,
+    /// from now by default, until the owner's P5 answer moves it. A
+    /// project's home room invites only through its signed roster write.
+    pub fn rooms_invite(&self, request: &JoinRequest) -> MemoryResult<JoinOutcome> {
+        let vault = self.vault();
+        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let outcome = vault.try_with_write_txn_grouped(|txn| {
+            let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+            Ok::<_, MemoryError>(owner_invite_in_txn(vault, txn, request, caller, now)?)
+        })?;
+        // FIX 1794: the invitation reaches the live window of its room.
+        #[cfg(feature = "sync")]
+        vault.refresh_room_rows_in_live_windows(&[outcome.join_ref.as_str()], &[]);
+        Ok(outcome)
+    }
+
     /// Records one party's answer to a join that waits on it, from that party
     /// only, and decides again. Membership is never answered here.
     pub fn rooms_consent(&self, answer: &ConsentAnswer) -> MemoryResult<JoinOutcome> {
@@ -185,7 +209,9 @@ pub fn rooms_join_in_txn(
 /// person its roster write newly seats and `caller` cannot speak for. It
 /// carries no subject's yes, so it holds until the person, or her principal,
 /// answers the subject part through `rooms.consent`; a no refuses it for its
-/// intent. Only the installed roster adapter files one, never the SDK.
+/// intent. The installed roster adapter files one for a project's home room,
+/// and the owner's `rooms.invite` for an ordinary room, each on its own
+/// standing: this checks only the request's shape.
 pub(super) fn rooms_invite_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -215,9 +241,58 @@ pub(super) fn rooms_invite_in_txn(
     )
 }
 
+/// [`Memory::rooms_invite`] in its write transaction: the owner's
+/// invitation and the owner's admission yes, which a replay of the same
+/// intent does not record again.
+fn owner_invite_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    request: &JoinRequest,
+    caller: WriteActor,
+    now: u64,
+) -> Result<JoinOutcome> {
+    vault.verify_write_actor_in_txn(txn, &caller)?;
+    if !matches!(request.subject, JoinSubject::Person(_))
+        || request.branch.is_some()
+        || request.paid
+        || request.spend_scope.is_some()
+    {
+        return Err(Error::InvalidConfig(
+            "an invitation is an unpaid person's join of the room itself".into(),
+        ));
+    }
+    if !invites_into_room_in_txn(vault, txn, request.room, caller)? {
+        return Err(refused(
+            "only the vault's owner invites a person into a live ordinary room; a project's home room invites through its signed roster write",
+        ));
+    }
+    let invited = rooms_invite_in_txn(vault, txn, request, caller, now)?;
+    if matches!(
+        invited.decision.consents.admission,
+        ConsentState::Granted(AdmissionConsent {
+            basis: AdmissionBasis::HostAnswer { .. },
+            ..
+        })
+    ) {
+        return Ok(invited);
+    }
+    rooms_consent_in_txn(
+        vault,
+        txn,
+        &ConsentAnswer {
+            join_ref: invited.join_ref,
+            part: ConsentPart::Admission,
+            grant: true,
+            spend_scope: None,
+        },
+        caller,
+        now,
+    )
+}
+
 /// Whether `reader` may file a roster join for `room`'s project (FIX 1163),
-/// read in `txn`; nothing is filed. Joins and invitations are filed only by
-/// the installed, signed project-roster write
+/// read in `txn`; nothing is filed. A project's joins and invitations are
+/// filed only by the installed, signed project-roster write
 /// ([`super::workplace_join::file_roster_joins_in_txn`]), so this is that
 /// write's standing, read: `room` is a project's home room, `reader`'s write
 /// standing verifies as the roster door's does, and `reader` signs the
@@ -252,8 +327,50 @@ pub(crate) fn files_roster_joins_in_txn(
     })
 }
 
-/// Whether a roster write that seats `person` files her join of `room`
-/// (FIX 1163): a PERSON with no live join of the room, as
+/// Whether `reader` may invite a person into `room` (OF-529), read in
+/// `txn`; nothing is filed. This is [`Memory::rooms_invite`]'s standing,
+/// read: `room` is a live ordinary room, since a project's home room invites
+/// only through its signed roster write ([`files_roster_joins_in_txn`]), and
+/// `reader` is one the invitation's policy lets invite there.
+pub(crate) fn invites_into_room_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    reader: WriteActor,
+) -> Result<bool> {
+    if vault.get_entity_type_in_txn(txn, &room)? != Some(crate::registry::ENTITY_TYPE_CONVERSATION)
+        || !crate::vault::live_entity_row_in_txn(&vault.store, txn, &room)?.is_live()
+        || home_room_seats_in_txn(vault, txn, room)?.is_some()
+    {
+        return Ok(false);
+    }
+    may_invite_into_room_in_txn(vault, txn, room, reader)
+}
+
+/// Who may invite a person into the ordinary room `room` (OF-529), decided
+/// here alone: the vault's owner, a Human actor the authority log binds as
+/// owner, and so the room's owner, whose invitation is the room's admission
+/// yes. The ILDF2 owner notes of 09-23 ask the owner what an invited person
+/// may see; delegated hosts and other members invite no one until a ruling
+/// widens this.
+fn may_invite_into_room_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    caller: WriteActor,
+) -> Result<bool> {
+    if caller.actor_class() != EdgeActorClass::Human
+        || vault.verify_write_actor_in_txn(txn, &caller).is_err()
+        || crate::memory::verify_owner_actor_binding_in_txn(vault, txn, caller.entity_ref())
+            .is_err()
+    {
+        return Ok(false);
+    }
+    Ok(room_host_in_txn(vault, txn, room, caller)? == Some(RoomHost::Owner))
+}
+
+/// Whether an invitation brings `person` into `room` (FIX 1163, OF-529): a
+/// PERSON with no live join of the room, as
 /// [`super::workplace_join::file_roster_joins_in_txn`] reads her standing.
 /// One already standing there needs none.
 pub(crate) fn roster_invitee_in_txn(

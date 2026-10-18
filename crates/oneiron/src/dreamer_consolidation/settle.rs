@@ -653,6 +653,8 @@ pub(super) fn restore_member_in_txn(
 }
 
 /// Whether a standing claim other than `kept` supersedes `loser` as well.
+/// Every superseder is read: past the scan's threshold row it raises one
+/// check and reads on (rule 5).
 fn superseded_elsewhere_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -660,27 +662,30 @@ fn superseded_elsewhere_in_txn(
     loser: EntityId,
 ) -> Result<bool> {
     use crate::ports::{EdgeDirection, EdgeStoreRead};
-    let mut seen = 0usize;
-    for peer in vault.port_edge_peers(
-        txn,
-        &loser,
-        EdgeDirection::In,
-        crate::edge::EdgeKind::Supersedes,
-    )? {
-        if seen >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("superseding claims"));
-        }
-        seen += 1;
+    use crate::scan_check::{EngineScan, ScanCount};
+    let kind = crate::edge::EdgeKind::Supersedes;
+    let scope = [
+        &[EdgeDirection::In as u8][..],
+        loser.as_bytes(),
+        &[kind as u8][..],
+    ]
+    .concat();
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::EdgePeerRows, &scope)?;
+    let mut standing = false;
+    for peer in vault.port_edge_peers(txn, &loser, EdgeDirection::In, kind)? {
+        count.row();
         let peer = peer?;
         if peer != kept
             && vault
                 .get_claim_in_txn(txn, &peer)?
                 .is_some_and(|body| body.lifecycle == ClaimLifecycleStatus::Active)
         {
-            return Ok(true);
+            standing = true;
+            break;
         }
     }
-    Ok(false)
+    count.finish(vault);
+    Ok(standing)
 }
 
 /// Stands a Dreamer-born MACHINE member `loser` again as the Dreamer's fresh
@@ -696,7 +701,7 @@ fn restore_dreamer_member_in_txn(
     surface: &RevertSurface,
     now: u64,
 ) -> Result<Option<EntityId>> {
-    use crate::ports::{EdgeDirection, EdgeStoreRead};
+    use crate::ports::EdgeStoreRead;
     let dreamer = crate::dreamer_runner::authority::dreamer_actor_id()?;
     let Some(body) = vault.get_claim_in_txn(txn, &loser)? else {
         return Ok(None);
@@ -707,25 +712,10 @@ fn restore_dreamer_member_in_txn(
     {
         return Ok(None);
     }
-    let mut linked = false;
-    let mut seen = 0usize;
-    for entry in vault.port_edges(
-        &*txn,
-        &kept,
-        EdgeDirection::Out,
-        Some(crate::edge::EdgeKind::Supersedes),
-        None,
-    )? {
-        if seen >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("superseded claims"));
-        }
-        seen += 1;
-        if entry?.target == loser {
-            linked = true;
-            break;
-        }
-    }
-    if !linked {
+    if vault
+        .port_edge_get(&*txn, &kept, crate::edge::EdgeKind::Supersedes, &loser)?
+        .is_none()
+    {
         return Ok(None);
     }
     let candidate = super::persistence::on_axes_of(
