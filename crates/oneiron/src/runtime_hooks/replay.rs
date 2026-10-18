@@ -5,6 +5,7 @@
 //! history is missing rather than reading newer state. A fact hook replays
 //! over its sources, a verb hook over its newest saved runs.
 
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -151,12 +152,40 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<Vec<HookReplayEntry>> {
+        self.hooks_replay_listing(runtime, verdict, binding, since, limit)
+            .map(|(entries, _)| entries)
+    }
+
+    /// [`Self::hooks_replay`], beside the rows its entries stand on: the
+    /// binding, its body's source, each entry's fact entity (a live entry's
+    /// actor too) and every row a replayed read served, as the run pinned it
+    /// and as it reads now. `None` once an entry's body asks a verdict: the
+    /// verdict's evidence is not listed.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::hooks_replay`].
+    pub fn hooks_replay_listing(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        verdict: Option<Arc<dyn HookVerdict>>,
+        binding: EntityId,
+        since: Option<FactPositionHex>,
+        limit: usize,
+    ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
         let (binding_id, row) = self
             .pack_hook_bindings()?
             .into_iter()
             .find(|(id, _)| *id == binding)
             .ok_or(Error::EntityNotFound)?;
-        self.hooks_replay_binding(runtime, verdict.as_deref(), binding_id, &row, since, limit)
+        self.hooks_replay_binding_listing(
+            runtime,
+            verdict.as_deref(),
+            binding_id,
+            &row,
+            since,
+            limit,
+        )
     }
 
     /// [`Self::hooks_replay`] over `row` as given, stored or not: a hub
@@ -171,6 +200,21 @@ impl Vault {
         since: Option<FactPositionHex>,
         limit: usize,
     ) -> Result<Vec<HookReplayEntry>> {
+        self.hooks_replay_binding_listing(runtime, verdict, binding_id, row, since, limit)
+            .map(|(entries, _)| entries)
+    }
+
+    /// [`Self::hooks_replay_binding`], listing as
+    /// [`Self::hooks_replay_listing`] does.
+    fn hooks_replay_binding_listing(
+        &self,
+        runtime: &dyn HookBodyRuntime,
+        verdict: Option<&dyn HookVerdict>,
+        binding_id: EntityId,
+        row: &PackHookBinding,
+        since: Option<FactPositionHex>,
+        limit: usize,
+    ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
         let limit = limit.clamp(1, MAX_REPLAY_ENTRIES);
         let body = self.bound_body(row);
         if row.selector.phase != HookPhase::Fact {
@@ -214,10 +258,12 @@ impl Vault {
                     .collect())
             },
         )
+        .map(|(runs, _)| runs)
     }
 
     /// Runs `walk` with `row`'s replay, on its grant's reader's Recorded
-    /// lane.
+    /// lane, beside the rows its entries stood on (`None` once one asked a
+    /// verdict).
     fn replaying<T>(
         &self,
         runtime: &dyn HookBodyRuntime,
@@ -226,7 +272,7 @@ impl Vault {
         row: &PackHookBinding,
         body: std::result::Result<String, String>,
         walk: impl FnOnce(&Replay<'_>, &ScopedRead<'_>) -> Result<T>,
-    ) -> Result<T> {
+    ) -> Result<(T, Option<Vec<EntityId>>)> {
         let grant = effective_grant(self, binding_id, row)?;
         let memory = self.memory(grant.reader, filter::edge_class(grant.reader_class));
         let lane = memory
@@ -240,8 +286,17 @@ impl Vault {
             binding: row,
             grant: &grant,
             body,
+            rows: RefCell::new(vec![binding_id, row.source]),
+            asked_verdict: Cell::new(false),
         };
-        walk(&replay, &lane)
+        let walked = walk(&replay, &lane)?;
+        let rows = (!replay.asked_verdict.get()).then(|| {
+            let mut rows = replay.rows.into_inner();
+            rows.sort_unstable();
+            rows.dedup();
+            rows
+        });
+        Ok((walked, rows))
     }
 
     /// The body `row` binds, or why it does not load.
@@ -263,9 +318,22 @@ struct Replay<'r> {
     binding: &'r PackHookBinding,
     grant: &'r HookGrant,
     body: std::result::Result<String, String>,
+    /// The rows its entries name and their bodies' reads served, so far.
+    rows: RefCell<Vec<EntityId>>,
+    /// Set once an entry's body asks a verdict, whose evidence it does not
+    /// list.
+    asked_verdict: Cell<bool>,
 }
 
 impl Replay<'_> {
+    /// Lists every row `pins` served.
+    fn served(&self, pins: &[HookReadPin]) {
+        self.rows.borrow_mut().extend(
+            pins.iter()
+                .flat_map(|pin| pin.rows.iter().map(|row| row.id)),
+        );
+    }
+
     /// The fact sources after `since`, or each from its start, until
     /// `limit` entries the hook takes.
     fn walk(
@@ -314,6 +382,7 @@ impl Replay<'_> {
                 None => return Ok(None),
             },
         };
+        self.rows.borrow_mut().push(entry.entity);
         Ok(Some(HookReplayEntry {
             case: HookReplayCase::Fact {
                 source: entry.position.source(),
@@ -328,19 +397,22 @@ impl Replay<'_> {
     /// One saved run, on what it saved.
     fn saved(&self, lane: &ScopedRead<'_>, run: &SavedRun) -> HookReplayEntry {
         match run {
-            SavedRun::Fact(_, memo) => HookReplayEntry {
-                case: HookReplayCase::Fact {
-                    source: memo.source,
-                    position: FactPositionHex(format!(
-                        "{}:{}",
-                        memo.source.as_str(),
-                        memo.position
-                    )),
-                    kind: memo.fact,
-                    entity: memo.entity,
-                },
-                result: self.from_memo(lane, memo),
-            },
+            SavedRun::Fact(_, memo) => {
+                self.rows.borrow_mut().push(memo.entity);
+                HookReplayEntry {
+                    case: HookReplayCase::Fact {
+                        source: memo.source,
+                        position: FactPositionHex(format!(
+                            "{}:{}",
+                            memo.source.as_str(),
+                            memo.position
+                        )),
+                        kind: memo.fact,
+                        entity: memo.entity,
+                    },
+                    result: self.from_memo(lane, memo),
+                }
+            }
             SavedRun::Verb(key, saved) => HookReplayEntry {
                 case: HookReplayCase::Verb {
                     run_key: hex_lower(key),
@@ -372,10 +444,15 @@ impl Replay<'_> {
                 input,
                 self.binding.selector.budget_ms,
                 &mut |request: &str| reads.answer(lane, self.grant, request),
-                &mut |request: &str| verdicts.answer(request),
+                &mut |request: &str| {
+                    self.asked_verdict.set(true);
+                    verdicts.answer(request)
+                },
             ),
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
+        self.served(&memo.reads);
+        self.served(&reads.scratch);
         if let Some(reason) = reads.missing.or(verdicts.missing) {
             return HookReplayResult::MissingHistory { reason };
         }
@@ -405,6 +482,8 @@ impl Replay<'_> {
             ),
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
+        self.served(&saved.reads);
+        self.served(&reads.scratch);
         if let Some(reason) = reads.missing {
             return HookReplayResult::MissingHistory { reason };
         }
@@ -441,6 +520,7 @@ impl Replay<'_> {
                     .to_owned(),
             }));
         }
+        self.rows.borrow_mut().push(entry.actor);
         let now = self
             .vault
             .store
@@ -462,6 +542,7 @@ impl Replay<'_> {
             Ok(body) => {
                 let mut answer = |request: &str| read::answer(lane, self.grant, request, &mut pins);
                 let mut verdict = |request: &str| {
+                    self.asked_verdict.set(true);
                     ask_verdict(self.binding, self.grant, self.verdict, request, deadline)
                 };
                 self.runtime
@@ -469,6 +550,7 @@ impl Replay<'_> {
             }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
+        self.served(&pins);
         Ok(Some(ran(
             judge(self.binding, result),
             None,

@@ -147,6 +147,11 @@ both bindings and their export-census tests in one change.
 - `vault.embedding_spaces.probes.list`
 - `vault.embedding_spaces.probes.put`
 - `vault.embedding_spaces.probes.delete`
+- `vault.gate.policy.get`
+- `vault.gate.policy.put`
+- `vault.gate.policy.propose`
+- `vault.gate.checker.get`
+- `vault.gate.checker.set`
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`

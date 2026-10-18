@@ -757,11 +757,24 @@ impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
 /// `ai.verdict` on a fact no run pinned; a pinned run hears its own again.
 pub fn replay_hooks_as_owner(
     vault: &crate::Vault,
-    _owner: &crate::consent::AuthenticatedOwner,
+    owner: &crate::consent::AuthenticatedOwner,
     runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
     verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
     input: &HooksReplayRequest,
 ) -> MemoryResult<Vec<HookReplayRow>> {
+    replay_hooks_as_owner_listing(vault, owner, runtime, verdict, input).map(|(rows, _)| rows)
+}
+
+/// [`replay_hooks_as_owner`], beside the rows its entries stand on
+/// ([`crate::Vault::hooks_replay_listing`]); `None` once an entry asked a
+/// verdict.
+pub fn replay_hooks_as_owner_listing(
+    vault: &crate::Vault,
+    _owner: &crate::consent::AuthenticatedOwner,
+    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
+    verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
+    input: &HooksReplayRequest,
+) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<crate::EntityId>>)> {
     let limit = input.limit()?;
     let binding = crate::EntityId::from_hex(input.binding.trim())
         .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
@@ -769,8 +782,8 @@ pub fn replay_hooks_as_owner(
         .since
         .as_ref()
         .map(|position| crate::runtime_hooks::FactPositionHex(position.trim().to_owned()));
-    let entries = vault
-        .hooks_replay(runtime, verdict, binding, since, limit)
+    let (entries, listed) = vault
+        .hooks_replay_listing(runtime, verdict, binding, since, limit)
         .map_err(|error| match error {
             crate::Error::EntityNotFound => {
                 MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
@@ -778,7 +791,10 @@ pub fn replay_hooks_as_owner(
             crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
             other => other.into(),
         })?;
-    Ok(entries.into_iter().map(HookReplayRow::from).collect())
+    Ok((
+        entries.into_iter().map(HookReplayRow::from).collect(),
+        listed,
+    ))
 }
 
 /// Where a credential value goes during a pack's setup: the owner secrets

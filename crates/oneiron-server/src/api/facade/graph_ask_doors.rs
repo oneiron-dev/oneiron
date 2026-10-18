@@ -10,6 +10,13 @@
 //! reads every unit under the credential's own lane, so a narrowed slip asks
 //! inside its narrowing. The standing-question rows store a bare principal
 //! the pump answers for later, so they refuse a narrowed record scope.
+//!
+//! Beside its answer, each door lists the rows that answer names
+//! (`host_door_lists`): an answer's claim, its unit, every source its
+//! decision names as evidence and the principal it was asked for; a
+//! question's principal, units and artifacts. A standing question, its head,
+//! its backfills and its artifact asks live in side tables, which hold no
+//! row.
 use std::sync::Arc;
 
 use oneiron::llm::decision::questions::{
@@ -18,7 +25,7 @@ use oneiron::llm::decision::questions::{
     refresh_question_with, run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type,
     standing_ask_route,
 };
-use oneiron::llm::decision::{DecisionDial, DecisionRung};
+use oneiron::llm::decision::{DecisionDial, DecisionRung, TypedDecision};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionAnswersRequest,
@@ -27,7 +34,7 @@ use oneiron::receipt::{
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
-use super::host_doors::internal;
+use super::host_doors::{Listed, hex_rows, internal, naming};
 use crate::auth::CoreAuth;
 use crate::decision_graph::LadderGraphAnswerer;
 use crate::server::SyncServer;
@@ -42,7 +49,19 @@ use crate::server::SyncServer;
 /// answer lands as a proposed claim private to the caller, written as the
 /// caller; a unit that fails stops the ask and names itself beside the
 /// answers already committed. The ladder runs on a blocking thread.
+/// Beside it, the rows its outcome names ([`outcome_rows`]).
 pub(crate) async fn vault_graph_ask(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GraphAskRequest,
+) -> Listed<GraphAskOutcome> {
+    naming(
+        vault_graph_ask_answer(server, auth, input).await,
+        outcome_rows,
+    )
+}
+
+async fn vault_graph_ask_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: GraphAskRequest,
@@ -83,7 +102,19 @@ pub(crate) async fn vault_graph_ask(
 /// `vault.questions.create`: a standing question for the caller, at version
 /// 1, unpaused. Its dial must sit inside the host's; the pump answers it as
 /// the caller from then on.
+/// Beside it, the rows the question names ([`question_rows`]).
 pub(crate) async fn vault_questions_create(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionCreateRequest,
+) -> Listed<QuestionRecord> {
+    naming(
+        vault_questions_create_answer(server, auth, input).await,
+        question_rows,
+    )
+}
+
+async fn vault_questions_create_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionCreateRequest,
@@ -108,7 +139,19 @@ pub(crate) async fn vault_questions_create(
 /// `vault.questions.edit`: the caller's standing question's next version,
 /// from a whole replacement definition over `expected_version`. Its dial
 /// must sit inside the host's.
+/// Beside it, the rows the question names ([`question_rows`]).
 pub(crate) async fn vault_questions_edit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionEditRequest,
+) -> Listed<QuestionRecord> {
+    naming(
+        vault_questions_edit_answer(server, auth, input).await,
+        question_rows,
+    )
+}
+
+async fn vault_questions_edit_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionEditRequest,
@@ -134,8 +177,19 @@ pub(crate) async fn vault_questions_edit(
 
 /// `vault.questions.pause`: pauses the caller's standing question, or
 /// resumes it with `paused: false`. Another principal's question is not
-/// found.
+/// found. Beside it, no row: the question's head lives in a side table.
 pub(crate) async fn vault_questions_pause(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionPauseRequest,
+) -> Listed<QuestionPaused> {
+    naming(
+        vault_questions_pause_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_pause_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionPauseRequest,
@@ -157,8 +211,20 @@ pub(crate) async fn vault_questions_pause(
 /// `vault.questions.backfill`: schedules the caller's standing question's
 /// backfill over `expected_version`, due at `at` or now. The pump runs it
 /// as it runs the question's scheduled refresh: once, over each covered
-/// unit that version has not answered.
+/// unit that version has not answered. Beside it, no row: the backfill
+/// lives in a side table.
 pub(crate) async fn vault_questions_backfill(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionBackfillRequest,
+) -> Listed<ScheduledBackfill> {
+    naming(
+        vault_questions_backfill_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_backfill_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionBackfillRequest,
@@ -183,7 +249,20 @@ pub(crate) async fn vault_questions_backfill(
 /// `vault.questions.read`: the caller's standing question at its current
 /// version or a past one; none when no such question or version is the
 /// caller's.
+/// Beside it, the rows the question names ([`question_rows`]), none when
+/// it found none.
 pub(crate) async fn vault_questions_read(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionReadRequest,
+) -> Listed<Option<QuestionRecord>> {
+    naming(
+        vault_questions_read_answer(server, auth, input).await,
+        |record| record.as_ref().map(question_rows).unwrap_or_default(),
+    )
+}
+
+async fn vault_questions_read_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionReadRequest,
@@ -207,7 +286,20 @@ pub(crate) async fn vault_questions_read(
 /// question, across its versions, tagged by kind: each graph answer receipt,
 /// then each artifact the question asked at its last ask, with where its
 /// proposal stands ([`QuestionAnswer::union`]).
+/// Beside it, the rows each answer names ([`answer_rows`], and an
+/// artifact ask's artifact and proposal).
 pub(crate) async fn vault_questions_answers(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionAnswersRequest,
+) -> Listed<Vec<QuestionAnswer>> {
+    naming(
+        vault_questions_answers_answer(server, auth, input).await,
+        |answers| answers.iter().flat_map(question_answer_rows).collect(),
+    )
+}
+
+async fn vault_questions_answers_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionAnswersRequest,
@@ -232,7 +324,19 @@ pub(crate) async fn vault_questions_answers(
 /// answers as the question's principal; another principal's question is not
 /// found, and a paused one answers nothing. The ladder runs on a blocking
 /// thread.
+/// Beside it, the rows each answer names ([`answer_rows`]).
 pub(crate) async fn vault_questions_refresh(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionRefreshRequest,
+) -> Listed<Vec<AnswerRecord>> {
+    naming(
+        vault_questions_refresh_answer(server, auth, input).await,
+        |answers| answers.iter().flat_map(answer_rows).collect(),
+    )
+}
+
+async fn vault_questions_refresh_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: QuestionRefreshRequest,
@@ -264,6 +368,85 @@ pub(crate) async fn vault_questions_refresh(
     })
     .await
     .map_err(|_| internal(VERB))?
+}
+
+/// The rows one answer names: its claim, its unit, every source its
+/// decision names as evidence (the unit and the neighbors it was shown, at
+/// the versions read, and each image or clip's source) and the principal it
+/// was asked for.
+fn answer_rows(answer: &AnswerRecord) -> Vec<EntityId> {
+    decision_rows(&answer.decision)
+        .chain([answer.claim, answer.unit])
+        .collect()
+}
+
+/// The rows a decision names: its evidence and its principal.
+fn decision_rows(decision: &TypedDecision) -> impl Iterator<Item = EntityId> + '_ {
+    decision
+        .evidence
+        .iter()
+        .copied()
+        .chain(std::iter::once(decision.receipt.principal))
+}
+
+/// The rows a graph ask's outcome names: each answer's ([`answer_rows`]),
+/// each unit that abstained or failed, and each declined unit with its
+/// decision's evidence. A unit the caller cannot read is in none of them.
+fn outcome_rows(outcome: &GraphAskOutcome) -> Vec<EntityId> {
+    match outcome {
+        GraphAskOutcome::Done {
+            answers,
+            abstained,
+            declined,
+        } => answers
+            .iter()
+            .flat_map(answer_rows)
+            .chain(abstained.iter().copied())
+            .chain(declined.iter().flat_map(|declined| {
+                decision_rows(&declined.decision).chain(std::iter::once(declined.unit))
+            }))
+            .collect(),
+        GraphAskOutcome::Failed {
+            failed_unit,
+            answers,
+            abstained,
+            ..
+        } => answers
+            .iter()
+            .flat_map(answer_rows)
+            .chain(abstained.iter().copied())
+            .chain(failed_unit.iter().copied())
+            .collect(),
+    }
+}
+
+/// The rows a standing question names: its principal, its units and the
+/// artifacts it asks.
+fn question_rows(record: &QuestionRecord) -> Vec<EntityId> {
+    std::iter::once(record.principal)
+        .chain(record.definition.units.iter().copied())
+        .chain(
+            record
+                .definition
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.artifact),
+        )
+        .collect()
+}
+
+/// The rows one of a question's answers names: a graph answer's
+/// ([`answer_rows`]), or an artifact ask's artifact and the proposal its
+/// answers were held under.
+fn question_answer_rows(answer: &QuestionAnswer) -> Vec<EntityId> {
+    match answer {
+        QuestionAnswer::Graph(answer) => answer_rows(answer),
+        QuestionAnswer::Artifact(ask) => {
+            let mut rows = hex_rows(ask.proposal_ref.iter());
+            rows.push(ask.artifact);
+            rows
+        }
+    }
 }
 
 /// Whom `verb` is asked for, by `ai.verdict`'s rule: the slip's principal

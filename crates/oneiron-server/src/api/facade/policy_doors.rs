@@ -7,6 +7,11 @@
 //! reading under its read key. The wake policy also takes the owner's proof,
 //! as `/v1/owner` takes it; the inference defaults leave the caller's Auto
 //! ceiling to the table.
+//!
+//! Each lists no row beside its outcome (`host_door_lists`): the wake policy
+//! and the inference defaults live in side tables, an action's replay record
+//! in the code-run table, and its text argument names no target the table
+//! would read.
 use std::sync::Arc;
 
 use oneiron::WriteActor;
@@ -18,20 +23,34 @@ use oneiron::policy_setting_doors::{
 use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::FacadeApiError;
-use super::host_doors::internal;
+use super::host_doors::{Listed, internal};
 use crate::actions::SharedActionExecutor;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// Runs `call` from the app's table as the credential's principal, under
-/// the owner's proof when `needs_owner`.
+/// the owner's proof when `needs_owner`. Beside its outcome, no row.
 async fn run_action(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,
-    call: AgentActionCall,
+    call: MemoryResult<AgentActionCall>,
+    needs_owner: bool,
+) -> Listed<PolicyActionOutcome> {
+    (
+        run_action_answer(server, auth, verb, call, needs_owner).await,
+        Vec::new(),
+    )
+}
+
+async fn run_action_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    call: MemoryResult<AgentActionCall>,
     needs_owner: bool,
 ) -> MemoryResult<PolicyActionOutcome> {
+    let call = call?;
     let (actor, class) = super::facade_actor(auth).map_err(FacadeApiError::into_memory_error)?;
     let unbound = || {
         MemoryError::new(
@@ -86,8 +105,8 @@ pub(crate) async fn vault_settings_wake_policy_set(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: WakePolicySetRequest,
-) -> MemoryResult<PolicyActionOutcome> {
-    let call = input.into_action()?;
+) -> Listed<PolicyActionOutcome> {
+    let call = input.into_action().map_err(MemoryError::from);
     run_action(server, auth, "vault.settings.wake_policy.set", call, true).await
 }
 
@@ -97,8 +116,8 @@ pub(crate) async fn vault_settings_inference_defaults(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
-) -> MemoryResult<PolicyActionOutcome> {
-    let call = policy_setting_doors::inference_defaults_read_action()?;
+) -> Listed<PolicyActionOutcome> {
+    let call = policy_setting_doors::inference_defaults_read_action().map_err(MemoryError::from);
     run_action(
         server,
         auth,
@@ -115,8 +134,8 @@ pub(crate) async fn vault_settings_inference_defaults_replace(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: InferenceDefaultsReplaceRequest,
-) -> MemoryResult<PolicyActionOutcome> {
-    let call = input.into_action()?;
+) -> Listed<PolicyActionOutcome> {
+    let call = input.into_action().map_err(MemoryError::from);
     run_action(
         server,
         auth,

@@ -432,6 +432,7 @@
       "output": "crate::task_verb::sdk::TaskWaveReceipt",
       "call": "crate::task_verb::sdk::host_only(memory, \"tasks.wave\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -786,6 +787,7 @@
       "output": "Option<crate::task_verb::sdk::ExplainMemoryReply>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.memory\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -797,6 +799,7 @@
       "output": "Option<crate::task_verb::sdk::ExplainGateReply>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.explain.gate\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1660,6 +1663,7 @@
       "output": "crate::autoreason_campaign::CampaignSplitReport",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.research.evaluate_split\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1981,6 +1985,7 @@
       "output": "crate::task_verb::sdk::EmbeddingSpaceMoveChecked",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.embedding_spaces.move_check\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2242,6 +2247,7 @@
       "output": "crate::policy_setting_doors::PolicyActionOutcome",
       "call": "crate::policy_setting_doors::wake_policy_set_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2253,6 +2259,7 @@
       "output": "crate::policy_setting_doors::PolicyActionOutcome",
       "call": "crate::policy_setting_doors::inference_defaults_embedded(memory)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "mcp_fields": {},
       "admission": {"unrestricted_record_scope": true},
@@ -2265,6 +2272,7 @@
       "output": "crate::policy_setting_doors::PolicyActionOutcome",
       "call": "crate::policy_setting_doors::inference_defaults_replace_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2447,6 +2455,7 @@
       "output": "Vec<crate::task_verb::sdk::HookReplayRow>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true,
@@ -3506,6 +3515,7 @@
       "output": "crate::reaction::MessageReactionReceipt",
       "call": "memory.messages_react(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"spec": "$"},
@@ -3694,6 +3704,7 @@
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.image\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3707,6 +3718,7 @@
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.speech\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3720,6 +3732,7 @@
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.transcribe\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3733,6 +3746,7 @@
       "output": "crate::task_verb::sdk::AiAnswer",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.embed\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3746,6 +3760,7 @@
       "output": "crate::task_verb::sdk::AiVideoTicket",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3759,6 +3774,7 @@
       "output": "crate::task_verb::sdk::AiVideoJob",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.poll\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -3772,6 +3788,7 @@
       "output": "crate::task_verb::sdk::AiVideoCancelled",
       "call": "crate::task_verb::sdk::host_only(memory, \"ai.video.cancel\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -3799,6 +3816,7 @@
       "output": "crate::receipt::GraphAskOutcome",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "proposes": true,
       "admission": {
@@ -3812,6 +3830,7 @@
       "output": "crate::llm::decision::questions::QuestionRecord",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.create\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3822,6 +3841,7 @@
       "output": "crate::llm::decision::questions::QuestionRecord",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.edit\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3832,6 +3852,7 @@
       "output": "crate::receipt::QuestionPaused",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.pause\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3842,6 +3863,7 @@
       "output": "crate::llm::decision::questions::ScheduledBackfill",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.backfill\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3852,6 +3874,7 @@
       "output": "Option<crate::llm::decision::questions::QuestionRecord>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.read\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3862,6 +3885,7 @@
       "output": "Vec<crate::receipt::QuestionAnswer>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.answers\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -3873,6 +3897,7 @@
       "output": "Vec<crate::llm::decision::questions::AnswerRecord>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.refresh\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -4902,6 +4927,7 @@
       "output": "crate::core_write::CoreEntityWriteReceipt",
       "call": "memory.conversations_turns_create(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"spec": "$"},
@@ -4929,6 +4955,7 @@
       "output": "crate::core_write::CoreBatchWriteReceipt",
       "call": "memory.core_batch_write(&input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "mcp_fields": {"spec": "$"},

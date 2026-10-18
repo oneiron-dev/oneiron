@@ -4,7 +4,8 @@
 //! MCP dispatcher and the REST routes run one write each. A TURN's write
 //! lands its turn on the vault once, here, so each row sets no
 //! `lands_turn`; a batch commits at the grade of the credential that sent
-//! it.
+//! it. Beside each receipt, its door lists the rows the receipt names
+//! (`host_door_lists`).
 use std::sync::Arc;
 
 use oneiron::WriteActor;
@@ -15,17 +16,22 @@ use oneiron::core_write::{
 use oneiron::dreamer_wake::WakeTurnSubject;
 use oneiron::memory::{MemoryResult, ProducerRows};
 
-use super::host_doors::{Listed, internal, refused};
+use super::host_doors::{Listed, hex_rows, internal, naming, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// `vault.conversations.turns.create`: one TURN under a conversation.
+/// Beside it, the TURN it wrote and the conversation it landed under,
+/// whose type the write read to land it.
 pub(crate) async fn vault_conversations_turns_create(
     server: &Arc<SyncServer>,
     _auth: &CoreAuth,
     input: ConversationTurnCreateInput,
-) -> MemoryResult<CoreEntityWriteReceipt> {
-    write_core_turn(server, input).await
+) -> Listed<CoreEntityWriteReceipt> {
+    let conversation = input.conversation.clone();
+    naming(write_core_turn(server, input).await, |receipt| {
+        hex_rows([receipt.id.as_str(), conversation.as_str()])
+    })
 }
 
 /// One TURN under a conversation, then its landing on the vault. Every
@@ -106,13 +112,16 @@ fn write_dag_record_listing(
     Ok(receipt)
 }
 
-/// `vault.batch`: an atomic core entity batch.
+/// `vault.batch`: an atomic core entity batch. Beside it, each entity it
+/// put: a put reads no row.
 pub(crate) async fn vault_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CoreBatchWriteInput,
-) -> MemoryResult<CoreBatchWriteReceipt> {
-    write_core_batch(server, auth, input).await
+) -> Listed<CoreBatchWriteReceipt> {
+    naming(write_core_batch(server, auth, input).await, |receipt| {
+        hex_rows(receipt.entities.iter().map(|entity| entity.id.as_str()))
+    })
 }
 
 /// One atomic batch, committed at owner grade only when `auth` carries it.

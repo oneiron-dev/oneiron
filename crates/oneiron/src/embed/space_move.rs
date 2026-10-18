@@ -278,6 +278,19 @@ fn reciprocal_rank(probe: &SpaceProbe, hits: &[ScoredEntity]) -> f32 {
         .map_or(0.0, |rank| 1.0 / (rank as f32 + 1.0))
 }
 
+/// The hits [`reciprocal_rank`] stands on: each up to and including `probe`'s first target,
+/// every one when none is there.
+fn ranked_rows<'a>(
+    probe: &SpaceProbe,
+    hits: &'a [ScoredEntity],
+) -> impl Iterator<Item = EntityId> + 'a {
+    let end = hits
+        .iter()
+        .position(|hit| probe.targets.contains(&hit.id))
+        .map_or(hits.len(), |rank| rank + 1);
+    hits[..end].iter().map(|hit| hit.id)
+}
+
 /// Two-sided 95% Student t quantiles for 1..=30 degrees of freedom; 1.96 past them.
 const T_975: [f64; 30] = [
     12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160,
@@ -573,6 +586,23 @@ impl Vault {
         candidate: &str,
         encoder: &dyn SpaceProbeEncoder,
     ) -> Result<SpaceMoveOutcome> {
+        self.check_space_move_listing(candidate, encoder)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// [`Self::check_space_move`], beside the rows its reading stands on: each live probe's
+    /// family and targets, and every hit up to and including the first target in each run (the
+    /// documents a reciprocal rank stands on). `None` while the candidate is still filling: its
+    /// backlog scan lists no row.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::check_space_move`].
+    pub fn check_space_move_listing(
+        &self,
+        candidate: &str,
+        encoder: &dyn SpaceProbeEncoder,
+    ) -> Result<(SpaceMoveOutcome, Option<Vec<EntityId>>)> {
         let (moving, candidate_space, incumbent_space, probes) = {
             let rtxn = self.store.env.read_txn()?;
             let moving = open_move_in_txn(&self.store, &rtxn, candidate)?;
@@ -588,7 +618,7 @@ impl Vault {
                 .media_backlog_in_txn(&rtxn, &candidate_space, &moving.kinds, 1, &mut report)?
                 .is_empty()
             {
-                return Ok(SpaceMoveOutcome::Filling);
+                return Ok((SpaceMoveOutcome::Filling, None));
             }
             let incumbent_space = match &moving.incumbent {
                 SpaceRef::TextIndex => self.text_index_space(),
@@ -617,6 +647,10 @@ impl Vault {
             }
             (moving, candidate_space, incumbent_space, probes)
         };
+        let mut rows: Vec<EntityId> = probes
+            .iter()
+            .flat_map(|probe| std::iter::once(probe.family).chain(probe.targets.iter().copied()))
+            .collect();
 
         // A probe is a text query, so it enters a space only through a text tower; a space
         // without one runs no probe and its kinds read unknown.
@@ -664,15 +698,18 @@ impl Vault {
             };
             let mut runs = Vec::with_capacity(encoded.len());
             for (probe, first, retest, next) in &encoded {
+                let incumbent_hits = search(&moving.incumbent, probe.kind, first)?;
+                let retest_hits = search(&moving.incumbent, probe.kind, retest)?;
+                let candidate_hits = search(&candidate_ref, probe.kind, next)?;
+                for hits in [&incumbent_hits, &retest_hits, &candidate_hits] {
+                    rows.extend(ranked_rows(probe, hits));
+                }
                 runs.push(ProbeRun {
                     kind: probe.kind,
                     family: probe.family,
-                    incumbent: reciprocal_rank(
-                        probe,
-                        &search(&moving.incumbent, probe.kind, first)?,
-                    ),
-                    retest: reciprocal_rank(probe, &search(&moving.incumbent, probe.kind, retest)?),
-                    candidate: reciprocal_rank(probe, &search(&candidate_ref, probe.kind, next)?),
+                    incumbent: reciprocal_rank(probe, &incumbent_hits),
+                    retest: reciprocal_rank(probe, &retest_hits),
+                    candidate: reciprocal_rank(probe, &candidate_hits),
                 });
             }
             runs
@@ -698,7 +735,12 @@ impl Vault {
             kinds,
             verdict,
         };
-        self.conclude_space_move(candidate, Some(check), false)
+        rows.sort_unstable();
+        rows.dedup();
+        Ok((
+            self.conclude_space_move(candidate, Some(check), false)?,
+            Some(rows),
+        ))
     }
 
     /// The owner's yes to an open move whose check did not read not worse: once the candidate
