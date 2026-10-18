@@ -261,6 +261,7 @@ impl SyncConnection {
                         let manager = std::sync::Arc::clone(&self.manager);
                         let config = self.client_config();
                         let events = event_tx.clone();
+                        let directives = std::sync::Arc::clone(&self.directive_wake);
                         sealed_task = Some(tokio::spawn(async move {
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
@@ -285,6 +286,9 @@ impl SyncConnection {
                                     "Authority catch-up failed: {error}"
                                 )));
                             }
+                            // The owner's residence directives naming this
+                            // machine run once its history is in (OF-534).
+                            directives.notify_one();
                             // A machine those rows made mine gets each portable
                             // credential's value sealed to it again (OF-422).
                             let vault = std::sync::Arc::clone(manager.vault());
