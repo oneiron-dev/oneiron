@@ -66,9 +66,8 @@ pub use record_ref::{
 };
 mod selection;
 pub use selection::{
-    LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest,
-    LensSelectedSpan, LensSelection, LensSelectionRange, LensSelectionResolveRequest,
-    LensSelectionResolved,
+    LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan,
+    LensSelection, LensSelectionRange, LensSelectionResolveRequest, LensSelectionResolved,
 };
 mod self_ui;
 mod validate;
