@@ -126,6 +126,24 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/coach/training-offers/authorize",
+        summary: "The owner's yes on a prepared run after their train approval, at the exact spec they saw.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-offers/prepare",
+        summary: "The owner's run for a Train offer's seat and base on a trainer connector this host names; nothing runs.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-offers/training",
+        summary: "A Train offer's handed-off run: its state, why it waits, the owner's authorization, its held-out summary and the plan the recipe suggests.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/coach/training-offers/undo",
         summary: "The owner's undo of the stock switch an approved offer bound.",
         row: None,

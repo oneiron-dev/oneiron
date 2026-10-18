@@ -11,7 +11,8 @@
 //! judge that did not produce the result ([`seal_checks`]). Type-tree upkeep
 //! names each new split type on the Coach's seat ([`type_tree_upkeep`]).
 //! The research job, queued each round while a campaign has host work,
-//! advances its autoresearch continuations (FIX 886).
+//! advances its autoresearch continuations (FIX 886). An owner-authorized
+//! training run trains on its own thread, then scores ([`super::training_pack`]).
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +27,7 @@ use oneiron::dreamer_runner::maintenance::coach::{
     COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
     COACH_RESEARCH_RUN_FACET, COACH_SEAL_CHECKS_FACET, COACH_SKILL_DISCOVERY_FACET,
     COACH_SKILL_DISTILL_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
-    COACH_TYPE_TREE_UPKEEP_FACET, PersonThresholdPolicy,
+    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, PersonThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
@@ -158,6 +159,7 @@ fn run_one(
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
         COACH_OFFER_CHECK_FACET => super::training_offer::check(server, admitted, now),
+        COACH_TRAINING_RUN_FACET => super::training_pack::run(server, admitted, now),
         COACH_SEAL_CHECKS_FACET => seal_checks::run(server, admitted, now),
         COACH_ATTRIBUTION_AUDITS_FACET => attribution_audits::run(server, admitted, now),
         COACH_JUDGE_LABEL_RECHECKS_FACET => judge_label_rechecks::run(server, admitted, now),

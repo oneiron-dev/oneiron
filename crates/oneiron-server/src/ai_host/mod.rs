@@ -60,6 +60,7 @@ pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
 mod training_offer;
+pub(crate) mod training_pack;
 mod turn_actions;
 mod turns;
 pub(crate) mod waves;

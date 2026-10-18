@@ -61,6 +61,10 @@ pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
 /// The host reads the receipts since and records what they showed through
 /// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
 pub const COACH_OFFER_CHECK_FACET: &str = "coach.offer_check";
+/// One owner-authorized training run, queued for the host when the owner
+/// authorizes it; the host trains, then evaluates, or records why it cannot.
+/// Input: `{run: <32 hex>, spec: <64 hex>}`.
+pub const COACH_TRAINING_RUN_FACET: &str = "coach.training_run";
 /// The nightly offer pass: each pending offer reaches every owner's inbox
 /// once, and each offer whose check date came queues its promise check.
 pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
@@ -517,6 +521,17 @@ impl Vault {
         crate::skill_optimize::record_offer_check(self, &offer, input, now)
     }
 
+    /// The run a leased `coach.training_run` attempt names, while it waits on
+    /// the host at the spec its owner authorized; `None` once it moved on.
+    /// The host trains or scores it under this lease.
+    pub fn run_coach_training_run(
+        &self,
+        attempt: &DreamerAdmittedAttempt,
+    ) -> Result<Option<crate::training_pack::TrainingRun>> {
+        self.require_coach_attempt(attempt, COACH_TRAINING_RUN_FACET)?;
+        self.queued_training_run(&attempt.status.payload.input)
+    }
+
     /// The leased attempt is this facet's, stamped for the Coach.
     pub(super) fn require_coach_attempt(
         &self,
@@ -616,6 +631,30 @@ fn offer_check_target(input: &Value) -> Result<EntityId> {
     }
 }
 
+/// Queues one owner-authorized training run for the host, in the writer
+/// that authorized it; the dedupe key keeps one queued job per run.
+pub(crate) fn enqueue_coach_training_run_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    run: &EntityId,
+    spec_blake3: &[u8; 32],
+    now: u64,
+) -> Result<()> {
+    DreamerRunnerStore::new(vault).enqueue_kind_in_txn(
+        txn,
+        COACH_HOST_QUEUE_KIND,
+        DreamerAttemptPayload {
+            attempt_type: COACH_TRAINING_RUN_FACET.into(),
+            input: crate::training_pack::training_run_job_input(run, spec_blake3),
+            parent_attempt: None,
+        },
+        Some(format!("{COACH_TRAINING_RUN_FACET}:{}", run.to_hex())),
+        None,
+        now,
+    )?;
+    Ok(())
+}
+
 /// One pending offer in every owner's inbox, keyed by offer and owner: a
 /// replay finds the row, so an owner's seen and acked marks stay theirs.
 fn notify_offer_in_txn(
@@ -654,6 +693,7 @@ fn notify_offer_in_txn(
 /// A promise is checked only after a yes: a declined, postponed or
 /// unanswered offer kept the baseline and promised nothing.
 pub(super) fn run_training_offers(vault: &Vault, now: u64) -> Result<()> {
+    vault.requeue_authorized_training_runs(now)?;
     let pending = crate::skill_optimize::pending_training_offers(vault)?;
     let mut due = Vec::new();
     for (offer, answer) in crate::skill_optimize::training_offers(vault, None)? {
