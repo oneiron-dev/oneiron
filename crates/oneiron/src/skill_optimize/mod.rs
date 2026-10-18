@@ -273,7 +273,7 @@ pub(crate) use self::job::{
 };
 
 use self::dials::invalid;
-use self::tier::tier_verdict_in_txn;
+pub(crate) use self::tier::tier_verdict_in_txn;
 
 #[cfg(test)]
 mod tests;

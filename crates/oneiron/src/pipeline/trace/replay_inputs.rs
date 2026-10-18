@@ -172,6 +172,7 @@ pub(in crate::pipeline) fn capture_replay_inputs(
     inputs.config["skill_reliability"] = json!(&builder.skill_reliability_query);
     inputs.config["turn_fold"] = json!(builder.turn_fold.as_str());
     inputs.config["affect_retrieval"] = affect_retrieval;
+    inputs.config["claim_aging_profiles"] = json!(builder.claim_aging_profiles);
     inputs.config["media_search"] = json!(
         builder
             .media_search

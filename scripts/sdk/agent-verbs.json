@@ -994,6 +994,36 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.retrieval.aging.get",
+      "description": "The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::ClaimAgingProfilesView",
+      "call": "crate::policy_manifest_doors::claim_aging_profiles_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.aging.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.retrieval.aging.configure",
+      "description": "The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies.",
+      "input": "crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest",
+      "output": "crate::policy_manifest_doors::ClaimAgingProfilesReceipt",
+      "call": "crate::policy_manifest_doors::configure_claim_aging_profiles_as_owner(memory.vault(), &memory.embedded_owner(\"vault.retrieval.aging.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.retrieval.weights.get",
       "description": "The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash.",
       "input": "EmptyRequest",
@@ -2080,6 +2110,66 @@
       "input": "HubSkillPermissionRequest",
       "output": "crate::task_verb::sdk::HubConsentReceipt",
       "call": "crate::task_verb::sdk::hub_skill_permissions_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.permissions.approve\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.start",
+      "description": "The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued.",
+      "input": "SkillOptimizeStartRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeStartReceipt",
+      "call": "crate::task_verb::sdk::skill_optimize_start_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.start\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.result",
+      "description": "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal.",
+      "input": "SkillOptimizeResultRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_result_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.result\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.governance.get",
+      "description": "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::SkillGovernanceView",
+      "call": "crate::task_verb::sdk::skill_governance_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.governance.set",
+      "description": "The owner marks or clears one skill governance tier; the mark changes no instruction content or version.",
+      "input": "SkillGovernanceSetRequest",
+      "output": "crate::task_verb::sdk::SkillGovernanceView",
+      "call": "crate::task_verb::sdk::skill_governance_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.set\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Write",
@@ -5672,6 +5762,126 @@
       "input": "crate::memory::origin_doors::CheckoutDoorBindRequest",
       "output": "crate::memory::origin_doors::CheckoutDoorBinding",
       "call": "memory.checkout_door_bind_as(&memory.embedded_owner(\"vault.code.checkout.bind\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.claim",
+      "description": "Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence.",
+      "input": "crate::memory::checkout_doors::CheckoutClaimInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.claim\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.get",
+      "description": "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it.",
+      "input": "crate::memory::checkout_doors::CheckoutGetInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.get\", &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.renew",
+      "description": "Renew the caller's still-live checkout under its exact holder and epoch fence.",
+      "input": "crate::memory::checkout_doors::CheckoutRenewInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.renew\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.reclaim",
+      "description": "Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch.",
+      "input": "crate::memory::checkout_doors::CheckoutReclaimInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.reclaim\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.takeover",
+      "description": "Explicitly take over a checkout as its task owner, including effect work, at the named epoch.",
+      "input": "crate::memory::checkout_doors::CheckoutTakeoverInput",
+      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.takeover\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.publish",
+      "description": "Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head.",
+      "input": "crate::memory::checkout_doors::CheckoutPublishInput",
+      "output": "crate::memory::checkout_doors::CheckoutPublished",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.publish\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.settle",
+      "description": "Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt.",
+      "input": "crate::memory::checkout_doors::CheckoutSettleInput",
+      "output": "crate::memory::checkout_doors::CheckoutSettled",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.settle\", &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.checkout.teardown",
+      "description": "Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees.",
+      "input": "crate::memory::checkout_doors::CheckoutTeardownInput",
+      "output": "crate::memory::checkout_doors::CheckoutTornDown",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.teardown\", &input)?",
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true

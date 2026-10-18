@@ -277,6 +277,16 @@ export_facade! {
     let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
     Lift::lift(output)
 };
+"vault.retrieval.aging.get" => fn vault_retrieval_aging_get(&self) -> ClaimAgingProfilesView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.aging.get")?;
+    let output = client.vault_retrieval_aging_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.aging.get", &output)
+};
+"vault.retrieval.aging.configure" => fn vault_retrieval_aging_configure(&self, input: ClaimAgingProfilesConfigureRequest) -> ClaimAgingProfilesReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::ClaimAgingProfilesConfigureRequest = crate::codec::lower_record("vault.retrieval.aging.configure", input)?;
+    let output = client.vault_retrieval_aging_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.aging.configure", &output)
+};
 "vault.retrieval.weights.get" => fn vault_retrieval_weights_get(&self) -> RetrievalWeightsView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.weights.get")?;
     let output = client.vault_retrieval_weights_get(&input)?;
@@ -605,6 +615,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::HubSkillPermissionRequest = crate::codec::lower_record("vault.skills.permissions.approve", input)?;
     let output = client.vault_skills_permissions_approve(&input)?;
     crate::codec::lift_record("vault.skills.permissions.approve", &output)
+};
+"vault.skills.optimize.start" => fn vault_skills_optimize_start(&self, input: SkillOptimizeStartRequest) -> SkillOptimizeStartReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillOptimizeStartRequest = crate::codec::lower_record("vault.skills.optimize.start", input)?;
+    let output = client.vault_skills_optimize_start(&input)?;
+    crate::codec::lift_record("vault.skills.optimize.start", &output)
+};
+"vault.skills.optimize.result" => fn vault_skills_optimize_result(&self, input: SkillOptimizeResultRequest) -> SkillOptimizeResultView = |client| {
+    let input: oneiron::task_verb::sdk::SkillOptimizeResultRequest = crate::codec::lower_record("vault.skills.optimize.result", input)?;
+    let output = client.vault_skills_optimize_result(&input)?;
+    crate::codec::lift_record("vault.skills.optimize.result", &output)
+};
+"vault.skills.governance.get" => fn vault_skills_governance_get(&self, input: HubSkillRequest) -> SkillGovernanceView = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.governance.get", input)?;
+    let output = client.vault_skills_governance_get(&input)?;
+    crate::codec::lift_record("vault.skills.governance.get", &output)
+};
+"vault.skills.governance.set" => fn vault_skills_governance_set(&self, input: SkillGovernanceSetRequest) -> SkillGovernanceView = |client| {
+    let input: oneiron::task_verb::sdk::SkillGovernanceSetRequest = crate::codec::lower_record("vault.skills.governance.set", input)?;
+    let output = client.vault_skills_governance_set(&input)?;
+    crate::codec::lift_record("vault.skills.governance.set", &output)
 };
 "vault.packs.hooks.bind" => fn vault_packs_hooks_bind(&self, input: HubHookBindRequest) -> Vec<String> = |client| {
     let input: oneiron::task_verb::sdk::HubHookBindRequest = crate::codec::lower_record("vault.packs.hooks.bind", input)?;
@@ -1820,6 +1850,46 @@ export_facade! {
     let input: oneiron::memory::origin_doors::CheckoutDoorBindRequest = crate::codec::lower_record("vault.code.checkout.bind", input)?;
     let output = client.vault_code_checkout_bind(&input)?;
     crate::codec::lift_record("vault.code.checkout.bind", &output)
+};
+"vault.code.checkout.claim" => fn vault_code_checkout_claim(&self, input: CheckoutClaimInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutClaimInput = crate::codec::lower_record("vault.code.checkout.claim", input)?;
+    let output = client.vault_code_checkout_claim(&input)?;
+    crate::codec::lift_record("vault.code.checkout.claim", &output)
+};
+"vault.code.checkout.get" => fn vault_code_checkout_get(&self, input: CheckoutGetInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutGetInput = crate::codec::lower_record("vault.code.checkout.get", input)?;
+    let output = client.vault_code_checkout_get(&input)?;
+    crate::codec::lift_record("vault.code.checkout.get", &output)
+};
+"vault.code.checkout.renew" => fn vault_code_checkout_renew(&self, input: CheckoutRenewInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutRenewInput = crate::codec::lower_record("vault.code.checkout.renew", input)?;
+    let output = client.vault_code_checkout_renew(&input)?;
+    crate::codec::lift_record("vault.code.checkout.renew", &output)
+};
+"vault.code.checkout.reclaim" => fn vault_code_checkout_reclaim(&self, input: CheckoutReclaimInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutReclaimInput = crate::codec::lower_record("vault.code.checkout.reclaim", input)?;
+    let output = client.vault_code_checkout_reclaim(&input)?;
+    crate::codec::lift_record("vault.code.checkout.reclaim", &output)
+};
+"vault.code.checkout.takeover" => fn vault_code_checkout_takeover(&self, input: CheckoutTakeoverInput) -> CheckoutLeaseView = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutTakeoverInput = crate::codec::lower_record("vault.code.checkout.takeover", input)?;
+    let output = client.vault_code_checkout_takeover(&input)?;
+    crate::codec::lift_record("vault.code.checkout.takeover", &output)
+};
+"vault.code.checkout.publish" => fn vault_code_checkout_publish(&self, input: CheckoutPublishInput) -> CheckoutPublished = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutPublishInput = crate::codec::lower_record("vault.code.checkout.publish", input)?;
+    let output = client.vault_code_checkout_publish(&input)?;
+    crate::codec::lift_record("vault.code.checkout.publish", &output)
+};
+"vault.code.checkout.settle" => fn vault_code_checkout_settle(&self, input: CheckoutSettleInput) -> CheckoutSettled = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutSettleInput = crate::codec::lower_record("vault.code.checkout.settle", input)?;
+    let output = client.vault_code_checkout_settle(&input)?;
+    crate::codec::lift_record("vault.code.checkout.settle", &output)
+};
+"vault.code.checkout.teardown" => fn vault_code_checkout_teardown(&self, input: CheckoutTeardownInput) -> CheckoutTornDown = |client| {
+    let input: oneiron::memory::checkout_doors::CheckoutTeardownInput = crate::codec::lower_record("vault.code.checkout.teardown", input)?;
+    let output = client.vault_code_checkout_teardown(&input)?;
+    crate::codec::lift_record("vault.code.checkout.teardown", &output)
 };
 "vault.code.snapshots.ingest" => fn vault_code_snapshots_ingest(&self, input: CodeSnapshotIngestRequest) -> CodeSnapshotView = |client| {
     let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest = crate::codec::lower_record("vault.code.snapshots.ingest", input)?;
