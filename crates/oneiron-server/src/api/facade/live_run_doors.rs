@@ -140,42 +140,8 @@ where
     T: Send + 'static,
     F: FnOnce(HostSelfDispatcher<'_>) -> MemoryResult<T> + Send + 'static,
 {
-    if session.is_some() {
-        return Err(MemoryError::new(
-            oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
-            "live child admission requires the attached run's canonical storage",
-            &[],
-        ));
-    }
-    let (actor, class) = facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-    let refused = || {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "a live-run call requires this agent's own verified credential",
-            &["Present the same credential that attached to the run."],
-        )
-    };
-    let proof = auth.verified_slip().ok_or_else(refused)?;
-    // As on attach and actions, an unbound credential borrows no run.
-    server
-        .vault()
-        .credential_read_key(proof)?
-        .ok_or_else(refused)?;
-    let writer = WriteActor::new(actor, class);
-    let run = server
-        .live_runs
-        .resolve(
-            &handle,
-            LiveRunCaller {
-                actor: writer,
-                credential: LiveRunCredential::of(&auth.idempotency_principal(), auth.locality()),
-            },
-        )
-        .map_err(live_refusal)?;
-    let held = run
-        .hold(&server.live_runs, &server.vault)
-        .await?
-        .map_err(live_refusal)?;
+    let (writer, run, held) = hold_live_run(server, auth, session, &handle).await?;
+    let actor = writer.entity_ref();
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
         // Keep the run held until the engine call and all its writes finish.
@@ -213,6 +179,52 @@ where
     })
     .await
     .map_err(|_| internal(verb))?
+}
+
+/// The shared admission for public calls on the caller's attached live run.
+pub(super) async fn hold_live_run(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    handle: &str,
+) -> MemoryResult<(WriteActor, crate::server::ResolvedLiveRun, crate::server::HeldLiveRun)> {
+    if session.is_some() {
+        return Err(MemoryError::new(
+            oneiron::memory::MEMORY_CODE_OFF_RECORD_SESSION_DOOR,
+            "live child admission requires the attached run's canonical storage",
+            &[],
+        ));
+    }
+    let (actor, class) = facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a live-run call requires this agent's own verified credential",
+            &["Present the same credential that attached to the run."],
+        )
+    };
+    let proof = auth.verified_slip().ok_or_else(refused)?;
+    // As on attach and actions, an unbound credential borrows no run.
+    server
+        .vault()
+        .credential_read_key(proof)?
+        .ok_or_else(refused)?;
+    let writer = WriteActor::new(actor, class);
+    let run = server
+        .live_runs
+        .resolve(
+            handle,
+            LiveRunCaller {
+                actor: writer,
+                credential: LiveRunCredential::of(&auth.idempotency_principal(), auth.locality()),
+            },
+        )
+        .map_err(live_refusal)?;
+    let held = run
+        .hold(&server.live_runs, &server.vault)
+        .await?
+        .map_err(live_refusal)?;
+    Ok((writer, run, held))
 }
 
 fn live_refusal(refusal: LiveRunRefusal) -> MemoryError {

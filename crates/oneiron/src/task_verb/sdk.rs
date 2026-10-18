@@ -538,6 +538,7 @@ pub use super::sdk_agents::*;
 pub use super::sdk_anonymous_chat::*;
 pub use super::sdk_asr::*;
 pub use super::sdk_authority_history::*;
+pub use super::sdk_browser::*;
 pub use super::sdk_calendar::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
@@ -581,6 +582,7 @@ pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_skill_execution::*;
 pub use super::sdk_skills::*;
+pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;

@@ -13,6 +13,9 @@ both bindings and their export-census tests in one change.
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
+- `self.standing.get`
+- `self.standing.list`
+- `self.standing.edit`
 - `self.identity.answer`
 - `self.identity.settle`
 - `self.inbox.list`
@@ -267,6 +270,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
 - `vault.consent.revoke`
@@ -365,6 +369,12 @@ both bindings and their export-census tests in one change.
 - `vault.agents.create`
 - `vault.agents.get`
 - `vault.agents.update`
+- `vault.agents.dreaming.get`
+- `vault.agents.dreaming.set`
+- `vault.standing_blocks.configure`
+- `vault.standing_blocks.reconfigure`
+- `vault.standing_blocks.get`
+- `vault.standing_blocks.list`
 - `vault.workflows.save`
 - `vault.workflows.get`
 - `vault.workflows.update`
@@ -482,6 +492,9 @@ both bindings and their export-census tests in one change.
 - `vault.questions.read`
 - `vault.questions.answers`
 - `vault.questions.refresh`
+- `vault.questions.outcomes`
+- `vault.questions.outcomes.project`
+- `vault.questions.schedule`
 - `vault.decisions.bands.read`
 - `vault.decisions.bands.learn`
 - `vault.decisions.bands.enforce`
@@ -497,6 +510,7 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
