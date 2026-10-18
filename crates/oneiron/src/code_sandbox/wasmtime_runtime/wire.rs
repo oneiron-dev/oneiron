@@ -668,8 +668,8 @@ fn reply_body(outcome: &SelfDispatchOutcome) -> Result<Value> {
         SelfDispatchOutcome::TaskRefusal(value) => json!({
             "output": crate::code_run::TaskRefuseOutput {
                 task: value.task_ref,
-                level: value.level.as_str().to_owned(),
-                outcome: value.outcome_word().to_owned(),
+                level: value.level,
+                outcome: value.level.outcome(),
                 replay: value.replay,
             }
         }),

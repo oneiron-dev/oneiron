@@ -412,6 +412,8 @@ class Oneiron:
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
+        def secrets(self) -> "Oneiron._SelfSecretsVerbs": ...
+        @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs": ...
@@ -483,6 +485,15 @@ class Oneiron:
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+    class _SelfSecretsVerbs:
+        def materialize(self, spec: Facade.LiveRunRequest[Facade.SecretGrantMintRequest]) -> Facade.SecretGrantView:
+            """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
+        def renew(self, spec: Facade.LiveRunRequest[Facade.SecretGrantRenewRequest]) -> Facade.SecretGrantView:
+            """Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."""
+        def teardown(self, spec: Facade.LiveRunRequest[Facade.SecretGrantTeardownRequest]) -> Facade.SecretGrantView:
+            """Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."""
+        def use(self, spec: Facade.LiveRunRequest[Facade.SecretGrantUseRequest]) -> Facade.SecretUseAnswer:
+            """Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."""
     class _SelfSkillsVerbs:
         def save(self, spec: Facade.SkillSaveRequest) -> Facade.SkillAuthoringReceipt:
             """An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."""
@@ -587,6 +598,8 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
         def policy(self) -> "Oneiron._VaultPolicyVerbs": ...
+        @property
+        def consent(self) -> "Oneiron._VaultConsentVerbs": ...
         @property
         def gate(self) -> "Oneiron._VaultGateVerbs": ...
         @property
@@ -1304,6 +1317,15 @@ class Oneiron:
     class _VaultPolicyRelayVerbs:
         def decide(self, spec: Facade.PolicyOutboundRequest) -> Facade.HostedRelayDecision:
             """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
+    class _VaultConsentVerbs:
+        def approve_once(self, spec: Facade.ApproveOnceRequest) -> Facade.ConsentActReceipt:
+            """The owner approves exactly one engine-emitted effect digest; no standing grant is created."""
+        def create_standing_grant(self, spec: Facade.CreateStandingGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."""
+        def registry(self, spec: Facade.ConsentRegistryQuery) -> Facade.ConsentRegistry:
+            """The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."""
+        def revoke(self, spec: Facade.RevokeGrantRequest) -> Facade.ConsentActReceipt:
+            """The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."""
     class _VaultGateVerbs:
         @property
         def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
@@ -1571,11 +1593,11 @@ class Oneiron:
             """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
-            """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
+            """The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
         def get(self, spec: Facade.AgentDefinitionRequest) -> Facade.AgentDefinitionView:
-            """The owner reads one saved agent composition and its version and approval state."""
+            """The owner reads one saved agent composition, including its declared refusal dial, version and approval state."""
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
-            """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+            """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
         @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
@@ -2007,6 +2029,8 @@ class Oneiron:
             """Admits one person's word on an ask; the word is evidence, never approval."""
         def outcomes(self, handle: Facade.TaskAskHandle) -> list[Facade.CalibrationPair]:
             """Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to."""
+        def refuse(self, spec: Facade.LiveRunRequest[Facade.TaskRefuseInput]) -> Facade.TaskRefuseOutput:
+            """Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay."""
     class _RevealVerbs:
         def __call__(self, spec: Facade.RevealRequest) -> Facade.RevealPending:
             """Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects."""

@@ -83,6 +83,7 @@ mod machine_write;
 mod mesh_machine;
 mod observation_policy;
 mod op_apply;
+mod owner_act;
 mod owner_project_slip;
 mod owner_roots;
 mod pinned_root;
@@ -122,10 +123,10 @@ mod tests;
 // below call them as before without widening `oneiron::authority`.
 pub(crate) use oneiron_authority::authority::*;
 pub use oneiron_authority::authority::{
-    AUTHORITY_HASH_LEN, AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN,
-    AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind, AuthorityEntryHash,
-    AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthoritySignatureSuite,
-    AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
+    AUTHORITY_HASH_LEN, AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN, ActBy,
+    ActSurface, AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind,
+    AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+    AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
     CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
     CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
     DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
@@ -134,18 +135,18 @@ pub use oneiron_authority::authority::{
     FoldedDevice, GENESIS_FRAGILE_FLAG, GenesisRecoveryStep, GrantTravelSet,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MACHINE_SEEN_WORLD_EDITS_MAX,
     MAX_PACT_SCOPE_BYTES, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerHandover,
-    OwnerHandoverCause, OwnerRootRecord, RESIDENCE_REASON_MAX, RESIDENCE_WINDOW_KEY_MAX,
-    ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY, ReadLocation, RecoveryRootId,
-    ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus,
-    SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS, SealedCopies, SlipClaims,
-    SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES, WORLD_MODEL_ROUTES_MAX,
-    WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
-    authority_log_entity_id, authority_log_entity_id_from_hash, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body, federation_pact_transcript,
-    federation_scope_digest, genesis_vault_id, machine_profile_proof_transcript,
-    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
-    verify_authority_signature,
+    MachineProfile, MachineRole, ModelOrder, OWNER_HANDOVER_REF_MAX, OwnerAct, OwnerActKind,
+    OwnerHandover, OwnerHandoverCause, OwnerRootRecord, RESIDENCE_REASON_MAX,
+    RESIDENCE_WINDOW_KEY_MAX, ROLE_ADMIN, ROLE_AGENT, ROLE_CLOUD, ROLE_OWNER, ROLE_RECOVERY,
+    ReadLocation, RecoveryRootId, ResidenceAct, ResidenceDirective, ResidenceResult,
+    ResidenceResultStatus, SUPPORT_GRANT_DEFAULT_TTL_SECS, SUPPORT_GRANT_MAX_TTL_SECS,
+    SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
+    WORLD_MODEL_ROUTES_MAX, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
+    authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
+    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
+    federation_pact_transcript, federation_scope_digest, genesis_vault_id,
+    machine_profile_proof_transcript, sign_federation_pact_gesture,
+    validate_authority_log_entry_body_bytes, verify_authority_signature,
 };
 mod federation_activation;
 pub use federation_activation::federation_grant_activation;
@@ -201,6 +202,8 @@ pub use machine_profile::{
 pub use machine_write::machine_claim_transcript;
 pub use mesh_machine::{MeshMachineAddress, MeshMachineAddressEnvelope};
 pub use observation_policy::*;
+pub use owner_act::KeyWork;
+pub(crate) use owner_act::owner_act_signer_admits;
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{

@@ -1241,6 +1241,26 @@ export_facade! {
     let output = client.vault_policy_relay_decide(&input)?;
     crate::codec::lift_record("vault.policy.relay.decide", &output)
 };
+"vault.consent.approve_once" => fn vault_consent_approve_once(&self, input: ApproveOnceRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::consent::lifecycle::ApproveOnceRequest = crate::codec::lower_record("vault.consent.approve_once", input)?;
+    let output = client.vault_consent_approve_once(&input)?;
+    crate::codec::lift_record("vault.consent.approve_once", &output)
+};
+"vault.consent.create_standing_grant" => fn vault_consent_create_standing_grant(&self, input: CreateStandingGrantRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::consent::lifecycle::CreateStandingGrantRequest = crate::codec::lower_record("vault.consent.create_standing_grant", input)?;
+    let output = client.vault_consent_create_standing_grant(&input)?;
+    crate::codec::lift_record("vault.consent.create_standing_grant", &output)
+};
+"vault.consent.registry" => fn vault_consent_registry(&self, input: ConsentRegistryQuery) -> ConsentRegistry = |client| {
+    let input: oneiron::consent::ConsentRegistryQuery = crate::codec::lower_record("vault.consent.registry", input)?;
+    let output = client.vault_consent_registry(&input)?;
+    crate::codec::lift_record("vault.consent.registry", &output)
+};
+"vault.consent.revoke" => fn vault_consent_revoke(&self, input: RevokeGrantRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::consent::lifecycle::RevokeGrantRequest = crate::codec::lower_record("vault.consent.revoke", input)?;
+    let output = client.vault_consent_revoke(&input)?;
+    crate::codec::lift_record("vault.consent.revoke", &output)
+};
 "vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
     let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
     let output = client.vault_gate_policy_get(&input)?;
@@ -1395,6 +1415,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::SecretUseRequest = crate::codec::lower_record("self.use", input)?;
     let output = client.self_use(&input)?;
     crate::codec::lift_record("self.use", &output)
+};
+"self.secrets.materialize" => fn self_secrets_materialize(&self, input: LiveRunRequestSecretGrantMintRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantMintRequest> = crate::codec::lower_record("self.secrets.materialize", input)?;
+    let output = client.self_secrets_materialize(&input)?;
+    crate::codec::lift_record("self.secrets.materialize", &output)
+};
+"self.secrets.renew" => fn self_secrets_renew(&self, input: LiveRunRequestSecretGrantRenewRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantRenewRequest> = crate::codec::lower_record("self.secrets.renew", input)?;
+    let output = client.self_secrets_renew(&input)?;
+    crate::codec::lift_record("self.secrets.renew", &output)
+};
+"self.secrets.teardown" => fn self_secrets_teardown(&self, input: LiveRunRequestSecretGrantTeardownRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantTeardownRequest> = crate::codec::lower_record("self.secrets.teardown", input)?;
+    let output = client.self_secrets_teardown(&input)?;
+    crate::codec::lift_record("self.secrets.teardown", &output)
+};
+"self.secrets.use" => fn self_secrets_use(&self, input: LiveRunRequestSecretGrantUseRequest) -> SecretUseAnswer = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantUseRequest> = crate::codec::lower_record("self.secrets.use", input)?;
+    let output = client.self_secrets_use(&input)?;
+    crate::codec::lift_record("self.secrets.use", &output)
 };
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;
@@ -2975,6 +3015,11 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldRunRequest = crate::codec::lower_record("self.folds", input)?;
     let output = client.self_folds(&input)?;
     crate::codec::lift_record("self.folds", &output)
+};
+"tasks.refuse" => fn tasks_refuse(&self, input: LiveRunRequestTaskRefuseInput) -> TaskRefuseOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> = crate::codec::lower_record("tasks.refuse", input)?;
+    let output = client.tasks_refuse(&input)?;
+    crate::codec::lift_record("tasks.refuse", &output)
 };
 "self.agents.spawn" => fn self_agents_spawn(&self, input: LiveRunRequestAgentSpawnInput) -> AgentSpawnOutput = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> = crate::codec::lower_record("self.agents.spawn", input)?;

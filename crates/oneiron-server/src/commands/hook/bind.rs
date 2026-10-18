@@ -120,7 +120,10 @@ fn choose(flag: Option<&str>, deadline: Instant) -> Choice {
 /// Binds a vault for a session, in the order above.
 pub(super) fn session(flag: Option<&str>, oneiron: &Path, deadline: Instant) -> Bound {
     match choose(flag, deadline) {
-        Choice::Pinned { pin, answers: false } => Bound::none(format!(
+        Choice::Pinned {
+            pin,
+            answers: false,
+        } => Bound::none(format!(
             "Oneiron: the vault pinned by {} at {} is not answering; this session has no vault.",
             pin.by, pin.url
         )),

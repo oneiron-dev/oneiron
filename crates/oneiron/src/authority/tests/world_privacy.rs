@@ -6,7 +6,7 @@ use super::super::slip_vault::next_entry;
 use super::machine_identity::{Host, host, own_encryption_key, request_for};
 use super::support::RosterHead;
 use super::support::{
-    authority_key_from_ed, device, ed_key, genesis_entry, sign_ed, unsigned_entry,
+    authority_key_from_ed, device, ed_key, genesis_entry, owner_act, sign_ed, unsigned_entry,
 };
 use super::*;
 use crate::registry::ENTITY_TYPE_WORLD;
@@ -74,8 +74,14 @@ pub(super) fn set(
     world: EntityId,
     read: ReadLocation,
 ) -> crate::error::Result<()> {
+    let surface = match origin {
+        EditOrigin::Peer(PeerMachine::Proven { machine, .. }) => {
+            ActSurface::LinkedDevice { machine }
+        }
+        _ => ActSurface::ThisInstall,
+    };
     host.vault
-        .set_world_privacy_as(&host.owner, origin, world, settings(read))
+        .set_world_privacy_as(&host.owner, surface, world, settings(read), None)
         .map(|_| ())
 }
 
@@ -102,7 +108,7 @@ pub(super) fn edit_by(
             parents.into_iter().collect(),
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world,
-                owner: host.owner.actor(),
+                act: owner_act(host.owner.actor(), world),
                 machine,
                 settings,
             }),
@@ -478,17 +484,10 @@ fn only_the_owner_on_a_machine_holding_the_world_changes_it() {
         .vault
         .set_world_privacy_as(
             &host.owner,
-            EditOrigin::Peer(PeerMachine::Proven {
-                machine: here,
-                key: host
-                    .vault
-                    .authority_fold()
-                    .unwrap()
-                    .machine_proof_key(here)
-                    .unwrap(),
-            }),
+            ActSurface::LinkedDevice { machine: here },
             world,
             settings(ReadLocation::OneMachine(here)),
+            None,
         )
         .unwrap();
     assert_eq!(receipt.previous.read, EffectiveRead::Everywhere);
@@ -581,7 +580,7 @@ fn no_agent_writer_root_or_borrowed_key_signs_a_settings_edit() {
             fold.append_heads.iter().copied().collect(),
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world,
-                owner: host.owner.actor(),
+                act: owner_act(host.owner.actor(), world),
                 machine: mine,
                 settings: widen,
             }),

@@ -1,9 +1,10 @@
 //! A private world's authority inside the sealed bundle (FIX 4211): its signed
-//! settings and key wrap entries, sealed to the machines that read the world and
-//! to the pinned recovery root, never under the world's own key, which those
-//! wraps open. A publisher that may not read the world carries the capsule of
-//! the latest generation unchanged, so the kit still restores the world's keys
-//! once its settings no longer ride the base section.
+//! key wrap entries, sealed to the machines that read the world and to the
+//! pinned recovery root, never under the world's own key, which those wraps
+//! open. A publisher that may not read the world carries the capsule of the
+//! latest generation unchanged, so the kit still restores the world's keys.
+//! The world's settings are main-log metadata every linked machine folds
+//! (PR1a #2961): they ride the base section, not the capsule.
 //!
 //! - A capsule is a sealed object of its own (purpose `SealedWorldAuthority`):
 //!   a fresh key in anonymous capsules to its readers, the body under it, padded
@@ -79,8 +80,8 @@ impl std::fmt::Debug for SealedWorldAuthority {
 pub(crate) struct BundleCarry<'a> {
     /// The pad object of the generation the carried sections come from.
     pub(crate) latest: Option<&'a OpenedKeyPads>,
-    /// Each world's signed settings and key wrap entries held here, parents
-    /// first: sealed fresh to the world's readers and the root.
+    /// Each world's signed key wrap entries held here, parents first: sealed
+    /// fresh to the world's readers and the root.
     pub(crate) fresh_authority: Vec<(EntityId, &'a [Vec<u8>])>,
     /// Capsules of the latest generation, carried unchanged.
     pub(crate) carried_authority: Vec<&'a SealedWorldAuthority>,

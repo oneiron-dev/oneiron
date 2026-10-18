@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 654 code-mode rows (633 host rows, 21 run rows), 2328 declarations.
-// Replies: 576 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 662 code-mode rows (641 host rows, 21 run rows), 2358 declarations.
+// Replies: 583 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1083,6 +1083,24 @@ declare namespace Sdk {
   type RelayResolution = "pattern_decided" | "model_decided" | "pattern_gated_allow" | "log_only" | "no_policy_in_play" | "vault_side_decided" | "unresolved";
   type HostedPassEvidence = { version: string; policy_hash: string; verify_content_hash: number[] };
   type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
+  type ApproveOnceRequest = { effect_digest: string };
+  type ConsentActReceipt = { decision_ref: string; outcome: string; reason_code: string; grant_ref?: string | null; diff_handle: number[] };
+  type ActionEnvelopeRequest = { project: string; audience: string[]; budget: number };
+  type ActionBoundRequest = { actor: string; class: string; envelope: ActionEnvelopeRequest };
+  type DisclosureEnvelopeRequest = { selectors: string[] };
+  type DisclosureBoundRequest = { audience: string[]; class: string; envelope: DisclosureEnvelopeRequest };
+  type StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest;
+  type CreateStandingGrantRequest = { bound: StandingGrantBound };
+  type ConsentRegistryQuery = { limit: number; include_revoked?: boolean };
+  type ConsentDomain = "disclosure" | "action";
+  type ConsentGrantStatus = "active" | "revoked";
+  type ConsentRevokeAction = { command: string; grant_ref: string };
+  type BypassScope = { project: EntityId } | { thread: EntityId };
+  type BypassExtent = { scope: BypassScope; floor_version: number };
+  type ConsentRegistryDelegation = { purpose: string; ticket_ref?: string | null; approved_by: string; wall_expires_at: number; status: SupportGrantStatus };
+  type ConsentRegistryRow = { grant_ref: string; domain: ConsentDomain; subject: string; class: string; selectors: string[]; scope?: Scope | null; status: ConsentGrantStatus; created_at: number; revoke_action: ConsentRevokeAction; bypass?: BypassExtent | null; delegation?: ConsentRegistryDelegation | null };
+  type ConsentRegistry = { rows: ConsentRegistryRow[] };
+  type RevokeGrantRequest = { grant: string };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
   type PolicySensitivity = "normal" | "sensitive";
@@ -1217,6 +1235,16 @@ declare namespace Sdk {
   type SecretUseStatus = "answered" | "failed" | "withheld";
   type SecretUseRecord = { handle: string; generation: number; effector: string; operation: string; decision: string; used_at: number };
   type SecretUseAnswer = { status: SecretUseStatus; result?: unknown | null; failure?: string | null; receipt: SecretUseRecord };
+  type LiveRunRequest<T> = { live_run: string; spec: T };
+  type SecretGrantPurpose = { kind: "operation"; name: string } | { kind: "connector"; name: string } | { kind: "host_destination"; name: string } | { kind: "local_file"; effector: string; path: string; project_id: string };
+  type SecretGrantMintRequest = { handle: string; purpose: SecretGrantPurpose; ttl_secs?: number | null };
+  type SecretGrantViewStatus = "active" | "expired" | "revoked" | "replaced";
+  type SecretGrantRegistration = { path: string; project_id: string };
+  type SecretGrantCleanup = "removed" | "absent" | "kept";
+  type SecretGrantView = { grant: string; handle?: string | null; purpose: SecretGrantPurpose; effector: string; tier: number; generation: number; granted_at: number; expires_at: number; status: SecretGrantViewStatus; replaced_by?: string | null; lease?: string | null; materialization_receipt?: string | null; registration?: SecretGrantRegistration | null; cleanup?: SecretGrantCleanup | null };
+  type SecretGrantRenewRequest = { grant: string; ttl_secs?: number | null };
+  type SecretGrantTeardownRequest = { grant: string };
+  type SecretGrantUseRequest = { grant: string; operation: string; arguments?: unknown };
   type BornWithField = "prompt" | "why" | "keep" | "intent_prompt";
   type TravelChoice = { born_with?: BornWithField[] };
   type ShareCreateRequest = { share_id?: string | null; recipient: string; brief_ref: string; world_refs?: string[]; facet_refs?: string[]; include_unscoped?: boolean; expires_at?: number | null; travel?: TravelChoice | null; mention?: MentionProvenance | null };
@@ -1377,8 +1405,10 @@ declare namespace Sdk {
   type AgentMcpInput = { key: string; min_version?: string | null };
   type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
   type AgentCeilingInput = "auto" | "proposed";
+  type RefusalLevel = "none" | "voice" | "veto" | "full";
+  type RefusalDial = { bond?: RefusalLevel | null; logistics?: RefusalLevel | null };
   type AgentModel = { model_ref: ModelId; when: string };
-  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; models?: AgentModel[]; compaction_model?: ModelId | null };
+  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; refusal?: RefusalDial | null; models?: AgentModel[]; compaction_model?: ModelId | null };
   type AgentDefinitionCreateRequest = { agent_def_ref: EntityId; definition: AgentDefinitionSpec };
   type AgentDefinitionLifecycle = "active" | "superseded" | "retracted";
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
@@ -1415,8 +1445,7 @@ declare namespace Sdk {
   type ResolvedTeam = { type_ref: TypeStamp; pattern: CoordinationPatternView; width: number; model: string; axis?: TeamAxis | null; project_ref?: EntityId | null; root_attempt_ref: EntityId; member_attempt_refs: EntityId[]; team_ref?: string | null };
   type TeamBindingView = { team_ref: string; pattern: CoordinationPatternView; leader: EntityId; member_attempt_refs: EntityId[]; proposal_refs: string[]; root_task?: string | null; started_at: number };
   type TeamReceiptView = { team_ref: string; type_ref: TypeStamp; pattern: CoordinationPatternView; pattern_skill?: SkillRevisionView | null; axis: TeamAxis; width: number; models: string[]; outcome_receipt?: string | null };
-  type RouteStampState = "unstamped_before_s5" | "stamped";
-  type RouteObservation = { run_ref: EntityId; type_ref?: TypeStamp | null; stamp_state: RouteStampState; model: string; effort: ReasoningEffort; why: string; reused: boolean };
+  type RouteObservation = { run_ref: EntityId; type_ref: TypeStamp; model: string; effort: ReasoningEffort; why: string; reused: boolean };
   type CriticAssociation = "branch_attempt" | "canonical_run_ref";
   type CriticObservation = { run_ref: string; branch_attempt_ref: EntityId; association: CriticAssociation; artifact_id: string; target_ref: string; type_ref: TypeStamp; lens_ref: EntityId; lens_id: string; executor: string; axis: string; verdict: string };
   type DoorsLearningCellView = { predicate: string; subject: EntityId; executor: string; type_ref: TypeStamp; axis: string };
@@ -2310,7 +2339,8 @@ declare namespace Sdk {
   type FoldsInput = Record<string, never>;
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
-  type TaskRefuseOutput = { task: EntityId; level: string; outcome: string; replay: boolean };
+  type RefusalOutcome = "proceed" | "object" | "decline";
+  type TaskRefuseOutput = { task: EntityId; level: RefusalLevel; outcome: RefusalOutcome; replay: boolean };
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
@@ -2603,6 +2633,16 @@ declare namespace self {
     /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
     attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
   };
+  const secrets: {
+    /** Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value. */
+    materialize(input: Sdk.LiveRunRequest<Sdk.SecretGrantMintRequest>): Promise<Sdk.SecretGrantView | StoredResult>;
+    /** Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out. */
+    renew(input: Sdk.LiveRunRequest<Sdk.SecretGrantRenewRequest>): Promise<Sdk.SecretGrantView | StoredResult>;
+    /** Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found. */
+    teardown(input: Sdk.LiveRunRequest<Sdk.SecretGrantTeardownRequest>): Promise<Sdk.SecretGrantView | StoredResult>;
+    /** Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value. */
+    use(input: Sdk.LiveRunRequest<Sdk.SecretGrantUseRequest>): Promise<Sdk.SecretUseAnswer | StoredResult>;
+  };
   const skills: {
     call(input: Sdk.SkillCallInput): Promise<unknown>;
     /** Every loadable callable helper skill and its call contract: what it takes and returns. */
@@ -2654,17 +2694,17 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   agents: {
-    /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+    /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
     create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
-    /** The owner reads one saved agent composition and its version and approval state. */
+    /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     spawn: {
       /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
       get(input: Sdk.PlannedSpawnRead): Promise<Sdk.PlannedSpawnObservation | StoredResult>;
     };
-    /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+    /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
@@ -3015,6 +3055,16 @@ declare const vault: Sdk.VaultHost & {
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;
     };
+  };
+  consent: {
+    /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
+    approve_once(input: Sdk.ApproveOnceRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
+    create_standing_grant(input: Sdk.CreateStandingGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
+    /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
+    registry(input: Sdk.ConsentRegistryQuery): Promise<Sdk.ConsentRegistry | StoredResult>;
+    /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
+    revoke(input: Sdk.RevokeGrantRequest): Promise<Sdk.ConsentActReceipt | StoredResult>;
   };
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */

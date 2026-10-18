@@ -66,9 +66,10 @@ fn a_stolen_machines_world_is_re_picked_from_another_of_the_owners_machines() {
             .vault
             .set_world_privacy_as(
                 &host.owner,
-                EditOrigin::ThisMachine,
+                ActSurface::ThisInstall,
                 world,
                 settings(ReadLocation::OneMachine(here)),
+                None,
             )
             .unwrap();
         assert_eq!(receipt.orphaned_from, vec![stolen.to_hex()]);
@@ -227,9 +228,10 @@ fn a_stale_holders_world_is_re_picked_after_a_handoff() {
     let repick = || {
         host.vault.set_world_privacy_as(
             &owner,
-            EditOrigin::ThisMachine,
+            ActSurface::ThisInstall,
             world,
             settings(ReadLocation::OneMachine(here)),
+            None,
         )
     };
     // Inside the window the old machine still stands, and keeps its world.
@@ -341,9 +343,10 @@ fn a_world_orphaned_by_a_removal_that_arrived_late_is_re_picked() {
         .vault
         .set_world_privacy_as(
             &host.owner,
-            EditOrigin::ThisMachine,
+            ActSurface::ThisInstall,
             world,
             settings(ReadLocation::OneMachine(here)),
+            None,
         )
         .unwrap();
     assert_eq!(receipt.orphaned_from, vec![holder.to_hex()]);

@@ -97,8 +97,9 @@ pub struct SealedBundleTake {
     pub skipped: usize,
 }
 
-/// Each private world's signed settings and key wrap entries held here, parents
-/// first: what that world's authority capsule seals (FIX 4211).
+/// Each private world's signed key wrap entries held here, parents first: what
+/// that world's authority capsule seals (FIX 4211). Its settings ride the main
+/// log and the base (PR1a #2961).
 type WorldSides = BTreeMap<EntityId, Vec<Vec<u8>>>;
 
 /// What a kit restore from the sealed cloud bundle did.
@@ -354,9 +355,12 @@ impl WindowManager {
     /// each of `windows` that is a base window or a window of a world read
     /// everywhere; and the worlds the bundle carries for `holder`
     /// ([`Vault::sealed_bundle_worlds`]), read after the history. A world's side
-    /// branch (its settings edits and key wraps) rides only with a world read
-    /// everywhere or one the bundle carries for `holder` (FIX 922 item 11):
-    /// nothing outside the world names it.
+    /// branch (its key wraps) rides only with a world read everywhere or one
+    /// the bundle carries for `holder` (FIX 922 item 11): nothing outside the
+    /// world names it. Its settings edits are main-log metadata (the Engine
+    /// call "OwnerAct world metadata to every linked machine"), so the base
+    /// always carries them, and the world's reader capsule seals its wraps
+    /// alone (FIX 4211, FIX 4271).
     fn sealed_bundle_base(
         &self,
         windows: &[WindowKey],
@@ -380,9 +384,8 @@ impl WindowManager {
                 .collect();
             let mut authority = Vec::with_capacity(history.len());
             for bytes in history {
-                let side = side_world(&decode_authority_log_entry_body(&bytes)?.op)
-                    .filter(|world| !everywhere(*world));
-                if let Some(world) = side {
+                let op = decode_authority_log_entry_body(&bytes)?.op;
+                if let Some(world) = side_world(&op).filter(|world| !everywhere(*world)) {
                     if !eligible.contains(&world) {
                         continue;
                     }

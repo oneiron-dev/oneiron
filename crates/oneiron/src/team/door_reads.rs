@@ -27,8 +27,8 @@ use crate::{EntityId, Vault};
 use super::doors::{
     BorrowedCellView, CriticAssociation, CriticObservation, LaunchedMember, LearningCellView,
     LearningEvidenceView, LearningObservation, ObservationIssue, PlanObservation,
-    PlannedSpawnObservation, ProviderPinView, ResolvedTeam, RouteObservation, RouteStampState,
-    SkillRevisionView, SpawnPhase, TeamBindingView, TeamReceiptView, TypeStamp,
+    PlannedSpawnObservation, ProviderPinView, ResolvedTeam, RouteObservation, SkillRevisionView,
+    SpawnPhase, TeamBindingView, TeamReceiptView, TypeStamp,
 };
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, team_receipt_in_txn};
@@ -487,9 +487,9 @@ const fn anchor_kind(anchor: Anchor) -> &'static str {
     }
 }
 
-/// Each launched run's agent-run seat receipt. The seat holds no type stamp
-/// before S5, so each route says it is unstamped; a run with no seat yet is
-/// an issue, never a template's model.
+/// Each launched run's agent-run seat receipt and the stamp the seat was
+/// born under (S5), held against the run's dispatch stamp. A run not seated
+/// yet is an issue, never a template's model.
 fn seat_routes(
     vault: &Vault,
     launched: &[LaunchedMember],
@@ -497,19 +497,22 @@ fn seat_routes(
 ) -> Result<Vec<RouteObservation>> {
     let mut routes = Vec::new();
     for member in launched {
-        let Some(seat) = vault.model_seat_receipt(member.attempt_ref)? else {
-            let hex = member.attempt_ref.to_hex();
-            issues.push(unavailable("route", format!("run {hex} has no seat born")));
+        let hex = member.attempt_ref.to_hex();
+        let Some(seat) = vault.task_model_seat_receipt(member.attempt_ref)? else {
+            let reason = format!("run {hex} is not seated: not started, or no model manifest");
+            issues.push(unavailable("route", reason));
             continue;
         };
+        let type_ref = TypeStamp::from(&seat.type_ref);
+        mismatch(issues, "route", &hex, &member.type_ref, &type_ref);
+        let receipt = seat.receipt;
         routes.push(RouteObservation {
             run_ref: member.attempt_ref,
-            type_ref: None,
-            stamp_state: RouteStampState::UnstampedBeforeS5,
-            model: seat.model.as_str().to_owned(),
-            effort: seat.effort,
-            why: seat.why,
-            reused: seat.reused,
+            type_ref,
+            model: receipt.model.as_str().to_owned(),
+            effort: receipt.effort,
+            why: receipt.why,
+            reused: receipt.reused,
         });
     }
     Ok(routes)
