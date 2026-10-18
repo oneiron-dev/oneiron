@@ -700,6 +700,11 @@ pub enum AgentVerb {
     VaultRunsCheckpoint,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
+    VaultSieveEvidence,
+    VaultSieveEvidenceReplay,
+    VaultSieveCadence,
+    VaultSieveSettlements,
+    VaultSieveSettlementsGet,
     VaultSieveQueue,
     VaultSieveRetained,
     VaultSieveReceipts,
@@ -1506,6 +1511,11 @@ impl AgentVerb {
         Self::VaultRunsCheckpoint,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
+        Self::VaultSieveEvidence,
+        Self::VaultSieveEvidenceReplay,
+        Self::VaultSieveCadence,
+        Self::VaultSieveSettlements,
+        Self::VaultSieveSettlementsGet,
         Self::VaultSieveQueue,
         Self::VaultSieveRetained,
         Self::VaultSieveReceipts,
@@ -2333,6 +2343,11 @@ impl AgentVerb {
             Self::VaultRunsCheckpoint => "vault.runs.checkpoint",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
+            Self::VaultSieveEvidence => "vault.sieve.evidence",
+            Self::VaultSieveEvidenceReplay => "vault.sieve.evidence.replay",
+            Self::VaultSieveCadence => "vault.sieve.cadence",
+            Self::VaultSieveSettlements => "vault.sieve.settlements",
+            Self::VaultSieveSettlementsGet => "vault.sieve.settlements.get",
             Self::VaultSieveQueue => "vault.sieve.queue",
             Self::VaultSieveRetained => "vault.sieve.retained",
             Self::VaultSieveReceipts => "vault.sieve.receipts",
@@ -3122,6 +3137,11 @@ impl AgentVerb {
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
+                | Self::VaultSieveEvidence
+                | Self::VaultSieveEvidenceReplay
+                | Self::VaultSieveCadence
+                | Self::VaultSieveSettlements
+                | Self::VaultSieveSettlementsGet
                 | Self::VaultSieveQueue
                 | Self::VaultSieveRetained
                 | Self::VaultSieveReceipts
@@ -3955,6 +3975,11 @@ impl AgentVerb {
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
+                | Self::VaultSieveEvidence
+                | Self::VaultSieveEvidenceReplay
+                | Self::VaultSieveCadence
+                | Self::VaultSieveSettlements
+                | Self::VaultSieveSettlementsGet
                 | Self::VaultSieveQueue
                 | Self::VaultSieveRetained
                 | Self::VaultSieveReceipts
@@ -4860,6 +4885,11 @@ impl AgentVerb {
                 | Self::VaultRunsCheckpoint
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
+                | Self::VaultSieveEvidence
+                | Self::VaultSieveEvidenceReplay
+                | Self::VaultSieveCadence
+                | Self::VaultSieveSettlements
+                | Self::VaultSieveSettlementsGet
                 | Self::VaultSieveQueue
                 | Self::VaultSieveRetained
                 | Self::VaultSieveReceipts
@@ -5377,6 +5407,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationPromote
+                | Self::VaultSieveEvidenceReplay
                 | Self::VaultSievePolicySet
                 | Self::VaultSieveRecipePolicySet
                 | Self::VaultSieveLeaseRefill
@@ -6179,6 +6210,11 @@ impl AgentVerb {
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultSieveEvidence => &["spec"],
+            Self::VaultSieveEvidenceReplay => &["spec"],
+            Self::VaultSieveCadence => &["spec"],
+            Self::VaultSieveSettlements => &["spec"],
+            Self::VaultSieveSettlementsGet => &["spec"],
             Self::VaultSieveQueue => &["spec"],
             Self::VaultSieveRetained => &["spec"],
             Self::VaultSieveReceipts => &["spec"],
@@ -6986,6 +7022,11 @@ impl AgentVerb {
             Self::VaultRunsCheckpoint => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultSieveEvidence => &["spec"],
+            Self::VaultSieveEvidenceReplay => &["spec"],
+            Self::VaultSieveCadence => &["spec"],
+            Self::VaultSieveSettlements => &["spec"],
+            Self::VaultSieveSettlementsGet => &["spec"],
             Self::VaultSieveQueue => &["spec"],
             Self::VaultSieveRetained => &["spec"],
             Self::VaultSieveReceipts => &["spec"],
@@ -9095,6 +9136,21 @@ impl AgentVerb {
             }
             Self::VaultConsolidationEvidence => {
                 "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
+            }
+            Self::VaultSieveEvidence => {
+                "Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner."
+            }
+            Self::VaultSieveEvidenceReplay => {
+                "Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed."
+            }
+            Self::VaultSieveCadence => {
+                "Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model."
+            }
+            Self::VaultSieveSettlements => {
+                "Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks."
+            }
+            Self::VaultSieveSettlementsGet => {
+                "Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed."
             }
             Self::VaultSieveQueue => {
                 "The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."

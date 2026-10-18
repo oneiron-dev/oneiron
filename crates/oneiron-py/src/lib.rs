@@ -6075,6 +6075,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_sieve_evidence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.evidence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.evidence", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_evidence_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.evidence.replay")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.evidence.replay", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_cadence(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.cadence")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.cadence", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_settlements(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.settlements")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.settlements", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_sieve_settlements_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.sieve.settlements.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.sieve.settlements.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_sieve_queue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.sieve.queue")?;
         let output = py

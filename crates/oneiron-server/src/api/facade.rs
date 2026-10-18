@@ -107,6 +107,7 @@ mod secret_use_doors;
 mod setting_doors;
 mod share_doors;
 mod sieve_doors;
+mod sieve_observation_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;

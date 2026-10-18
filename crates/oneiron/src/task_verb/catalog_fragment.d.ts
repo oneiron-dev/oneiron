@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 816 code-mode rows (793 host rows, 23 run rows), 2766 declarations.
-// Replies: 729 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 821 code-mode rows (798 host rows, 23 run rows), 2787 declarations.
+// Replies: 734 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2529,6 +2529,27 @@ declare namespace Sdk {
   type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
   type ConsolidationEvidenceRequest = { source_refs: string[] };
+  type SieveEvidenceRequest = { turn: EntityId };
+  type SieveEvidenceCursor = { learned_at: number; turn: EntityId };
+  type SieveEvidenceView = { turn: EntityId; reading?: number[] | null; cursor?: SieveEvidenceCursor | null; owed: boolean; continuing: boolean };
+  type WakeCadenceRequest = Record<string, never>;
+  type AgentWakeRole = "companion" | "leader" | "worker";
+  type CadencePrecedence = "vault_floor" | "agent_override";
+  type AgentWakeTriggers = { cadence: boolean; surprise: boolean; agency: boolean; event: boolean };
+  type AgentWakePolicy = { absent_role: AgentWakeRole; precedence: CadencePrecedence; companion: AgentWakeTriggers; leader: AgentWakeTriggers; worker: AgentWakeTriggers };
+  type WeaveRecipePriority = "before_connector_event" | "after_connector_event";
+  type DreamerWakePolicy = { wake_grain_turns: number; agent_cadence: AgentWakePolicy; new_records: number; longest_wait_secs: number; nightly_secs: number; idle_secs: number; quiet_weave_secs: number; weave_recipe_priority: WeaveRecipePriority; surprise_permille: number };
+  type WakeIdleState = { running_turns: boolean; live_background_work: boolean; compute_available: boolean; last_inbound_at: number };
+  type WakeRecipe = "continuous" | "nightly" | "weave";
+  type WakePolicyDecision = "Silent" | { ArmIdle: { due_at: number } } | { Enqueue: { recipe: WakeRecipe } };
+  type WakeCadenceReceipt = { sequence: number; observed_at: number; previous_due_at?: number | null; boundary_reached: boolean; last_boundary_at?: number | null; idle: WakeIdleState; decision: WakePolicyDecision; wake?: EntityId | null; processed_change_id?: number[] | null };
+  type WakeRecipeInputView = { recipe: WakeRecipe; turn_count: number; record_count: number; nightly_count: number; after_turn?: number[] | null; after_record?: number[] | null; after_nightly?: number[] | null; through: number[]; observed_at: number };
+  type WakeCadenceView = { policy: DreamerWakePolicy; receipt?: WakeCadenceReceipt | null; pending: WakeRecipeInputView[] };
+  type WakeSettlementsRequest = { after?: EntityId | null; limit: number };
+  type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
+  type WakeSettlementView = { wake: EntityId; input?: WakeRecipeInputView | null; settled: boolean; jobs: WakeRecipeJobView[] };
+  type WakeSettlementsPage = { wakes: WakeSettlementView[]; next?: EntityId | null };
+  type WakeSettlementRequest = { wake: EntityId };
   type SievePageRequest = { limit?: number | null };
   type SieveSpanView = { span: string; turn: string; source: string; start: number; end: number; kind: string; entity?: string | null; novel?: boolean | null; confidence: number; score: number; band: string; owed: string[]; queued_at: number; source_digest: string; policy_digest: string };
   type SieveQueuePage = { spans: SieveSpanView[]; skipped_unreadable: number; skipped_detached: number };
@@ -4531,6 +4552,13 @@ declare const vault: Sdk.VaultHost & {
     view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
   };
   sieve: {
+    /** Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model. */
+    cadence(input: Sdk.WakeCadenceRequest): Promise<Sdk.WakeCadenceView | StoredResult>;
+    /** Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner. */
+    evidence: ((input: Sdk.SieveEvidenceRequest) => Promise<Sdk.SieveEvidenceView | StoredResult>) & {
+      /** Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed. */
+      replay(input: Sdk.SieveEvidenceRequest): Promise<Sdk.SieveEvidenceView | StoredResult>;
+    };
     /** The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id. */
     lease: ((input: Sdk.SieveLeaseRequest) => Promise<Sdk.SieveLeaseView | StoredResult>) & {
       /** The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice. */
@@ -4552,6 +4580,11 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence. */
     retained(input: Sdk.SievePageRequest): Promise<Sdk.SieveRetainedPage | StoredResult>;
+    /** Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks. */
+    settlements: ((input: Sdk.WakeSettlementsRequest) => Promise<Sdk.WakeSettlementsPage | StoredResult>) & {
+      /** Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed. */
+      get(input: Sdk.WakeSettlementRequest): Promise<Sdk.WakeSettlementView | null | StoredResult>;
+    };
   };
   skill_hubs: {
     /** Reads one configured hub as the owner. */

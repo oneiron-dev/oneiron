@@ -3295,6 +3295,15 @@ class Oneiron:
     class _VaultSieveVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def evidence(self) -> "Oneiron._VaultSieveEvidenceVerbs":
+            return Oneiron._VaultSieveEvidenceVerbs(self._client)
+        def cadence(self, spec):
+            """Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_cadence(json.dumps(spec))))
+        @property
+        def settlements(self) -> "Oneiron._VaultSieveSettlementsVerbs":
+            return Oneiron._VaultSieveSettlementsVerbs(self._client)
         def queue(self, spec):
             """The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."""
             return json.loads(_translate(lambda: self._client.vault_sieve_queue(json.dumps(spec))))
@@ -3313,6 +3322,24 @@ class Oneiron:
         @property
         def lease(self) -> "Oneiron._VaultSieveLeaseVerbs":
             return Oneiron._VaultSieveLeaseVerbs(self._client)
+    class _VaultSieveEvidenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_evidence(json.dumps(spec))))
+        def replay(self, spec):
+            """Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_evidence_replay(json.dumps(spec))))
+    class _VaultSieveSettlementsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_settlements(json.dumps(spec))))
+        def get(self, spec):
+            """Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_settlements_get(json.dumps(spec))))
     class _VaultSievePolicyVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

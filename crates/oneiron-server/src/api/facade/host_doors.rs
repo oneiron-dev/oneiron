@@ -82,6 +82,7 @@ pub(crate) use super::model_step_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::skill_execution_doors::*;
+pub(crate) use super::sieve_observation_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -1239,6 +1240,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.vetting"
         | "vault.consolidation.promote"
         | "vault.consolidation.evidence"
+        | "vault.sieve.evidence"
+        | "vault.sieve.evidence.replay"
+        | "vault.sieve.cadence"
+        | "vault.sieve.settlements"
+        | "vault.sieve.settlements.get"
         | "vault.sieve.queue"
         | "vault.sieve.retained"
         | "vault.sieve.receipts"

@@ -11763,6 +11763,81 @@
       "section": false
     },
     {
+      "name": "vault.sieve.evidence",
+      "description": "Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner.",
+      "input": "crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest",
+      "output": "crate::dreamer_wake::sieve_evidence::SieveEvidenceView",
+      "call": "crate::dreamer_wake::sieve_evidence::evidence_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.evidence\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.evidence.replay",
+      "description": "Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed.",
+      "input": "crate::dreamer_wake::sieve_evidence::SieveEvidenceRequest",
+      "output": "crate::dreamer_wake::sieve_evidence::SieveEvidenceView",
+      "call": "crate::dreamer_wake::sieve_evidence::replay_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.evidence.replay\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.cadence",
+      "description": "Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model.",
+      "input": "crate::dreamer_wake::WakeCadenceRequest",
+      "output": "crate::dreamer_wake::WakeCadenceView",
+      "call": "crate::dreamer_wake::cadence_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.cadence\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.settlements",
+      "description": "Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks.",
+      "input": "crate::dreamer_runner::observation::WakeSettlementsRequest",
+      "output": "crate::dreamer_runner::observation::WakeSettlementsPage",
+      "call": "crate::dreamer_runner::observation::settlements_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.settlements\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.settlements.get",
+      "description": "Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed.",
+      "input": "crate::dreamer_runner::observation::WakeSettlementRequest",
+      "output": "Option<crate::dreamer_runner::observation::WakeSettlementView>",
+      "call": "crate::dreamer_runner::observation::settlement_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.settlements.get\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.sieve.queue",
       "description": "The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed.",
       "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",

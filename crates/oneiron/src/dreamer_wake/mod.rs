@@ -42,6 +42,7 @@ pub use self::sieve::{
     SieveSkipped, SieveSpan, SpanBand, SpanKind, SpanOrigin,
 };
 pub mod sieve_doors;
+pub use self::sieve::evidence as sieve_evidence;
 pub use self::types::*;
 
 /// The erase hook, in the erasing transaction before the graph is torn down.

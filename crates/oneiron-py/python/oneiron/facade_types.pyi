@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 780 facade rows, 2722 declarations.
-Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 785 facade rows, 2743 declarations.
+Inputs: 733 of 785 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 705 of 785 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -12686,6 +12686,109 @@ class ConsolidationPromotion(TypedDict):
     output_evidence: list[ConsolidationEvidenceSource]
 class ConsolidationEvidenceRequest(TypedDict):
     source_refs: list[str]
+class SieveEvidenceRequest(TypedDict):
+    turn: EntityId
+class SieveEvidenceCursor(TypedDict):
+    learned_at: int
+    turn: EntityId
+class SieveEvidenceView(TypedDict):
+    turn: EntityId
+    reading: NotRequired[list[int] | None]
+    cursor: NotRequired[SieveEvidenceCursor | None]
+    owed: bool
+    continuing: bool
+class WakeCadenceRequest(TypedDict):
+    ...
+AgentWakeRole = Literal["companion", "leader", "worker"]
+CadencePrecedence = Literal["vault_floor", "agent_override"]
+class AgentWakeTriggers(TypedDict):
+    cadence: bool
+    surprise: bool
+    agency: bool
+    event: bool
+class AgentWakePolicy(TypedDict):
+    absent_role: AgentWakeRole
+    precedence: CadencePrecedence
+    companion: AgentWakeTriggers
+    leader: AgentWakeTriggers
+    worker: AgentWakeTriggers
+WeaveRecipePriority = Literal["before_connector_event", "after_connector_event"]
+class DreamerWakePolicy(TypedDict):
+    wake_grain_turns: int
+    agent_cadence: AgentWakePolicy
+    new_records: int
+    longest_wait_secs: int
+    nightly_secs: int
+    idle_secs: int
+    quiet_weave_secs: int
+    weave_recipe_priority: WeaveRecipePriority
+    surprise_permille: int
+class WakeIdleState(TypedDict):
+    running_turns: bool
+    live_background_work: bool
+    compute_available: bool
+    last_inbound_at: int
+WakeRecipe = Literal["continuous", "nightly", "weave"]
+class WakePolicyDecisionArmIdleBody(TypedDict):
+    due_at: int
+class WakePolicyDecisionArmIdle(TypedDict):
+    ArmIdle: WakePolicyDecisionArmIdleBody
+class WakePolicyDecisionEnqueueBody(TypedDict):
+    recipe: WakeRecipe
+class WakePolicyDecisionEnqueue(TypedDict):
+    Enqueue: WakePolicyDecisionEnqueueBody
+WakePolicyDecision = Literal["Silent"] | WakePolicyDecisionArmIdle | WakePolicyDecisionEnqueue
+class WakeCadenceReceipt(TypedDict):
+    sequence: int
+    observed_at: int
+    previous_due_at: NotRequired[int | None]
+    boundary_reached: bool
+    last_boundary_at: NotRequired[int | None]
+    idle: WakeIdleState
+    decision: WakePolicyDecision
+    wake: NotRequired[EntityId | None]
+    processed_change_id: NotRequired[list[int] | None]
+class WakeRecipeInputView(TypedDict):
+    recipe: WakeRecipe
+    turn_count: int
+    record_count: int
+    nightly_count: int
+    after_turn: NotRequired[list[int] | None]
+    after_record: NotRequired[list[int] | None]
+    after_nightly: NotRequired[list[int] | None]
+    through: list[int]
+    observed_at: int
+class WakeCadenceView(TypedDict):
+    policy: DreamerWakePolicy
+    receipt: NotRequired[WakeCadenceReceipt | None]
+    pending: list[WakeRecipeInputView]
+class WakeSettlementsRequest(TypedDict):
+    after: NotRequired[EntityId | None]
+    limit: int
+class WakeRecipeJobView(TypedDict):
+    attempt: EntityId
+    parent: NotRequired[EntityId | None]
+    kind: str
+    state: AttemptState
+    created_at: int
+    updated_at: int
+    actor: NotRequired[EntityId | None]
+    facet: NotRequired[str | None]
+    authority_receipt: NotRequired[list[int] | None]
+    park_cause: NotRequired[DreamerParkCauseView | None]
+    parked_at: NotRequired[int | None]
+    result_ref: NotRequired[str | None]
+    conclusions: list[EntityId]
+class WakeSettlementView(TypedDict):
+    wake: EntityId
+    input: NotRequired[WakeRecipeInputView | None]
+    settled: bool
+    jobs: list[WakeRecipeJobView]
+class WakeSettlementsPage(TypedDict):
+    wakes: list[WakeSettlementView]
+    next: NotRequired[EntityId | None]
+class WakeSettlementRequest(TypedDict):
+    wake: EntityId
 class SievePageRequest(TypedDict):
     limit: NotRequired[int | None]
 class SieveSpanView(TypedDict):
