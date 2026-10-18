@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 843 code-mode rows (820 host rows, 23 run rows), 2837 declarations.
-// Replies: 756 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 848 code-mode rows (825 host rows, 23 run rows), 2866 declarations.
+// Replies: 760 fully typed, 84 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1666,6 +1666,18 @@ declare namespace Sdk {
   type CodeMutationState = "prepared" | "applied" | "failed";
   type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
+  type ForeignCodeRunRequest = { source: string; reads?: string[] };
+  type ForeignCodeTier = "foreign";
+  type ForeignCodeRead = { reference: string; path: string };
+  type ForeignCodeOutput = { path: string; bytes: number[] };
+  type ForeignCodeSource = "generated";
+  type ForeignCodeApproval = "proposed";
+  type CodeFileEdit = { path: string; start: number; end: number; expected: string; replacement: string; new_path?: string | null };
+  type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
+  type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
+  type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; actor_ref: string; source: ForeignCodeSource; approval: ForeignCodeApproval; effect: ForeignCodeEffect };
+  type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean };
+  type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
@@ -2296,7 +2308,6 @@ declare namespace Sdk {
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
-  type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
@@ -2776,6 +2787,24 @@ declare namespace Sdk {
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
   type FoldHistoryStep = { step: number; code: string; console: string };
   type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
+  type RunReviewChange = { kind: "claim"; claim_ref: string } | { kind: "edge"; provenance_ref: string } | { kind: "note"; note_ref: string; fork_ref: string } | { kind: "topology"; event_ref: string } | { kind: "external_effect"; receipt_ref: string } | { kind: "delete"; entity_ref: string } | { kind: "erase"; entity_ref: string };
+  type RunReviewRequest = { run_id: string; changes: RunReviewChange[] };
+  type RunChangeVerdict = "landed" | "rejected" | "waiting" | "let_go";
+  type RunChangeOutcome = { change: string; verdict: RunChangeVerdict; receipt?: string | null };
+  type RunReviewExplainer = { text: string; read_refs: string[] };
+  type RunReview = { run_id: string; review_id: string; changes: RunChangeOutcome[]; explainer: RunReviewExplainer };
+  type RunSettleDecision = "approve" | "reject";
+  type RunSettleRequest = { review: RunReviewRequest; review_id: string; decision: RunSettleDecision };
+  type RunSettlementKind = "ProposalOutcome";
+  type RunAnsweredBy = { word_ref: string } | { row: string } | { grant: string };
+  type RunSettlementReason = "owner_approved" | "owner_rejected";
+  type RunSettlement = { kind: RunSettlementKind; run_id: string; receipt: string; changes: RunChangeOutcome[]; verdict: RunChangeVerdict; answered_by: RunAnsweredBy; reason: RunSettlementReason; summary: string; revert_handle: string };
+  type RunSettlementRequest = { run_id: string };
+  type RevertRunRequest = { run_id: string; changes?: string[] | null };
+  type RunCompensation = { change: string; receipt: string };
+  type RunNotUndoneReason = "one_way" | "backup_only" | "dependent" | "not_selected" | "not_landed";
+  type RunNotUndone = { change: string; reason: RunNotUndoneReason };
+  type RevertRunOutcome = { run_id: string; compensated: RunCompensation[]; not_undone: RunNotUndone[] };
   type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
@@ -2963,6 +2992,8 @@ declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | St
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
+/** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
+declare function execute_code(input: Sdk.ForeignCodeRunRequest): Promise<Sdk.ForeignCodeRunResult | StoredResult>;
 declare const feedback: {
   /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
   preview(input: Sdk.FeedbackPreviewRequest): Promise<Sdk.FeedbackSubjectPreview | StoredResult>;
@@ -4506,6 +4537,8 @@ declare const vault: Sdk.VaultHost & {
       get(input: Sdk.EmptyRequest): Promise<Sdk.RetrievalWeightsView | StoredResult>;
     };
   };
+  /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
+  revert_run(input: Sdk.RevertRunRequest): Promise<Sdk.RevertRunOutcome | StoredResult>;
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
     claim(input: Sdk.RoomClaimRequest): Promise<Sdk.RoomClaimOutcome | StoredResult>;
@@ -4561,6 +4594,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
+    review(input: Sdk.RunReviewRequest): Promise<Sdk.RunReview | StoredResult>;
+    /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
+    settle(input: Sdk.RunSettleRequest): Promise<Sdk.RunSettlement | StoredResult>;
+    /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
+    settlement(input: Sdk.RunSettlementRequest): Promise<Sdk.RunSettlement | StoredResult>;
     /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
     step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
   };

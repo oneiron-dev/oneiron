@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 807 facade rows, 2793 declarations.
-Inputs: 755 of 807 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 727 of 807 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 812 facade rows, 2822 declarations.
+Inputs: 760 of 812 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 731 of 812 fully typed, 81 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -8009,6 +8009,87 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class ForeignCodeRunRequest(TypedDict):
+    source: str
+    reads: NotRequired[list[str]]
+ForeignCodeTier = Literal["foreign"]
+class ForeignCodeRead(TypedDict):
+    reference: str
+    path: str
+class ForeignCodeOutput(TypedDict):
+    path: str
+    bytes: list[int]
+ForeignCodeSource = Literal["generated"]
+ForeignCodeApproval = Literal["proposed"]
+class CodeFileEdit(TypedDict):
+    path: str
+    start: int
+    end: int
+    expected: str
+    replacement: str
+    new_path: NotRequired[str | None]
+class ClaimInput(TypedDict):
+    id: NotRequired[str | None]
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    source: str
+    world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[str | None]
+    scope: NotRequired[Any | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    occurred_at: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    salience: NotRequired[float | None]
+class ForeignCodeEffectFileWrite(TypedDict):
+    kind: Literal["file_write"]
+    path: str
+    bytes: list[int]
+class ForeignCodeEffectFileEdit(TypedDict):
+    kind: Literal["file_edit"]
+    path: str
+    base_content_hash: str
+    edit: CodeFileEdit
+class ForeignCodeEffectFileDelete(TypedDict):
+    kind: Literal["file_delete"]
+    path: str
+ForeignCodeEffectFileRename = TypedDict("ForeignCodeEffectFileRename", {"kind": Literal["file_rename"], "from": str, "to": str})
+class ForeignCodeEffectDirectoryOpaque(TypedDict):
+    kind: Literal["directory_opaque"]
+    path: str
+class ForeignCodeEffectClaimCandidate(TypedDict):
+    kind: Literal["claim_candidate"]
+    claim: ClaimInput
+ForeignCodeEffect = ForeignCodeEffectFileWrite | ForeignCodeEffectFileEdit | ForeignCodeEffectFileDelete | ForeignCodeEffectFileRename | ForeignCodeEffectDirectoryOpaque | ForeignCodeEffectClaimCandidate
+class ForeignCodeProposal(TypedDict):
+    proposal_ref: str
+    receipt_ref: str
+    actor_ref: str
+    source: ForeignCodeSource
+    approval: ForeignCodeApproval
+    effect: ForeignCodeEffect
+class ForeignCodeIsolation(TypedDict):
+    backend: str
+    runtime: str
+    image: str
+    argv_digest: str
+    network: str
+    generation: str
+    fence_proven: bool
+class ForeignCodeRunResult(TypedDict):
+    run_id: str
+    actor_ref: str
+    tier: ForeignCodeTier
+    linked_imports: list[str]
+    reads: list[ForeignCodeRead]
+    done: bool
+    observation: str
+    outputs: list[ForeignCodeOutput]
+    proposals: list[ForeignCodeProposal]
+    isolation: ForeignCodeIsolation
+    receipt_ref: str
 class CodeRunModelHealCountRequest(TypedDict):
     model_id: str
 class CodeRunModelHealCountView(TypedDict):
@@ -11280,21 +11361,6 @@ class CommitOutcomeRefused(TypedDict):
     refusal: RecordRefusal
     receipt_ref: NotRequired[str | None]
 CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
-class ClaimInput(TypedDict):
-    id: NotRequired[str | None]
-    predicate: str
-    subject_ref: str
-    value: Any
-    confidence: float
-    source: str
-    world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
-    scope: NotRequired[Any | None]
-    valid_from: NotRequired[int | None]
-    valid_to: NotRequired[int | None]
-    occurred_at: NotRequired[int | None]
-    learned_at: NotRequired[int | None]
-    salience: NotRequired[float | None]
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):
@@ -13919,6 +13985,85 @@ class FoldHistory(TypedDict):
     epochs: list[FoldHistoryEpoch]
     steps: list[FoldHistoryStep]
     next: NotRequired[int | None]
+class RunReviewChangeClaim(TypedDict):
+    kind: Literal["claim"]
+    claim_ref: str
+class RunReviewChangeEdge(TypedDict):
+    kind: Literal["edge"]
+    provenance_ref: str
+class RunReviewChangeNote(TypedDict):
+    kind: Literal["note"]
+    note_ref: str
+    fork_ref: str
+class RunReviewChangeTopology(TypedDict):
+    kind: Literal["topology"]
+    event_ref: str
+class RunReviewChangeExternalEffect(TypedDict):
+    kind: Literal["external_effect"]
+    receipt_ref: str
+class RunReviewChangeDelete(TypedDict):
+    kind: Literal["delete"]
+    entity_ref: str
+class RunReviewChangeErase(TypedDict):
+    kind: Literal["erase"]
+    entity_ref: str
+RunReviewChange = RunReviewChangeClaim | RunReviewChangeEdge | RunReviewChangeNote | RunReviewChangeTopology | RunReviewChangeExternalEffect | RunReviewChangeDelete | RunReviewChangeErase
+class RunReviewRequest(TypedDict):
+    run_id: str
+    changes: list[RunReviewChange]
+RunChangeVerdict = Literal["landed", "rejected", "waiting", "let_go"]
+class RunChangeOutcome(TypedDict):
+    change: str
+    verdict: RunChangeVerdict
+    receipt: NotRequired[str | None]
+class RunReviewExplainer(TypedDict):
+    text: str
+    read_refs: list[str]
+class RunReview(TypedDict):
+    run_id: str
+    review_id: str
+    changes: list[RunChangeOutcome]
+    explainer: RunReviewExplainer
+RunSettleDecision = Literal["approve", "reject"]
+class RunSettleRequest(TypedDict):
+    review: RunReviewRequest
+    review_id: str
+    decision: RunSettleDecision
+RunSettlementKind = Literal["ProposalOutcome"]
+class RunAnsweredByWord(TypedDict):
+    word_ref: str
+class RunAnsweredByRow(TypedDict):
+    row: str
+class RunAnsweredByGrant(TypedDict):
+    grant: str
+RunAnsweredBy = RunAnsweredByWord | RunAnsweredByRow | RunAnsweredByGrant
+RunSettlementReason = Literal["owner_approved", "owner_rejected"]
+class RunSettlement(TypedDict):
+    kind: RunSettlementKind
+    run_id: str
+    receipt: str
+    changes: list[RunChangeOutcome]
+    verdict: RunChangeVerdict
+    answered_by: RunAnsweredBy
+    reason: RunSettlementReason
+    summary: str
+    revert_handle: str
+class RunSettlementRequest(TypedDict):
+    run_id: str
+class RevertRunRequest(TypedDict):
+    run_id: str
+    changes: NotRequired[list[str] | None]
+class RunCompensation(TypedDict):
+    change: str
+    receipt: str
+RunNotUndoneReason = Literal["one_way", "backup_only", "dependent", "not_selected", "not_landed"]
+class RunNotUndone(TypedDict):
+    change: str
+    reason: RunNotUndoneReason
+class RevertRunOutcome(TypedDict):
+    run_id: str
+    compensated: list[RunCompensation]
+    not_undone: list[RunNotUndone]
 class OpenInput(TypedDict):
     url: str
 class Row(TypedDict):

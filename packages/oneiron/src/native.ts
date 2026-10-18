@@ -473,6 +473,7 @@ vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
@@ -807,6 +808,10 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+vaultRunsReview(input: unknown): unknown
+vaultRunsSettle(input: unknown): unknown
+vaultRunsSettlement(input: unknown): unknown
+vaultRevertRun(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown

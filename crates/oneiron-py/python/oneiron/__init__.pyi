@@ -384,6 +384,8 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
+    def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
+        """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
     def peek(self, request: TaskAskHandle) -> list[TaskAskPersonEvidence]: ...
     @overload
@@ -612,6 +614,8 @@ class Oneiron:
         def summaries(self) -> "Oneiron._VaultSummariesVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
+        def revert_run(self, spec: Facade.RevertRunRequest) -> Facade.RevertRunOutcome:
+            """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
     class _VaultReportsVerbs:
         def disclosure(self, spec: Facade.ReportDisclosureRequest) -> Facade.ReportIssue:
             """The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny."""
@@ -1914,6 +1918,12 @@ class Oneiron:
             """Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work."""
         def checkpoint(self, spec: Facade.CheckpointReadRequest) -> Facade.CheckpointView | None:
             """Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."""
+        def review(self, spec: Facade.RunReviewRequest) -> Facade.RunReview:
+            """The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."""
+        def settle(self, spec: Facade.RunSettleRequest) -> Facade.RunSettlement:
+            """The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle."""
+        def settlement(self, spec: Facade.RunSettlementRequest) -> Facade.RunSettlement:
+            """The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."""
     class _VaultRunsBranchesVerbs:
         def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
             """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
