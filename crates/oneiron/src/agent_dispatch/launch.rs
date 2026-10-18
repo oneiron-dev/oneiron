@@ -53,6 +53,7 @@ pub struct LaunchNode {
 
 /// The hard cap a launch runs under.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(schemars::JsonSchema)]
 pub struct SpendCapView {
     /// The nearest hard scope above the launch; `None` for a `budget` pinned
     /// outside any tree.

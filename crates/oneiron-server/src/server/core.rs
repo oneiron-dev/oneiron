@@ -108,6 +108,7 @@ pub struct SyncServer {
     /// Runtime-declared private live ports; never restored after restart.
     pub(crate) artifact_previews: super::ArtifactPreviews,
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
+    pub(crate) asr_sessions: crate::api::AsrSessions,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -403,6 +404,7 @@ impl SyncServer {
             note_editors: super::NoteEditors::default(),
             artifact_previews: super::ArtifactPreviews::default(),
             live_voice: Default::default(),
+            asr_sessions: Default::default(),
             lens_frames,
             retained,
             presence,

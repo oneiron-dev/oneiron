@@ -34,8 +34,9 @@ pub(crate) struct AuthorityStructure {
     /// The slip issuers: the admitters that hold the owner role.
     pub(super) issuers: BTreeSet<AuthorityKey>,
     /// Each machine and the install keys a slip issuer's or one of this
-    /// install's own anchors' revisions of it named. Such a key signs that
-    /// machine's world edits and key records.
+    /// install's own anchors' revisions of it named, or an owner answer its
+    /// carrier's such key signed (mesh PR1b). Such a key signs that
+    /// machine's world edits, key records and the answers it carries.
     machine_keys: BTreeSet<(crate::EntityId, AuthorityKey)>,
     /// The install keys only other anchors' revisions named. Such a key
     /// signs as a machine key does, but as a stranger ([`Self::is_stranger`]).
@@ -153,8 +154,12 @@ pub(super) struct StructureBuilder<'a> {
     /// key that signed them.
     admissions: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
     /// Machine revisions whose primary signer is no slip issuer yet, under
-    /// that signer.
+    /// that signer: an owner answer under its carrier's install key.
     profiles: BTreeMap<AuthorityKey, Vec<&'a AuthorityLogEntry>>,
+    /// The install keys [`Self::file_profile`] granted that [`Self::settle`]
+    /// has not yet woken the answers they carry with: the fixed point that
+    /// makes a carrier-approved key usable downstream in any batch order.
+    woken: Vec<AuthorityKey>,
     /// The grants [`Self::settle`] made since the caller last took them.
     pub(super) grown: Vec<Grant>,
 }
@@ -267,6 +272,10 @@ impl<'a> StructureBuilder<'a> {
                     self.file_profile(entry);
                 }
                 self.grown.push(Grant::Anchor(key));
+            } else if let Some(key) = self.woken.pop() {
+                for entry in self.profiles.remove(&key).unwrap_or_default() {
+                    self.file_profile(entry);
+                }
             } else {
                 break;
             }
@@ -296,17 +305,33 @@ impl<'a> StructureBuilder<'a> {
 
     /// Takes a machine revision's install key when a slip issuer or an
     /// owner anchor signed it, as a stranger's when that anchor is not this
-    /// install's own, or files it under its signer.
+    /// install's own, or files it under its signer. An owner answer is
+    /// taken when its carrier's install key signed it alone, as its
+    /// carrier's key stands: own, or a stranger's (mesh PR1b).
     fn file_profile(&mut self, entry: &'a AuthorityLogEntry) {
-        let signer = entry.signer_key();
-        let own = self.structure.issuers.contains(signer) || self.structure.is_own_anchor(signer);
-        if !own && !self.structure.is_anchor(signer) {
-            self.profiles.entry(signer.clone()).or_default().push(entry);
-            return;
-        }
         let AuthorityOp::MachineProfile(profile) = &entry.op else {
             return;
         };
+        let signer = entry.signer_key();
+        let (own, stranger) = match profile.carrier {
+            Some(_) if !entry.cosigns.is_empty() => return,
+            Some(carrier) => {
+                let key = (carrier, signer.clone());
+                (
+                    self.structure.machine_keys.contains(&key),
+                    self.structure.stranger_keys.contains(&key),
+                )
+            }
+            None => {
+                let own =
+                    self.structure.issuers.contains(signer) || self.structure.is_own_anchor(signer);
+                (own, !own && self.structure.is_anchor(signer))
+            }
+        };
+        if !own && !stranger {
+            self.profiles.entry(signer.clone()).or_default().push(entry);
+            return;
+        }
         if verify_entry_signatures(entry).is_err() {
             return;
         }
@@ -319,6 +344,7 @@ impl<'a> StructureBuilder<'a> {
             self.structure.stranger_keys.insert(key.clone());
         }
         if !vouched {
+            self.woken.push(key.1.clone());
             self.grown.push(Grant::InstallKey(key.0, key.1));
         }
     }
@@ -349,6 +375,10 @@ impl AuthorityStructure {
             AuthorityOp::ResidenceResult(result) => install_key(result.machine),
             AuthorityOp::GrantTravelSet(set) => install_key(set.machine),
             AuthorityOp::OwnerRoot(_) => self_signed_root(entry).is_some(),
+            // An owner answer: its carrier's install key, alone (mesh PR1b).
+            AuthorityOp::MachineProfile(profile) if profile.carrier.is_some() => {
+                entry.cosigns.is_empty() && profile.carrier.is_some_and(install_key)
+            }
             AuthorityOp::MachineProfile(_)
                 if self.is_anchor(entry.signer_key()) && entry.cosigns.is_empty() =>
             {
@@ -375,11 +405,14 @@ impl AuthorityStructure {
             AuthorityOp::OwnerRoot(record) => self_signed_root(entry).is_some_and(|anchor| {
                 !self.own_anchors.contains(&anchor) && !self.local.roots.contains(&record.root)
             }),
-            AuthorityOp::MachineProfile(_) => {
-                !self.is_own_anchor(signer)
-                    && !matches!(signer, AuthorityKey::Ed25519(anchor)
-                        if self.awaited_anchors.contains(anchor))
-            }
+            AuthorityOp::MachineProfile(profile) => match profile.carrier {
+                Some(carrier) => machine_key(carrier),
+                None => {
+                    !self.is_own_anchor(signer)
+                        && !matches!(signer, AuthorityKey::Ed25519(anchor)
+                            if self.awaited_anchors.contains(anchor))
+                }
+            },
             AuthorityOp::WorldPrivacy(edit) => machine_key(edit.machine),
             AuthorityOp::WorldKeyWraps(record) => machine_key(record.machine),
             AuthorityOp::ResidenceResult(result) => machine_key(result.machine),
