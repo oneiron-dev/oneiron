@@ -471,6 +471,18 @@ impl SyncServer {
         runtime: &tokio::runtime::Handle,
         moving: &SpaceMove,
     ) -> Result<SpaceMoveOutcome, MediaEmbedRefusal> {
+        self.check_space_move_listing(runtime, moving)
+            .map(|(outcome, _)| outcome)
+    }
+
+    /// [`Self::check_space_move`], beside the rows its reading stands on
+    /// ([`oneiron::Vault::check_space_move_listing`]). A check it waited on
+    /// lists none: it answers from the move's stored check, a side table.
+    pub(crate) fn check_space_move_listing(
+        &self,
+        runtime: &tokio::runtime::Handle,
+        moving: &SpaceMove,
+    ) -> Result<(SpaceMoveOutcome, Option<Vec<oneiron::EntityId>>), MediaEmbedRefusal> {
         let lock = Arc::clone(
             MOVE_CHECKS
                 .lock()
@@ -483,7 +495,9 @@ impl SyncServer {
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(TryLockError::WouldBlock) => {
                 drop(lock.lock().unwrap_or_else(PoisonError::into_inner));
-                return self.checked_move_outcome(moving);
+                return self
+                    .checked_move_outcome(moving)
+                    .map(|outcome| (outcome, Some(Vec::new())));
             }
         };
         let candidate = self
@@ -499,7 +513,9 @@ impl SyncServer {
             candidate,
             runtime,
         };
-        Ok(self.vault.check_space_move(&moving.candidate, &encoder)?)
+        Ok(self
+            .vault
+            .check_space_move_listing(&moving.candidate, &encoder)?)
     }
 
     /// The reading the check that just finished left on `moving`, for a

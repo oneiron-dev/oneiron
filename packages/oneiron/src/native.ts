@@ -187,6 +187,11 @@ vaultEmbeddingSpacesMoveAbandon(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
+vaultGatePolicyGet(input: unknown): unknown
+vaultGatePolicyPut(input: unknown): unknown
+vaultGatePolicyPropose(input: unknown): unknown
+vaultGateCheckerGet(input: unknown): unknown
+vaultGateCheckerSet(input: unknown): unknown
 vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown

@@ -21994,7 +21994,7 @@
       "const": 5,
       "crate-vis": 3,
       "enum": 4,
-      "fn": 8,
+      "fn": 9,
       "struct": 4,
       "trait": 1
      }
@@ -24207,7 +24207,7 @@
      "path": "src/gate/manifest_authenticity.rs",
      "purpose": "Local write-door authentication for manifest contributions",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 1
      }
@@ -24230,6 +24230,7 @@
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
       "crate-vis": 64,
+      "mod": 1,
       "re-export": 8
      }
     },
@@ -24296,6 +24297,51 @@
      "surface": {
       "crate-vis": 12,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/policy_manifest_doors/mod.rs",
+     "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
+     "surface": {
+      "fn": 5,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ActorCeiling",
+      "GateCheckerReceipt",
+      "GateCheckerSet",
+      "GateCheckerView",
+      "PolicyAxes",
+      "PolicyCeiling",
+      "PolicyCriticality",
+      "PolicyManifest",
+      "PolicyManifestPropose",
+      "PolicyManifestPut",
+      "PolicyManifestRead",
+      "PolicyManifestReceipt",
+      "PolicyManifestView",
+      "PolicyManifestsView",
+      "PolicyRule",
+      "PolicySensitivity",
+      "PolicySignature",
+      "PolicySource",
+      "SensitivityBand",
+      "SensitivityName",
+      "SourceTrust",
+      "SourceTrustRow"
+     ],
+     "path": "src/gate/policy_manifest_doors/types.rs",
+     "purpose": "Typed DEC-0005 policy axes",
+     "surface": {
+      "enum": 7,
+      "struct": 15
      }
     },
     {
@@ -28194,7 +28240,7 @@
      "surface": {
       "crate-vis": 20,
       "mod": 197,
-      "re-export": 75
+      "re-export": 76
      }
     },
     {
@@ -39251,7 +39297,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -48550,7 +48596,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 373
+      "fn": 378
      }
     },
     {
@@ -48609,7 +48655,7 @@
      "surface": {
       "const": 4,
       "enum": 6,
-      "fn": 24,
+      "fn": 25,
       "struct": 27
      }
     },
@@ -54346,7 +54392,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 135,
+     "files": 137,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55230,7 +55276,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3364,
+   "source_files": 3366,
    "test_files": 902
   },
   "oneiron-android": {
@@ -63625,7 +63671,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 324
+      "fn": 329
      }
     },
     {
@@ -64673,7 +64719,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 325
+      "fn": 330
      }
     },
     {
@@ -67516,7 +67562,7 @@
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -67650,6 +67696,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/gate_policy_doors.rs",
+     "purpose": "Owner policy and checker host doors",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -67670,13 +67726,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 67
+      "crate-vis": 69
      }
     },
     {
@@ -71859,7 +71915,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -73977,7 +74033,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 31
      }
     },
     {
@@ -74147,7 +74203,7 @@
      "path": "src/server/space_move.rs",
      "purpose": "The server's half of a kind slot version move (OF-370; ARCH-0004 `#swap-check-ruling`…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -74921,7 +74977,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 323,
+     "files": 324,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75336,7 +75392,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 644,
+   "source_files": 645,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -75531,6 +75587,7 @@
      "notable": [
       "AccessStatus",
       "ActExecution",
+      "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
       "AgentHealthApplicationState",
@@ -75709,6 +75766,7 @@
       "ConcernMoveRequest",
       "ConcernOutcome",
       "ConcernOutcomeRequest",
+      "ConfidenceBand",
       "ConfirmationReceipt",
       "Conflict",
       "ConflictKind",
@@ -75914,6 +75972,9 @@
       "FolderItemInput",
       "ForkKind",
       "ForkState",
+      "GateCheckerReceipt",
+      "GateCheckerSet",
+      "GateCheckerView",
       "GateDecisionId",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
@@ -76093,6 +76154,7 @@
       "MetricDirection",
       "MetricRole",
       "MetricSet",
+      "ModelSlot",
       "MutationIntent",
       "NativeOutputRequest",
       "NeighborhoodGraphAtom",
@@ -76249,6 +76311,19 @@
       "PinnedRef",
       "PixelRegion",
       "PolicyActionOutcome",
+      "PolicyAxes",
+      "PolicyCeiling",
+      "PolicyCriticality",
+      "PolicyManifest",
+      "PolicyManifestPropose",
+      "PolicyManifestPut",
+      "PolicyManifestRead",
+      "PolicyManifestReceipt",
+      "PolicyManifestView",
+      "PolicyManifestsView",
+      "PolicyRule",
+      "PolicySensitivity",
+      "PolicySignature",
       "PostmarkAtom",
       "Preset",
       "PriorRung",
@@ -76490,7 +76565,9 @@
       "SelfUiStateValue",
       "SelfUiValue",
       "Sensitivity",
+      "SensitivityBand",
       "SensitivityCeiling",
+      "SensitivityName",
       "SetNoteOverridesRequest",
       "SettleVerdict",
       "ShapeApplyItem",
@@ -76569,6 +76646,8 @@
       "SlideUnitRefused",
       "SliderControl",
       "SmartArtNode",
+      "SourceTrust",
+      "SourceTrustRow",
       "SpaceMove",
       "SpaceMoveCheck",
       "SpaceMoveState",
@@ -76678,6 +76757,8 @@
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
       "VadBadge",
+      "VerdictBinding",
+      "VerdictMode",
       "VoiceLineAtom",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
@@ -76737,8 +76818,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 327,
-      "struct": 877
+      "enum": 336,
+      "struct": 893
      }
     },
     {

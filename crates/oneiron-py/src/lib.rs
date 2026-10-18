@@ -1641,6 +1641,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_gate_policy_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.gate.policy.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.gate.policy.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_gate_policy_put(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.gate.policy.put")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.gate.policy.put", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_gate_policy_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.gate.policy.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.gate.policy.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_gate_checker_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.gate.checker.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.gate.checker.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_gate_checker_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.gate.checker.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.gate.checker.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_settings_learning(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.settings.learning")?;
         let output = py

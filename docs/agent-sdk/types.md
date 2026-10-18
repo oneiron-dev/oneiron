@@ -940,6 +940,8 @@ class Oneiron:
         @property
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs": ...
         @property
+        def gate(self) -> "Oneiron._VaultGateVerbs": ...
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
         def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
@@ -1203,7 +1205,7 @@ class Oneiron:
         def mode(self, spec: Facade.ResidenceModeRequest) -> Facade.ResidenceModeChanged:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
         def open(self, spec: Facade.ResidenceOpenRequest) -> Facade.ResidenceOpened:
-            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
         def index(self, spec: Facade.ResidenceMachineRequest) -> Facade.ResidenceIndex:
             """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
         def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
@@ -1296,6 +1298,23 @@ class Oneiron:
             """Stores one retrieval probe the owner or another model wrote: kind, query, family, targets and author."""
         def delete(self, spec: Facade.EmbeddingSpaceProbeDeleteRequest) -> Facade.EmbeddingSpaceProbeDeleted:
             """Removes one stored embedding space probe by its id."""
+    class _VaultGateVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultGatePolicyVerbs": ...
+        @property
+        def checker(self) -> "Oneiron._VaultGateCheckerVerbs": ...
+    class _VaultGatePolicyVerbs:
+        def get(self, spec: Facade.PolicyManifestRead) -> Facade.PolicyManifestsView:
+            """The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."""
+        def put(self, spec: Facade.PolicyManifestPut) -> Facade.PolicyManifestReceipt:
+            """The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."""
+        def propose(self, spec: Facade.PolicyManifestPropose) -> Facade.PolicyManifestReceipt:
+            """Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."""
+    class _VaultGateCheckerVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.GateCheckerView:
+            """The owner reads the calibrated checker verdict role from the vault model manifest."""
+        def set(self, spec: Facade.GateCheckerSet) -> Facade.GateCheckerReceipt:
+            """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...
@@ -1595,12 +1614,23 @@ class Oneiron:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
         def from_entity(self, input: Facade.CreateNoteFromEntityRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind from an existing entity."""
+        def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:
+            """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
+        def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
+            """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+        @property
+        def editor(self) -> "Oneiron._VaultNotesEditorVerbs": ...
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
         def seal(self, request: Facade.NoteRefRequest) -> Facade.NoteSeal: ...
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
         def set_overrides(self, request: Facade.SetNoteOverridesRequest) -> Facade.NoteDefaultsView: ...
         def defaults(self, request: Facade.NoteRefRequest) -> Facade.NoteDefaultsView: ...
+    class _VaultNotesEditorVerbs:
+        def bind(self, spec: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteEditorBinding | None]:
+            """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
+        def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
+            """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""
