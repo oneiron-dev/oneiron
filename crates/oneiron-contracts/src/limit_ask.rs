@@ -104,11 +104,15 @@ pub enum EngineLimit {
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
+    /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
+    /// original or its prepared copy, whichever is larger. Past it asks
+    /// whether everything is okay, and the item is prepared and sealed whole.
+    EsignPdfBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -132,6 +136,7 @@ impl EngineLimit {
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
         Self::ImportXlsxLiveCells,
+        Self::EsignPdfBytes,
     ];
 
     /// The config key that sets the row.
@@ -160,6 +165,7 @@ impl EngineLimit {
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::EsignPdfBytes => "limits.esign_pdf_bytes",
         }
     }
 
@@ -190,6 +196,7 @@ impl EngineLimit {
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
             Self::ImportXlsxLiveCells => 200_000,
+            Self::EsignPdfBytes => 256 << 20,
         }
     }
 }

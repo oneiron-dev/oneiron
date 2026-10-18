@@ -260,6 +260,7 @@ impl LimitsConfig {
             import_decoded_bytes,
             signature_decode_bytes,
             import_xlsx_live_cells,
+            esign_pdf_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -321,6 +322,7 @@ impl LimitsConfig {
             (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
             (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
             (EngineLimit::ImportXlsxLiveCells, import_xlsx_live_cells),
+            (EngineLimit::EsignPdfBytes, esign_pdf_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -452,4 +454,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) import_decoded_bytes: Option<u64>,
     pub(super) signature_decode_bytes: Option<u64>,
     pub(super) import_xlsx_live_cells: Option<u64>,
+    pub(super) esign_pdf_bytes: Option<u64>,
 }
