@@ -417,6 +417,12 @@ export class Oneiron {
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
       /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
       list: (input: Facade.ClaimListFilter): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsList(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
+      /** Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it. */
+      demote: (input: Facade.ClaimDemoteRequest): Facade.ClaimDemoteView => this.#call(() => this.#client.vaultClaimsDemote(input) as Facade.ClaimDemoteView),
+      /** Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
+      list_filtered: (input: Facade.ClaimFilteredListRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsListFiltered(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
+      /** Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt. */
+      read_filtered: (input: Facade.ClaimFilteredReadRequest): Facade.ScopedReadResult<Facade.ClaimView | null> => this.#call(() => this.#client.vaultClaimsReadFiltered(input) as Facade.ScopedReadResult<Facade.ClaimView | null>),
       /** The supersession timeline of one claim, oldest first, with the read's narrowing receipt. */
       history: (input: Facade.ClaimRefRequest): Facade.ScopedReadResult<Facade.ClaimView[]> => this.#call(() => this.#client.vaultClaimsHistory(input) as Facade.ScopedReadResult<Facade.ClaimView[]>),
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */

@@ -2506,6 +2506,21 @@ export_facade! {
     let output = client.vault_claims_list(&input)?;
     Lift::lift(output)
 };
+"vault.claims.demote" => fn vault_claims_demote(&self, input: ClaimDemoteRequest) -> ClaimDemoteView = |client| {
+    let input: oneiron::memory::ClaimDemoteRequest = crate::codec::lower_record("vault.claims.demote", input)?;
+    let output = client.vault_claims_demote(&input)?;
+    crate::codec::lift_record("vault.claims.demote", &output)
+};
+"vault.claims.list_filtered" => fn vault_claims_list_filtered(&self, input: ClaimFilteredListRequest) -> ClaimViews = |client| {
+    let input: oneiron::memory::ClaimFilteredListRequest = crate::codec::lower_record("vault.claims.list_filtered", input)?;
+    let output = client.vault_claims_list_filtered(&input)?;
+    Lift::lift(output)
+};
+"vault.claims.read_filtered" => fn vault_claims_read_filtered(&self, input: ClaimFilteredReadRequest) -> ScopedReadResultOptionalClaimView = |client| {
+    let input: oneiron::memory::ClaimFilteredReadRequest = crate::codec::lower_record("vault.claims.read_filtered", input)?;
+    let output = client.vault_claims_read_filtered(&input)?;
+    crate::codec::lift_record("vault.claims.read_filtered", &output)
+};
 "vault.claims.history" => fn vault_claims_history(&self, claim_ref: String) -> ClaimViews = |client| {
     let input: oneiron::task_verb::sdk::ClaimRefRequest = claim_ref.lower()?;
     let output = client.vault_claims_history(&input)?;

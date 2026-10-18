@@ -8491,6 +8491,61 @@
       "mcp_scope": "filtered"
     },
     {
+      "name": "vault.claims.demote",
+      "description": "Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it.",
+      "refs": [
+        "/claim_ref"
+      ],
+      "input": "crate::memory::ClaimDemoteRequest",
+      "output": "crate::memory::ClaimDemoteView",
+      "call": "memory.claim_demote(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.list_filtered",
+      "description": "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+      "input": "crate::memory::ClaimFilteredListRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+      "call": "memory.claim_list_filtered(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.read_filtered",
+      "description": "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+      "input": "crate::memory::ClaimFilteredReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>",
+      "call": "memory.claim_read_filtered(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.claims.history",
       "description": "The supersession timeline of one claim, oldest first, with the read's narrowing receipt.",
       "uniffi": {

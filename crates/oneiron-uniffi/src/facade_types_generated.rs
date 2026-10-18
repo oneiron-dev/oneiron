@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 626 facade rows, 2280 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 585.
+// UniFFI census: 629 facade rows, 2287 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 14; generated in and out: 587.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -30218,6 +30218,125 @@ pub enum TranscriptIngestOutcome {
         #[serde(rename = "note_ref")]
         note_ref: String,
     },
+}
+
+/// `oneiron::memory::claim_stale::ClaimDemoteActionInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum ClaimDemoteActionInput {
+    #[serde(rename = "decay")]
+    Decay {
+        #[serde(rename = "new_claim_of_weight")]
+        new_claim_of_weight: f64,
+    },
+    #[serde(rename = "weaken")]
+    Weaken {
+        #[serde(rename = "new_confidence")]
+        new_confidence: f64,
+    },
+    #[serde(rename = "stale")]
+    Stale,
+}
+
+/// `oneiron::memory::claim_stale::ClaimDemoteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimDemoteRequest {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "action")]
+    pub action: ClaimDemoteActionInput,
+}
+
+/// `oneiron::memory::claim_stale::ClaimDemoteView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClaimDemoteView {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "short_ref", default, skip_serializing_if = "Option::is_none")]
+    pub short_ref: Option<String>,
+    #[serde(rename = "rung")]
+    pub rung: String,
+    #[serde(rename = "stale")]
+    pub stale: bool,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+}
+
+/// `oneiron::memory::claim_stale::ReadFilterInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ReadFilterInput {
+    #[serde(
+        rename = "entity_types",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub entity_types: Option<Vec<u8>>,
+    #[serde(
+        rename = "max_sensitivity_band",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_sensitivity_band: Option<u8>,
+    #[serde(
+        rename = "include_stale",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_stale: Option<bool>,
+    #[serde(
+        rename = "min_confidence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_confidence: Option<f64>,
+    #[serde(
+        rename = "min_salience",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_salience: Option<f64>,
+}
+
+/// `oneiron::memory::claim_stale::ClaimFilteredListRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimFilteredListRequest {
+    #[serde(
+        rename = "subject_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub subject_ref: Option<String>,
+    #[serde(rename = "predicate", default, skip_serializing_if = "Option::is_none")]
+    pub predicate: Option<String>,
+    #[serde(rename = "lifecycle", default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<String>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
+}
+
+/// `oneiron::memory::claim_stale::ClaimFilteredReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimFilteredReadRequest {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "filter", default, skip_serializing_if = "Option::is_none")]
+    pub filter: Option<ReadFilterInput>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalClaimView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalClaimView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<WireClaimView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.

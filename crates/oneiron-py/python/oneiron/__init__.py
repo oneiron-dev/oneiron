@@ -960,6 +960,15 @@ class Oneiron:
         def list(self, input: dict[str, Any]) -> Any:
             """Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_list(json.dumps(input, allow_nan=False))))
+        def demote(self, input: dict[str, Any]) -> Any:
+            """Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."""
+            return json.loads(_translate(lambda: self._client.vault_claims_demote(json.dumps(input, allow_nan=False))))
+        def list_filtered(self, input: dict[str, Any]) -> Any:
+            """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_claims_list_filtered(json.dumps(input, allow_nan=False))))
+        def read_filtered(self, input: dict[str, Any]) -> Any:
+            """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_claims_read_filtered(json.dumps(input, allow_nan=False))))
         def history(self, input: dict[str, Any]) -> Any:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_history(json.dumps(input, allow_nan=False))))

@@ -769,6 +769,12 @@ class Oneiron:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
         def list(self, input: Facade.ClaimListFilter) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."""
+        def demote(self, input: Facade.ClaimDemoteRequest) -> Facade.ClaimDemoteView:
+            """Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."""
+        def list_filtered(self, input: Facade.ClaimFilteredListRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
+            """Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
+        def read_filtered(self, input: Facade.ClaimFilteredReadRequest) -> Facade.ScopedReadResult[Facade.ClaimView | None]:
+            """Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."""
         def history(self, input: Facade.ClaimRefRequest) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
             """The supersession timeline of one claim, oldest first, with the read's narrowing receipt."""
         def admit(self, input: Facade.AdmitImportedClaimInput) -> Facade.CommitReceipt:

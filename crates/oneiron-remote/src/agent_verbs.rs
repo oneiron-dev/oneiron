@@ -1578,6 +1578,17 @@ impl OneironClient {
                 "vault.claims.list" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
                 >(client, verb, &input),
+                "vault.claims.demote" => {
+                    remote_agent_verb_output::<oneiron::memory::ClaimDemoteView>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.claims.list_filtered" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
+                >(client, verb, &input),
+                "vault.claims.read_filtered" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::memory::ClaimView>>,
+                >(client, verb, &input),
                 "vault.claims.history" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
                 >(client, verb, &input),
@@ -8144,6 +8155,45 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.claims.list", value)
+    }
+    pub fn vault_claims_demote(
+        &self,
+        input: &oneiron::memory::ClaimDemoteRequest,
+    ) -> Result<oneiron::memory::ClaimDemoteView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.demote", value)
+    }
+    pub fn vault_claims_list_filtered(
+        &self,
+        input: &oneiron::memory::ClaimFilteredListRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>, MemoryError>
+    {
+        oneiron::memory::caps::check_limit_nonzero(input.limit)?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.list_filtered", value)
+    }
+    pub fn vault_claims_read_filtered(
+        &self,
+        input: &oneiron::memory::ClaimFilteredReadRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::memory::ClaimView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.claims.read_filtered", value)
     }
     pub fn vault_claims_history(
         &self,

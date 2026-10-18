@@ -4482,6 +4482,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_claims_demote(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.demote")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.demote", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_list_filtered(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.list_filtered")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.list_filtered", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_read_filtered(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.read_filtered")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.read_filtered", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_history(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.history")?;
         let output = py

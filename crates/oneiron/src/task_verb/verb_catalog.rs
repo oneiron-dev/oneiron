@@ -545,6 +545,9 @@ pub enum AgentVerb {
     VaultCalendarFreebusy,
     VaultCalendarTranscriptIngest,
     VaultClaimsList,
+    VaultClaimsDemote,
+    VaultClaimsListFiltered,
+    VaultClaimsReadFiltered,
     VaultClaimsHistory,
     VaultDelete,
     VaultWritesPending,
@@ -1217,6 +1220,9 @@ impl AgentVerb {
         Self::VaultCalendarFreebusy,
         Self::VaultCalendarTranscriptIngest,
         Self::VaultClaimsList,
+        Self::VaultClaimsDemote,
+        Self::VaultClaimsListFiltered,
+        Self::VaultClaimsReadFiltered,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
         Self::VaultWritesPending,
@@ -1904,6 +1910,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
             Self::VaultCalendarTranscriptIngest => "vault.calendar.transcript.ingest",
             Self::VaultClaimsList => "vault.claims.list",
+            Self::VaultClaimsDemote => "vault.claims.demote",
+            Self::VaultClaimsListFiltered => "vault.claims.list_filtered",
+            Self::VaultClaimsReadFiltered => "vault.claims.read_filtered",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
             Self::VaultWritesPending => "vault.writes.pending",
@@ -2539,6 +2548,9 @@ impl AgentVerb {
                 | Self::VaultCalendarFreebusy
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
+                | Self::VaultClaimsDemote
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -3218,6 +3230,9 @@ impl AgentVerb {
                 | Self::VaultCalendarFreebusy
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultClaimsList
+                | Self::VaultClaimsDemote
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -3441,6 +3456,8 @@ impl AgentVerb {
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
+                | Self::VaultClaimsListFiltered
+                | Self::VaultClaimsReadFiltered
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
                 | Self::VaultGet
@@ -3987,6 +4004,7 @@ impl AgentVerb {
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
+                | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -4424,6 +4442,7 @@ impl AgentVerb {
                 | Self::VaultCalendarIcsImport
                 | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
+                | Self::VaultClaimsDemote
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
                 | Self::VaultHabitsCheckin
@@ -5084,6 +5103,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsDemote => &["spec"],
+            Self::VaultClaimsListFiltered => &["spec"],
+            Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
             Self::VaultWritesPending => &["spec"],
@@ -5757,6 +5779,9 @@ impl AgentVerb {
             Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultCalendarTranscriptIngest => &["spec"],
             Self::VaultClaimsList => &["spec"],
+            Self::VaultClaimsDemote => &["spec"],
+            Self::VaultClaimsListFiltered => &["spec"],
+            Self::VaultClaimsReadFiltered => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
             Self::VaultWritesPending => &["spec"],
@@ -7422,6 +7447,15 @@ impl AgentVerb {
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."
+            }
+            Self::VaultClaimsDemote => {
+                "Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it."
+            }
+            Self::VaultClaimsListFiltered => {
+                "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."
+            }
+            Self::VaultClaimsReadFiltered => {
+                "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt."
             }
             Self::VaultClaimsHistory => {
                 "The supersession timeline of one claim, oldest first, with the read's narrowing receipt."

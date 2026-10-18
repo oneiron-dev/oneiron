@@ -531,6 +531,9 @@ vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown
 vaultCalendarTranscriptIngest(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
+vaultClaimsDemote(input: unknown): unknown
+vaultClaimsListFiltered(input: unknown): unknown
+vaultClaimsReadFiltered(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown
 vaultWritesPending(input: unknown): unknown
