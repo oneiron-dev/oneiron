@@ -1400,6 +1400,68 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_off_record_start(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.start")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.off_record.start", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.off_record.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_witness(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.witness")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.off_record.witness", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_discard(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.discard")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.off_record.discard", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_recall(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.recall")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.off_record.recall", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_notes_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.notes.create")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.off_record.notes.create", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_off_record_claims_upsert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.off_record.claims.upsert")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.off_record.claims.upsert", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_off_record_execute(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.off_record.execute")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.off_record.execute", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_records_erase_preview(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.records.erase_preview")?;
         let output = py
