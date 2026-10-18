@@ -581,8 +581,11 @@ export class Oneiron {
       resolve: (input: Facade.AssetResolveRequest): Facade.ScopedReadResult<Facade.AssetResolved> => this.#call(() => this.#client.vaultAssetsResolve(input) as Facade.ScopedReadResult<Facade.AssetResolved>),
     },
     search: {
-      /** Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt. */
-      vector: (input: Facade.VectorSearchRequest): Facade.ScopedReadResult<Facade.VectorSearchHit[]> => this.#call(() => this.#client.vaultSearchVector(input) as Facade.ScopedReadResult<Facade.VectorSearchHit[]>),
+      /** Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit. */
+      vector: Object.assign((input: Facade.VectorSearchRequest): Facade.ScopedReadResult<Facade.VectorSearchResult> => this.#call(() => this.#client.vaultSearchVector(input) as Facade.ScopedReadResult<Facade.VectorSearchResult>), {
+        /** Reads this vault open's persisted dimensions and optional MRL fast_dims prefix; graph shape is configured before open, never changed by a search. */
+        config: (input: Facade.EmptyRequest = {}): Facade.ScopedReadResult<Facade.VectorSearchConfig> => this.#call(() => this.#client.vaultSearchVectorConfig(input) as Facade.ScopedReadResult<Facade.VectorSearchConfig>),
+      }),
       /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
       hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
       /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
@@ -2031,6 +2034,10 @@ export class Oneiron {
       resolve: (input: Facade.ResolveRecordRefRequest): Facade.ScopedReadResult<Facade.RecordRefPreview> => this.#call(() => this.#client.vaultRefsResolve(input) as Facade.ScopedReadResult<Facade.RecordRefPreview>),
       /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
       links: (input: Facade.RecordLinksRequest): Facade.RecordLinks => this.#call(() => this.#client.vaultRefsLinks(input) as Facade.RecordLinks),
+    },
+    vectors: {
+      /** Supplies one full-width vector for a readable record as the authenticated owner; the existing write gate checks model, transform, width, revision staging and graph updates atomically. */
+      put: (input: Facade.VectorPutRequest): Facade.VectorPutReceipt => this.#call(() => this.#client.vaultVectorsPut(input) as Facade.VectorPutReceipt),
     },
     /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
     neighbors: (input: Facade.NeighborsRequest): Facade.ScopedReadResult<Facade.NeighborHit[]> => this.#call(() => this.#client.vaultNeighbors(input) as Facade.ScopedReadResult<Facade.NeighborHit[]>),

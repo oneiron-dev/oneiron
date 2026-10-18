@@ -4206,6 +4206,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::RecordLinksRequest>(),
             ),
             (
+                "vault.search.vector.config",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.vectors.put",
+                crate::code_run::vault_read::request_schema::<crate::memory::VectorPutRequest>(),
+            ),
+            (
                 "vault.search.hybrid",
                 crate::code_run::vault_read::request_schema::<crate::memory::HybridSearchRequest>(),
             ),
@@ -5756,6 +5764,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.claims.demote",
     "vault.claims.list_filtered",
     "vault.claims.read_filtered",
+    "vault.search.vector.config",
+    "vault.vectors.put",
     "vault.search.hybrid",
     "vault.search.temporal",
     "vault.productivity.create",
@@ -6144,7 +6154,7 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::claim::ScopedReadResult<crate::memory::AssetResolved>,
         >(),
         "vault.search.vector" => crate::code_run::vault_read::request_schema::<
-            crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>,
+            crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>,
         >(),
         "self.admission.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::admission::AdmissionReceipt>,
@@ -7312,6 +7322,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.read_filtered" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>,
         >(),
+        "vault.search.vector.config" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>,
+        >(),
+        "vault.vectors.put" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::VectorPutReceipt>()
+        }
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
         >(),
@@ -13049,6 +13065,14 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.search.vector.config" => &[],
+        "vault.vectors.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.hybrid" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -16874,6 +16898,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.refs.links" => {
             let _input: crate::lens::RecordLinksRequest = decode(value.clone())?;
         }
+        "vault.search.vector.config" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.vectors.put" => {
+            let _input: crate::memory::VectorPutRequest = decode(value.clone())?;
+        }
         "vault.search.hybrid" => {
             let input: crate::memory::HybridSearchRequest = decode(value.clone())?;
             input.validate()?;
@@ -18946,6 +18976,8 @@ pub fn invoke(
         "vault.get" => encode(vault_get(memory, decode(value)?)?),
         "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
         "vault.refs.links" => encode(vault_refs_links(memory, decode(value)?)?),
+        "vault.search.vector.config" => encode(vault_search_vector_config(memory, decode(value)?)?),
+        "vault.vectors.put" => encode(vault_vectors_put(memory, decode(value)?)?),
         "vault.search.hybrid" => encode(vault_search_hybrid(memory, decode(value)?)?),
         "vault.search.temporal" => encode(vault_search_temporal(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
@@ -20622,7 +20654,7 @@ pub fn vault_assets_resolve(
 pub fn vault_search_vector(
     memory: &Memory<'_>,
     input: crate::memory::VectorSearchRequest,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>> {
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::VectorSearchResult>> {
     input.validate()?;
     memory.query_vector(&input)
 }
@@ -25786,6 +25818,18 @@ pub fn vault_refs_links(
     input: crate::lens::RecordLinksRequest,
 ) -> MemoryResult<crate::lens::RecordLinks> {
     memory.record_links(&input)
+}
+pub fn vault_search_vector_config(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::VectorSearchConfig>> {
+    memory.vector_search_config()
+}
+pub fn vault_vectors_put(
+    memory: &Memory<'_>,
+    input: crate::memory::VectorPutRequest,
+) -> MemoryResult<crate::memory::VectorPutReceipt> {
+    memory.put_vector_as_owner(&memory.embedded_owner("vault.vectors.put")?, &input)
 }
 pub fn vault_search_hybrid(
     memory: &Memory<'_>,

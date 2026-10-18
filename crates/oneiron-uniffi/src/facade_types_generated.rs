@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 936 facade rows, 3168 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 889.
+// UniFFI census: 938 facade rows, 3175 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 891.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -8936,6 +8936,15 @@ pub struct ScopedReadResultAssetResolved {
     pub narrowing: ScopedReadReceipt,
 }
 
+/// `oneiron::memory::search_vector::VectorSearchLane`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum VectorSearchLane {
+    #[serde(rename = "ordinary")]
+    Ordinary,
+    #[serde(rename = "voice_hot")]
+    VoiceHot,
+}
+
 /// `oneiron::memory::search_vector::VectorSearchRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -8954,6 +8963,8 @@ pub struct VectorSearchRequest {
     pub kinds: Option<Vec<InputKind>>,
     #[serde(rename = "limit")]
     pub limit: u64,
+    #[serde(rename = "lane", default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<VectorSearchLane>,
 }
 
 /// `oneiron::embed::evidence::EmbeddingMatchEvidence`.
@@ -8992,11 +9003,45 @@ pub struct VectorSearchHit {
     pub embedding_matches: Vec<EmbeddingMatchEvidence>,
 }
 
-/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `VectorSearchHitList`.
+/// `oneiron::pipeline::vector_refinement::VectorRefinement`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ScopedReadResultVectorSearchHitList {
+pub struct VectorRefinement {
+    #[serde(rename = "stored_dimensions")]
+    pub stored_dimensions: u64,
+    #[serde(rename = "candidate_dimensions")]
+    pub candidate_dimensions: u64,
+    #[serde(rename = "query_dimensions")]
+    pub query_dimensions: u64,
+    #[serde(rename = "score_dimensions")]
+    pub score_dimensions: u64,
+    #[serde(rename = "full_dimension_rescore")]
+    pub full_dimension_rescore: bool,
+}
+
+/// `oneiron::memory::search_vector::VectorSearchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct VectorSearchResult {
+    #[serde(rename = "hits")]
+    pub hits: Vec<VectorSearchHit>,
+    #[serde(rename = "lane")]
+    pub lane: VectorSearchLane,
+    #[serde(rename = "effective_limit")]
+    pub effective_limit: u64,
+    #[serde(rename = "limit_clamped")]
+    pub limit_clamped: bool,
+    #[serde(
+        rename = "refinement",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refinement: Option<VectorRefinement>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `VectorSearchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultVectorSearchResult {
     #[serde(rename = "value")]
-    pub value: Vec<VectorSearchHit>,
+    pub value: VectorSearchResult,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
 }
@@ -40765,6 +40810,43 @@ pub struct RecordLinks {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+}
+
+/// `oneiron::memory::search_vector::VectorSearchConfig`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct VectorSearchConfig {
+    #[serde(rename = "dimensions")]
+    pub dimensions: u64,
+    #[serde(rename = "fast_dims", default, skip_serializing_if = "Option::is_none")]
+    pub fast_dims: Option<u16>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `VectorSearchConfig`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultVectorSearchConfig {
+    #[serde(rename = "value")]
+    pub value: VectorSearchConfig,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::search_vector::VectorPutRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VectorPutRequest {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(rename = "vector")]
+    pub vector: Vec<f64>,
+}
+
+/// `oneiron::memory::search_vector::VectorPutReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct VectorPutReceipt {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(rename = "dimensions")]
+    pub dimensions: u64,
 }
 
 /// `oneiron::memory::search_hybrid::HybridPprQuery`.
