@@ -11223,7 +11223,7 @@
      "path": "src/code_document/verbs.rs",
      "purpose": "The code views' agent verbs (OF-323): `vault.code.diff`, a semantic diff between two tested states of one…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 2,
       "struct": 10
      }
