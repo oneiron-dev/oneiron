@@ -4,7 +4,7 @@ import { blake3 } from "@noble/hashes/blake3";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture } from "./support/engine.ts";
 import { PublicHttpClient } from "./support/clients.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile, redactor } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -209,6 +209,7 @@ suite.test(test, "SECRETS-01", "Mask-on-write and reveal should work", async () 
 
     // G04: a value in a structured field is kept by reference, not rejected.
     const claim = await engine.client.call("vault.claims.upsert", {
+      scope: await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef),
       predicate: fixture.predicate, subject_ref: conversation.id,
       value: { note: fixture.fieldNote, access: fixture.fieldCredential, tail: fixture.fieldTail },
       source: "user_stated", confidence: 1, occurred_at: fixture.occurredAt,

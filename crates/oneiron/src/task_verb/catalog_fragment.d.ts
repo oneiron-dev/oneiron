@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 438 code-mode rows (417 host rows, 21 run rows), 1579 declarations.
-// Replies: 384 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 441 code-mode rows (420 host rows, 21 run rows), 1588 declarations.
+// Replies: 387 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1024,8 +1024,9 @@ declare namespace Sdk {
   type ProjectProposalRequest = { card_id: string; source_message_ref: string; goal: ProjectGoalDraft; picks: ProjectProposalPicks };
   type ProjectProposalCard = { card_id: string; principal_ref: string; source_message_ref: string; source_room_ref?: string | null; source_thread_ref?: string | null; goal: ProjectGoalDraft; leader_agent_def_ref: string; board_human_refs: string[]; budget_share_bps: number; starting_skill_refs: string[] };
   type ProjectConversationRequest = { conversation_ref: string };
+  type RosterActor = string;
   type ProjectCardState = "proposed" | { minted: { project: EntityId } } | "dismissed";
-  type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: EntityId; state: ProjectCardState; at: number };
+  type ProjectCardRecord = { card: ProjectProposalCard; conversation: EntityId; detection: EntityId; drafted_by: RosterActor; state: ProjectCardState; at: number };
   type ProjectCardRequest = { card_id: string };
   type ProjectCardDismissal = { card_id: string; dismissed: boolean };
   type ProjectCardConfirmRequest = { card_id: string; action_id: string; occurred_at: number };
@@ -1047,15 +1048,15 @@ declare namespace Sdk {
   type ConsentPart = "subject" | "spend" | "membership" | "admission";
   type RequiredParty = { subject: JoinSubject } | { payer: EntityId } | "payer_unknown" | { vault_admin: { vault: number } } | { room_host: { room: EntityId } };
   type ConsentNeed = { part: ConsentPart; party: RequiredParty };
-  type JoinRefusal = { denied: { part: ConsentPart; party: EntityId; answer_ref: string } } | "unknown_subject" | { foreign_house_agent: { org: EntityId } } | "unknown_room" | { unknown_spend_scope: { scope: SpendScopeId } } | { forged_payer: { scope: SpendScopeId } };
+  type JoinRefusal = { denied: { part: ConsentPart; party: RosterActor; answer_ref: string } } | "unknown_subject" | { foreign_house_agent: { org: EntityId } } | "unknown_room" | { unknown_spend_scope: { scope: SpendScopeId } } | { forged_payer: { scope: SpendScopeId } };
   type JoinDecision = "ready" | { hold: { needs: ConsentNeed[] } } | { refuse: JoinRefusal };
-  type ConsentDenial = { party: EntityId; answer_ref: string };
+  type ConsentDenial = { party: RosterActor; answer_ref: string };
   type ConsentState<T> = { missing: ConsentNeed } | { granted: T } | { denied: ConsentDenial };
-  type SpendConsent = { paid: { payer: EntityId; granted_by: EntityId; scope: SpendScopeId; unit: LeaseUnit; cap_units: number; at_ms: number } } | "no_paid_work";
+  type SpendConsent = { paid: { payer: EntityId; granted_by: RosterActor; scope: SpendScopeId; unit: LeaseUnit; cap_units: number; at_ms: number } } | "no_paid_work";
   type MembershipConsent = { vault_owner: { person: EntityId } } | { member: { person: EntityId; grant: EntityId } } | { companion_of_member: { companion: EntityId; principal: EntityId; grant?: EntityId | null } } | { scoped_guest: { person: EntityId; guest_grant: EntityId } } | { house_agent: { org: EntityId } };
   type AdmissionBasis = "room_owner" | "delegated_host" | "standing_home_roster" | { host_answer: { answer_ref: string } } | { through_principal: { principal: EntityId } };
-  type AdmissionConsent = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; granted_by: EntityId; basis: AdmissionBasis };
-  type ConsentSet = { subject: ConsentState<EntityId>; spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> };
+  type AdmissionConsent = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; granted_by: RosterActor; basis: AdmissionBasis };
+  type ConsentSet = { subject: ConsentState<RosterActor>; spend: ConsentState<SpendConsent>; membership: ConsentState<MembershipConsent>; admission: ConsentState<AdmissionConsent> };
   type JoinParticipation = "ledger_seat" | "already_seated" | "home_room_receipt" | "branch_receipt" | "agent_receipt" | "principal_receipt";
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
@@ -1089,7 +1090,7 @@ declare namespace Sdk {
   type MessageReactionReceipt = { id: string; event: string };
   type RoomHostRequest = { room_ref: string; session_ref?: string | null };
   type HostPinKind = "pinned" | "handed_off";
-  type HostPin = { agent: EntityId; by: EntityId; kind: HostPinKind; at: number };
+  type HostPin = { agent: EntityId; by: RosterActor; kind: HostPinKind; at: number };
   type RoomHosting = { host?: EntityId | null; candidates: EntityId[]; pin?: HostPin | null };
   type RoomSpeakingRole = "host" | "member";
   type RoomStanding = { hosting: RoomHosting; role?: RoomSpeakingRole | null };
@@ -1531,6 +1532,17 @@ declare namespace Sdk {
   type SetNoteOverridesRequest = { note_ref: string; overrides?: NoteOverrides };
   type NoteKindDescriptor = { pack: string; kind: string; extraction: ExtractionDefault; context: ContextDefault; retention: RetentionDefault; archive_after_days?: number | null };
   type NoteDefaultsView = { overrides: NoteOverrides; defaults: NoteKindDescriptor };
+  type RunAttachRequest = { run: string; rebind?: boolean };
+  type RunAttached = { live_run: string };
+  type FoldUnfoldRequest = { live_run: string; fold: string };
+  type FoldHistoryRequest = { live_run: string; from: number; limit: number };
+  type FoldSpan = { fold: string; from: number; through: number };
+  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
+  type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
+  type FoldUnfold = { fold: number; at: number };
+  type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
+  type FoldHistoryStep = { step: number; code: string; console: string };
+  type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
   type ConnectorAnswerAction = "accept" | "decline" | "cancel";
   type ConnectorQuestionAnswer = { key: string; action: ConnectorAnswerAction; content?: unknown | null };
   type ConnectorAnswerRequest = { handle: string; answers: ConnectorQuestionAnswer[] };
@@ -1552,9 +1564,6 @@ declare namespace Sdk {
   type FoldUnfoldInput = { fold: string };
   type FoldUnfolded = { fold: string; from: number; through: number; unfolded_after_step: number };
   type FoldsInput = Record<string, never>;
-  type FoldSpan = { fold: string; from: number; through: number };
-  type FoldPending = { fold: string; from: number; through: number; note?: string | null; failed?: string | null };
-  type FoldList = { folds: FoldSpan[]; pending: FoldPending[]; compact_asked: boolean };
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
   type TaskRefuseOutput = { task: EntityId; level: string; outcome: string; replay: boolean };
@@ -1765,11 +1774,16 @@ declare namespace self {
     unsubscribe(input: Sdk.BoardSubscriptionRequest): Promise<Sdk.BoardVerbOutput | StoredResult>;
   };
   const fold: (span: readonly [number, number], options?: { note?: string | null }) => Promise<Sdk.FoldReply<Sdk.FoldMarked> | StoredResult>;
-  const folds: (input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>;
+  const folds: ((input: Sdk.FoldsInput) => Promise<Sdk.FoldReply<Sdk.FoldList> | StoredResult>) & {
+    /** Reads one pending mark or landed fold of the attached run, with its Generated stub, source ids and retained result handles. */
+    describe(input: Sdk.FoldUnfoldRequest): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
+  };
   const grants: {
     /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
     ask(input: Sdk.GrantAskRequest): Promise<Sdk.GrantAskReceipt | StoredResult>;
   };
+  /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
+  const history: (input: Sdk.FoldHistoryRequest) => Promise<Sdk.FoldHistory | StoredResult>;
   const identity: {
     /** A vault owner's tap on an identity choice card: who a person named in their conversations is. */
     answer(input: Sdk.IdentityAnswerRequest): Promise<Sdk.IdentitySettled | StoredResult>;
@@ -1804,6 +1818,10 @@ declare namespace self {
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
+  const run: {
+    /** Attaches the caller's own credential to its leased live run and returns the handle required by the public fold and history calls. */
+    attach(input: Sdk.RunAttachRequest): Promise<Sdk.RunAttached | StoredResult>;
+  };
   const skills: {
     call(input: Sdk.SkillCallInput): Promise<unknown>;
     /** Every loadable callable helper skill and its call contract: what it takes and returns. */

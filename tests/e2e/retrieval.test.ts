@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import type { FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic } from "./support/engine.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile, ownResource } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -247,9 +247,11 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
   try {
     await engine.requireHttpDoor("/v1/core/context-pack", "POST");
     await engine.requireHttpDoor("/api/search/vector", "GET");
+    const scope = await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef);
     const identities = new Map<string, { id: string; ref: string }>();
     for (const row of fixture.claims) {
       const input: FacadeInput<"vault.claims.upsert"> = {
+        scope,
         predicate: row.predicate, subject_ref: engine.pairedActor.principalRef,
         value: row.value, confidence: fixture.confidence,
         source: fixture.expectations.storedSource, salience: fixture.salience,

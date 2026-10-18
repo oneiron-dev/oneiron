@@ -1311,6 +1311,13 @@ fn mcp_agent_verb_input(
         "vault.notes.lifecycle" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.set_overrides" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.defaults" => a.spec.clone().ok_or_else(invalid),
+        "self.run.attach" => a.spec.clone().ok_or_else(invalid),
+        "self.folds.describe" => a.spec.clone().ok_or_else(invalid),
+        "self.history" => a.spec.clone().ok_or_else(invalid),
+        "self.fold" => a.spec.clone().ok_or_else(invalid),
+        "self.compact" => a.spec.clone().ok_or_else(invalid),
+        "self.unfold" => a.spec.clone().ok_or_else(invalid),
+        "self.folds" => a.spec.clone().ok_or_else(invalid),
         "self.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "self.leader.split" => a.spec.clone().ok_or_else(invalid),
         _ => Err(invalid()),
@@ -2539,6 +2546,27 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.defaults" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.run.attach" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.folds.describe" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.fold" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.compact" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.unfold" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.folds" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.agents.spawn" => {
@@ -7784,6 +7812,144 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_defaults(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.run.attach" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.run.attach", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::RunAttachRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_run_attach(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.folds.describe" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.folds.describe", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::FoldUnfoldRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_folds_describe(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.history" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.history", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::FoldHistoryRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::self_history(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.fold" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.fold", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::FoldMarkRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_fold(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.compact" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.compact", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::FoldCompactRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_compact(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.unfold" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.unfold", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::FoldUnfoldRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_unfold(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.folds" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("self.folds", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::code_run::fold_api::FoldRunRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = crate::api::facade::host_doors::self_folds(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

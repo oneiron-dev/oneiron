@@ -3695,6 +3695,48 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn self_run_attach(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.run.attach", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_folds_describe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.folds.describe", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_fold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.fold", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_compact(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.compact", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_unfold(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.unfold", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_folds(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.folds", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_agents_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.agents.spawn", input)

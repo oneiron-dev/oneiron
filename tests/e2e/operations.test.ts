@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import type { Facade, FacadeInput } from "@oneiron/client";
 import { EngineFixture } from "./support/engine.ts";
-import { loadFixtures } from "./support/fixtures.ts";
+import { loadFixtures, ownerBaseClaimScope } from "./support/fixtures.ts";
 import { defineFile } from "./support/run.ts";
 
 const profile = process.env.E2E_PROFILE === "real-small-model"
@@ -233,6 +233,7 @@ suite.test(test, "OPERATIONS-05", "Default seeded engine needs no product pack s
   const second = await engine.client.call("vault.witness", witnessInput(data.after, data.occurred_at + 1));
   expect(second.message_short_ids).toHaveLength(1);
   const claim = await engine.client.call("vault.claims.upsert", {
+    scope: await ownerBaseClaimScope(engine.client, engine.pairedActor.principalRef),
     id: data.extension.id, subject_ref: data.after.turn_ref, predicate: data.extension.predicate,
     value: data.extension.value, confidence: 1, source: "user_stated", occurred_at: data.occurred_at + 1,
   });

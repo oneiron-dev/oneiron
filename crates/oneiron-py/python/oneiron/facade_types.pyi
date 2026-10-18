@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 376 facade rows, 1477 declarations.
-Inputs: 333 of 376 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 333 of 376 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 383 facade rows, 1497 declarations.
+Inputs: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 340 of 383 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -5050,6 +5050,7 @@ class ProjectProposalCard(TypedDict):
     starting_skill_refs: list[str]
 class ProjectConversationRequest(TypedDict):
     conversation_ref: str
+RosterActor = str
 class ProjectCardStateMintedBody(TypedDict):
     project: EntityId
 class ProjectCardStateMinted(TypedDict):
@@ -5059,7 +5060,7 @@ class ProjectCardRecord(TypedDict):
     card: ProjectProposalCard
     conversation: EntityId
     detection: EntityId
-    drafted_by: EntityId
+    drafted_by: RosterActor
     state: ProjectCardState
     at: int
 class ProjectCardRequest(TypedDict):
@@ -5183,7 +5184,7 @@ class ConsentNeed(TypedDict):
     party: RequiredParty
 class JoinRefusalDeniedBody(TypedDict):
     part: ConsentPart
-    party: EntityId
+    party: RosterActor
     answer_ref: str
 class JoinRefusalDenied(TypedDict):
     denied: JoinRefusalDeniedBody
@@ -5208,7 +5209,7 @@ class JoinDecisionRefuse(TypedDict):
     refuse: JoinRefusal
 JoinDecision = Literal["ready"] | JoinDecisionHold | JoinDecisionRefuse
 class ConsentDenial(TypedDict):
-    party: EntityId
+    party: RosterActor
     answer_ref: str
 class ConsentStateMissing(TypedDict):
     missing: ConsentNeed
@@ -5219,7 +5220,7 @@ class ConsentStateDenied(TypedDict):
 ConsentState = ConsentStateMissing | ConsentStateGranted[T] | ConsentStateDenied
 class SpendConsentPaidBody(TypedDict):
     payer: EntityId
-    granted_by: EntityId
+    granted_by: RosterActor
     scope: SpendScopeId
     unit: LeaseUnit
     cap_units: int
@@ -5265,10 +5266,10 @@ class AdmissionConsent(TypedDict):
     room: EntityId
     branch: NotRequired[EntityId | None]
     subject: JoinSubject
-    granted_by: EntityId
+    granted_by: RosterActor
     basis: AdmissionBasis
 class ConsentSet(TypedDict):
-    subject: ConsentState[EntityId]
+    subject: ConsentState[RosterActor]
     spend: ConsentState[SpendConsent]
     membership: ConsentState[MembershipConsent]
     admission: ConsentState[AdmissionConsent]
@@ -5424,7 +5425,7 @@ class RoomHostRequest(TypedDict):
 HostPinKind = Literal["pinned", "handed_off"]
 class HostPin(TypedDict):
     agent: EntityId
-    by: EntityId
+    by: RosterActor
     kind: HostPinKind
     at: int
 class RoomHosting(TypedDict):
@@ -7620,6 +7621,56 @@ class NoteKindDescriptor(TypedDict):
 class NoteDefaultsView(TypedDict):
     overrides: NoteOverrides
     defaults: NoteKindDescriptor
+class RunAttachRequest(TypedDict):
+    run: str
+    rebind: NotRequired[bool]
+class RunAttached(TypedDict):
+    live_run: str
+class FoldUnfoldRequest(TypedDict):
+    live_run: str
+    fold: str
+class FoldReplyRefused(TypedDict):
+    error: str
+FoldReply = T | FoldReplyRefused
+FoldDescriptionFolded = TypedDict("FoldDescriptionFolded", {"fold": str, "from": int, "through": int, "stub": str, "source": str, "ids": list[str], "handles": list[str]})
+FoldDescriptionPending = TypedDict("FoldDescriptionPending", {"fold": str, "from": int, "through": int, "pending": bool, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+FoldDescription = FoldDescriptionFolded | FoldDescriptionPending
+FoldHistoryRequest = TypedDict("FoldHistoryRequest", {"live_run": str, "from": int, "limit": int})
+FoldSpan = TypedDict("FoldSpan", {"fold": str, "from": int, "through": int})
+FoldPending = TypedDict("FoldPending", {"fold": str, "from": int, "through": int, "note": NotRequired[str | None], "failed": NotRequired[str | None]})
+class FoldList(TypedDict):
+    folds: list[FoldSpan]
+    pending: list[FoldPending]
+    compact_asked: bool
+class FoldUnfold(TypedDict):
+    fold: int
+    at: int
+FoldHistoryEpoch = TypedDict("FoldHistoryEpoch", {"summary_ref": str, "epoch": int, "from": int, "through": int, "text": NotRequired[str | None]})
+class FoldHistoryStep(TypedDict):
+    step: int
+    code: str
+    console: str
+class FoldHistory(TypedDict):
+    run: str
+    completed_steps: int
+    compacted_through: NotRequired[int | None]
+    state: FoldList
+    folds: list[FoldDescription]
+    unfolds: list[FoldUnfold]
+    epochs: list[FoldHistoryEpoch]
+    steps: list[FoldHistoryStep]
+    next: NotRequired[int | None]
+FoldMarkRequest = TypedDict("FoldMarkRequest", {"live_run": str, "from": int, "through": int, "note": NotRequired[str | None]})
+FoldMarked = TypedDict("FoldMarked", {"fold": str, "from": int, "through": int, "pending": bool})
+class FoldCompactRequest(TypedDict):
+    live_run: str
+    note: NotRequired[str | None]
+class FoldCompactAsked(TypedDict):
+    pending: list[str]
+    applies: str
+FoldUnfolded = TypedDict("FoldUnfolded", {"fold": str, "from": int, "through": int, "unfolded_after_step": int})
+class FoldRunRequest(TypedDict):
+    live_run: str
 class LiveRunRequest(TypedDict, Generic[T]):
     live_run: str
     spec: T

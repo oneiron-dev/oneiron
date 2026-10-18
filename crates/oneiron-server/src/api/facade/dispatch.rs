@@ -8592,6 +8592,195 @@ async fn vault_notes_defaults(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_run_attach(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.run.attach")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.run.attach", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.run.attach", value).await?;
+    let output = facade_output(
+        super::host_doors::self_run_attach(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_folds_describe(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.folds.describe")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.folds.describe", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.folds.describe", value).await?;
+    let (output, listed) = super::host_doors::self_folds_describe(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_history(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.history")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.history", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.history", value).await?;
+    let (output, listed) = super::host_doors::self_history(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn self_fold(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.fold")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.fold", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.fold", value).await?;
+    let output = facade_output(
+        super::host_doors::self_fold(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_compact(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.compact")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.compact", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.compact", value).await?;
+    let output = facade_output(
+        super::host_doors::self_compact(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_unfold(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.unfold")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.unfold", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.unfold", value).await?;
+    let output = facade_output(
+        super::host_doors::self_unfold(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn self_folds(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.folds")?;
+    let caller = facade_actor(auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.folds", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.folds", value).await?;
+    let output = facade_output(
+        super::host_doors::self_folds(
+            server,
+            auth,
+            caller,
+            Some(hooks.call().invocation),
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn self_agents_spawn(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -9162,6 +9351,13 @@ pub(crate) async fn call_verb(
         "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
         "vault.notes.set_overrides" => vault_notes_set_overrides(server, call, input).await,
         "vault.notes.defaults" => vault_notes_defaults(server, call, input).await,
+        "self.run.attach" => self_run_attach(server, call, input).await,
+        "self.folds.describe" => self_folds_describe(server, call, input).await,
+        "self.history" => self_history(server, call, input).await,
+        "self.fold" => self_fold(server, call, input).await,
+        "self.compact" => self_compact(server, call, input).await,
+        "self.unfold" => self_unfold(server, call, input).await,
+        "self.folds" => self_folds(server, call, input).await,
         "self.agents.spawn" => self_agents_spawn(server, call, input).await,
         "self.leader.split" => self_leader_split(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
@@ -9212,10 +9408,6 @@ pub(crate) async fn call_verb(
         | "vault.claims.put"
         | "vault.claims.supersede"
         | "vault.edges.put"
-        | "self.fold"
-        | "self.compact"
-        | "self.unfold"
-        | "self.folds"
         | "tasks.refuse"
         | "self.leader.advice"
         | "self.leader.pattern"
