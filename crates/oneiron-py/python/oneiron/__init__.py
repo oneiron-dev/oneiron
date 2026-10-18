@@ -580,6 +580,9 @@ class Oneiron:
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs":
             return Oneiron._VaultRetrievalVerbs(self._client)
         @property
+        def affect(self) -> "Oneiron._VaultAffectVerbs":
+            return Oneiron._VaultAffectVerbs(self._client)
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs":
             return Oneiron._VaultExportVerbs(self._client)
         @property
@@ -939,6 +942,9 @@ class Oneiron:
     class _VaultRetrievalVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs":
+            return Oneiron._VaultRetrievalWeightsVerbs(self._client)
         def recall(self, spec):
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_recall(json.dumps(spec))))
@@ -963,6 +969,15 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_replay(json.dumps(spec))))
+    class _VaultRetrievalWeightsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_weights_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_weights_configure(json.dumps(spec))))
     class _VaultRetrievalOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -972,6 +987,27 @@ class Oneiron:
         def end(self, spec):
             """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_outcomes_end(json.dumps(spec))))
+    class _VaultAffectVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def annotations(self) -> "Oneiron._VaultAffectAnnotationsVerbs":
+            return Oneiron._VaultAffectAnnotationsVerbs(self._client)
+        @property
+        def claims(self) -> "Oneiron._VaultAffectClaimsVerbs":
+            return Oneiron._VaultAffectClaimsVerbs(self._client)
+    class _VaultAffectAnnotationsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."""
+            return json.loads(_translate(lambda: self._client.vault_affect_annotations_put(json.dumps(spec))))
+    class _VaultAffectClaimsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def consolidate(self, spec):
+            """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
+            return json.loads(_translate(lambda: self._client.vault_affect_claims_consolidate(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3084,6 +3120,9 @@ class Oneiron:
         @property
         def voice(self) -> "Oneiron._AiVoiceVerbs":
             return Oneiron._AiVoiceVerbs(self._client)
+        def anonymous_chat(self, spec):
+            """One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."""
+            return json.loads(_translate(lambda: self._client.ai_anonymous_chat(json.dumps(spec))))
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))

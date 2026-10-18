@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::machine_identity::{Host, host, request_for};
 use super::support::RosterHead;
-use super::support::{authority_key_from_ed, ed_key, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, ed_key, owner_act, sign_ed, unsigned_entry};
 use super::world_privacy::{
     edit_by, land, other_machine, read_of, settings, stored_entries, world_row,
 };
@@ -84,7 +84,7 @@ fn edit_on(
             parents,
             AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                 world,
-                owner: host.owner.actor(),
+                act: owner_act(host.owner.actor(), world),
                 machine,
                 settings: settings(read),
             }),

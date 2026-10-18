@@ -1058,6 +1058,101 @@ async fn vault_recall(
         rows,
     })
 }
+async fn vault_retrieval_weights_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.weights.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.weights.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.weights.get", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_weights_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_retrieval_weights_configure(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.retrieval.weights.configure")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.retrieval.weights.configure", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.retrieval.weights.configure", value).await?;
+    let (output, listed) = super::host_doors::vault_retrieval_weights_configure(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_affect_annotations_put(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_claim_position(server, call)?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke_born(
+        server,
+        call,
+        actor,
+        class,
+        "vault.affect.annotations.put",
+        value,
+        position,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_affect_claims_consolidate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.affect.claims.consolidate")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.affect.claims.consolidate", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.affect.claims.consolidate", value).await?;
+    let (output, listed) = super::host_doors::vault_affect_claims_consolidate(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_retrieval_recall(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -9470,6 +9565,20 @@ async fn ai_voice_close(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn ai_anonymous_chat(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    let _ = (server, auth, input);
+    Err(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+        "anonymous chat requires its standalone HTTP SDK route",
+        &["Call POST /v1/ai/anonymous-chat or the HTTP SDK ai.anonymous_chat method."],
+    )
+    .into())
+}
 async fn ai_options(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13593,6 +13702,14 @@ pub(crate) async fn call_verb(
         "vault.witness" => vault_witness(server, call, input).await,
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
         "vault.recall" => vault_recall(server, call, input).await,
+        "vault.retrieval.weights.get" => vault_retrieval_weights_get(server, call, input).await,
+        "vault.retrieval.weights.configure" => {
+            vault_retrieval_weights_configure(server, call, input).await
+        }
+        "vault.affect.annotations.put" => vault_affect_annotations_put(server, call, input).await,
+        "vault.affect.claims.consolidate" => {
+            vault_affect_claims_consolidate(server, call, input).await
+        }
         "vault.retrieval.recall" => vault_retrieval_recall(server, call, input).await,
         "vault.retrieval.runs" => vault_retrieval_runs(server, call, input).await,
         "vault.retrieval.run" => vault_retrieval_run(server, call, input).await,
@@ -14101,6 +14218,7 @@ pub(crate) async fn call_verb(
         "ai.voice.tool" => ai_voice_tool(server, call, input).await,
         "ai.voice.end" => ai_voice_end(server, call, input).await,
         "ai.voice.close" => ai_voice_close(server, call, input).await,
+        "ai.anonymous_chat" => ai_anonymous_chat(server, call, input).await,
         "ai.options" => ai_options(server, call, input).await,
         "ai.image" => ai_image(server, call, input).await,
         "ai.speech" => ai_speech(server, call, input).await,

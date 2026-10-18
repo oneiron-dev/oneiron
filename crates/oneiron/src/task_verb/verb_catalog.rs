@@ -49,6 +49,10 @@ pub enum AgentVerb {
     VaultWitness,
     VaultClaimsUpsert,
     VaultRecall,
+    VaultRetrievalWeightsGet,
+    VaultRetrievalWeightsConfigure,
+    VaultAffectAnnotationsPut,
+    VaultAffectClaimsConsolidate,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -415,6 +419,7 @@ pub enum AgentVerb {
     AiVoiceTool,
     AiVoiceEnd,
     AiVoiceClose,
+    AiAnonymousChat,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -675,6 +680,10 @@ impl AgentVerb {
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
+        Self::VaultRetrievalWeightsGet,
+        Self::VaultRetrievalWeightsConfigure,
+        Self::VaultAffectAnnotationsPut,
+        Self::VaultAffectClaimsConsolidate,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1041,6 +1050,7 @@ impl AgentVerb {
         Self::AiVoiceTool,
         Self::AiVoiceEnd,
         Self::AiVoiceClose,
+        Self::AiAnonymousChat,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1304,6 +1314,10 @@ impl AgentVerb {
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
+            Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
+            Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
+            Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
+            Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -1676,6 +1690,7 @@ impl AgentVerb {
             Self::AiVoiceTool => "ai.voice.tool",
             Self::AiVoiceEnd => "ai.voice.end",
             Self::AiVoiceClose => "ai.voice.close",
+            Self::AiAnonymousChat => "ai.anonymous_chat",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -1939,6 +1954,10 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalWeightsGet
+                | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultAffectAnnotationsPut
+                | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -2305,6 +2324,7 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiAnonymousChat
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2572,6 +2592,10 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultRetrievalWeightsGet
+                | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultAffectAnnotationsPut
+                | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -2938,6 +2962,7 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiAnonymousChat
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3195,6 +3220,7 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
+                | Self::VaultAffectAnnotationsPut
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
@@ -3263,6 +3289,9 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
+                | Self::VaultRetrievalWeightsGet
+                | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3626,6 +3655,7 @@ impl AgentVerb {
                 | Self::AiVoiceTool
                 | Self::AiVoiceEnd
                 | Self::AiVoiceClose
+                | Self::AiAnonymousChat
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3845,6 +3875,9 @@ impl AgentVerb {
                 | Self::TasksAccept
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
+                | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultAffectAnnotationsPut
+                | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
@@ -4195,6 +4228,7 @@ impl AgentVerb {
             Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
+                | Self::VaultAffectAnnotationsPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -4276,6 +4310,10 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalWeightsGet => &["spec"],
+            Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -4642,6 +4680,7 @@ impl AgentVerb {
             Self::AiVoiceTool => &["spec"],
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
+            Self::AiAnonymousChat => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -4903,6 +4942,10 @@ impl AgentVerb {
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
+            Self::VaultRetrievalWeightsGet => &["spec"],
+            Self::VaultRetrievalWeightsConfigure => &["spec"],
+            Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -5269,6 +5312,7 @@ impl AgentVerb {
             Self::AiVoiceTool => &["spec"],
             Self::AiVoiceEnd => &["spec"],
             Self::AiVoiceClose => &["spec"],
+            Self::AiAnonymousChat => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -5614,6 +5658,18 @@ impl AgentVerb {
             }
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
+            }
+            Self::VaultRetrievalWeightsGet => {
+                "The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."
+            }
+            Self::VaultRetrievalWeightsConfigure => {
+                "The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."
+            }
+            Self::VaultAffectAnnotationsPut => {
+                "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
+            }
+            Self::VaultAffectClaimsConsolidate => {
+                "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
             }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
@@ -6672,6 +6728,9 @@ impl AgentVerb {
             }
             Self::AiVoiceClose => {
                 "Ends and releases a live voice session and its retained events; read terminal usage and acknowledge playout before closing."
+            }
+            Self::AiAnonymousChat => {
+                "One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."

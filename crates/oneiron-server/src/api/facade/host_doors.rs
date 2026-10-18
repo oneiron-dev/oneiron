@@ -49,6 +49,7 @@ use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
+pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
@@ -145,6 +146,7 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
+pub(crate) use super::affect_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1129,6 +1131,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.retrieval.weights.get"
+        | "vault.retrieval.weights.configure"
+        | "vault.affect.claims.consolidate"
         | "vault.slim.policy"
         | "vault.slim.state"
         | "vault.slim.resume_step"
