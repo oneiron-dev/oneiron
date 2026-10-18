@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 926 facade rows, 3152 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 879.
+// UniFFI census: 936 facade rows, 3168 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 17; generated in and out: 889.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), CodeDocumentFrontier.version (a tuple), ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -27139,6 +27139,237 @@ pub struct AnnotationStateRequest {
     pub thread_ref: String,
     #[serde(rename = "state")]
     pub state: AnnotationThreadState,
+}
+
+/// `oneiron::graph_fs::snapshot::GraphFsReference`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum GraphFsReference {
+    #[serde(rename = "live_head")]
+    LiveHead,
+    #[serde(rename = "fork_hash")]
+    ForkHash {
+        #[serde(rename = "repo")]
+        repo: String,
+        #[serde(rename = "hash")]
+        hash: String,
+    },
+    #[serde(rename = "repo_snapshot")]
+    RepoSnapshot {
+        #[serde(rename = "snapshot")]
+        snapshot: String,
+    },
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsMountRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsMountRequest {
+    #[serde(rename = "ref")]
+    pub r#ref: GraphFsReference,
+    #[serde(
+        rename = "page_byte_cap",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub page_byte_cap: Option<u64>,
+    #[serde(
+        rename = "max_entries",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_entries: Option<u64>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsMounted`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraphFsMounted {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "projection")]
+    pub projection: String,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsPathRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsPathRequest {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraphFsKind {
+    #[serde(rename = "directory")]
+    Directory,
+    #[serde(rename = "file")]
+    File,
+    #[serde(rename = "symlink")]
+    Symlink,
+    #[serde(rename = "cursor")]
+    Cursor,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsEntryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraphFsEntryView {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "kind")]
+    pub kind: GraphFsKind,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "byte_len", default, skip_serializing_if = "Option::is_none")]
+    pub byte_len: Option<u64>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsDirectoryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraphFsDirectoryView {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "entries")]
+    pub entries: Vec<GraphFsEntryView>,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsEncoding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraphFsEncoding {
+    #[serde(rename = "utf8")]
+    Utf8,
+    #[serde(rename = "base64")]
+    Base64,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsPlan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GraphFsPlan {
+    #[serde(rename = "pushdown")]
+    Pushdown,
+    #[serde(rename = "walk")]
+    Walk,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraphFsOutput {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "output")]
+    pub output: String,
+    #[serde(rename = "encoding")]
+    pub encoding: GraphFsEncoding,
+    #[serde(
+        rename = "next_cursor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub next_cursor: Option<String>,
+    #[serde(rename = "plan")]
+    pub plan: GraphFsPlan,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsLinkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsLinkRequest {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsLinkView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct GraphFsLinkView {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "target", default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsLsRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsLsRequest {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(rename = "by_time", default, skip_serializing_if = "Option::is_none")]
+    pub by_time: Option<bool>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsFindRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsFindRequest {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+    #[serde(
+        rename = "newer_than",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub newer_than: Option<u64>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsGrepRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsGrepRequest {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "pattern")]
+    pub pattern: String,
+    #[serde(rename = "recursive", default, skip_serializing_if = "Option::is_none")]
+    pub recursive: Option<bool>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+/// `oneiron::memory::graph_fs_doors::types::GraphFsHeadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GraphFsHeadRequest {
+    #[serde(rename = "mount")]
+    pub mount: GraphFsMountRequest,
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "lines", default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<u64>,
+    #[serde(rename = "cursor", default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
 }
 
 /// `oneiron::code_document::verbs::CodeStateRequest`.

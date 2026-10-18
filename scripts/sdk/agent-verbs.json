@@ -7553,6 +7553,146 @@
       "openapi": true
     },
     {
+      "name": "mount",
+      "description": "Open the caller-scoped live graph or a retained repository snapshot, resolving a snapshot id to its exact fork hash.",
+      "input": "crate::memory::graph_fs_doors::GraphFsMountRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsMounted",
+      "call": "memory.graph_fs_mount(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.readdir",
+      "description": "List one directory at the mounted reference under the caller read gate, with a sealed continuation.",
+      "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsDirectoryView",
+      "call": "memory.graph_fs_readdir(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.read_file",
+      "description": "Read a bounded page of file bytes at the mounted reference, with its encoding and sealed continuation.",
+      "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_read_file(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.read_link",
+      "description": "Resolve a visible graph link at the mounted reference without following a host filesystem link.",
+      "input": "crate::memory::graph_fs_doors::GraphFsLinkRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsLinkView",
+      "call": "memory.graph_fs_read_link(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.ls",
+      "description": "List names at the mounted reference, using the live temporal index when requested.",
+      "input": "crate::memory::graph_fs_doors::GraphFsLsRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_ls(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.find",
+      "description": "Walk visible paths at the mounted reference, or push a live newer-than query into the temporal index.",
+      "input": "crate::memory::graph_fs_doors::GraphFsFindRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_find(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.grep",
+      "description": "Search visible mounted file bytes, using the live claim text index for supported recursive patterns.",
+      "input": "crate::memory::graph_fs_doors::GraphFsGrepRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_grep(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.cat",
+      "description": "Read a bounded page of mounted file bytes as UTF-8 or base64 without changing its reference.",
+      "input": "crate::memory::graph_fs_doors::GraphFsPathRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_cat(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.head",
+      "description": "Read the first requested lines at the mounted reference with bounded output and a sealed continuation.",
+      "input": "crate::memory::graph_fs_doors::GraphFsHeadRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_head(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "graph_fs.wc",
+      "description": "Count lines, words and bytes of a visible file at the mounted reference.",
+      "input": "crate::memory::graph_fs_doors::GraphFsLinkRequest",
+      "output": "crate::memory::graph_fs_doors::GraphFsOutput",
+      "call": "memory.graph_fs_wc(input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.code.diff",
       "description": "The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort.",
       "input": "crate::code_document::CodeDiffRequest",

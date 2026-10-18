@@ -498,6 +498,16 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.threads.list`
 - `vault.artifacts.threads.assign`
 - `vault.artifacts.threads.state`
+- `mount`
+- `graph_fs.readdir`
+- `graph_fs.read_file`
+- `graph_fs.read_link`
+- `graph_fs.ls`
+- `graph_fs.find`
+- `graph_fs.grep`
+- `graph_fs.cat`
+- `graph_fs.head`
+- `graph_fs.wc`
 - `vault.code.diff`
 - `vault.code.blame`
 - `vault.code.proposal_view`
