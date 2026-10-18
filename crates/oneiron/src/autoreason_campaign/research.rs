@@ -5,8 +5,10 @@
 //! experiment is an existing attempt under it. No second tree exists. This
 //! module records what the workflow did to that tree (bind, fork, measure,
 //! weave, prune, select, promote) and reserves its spend on the RSI line. It
-//! runs no experiment, calls no model and schedules nothing: execution stays
-//! with the workflow skill, under the existing Grant and gate.
+//! calls no model itself. A campaign bound with an execution spec lets the
+//! Coach host drive the loop through `continuation`: it dispatches the spec's
+//! agents and records their answers through these doors. Without one, the
+//! workflow skill drives its own record. Selection stays the Coach tick's.
 //!
 //! - The ruler is bound once. A skill campaign's metric set must be the
 //!   skill's authenticated goal axes; only the goal-intake door changes those,
@@ -36,6 +38,7 @@ use super::selection::{
     decide_experiment_for, selection_policy_for,
 };
 use super::{CampaignDatasetRef, CampaignError};
+use crate::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::run_tree::{RunTree, RunTreeNode, render_run_tree};
 use crate::side_table::{self, Named, SideTable};
@@ -46,6 +49,7 @@ use crate::{
 };
 
 mod budget;
+mod continuation;
 mod estimator;
 mod promotion;
 
@@ -53,6 +57,11 @@ pub use budget::{
     ResearchBudgetRead, ResearchReservation, ResearchReservationLine, refund_research_work,
     research_budget, research_reservations, reserve_research_exploration, reserve_research_work,
     settle_research_work,
+};
+pub use continuation::{
+    ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
+    ResearchWork, advance_research_continuations, ensure_research_continuations,
+    research_work_pending,
 };
 pub use estimator::{
     BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,
@@ -122,6 +131,24 @@ pub struct CandidateRef {
     pub config_sha256: String,
 }
 
+/// The agents the host runs a campaign's work with (FIX 886). Each is an
+/// AGENT_DEF running its own workflow skill; each answers with one JSON
+/// object and never writes the campaign record itself.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchExecution {
+    /// Writes one candidate configuration in its own sandbox.
+    pub experimenter: EntityId,
+    /// The campaign's judge: scores one candidate on one split.
+    pub scorer: EntityId,
+    /// Runs the sealed confirmation; set exactly when a confirmation seat is.
+    pub referee: Option<EntityId>,
+    /// RSI units one experiment, one measurement and one confirmation reserve.
+    pub experiment_units: u64,
+    pub measure_units: u64,
+    pub confirm_units: u64,
+}
+
 /// The bound ruler and resources of one campaign. Written once.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -141,6 +168,9 @@ pub struct ResearchBinding {
     /// The cold-start ladder the root's belief seeds from: user, persona,
     /// then global data. Empty starts uniform.
     pub prior_ladder: Vec<PriorSeed>,
+    /// The agents the Coach host drives the loop with; `None` leaves the
+    /// workflow driving its own record.
+    pub execution: Option<ResearchExecution>,
     pub bound_at: u64,
 }
 
@@ -156,6 +186,7 @@ pub struct ResearchBindRequest {
     /// The incumbent configuration, pinned as the root node.
     pub incumbent: CandidateRef,
     pub prior_ladder: Vec<PriorSeed>,
+    pub execution: Option<ResearchExecution>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -409,6 +440,37 @@ impl CandidateRef {
     }
 }
 
+impl ResearchExecution {
+    /// Every run reserves units, a referee comes exactly with a confirmation
+    /// seat, and each agent is an AGENT_DEF the dispatcher would run.
+    fn validate(&self, vault: &Vault, confirms: bool) -> Result<()> {
+        if self.experiment_units == 0 || self.measure_units == 0 || self.confirm_units == 0 {
+            return Err(invalid("an execution spec reserves units for every run"));
+        }
+        if self.referee.is_some() != confirms {
+            return Err(invalid(
+                "an execution spec names a referee exactly when the campaign confirms",
+            ));
+        }
+        let dispatcher = AgentDispatcher::new(vault);
+        for agent in [Some(self.experimenter), Some(self.scorer), self.referee]
+            .into_iter()
+            .flatten()
+        {
+            match dispatcher.dispatchable_definition(&AgentDispatchTarget::Custom(agent)) {
+                Ok(_) => {}
+                Err(Error::Artifact(_)) => {
+                    return Err(invalid(
+                        "an execution agent is not a dispatchable AGENT_DEF",
+                    ));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The ruler of a skill campaign is the skill's goal: the same axes, each in
 /// the same role. A campaign cannot add, drop or re-role one.
 fn check_ruler(config: &CampaignConfig, goal: &[GoalAxisSpec]) -> Result<()> {
@@ -456,7 +518,9 @@ pub(super) fn check_goal_current(vault: &Vault, binding: &ResearchBinding) -> Re
 /// # Errors
 /// An invalid config or candidate, a missing root or run, a skill metric set
 /// that is not the skill's goal, a missing selection policy, a missing or
-/// retired cohort, an already-bound root, or storage errors.
+/// retired cohort, an execution spec with a zero unit count, a referee
+/// without a confirmation seat (or the reverse) or an agent that is not a
+/// dispatchable AGENT_DEF, an already-bound root, or storage errors.
 pub fn bind_research(
     vault: &Vault,
     request: ResearchBindRequest,
@@ -464,6 +528,9 @@ pub fn bind_research(
 ) -> Result<ResearchBinding> {
     request.config.validate().map_err(campaign_error)?;
     request.incumbent.validate()?;
+    if let Some(execution) = &request.execution {
+        execution.validate(vault, request.confirmation.is_some())?;
+    }
     if let Some(holder) = &request.holder {
         bounded(holder, "a campaign holder is a bounded id")?;
     }
@@ -519,6 +586,7 @@ pub fn bind_research(
         confirmation: request.confirmation,
         share: request.share,
         prior_ladder: request.prior_ladder,
+        execution: request.execution,
         bound_at: at,
     };
     let root = ExperimentNode {
@@ -610,7 +678,9 @@ pub fn bound_research_roots(vault: &Vault) -> Result<Vec<AttemptId>> {
 /// it has an eligible measured branch, no round stopped it, and its last
 /// round either paused on budget or saw a different branch set than the
 /// campaign holds now. A campaign with nothing new since its last round
-/// waits; the scheduler never re-rules unchanged evidence.
+/// waits; the scheduler never re-rules unchanged evidence. Under an
+/// execution spec, a round's host continuation that is still open or held
+/// holds the next round, and one that ended failed releases it.
 /// # Errors
 /// Storage errors.
 pub fn research_round_due(vault: &Vault, root: AttemptId) -> Result<bool> {
@@ -632,6 +702,9 @@ pub fn research_round_due(vault: &Vault, root: AttemptId) -> Result<bool> {
         .collect();
     if eligible.is_empty() {
         return Ok(false);
+    }
+    if let Some(due) = continuation::round_due_gate(vault, &txn, root, last.as_ref())? {
+        return Ok(due);
     }
     Ok(match last {
         None => true,

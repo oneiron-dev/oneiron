@@ -16,6 +16,8 @@ use crate::{AttemptId, EntityId, Error, Result, Vault};
 /// then reservation id.
 const RESERVATION: SideTable<([u8; 16], EntityId), ResearchReservation, Named> =
     SideTable::new(&side_table::AUTORESEARCH_RESERVATION);
+/// The refusal of a reservation the campaign's lease has no room for.
+const LEASE_FULL: &str = "the reservation exceeds the campaign's lease";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +68,21 @@ fn rsi_error(error: RsiBudgetError) -> Error {
         RsiBudgetError::Engine(error) => error,
         other => Error::InvalidConfig(other.to_string()),
     }
+}
+
+/// Whether a reserve refusal means "no room": a full lease, or an RSI line
+/// that is unconfigured, exhausted or suspended. Work waits on those, as a
+/// round pauses on budget.
+pub(super) fn is_budget_refusal(error: &Error) -> bool {
+    let Error::InvalidConfig(reason) = error else {
+        return false;
+    };
+    let no_room = [
+        RsiBudgetError::Unconfigured,
+        RsiBudgetError::Exhausted,
+        RsiBudgetError::Suspended,
+    ];
+    reason == LEASE_FULL || no_room.iter().any(|refusal| *reason == refusal.to_string())
 }
 
 fn read_in_txn(
@@ -162,7 +179,7 @@ fn reserve(
         }
     };
     if !fits(&read_in_txn(vault, &txn, &binding)?) {
-        return Err(invalid("the reservation exceeds the campaign's lease"));
+        return Err(invalid(LEASE_FULL));
     }
     drop(txn);
     let id = vault.store.clock.entity_id()?;
@@ -184,7 +201,7 @@ fn reserve(
     let recorded = vault.with_write_txn_grouped(|txn| {
         // A concurrent reservation may have filled the lease meanwhile.
         if !fits(&read_in_txn(vault, txn, &binding)?) {
-            return Err(invalid("the reservation exceeds the campaign's lease"));
+            return Err(invalid(LEASE_FULL));
         }
         RESERVATION.put(&vault.store, txn, &(*root.as_bytes(), id), &row)
     });
