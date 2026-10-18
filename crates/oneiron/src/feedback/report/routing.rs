@@ -20,7 +20,7 @@ const ROUTES: SideTable<String, ReportRoute, Named> =
 const DISCLOSURES: SideTable<String, bool, Named> =
     SideTable::new(&side_table::FEEDBACK_REPORT_DISCLOSURE);
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "destination", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ReportRoute {
     #[default]
@@ -31,7 +31,7 @@ pub enum ReportRoute {
 }
 
 /// The three DEC-0006 choices, scoped to this issue or its already-resolved publisher.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportDisclosureChoice {
     ApproveOnce,

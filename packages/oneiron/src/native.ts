@@ -31,6 +31,11 @@ import type {
 export interface NativeClient {
 // BEGIN GENERATED AGENT VERBS
 report(input: unknown): unknown
+feedbackPreview(input: unknown): unknown
+feedbackSend(input: unknown): unknown
+vaultReportsDisclosure(input: unknown): unknown
+vaultReportsRoute(input: unknown): unknown
+vaultReportsOutbound(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -248,6 +253,12 @@ vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown
 vaultResearchArchive(input: unknown): unknown
+vaultResearchArchiveInstall(input: unknown): unknown
+vaultResearchArchiveRecord(input: unknown): unknown
+vaultResearchArchiveGet(input: unknown): unknown
+vaultResearchArchiveBest(input: unknown): unknown
+vaultResearchArchiveRepropose(input: unknown): unknown
+vaultResearchArchiveCoverage(input: unknown): unknown
 vaultEvalsInventory(input: unknown): unknown
 vaultEvalsCohortsSetup(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
@@ -298,6 +309,7 @@ vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
 vaultConsentApproveOnce(input: unknown): unknown
+vaultConsentDeny(input: unknown): unknown
 vaultConsentCreateStandingGrant(input: unknown): unknown
 vaultConsentRegistry(input: unknown): unknown
 vaultConsentRevoke(input: unknown): unknown
@@ -371,6 +383,8 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultCodeWaitsResolve(input: unknown): unknown
+vaultCodeWaitsReceipt(input: unknown): unknown
 vaultResultsStatus(input: unknown): unknown
 vaultResultsRecover(input: unknown): unknown
 vaultResultsRead(input: unknown): unknown
@@ -410,6 +424,7 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown
@@ -519,6 +534,9 @@ vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
+vaultQuestionsOutcomes(input: unknown): unknown
+vaultQuestionsOutcomesProject(input: unknown): unknown
+vaultQuestionsSchedule(input: unknown): unknown
 vaultDecisionsBandsRead(input: unknown): unknown
 vaultDecisionsBandsLearn(input: unknown): unknown
 vaultDecisionsBandsEnforce(input: unknown): unknown
@@ -534,6 +552,7 @@ vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
+vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown
@@ -660,6 +679,21 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+selfBrowserOpen(input: unknown): unknown
+selfBrowserObserve(input: unknown): unknown
+selfBrowserFind(input: unknown): unknown
+selfBrowserClick(input: unknown): unknown
+selfBrowserClickAt(input: unknown): unknown
+selfBrowserType(input: unknown): unknown
+selfBrowserSelect(input: unknown): unknown
+selfBrowserWaitFor(input: unknown): unknown
+selfBrowserExpect(input: unknown): unknown
+selfBrowserScreenshot(input: unknown): unknown
+selfBrowserView(input: unknown): unknown
+selfBrowserCrop(input: unknown): unknown
+selfBrowserZoom(input: unknown): unknown
+selfBrowserBatch(input: unknown): unknown
+selfBrowserHandover(input: unknown): unknown
 vaultClaimsSupersede(input: unknown): unknown
 selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown

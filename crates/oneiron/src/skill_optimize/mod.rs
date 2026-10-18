@@ -302,3 +302,5 @@ use crate::skill_convert::PROVENANCE_BIRTH_KEY;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
+
+pub(crate) use gate::skill_edit_goal_in_txn;

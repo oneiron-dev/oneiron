@@ -4072,10 +4072,10 @@
      "path": "src/autoreason_campaign/archive.rs",
      "purpose": "OF-545: a rebuildable output archive, joined from placement and scoring receipts",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 20,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 7,
       "trait": 1
      }
@@ -4098,6 +4098,29 @@
       "fn": 1,
       "struct": 3,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CampaignArchiveAdmission",
+      "CampaignArchiveBest",
+      "CampaignArchiveCoverage",
+      "CampaignArchiveInstall",
+      "CampaignArchiveOutput",
+      "CampaignArchivePlacement",
+      "CampaignArchiveRecord",
+      "CampaignArchiveReproposal",
+      "CampaignArchiveRequest",
+      "CampaignArchiveView"
+     ],
+     "path": "src/autoreason_campaign/archive/records.rs",
+     "purpose": "Retained descriptor and source receipts for the public campaign archive",
+     "surface": {
+      "crate-vis": 8,
+      "enum": 1,
+      "struct": 9
      }
     },
     {
@@ -4163,7 +4186,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CoverageFloorComparison",
@@ -4173,7 +4196,7 @@
      "path": "src/autoreason_campaign/coverage.rs",
      "purpose": "Coverage is a goal-record floor, not a skill quality-diversity archive",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 9,
       "struct": 3
      }
@@ -4271,7 +4294,7 @@
      "path": "src/autoreason_campaign/research.rs",
      "purpose": "The autoresearch loop's record over the existing run tree (OF-351)",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 13,
       "enum": 6,
       "fn": 15,
       "re-export": 5,
@@ -4359,7 +4382,7 @@
      "path": "src/autoreason_campaign/research/promotion.rs",
      "purpose": "Promotion under the campaign's goal: an untouched held-out decision, one sealed confirmation on OF-578's…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 5,
       "struct": 4
@@ -11889,6 +11912,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/code_run/consent_wait/ledger.rs",
+     "purpose": "A wait's receipts as the consent Gate ledger holds them (DOOR-079 PR 2)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/code_run/consent_wait/mod.rs",
      "purpose": "Bound code consent waits (DOOR-079 1a, toward CODE-RUNTIME-03)",
      "surface": {
@@ -11931,7 +11964,7 @@
      "path": "src/code_run/consent_wait/types.rs",
      "purpose": "The shapes of one bound code consent wait: the host-only call site the dispatcher carries, the control row…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "enum": 3,
       "fn": 3,
       "struct": 3
@@ -12036,7 +12069,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -15304,6 +15337,7 @@
      "purpose": "—",
      "surface": {
       "const": 10,
+      "crate-vis": 1,
       "enum": 4,
       "fn": 16,
       "struct": 6,
@@ -15319,6 +15353,7 @@
       "ApproveOnceRequest",
       "ConsentActReceipt",
       "CreateStandingGrantRequest",
+      "DenyConsentRequest",
       "DisclosureBoundRequest",
       "DisclosureEnvelopeRequest",
       "RevokeGrantRequest",
@@ -15328,8 +15363,8 @@
      "purpose": "Typed public consent lifecycle calls",
      "surface": {
       "enum": 1,
-      "fn": 4,
-      "struct": 8
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -18416,7 +18451,7 @@
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
       "crate-vis": 2,
-      "fn": 3
+      "fn": 5
      }
     },
     {
@@ -29948,13 +29983,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/decision/questions/outcomes.rs",
      "purpose": "Idempotent outcome projection over durable facts and immutable question versions",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -29990,6 +30025,7 @@
       "QuestionDefinition",
       "QuestionMedia",
       "QuestionRecord",
+      "QuestionScheduleHead",
       "RefreshPolicy",
       "RefreshTrigger",
       "ScheduledBackfill",
@@ -30002,7 +30038,7 @@
       "crate-vis": 1,
       "enum": 5,
       "fn": 11,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -30058,7 +30094,7 @@
      "purpose": "Immutable question versions and a CAS-updated scheduling head in the typed `TYPED_QUESTION` side table: one…",
      "surface": {
       "crate-vis": 13,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -31641,6 +31677,49 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_wait_doors/mod.rs",
+     "purpose": "Typed code consent wait doors (DOOR-079): `vault.code.waits.resolve` answers one exact sealed code consent…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_wait_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeWaitAnswerView",
+      "CodeWaitChoice",
+      "CodeWaitConsumptionView",
+      "CodeWaitLedgerLinks",
+      "CodeWaitReceiptRequest",
+      "CodeWaitReceiptView",
+      "CodeWaitResolveRequest",
+      "CodeWaitSettleOutcome",
+      "CodeWaitSettlementView",
+      "CodeWaitState",
+      "CodeWaitTarget"
+     ],
+     "path": "src/memory/code_wait_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 3,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -32102,7 +32181,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 11,
+      "mod": 12,
       "re-export": 45
      }
     },
@@ -36401,7 +36480,7 @@
      "purpose": "Named (agent, world) standing blocks compiled from gated persona claims",
      "surface": {
       "enum": 1,
-      "fn": 11,
+      "fn": 12,
       "struct": 4
      }
     },
@@ -39396,10 +39475,15 @@
       "QuestionBackfillRequest",
       "QuestionCreateRequest",
       "QuestionEditRequest",
+      "QuestionOutcomes",
+      "QuestionOutcomesProjectRequest",
+      "QuestionOutcomesProjected",
+      "QuestionOutcomesRequest",
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
-      "QuestionRefreshRequest"
+      "QuestionRefreshRequest",
+      "QuestionScheduleRequest"
      ],
      "path": "src/receipt/questions.rs",
      "purpose": "OF-506's doors (ARCH-0076): the wire shapes of a one-off graph ask and of the standing-question verbs",
@@ -39407,7 +39491,7 @@
       "const": 2,
       "enum": 2,
       "fn": 3,
-      "struct": 11
+      "struct": 16
      }
     },
     {
@@ -45244,7 +45328,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 11
      }
     },
@@ -45300,7 +45384,7 @@
      "path": "src/skill_optimize/gate/goal_axis.rs",
      "purpose": "Goal-axis replay scores",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -45527,7 +45611,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "re-export": 17
      }
     },
@@ -50558,7 +50642,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 53,
+      "re-export": 57,
       "struct": 36
      }
     },
@@ -50642,7 +50726,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_browser.rs",
+     "purpose": "Browser wire shapes, shared by code mode and the credential-bound host doors",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
+      "BookingConstraintHoldContext",
+      "BookingConstraintTurnInput",
+      "BookingConstraintTurnRequest",
+      "BookingConstraintTurnResponse",
+      "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "CalendarFreebusyRequest"
@@ -50650,7 +50749,18 @@
      "path": "src/task_verb/sdk_calendar.rs",
      "purpose": "Typed booking-page discovery and calendar occupancy inputs",
      "surface": {
-      "struct": 3
+      "enum": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/sdk_campaign_archive.rs",
+     "purpose": "Typed output-archive doors under the existing research-controller gate",
+     "surface": {
+      "fn": 6
      }
     },
     {
@@ -50932,6 +51042,29 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackPreviewRequest",
+      "FeedbackSendSubjectRequest",
+      "FeedbackSubjectPreview",
+      "FeedbackSubjectSent",
+      "ReportDisclosureRequest",
+      "ReportOutboundRequest",
+      "ReportOutboundView",
+      "ReportPayloadView",
+      "ReportRouteReceipt",
+      "ReportRouteRequest",
+      "ReportSignatureView"
+     ],
+     "path": "src/task_verb/sdk_feedback.rs",
+     "purpose": "Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload…",
+     "surface": {
+      "fn": 7,
+      "struct": 11
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -50939,7 +51072,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 676
+      "fn": 705
      }
     },
     {
@@ -51251,6 +51384,7 @@
      "path": "src/task_verb/sdk_research.rs",
      "purpose": "`vault.research.*` (OF-351): the autoresearch workflow skill's verbs over the campaign record…",
      "surface": {
+      "crate-vis": 2,
       "enum": 1,
       "fn": 17,
       "struct": 20
@@ -51532,6 +51666,30 @@
       "enum": 3,
       "fn": 10,
       "struct": 17
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AgentDreamingRequest",
+      "AgentDreamingSetRequest",
+      "AgentDreamingView",
+      "DreamingModeInput",
+      "OwnStandingBlockRequest",
+      "StandingBlockConfigureRequest",
+      "StandingBlockEditReceipt",
+      "StandingBlockEditRequest",
+      "StandingBlockRequest",
+      "StandingBlockView",
+      "StandingBlocksRequest"
+     ],
+     "path": "src/task_verb/sdk_standing.rs",
+     "purpose": "Standing-block configuration, gated self-edits and per-agent dreaming choice (BOARD-04)",
+     "surface": {
+      "enum": 1,
+      "fn": 9,
+      "struct": 10
      }
     },
     {
@@ -51901,7 +52059,7 @@
      "path": "src/task_verb/verb_hook_boundary.rs",
      "purpose": "The verb-hook boundary of one SDK row (ARCH-0080 §3, attach point 1)",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -51965,7 +52123,7 @@
      "path": "src/team/door_reads.rs",
      "purpose": "The joins behind the owner's spawn observation (DOOR-111, S6): what the stores hold for one spawned agent…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -52005,7 +52163,24 @@
       "const": 1,
       "enum": 3,
       "fn": 3,
+      "re-export": 1,
       "struct": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SpawnAskKnob",
+      "SpawnIntentReply",
+      "SpawnIntentRequest"
+     ],
+     "path": "src/team/doors/spawn.rs",
+     "purpose": "The owner's planned spawn door (DOOR-111, slice 10): the owner launches one reserved planned agent or team…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -56775,7 +56950,7 @@
      "purpose": "AUTHORITY_LOG record substrate"
     },
     "autoreason_campaign": {
-     "files": 19,
+     "files": 20,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -56943,7 +57118,7 @@
      "purpose": "—"
     },
     "code_run": {
-     "files": 85,
+     "files": 86,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57545,7 +57720,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 173,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58056,14 +58231,14 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 167,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58226,7 +58401,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3552,
+   "source_files": 3562,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66756,7 +66931,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 626
+      "fn": 669
      }
     },
     {
@@ -67805,7 +67980,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 627
+      "fn": 670
      }
     },
     {
@@ -69840,7 +70015,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -69882,13 +70057,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking/front.rs",
      "purpose": "ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -70012,7 +70187,7 @@
      "path": "src/api/booking/transport.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -70746,9 +70921,19 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/booking_doors.rs",
-     "purpose": "Owner discovery of the opaque address of an existing booking page",
+     "purpose": "Typed booking-page discovery and the published constraint front",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/browser_doors.rs",
+     "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -70845,6 +71030,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_wait_doors.rs",
+     "purpose": "Credential-bound host projections of the typed code consent wait doors (DOOR-079): answer one exact sealed…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -70878,7 +71073,7 @@
      "path": "src/api/facade/consent_doors.rs",
      "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -70902,13 +71097,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -71055,6 +71250,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/feedback_doors.rs",
+     "purpose": "The host doors of subject-bound feedback (OF-420/537): the owner's report disclosure, route and outbound…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fold_doors.rs",
      "purpose": "Public run-bound folds, through the caller's existing live-run action door",
      "surface": {
@@ -71078,7 +71283,7 @@
      "path": "src/api/facade/graph_ask_doors.rs",
      "purpose": "OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
@@ -71098,7 +71303,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 118
+      "crate-vis": 122
      }
     },
     {
@@ -71148,7 +71353,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -71419,6 +71624,16 @@
      "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/standing_doors.rs",
+     "purpose": "Standing-block configuration and per-agent dreaming choice, with the caller's own proof (BOARD-04)",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -71820,7 +72035,7 @@
      "path": "src/api/mcp_gateway/code_mode_verbs.rs",
      "purpose": "Code mode's verb calls at their SDK paths: the SDK verb table through the tool door",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -75565,7 +75780,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/import_audience.rs",
@@ -77204,13 +77419,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/feedback.rs",
      "purpose": "Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -77808,7 +78023,7 @@
      "path": "src/server/live_runs.rs",
      "purpose": "The live agent runs a harness may act for over HTTP (OF-181)",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -78807,7 +79022,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 380,
+     "files": 384,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79026,7 +79241,7 @@
     "import_audience": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "The import audience sweep (OF-492)"
     },
@@ -79229,7 +79444,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 718,
+   "source_files": 722,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79445,6 +79660,9 @@
       "AgentDefinitionSpec",
       "AgentDefinitionUpdateRequest",
       "AgentDefinitionView",
+      "AgentDreamingRequest",
+      "AgentDreamingSetRequest",
+      "AgentDreamingView",
       "AgentHealthApplicationState",
       "AgentHealthCard",
       "AgentHealthCardView",
@@ -79520,10 +79738,14 @@
       "AnsweringAuthority",
       "ApproveOnceRequest",
       "ApproveScope",
+      "ArchiveAxesProposal",
       "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
+      "ArchiveCell",
+      "ArchiveCellJudgment",
       "ArchiveDescriptor",
       "ArchiveOutputRef",
+      "ArchiveOutputScore",
       "ArchiveQualityMetric",
       "ArtifactAskOutcome",
       "ArtifactAskRecord",
@@ -79602,7 +79824,10 @@
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
       "BandMode",
+      "BatchInput",
+      "BatchOutput",
       "BatchState",
+      "BatchStep",
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
@@ -79611,6 +79836,11 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingConstraintHoldContext",
+      "BookingConstraintTurnInput",
+      "BookingConstraintTurnRequest",
+      "BookingConstraintTurnResponse",
+      "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "BornFromArtifact",
@@ -79661,7 +79891,17 @@
       "CallReceiptRequest",
       "CallTransport",
       "CallableCardView",
+      "CampaignArchiveAdmission",
+      "CampaignArchiveBest",
+      "CampaignArchiveCoverage",
+      "CampaignArchiveInstall",
+      "CampaignArchiveOutput",
       "CampaignArchivePin",
+      "CampaignArchivePlacement",
+      "CampaignArchiveRecord",
+      "CampaignArchiveReproposal",
+      "CampaignArchiveRequest",
+      "CampaignArchiveView",
       "CampaignConfig",
       "CampaignCost",
       "CampaignDatasetRef",
@@ -79748,6 +79988,7 @@
       "CleanupKind",
       "CleanupPosture",
       "CleanupRunView",
+      "ClickInput",
       "CodeBlameView",
       "CodeChangeView",
       "CodeDiffRequest",
@@ -79792,6 +80033,17 @@
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
+      "CodeWaitAnswerView",
+      "CodeWaitChoice",
+      "CodeWaitConsumptionView",
+      "CodeWaitLedgerLinks",
+      "CodeWaitReceiptRequest",
+      "CodeWaitReceiptView",
+      "CodeWaitResolveRequest",
+      "CodeWaitSettleOutcome",
+      "CodeWaitSettlementView",
+      "CodeWaitState",
+      "CodeWaitTarget",
       "CohortSummary",
       "ColdAuthorityAuditRow",
       "CollectionAtom",
@@ -79883,6 +80135,9 @@
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConstraintContinuation",
+      "ConstraintObject",
+      "ConstraintWeekday",
       "ConsultDisposition",
       "ConsultInspection",
       "ConsultPayloadRef",
@@ -79955,12 +80210,14 @@
       "CritiqueTriage",
       "CritiqueTriageScores",
       "CritiqueVerdict",
+      "CropInput",
       "CursorSpan",
       "CutDecision",
       "DagRecordAppendInput",
       "DagRecordAppendReceipt",
       "DataClass",
       "DecideRules",
+      "DecideStep",
       "DecisionAnswer",
       "DecisionAsk",
       "DecisionAskAnswerRequest",
@@ -80032,6 +80289,7 @@
       "DeliveryWindowRule",
       "DeliveryWindowTimeWindow",
       "DeliveryWindowVerbClass",
+      "DenyConsentRequest",
       "DerivationEnvelopeView",
       "DerivationKind",
       "DeterministicFallback",
@@ -80064,7 +80322,9 @@
       "DoorsLearningCellView",
       "DoorsLearningEvidenceView",
       "DreamerAttemptView",
+      "DreamingModeInput",
       "EditNoteRequest",
+      "EffectReceipt",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
       "EmbeddingSpaceCandidateRequest",
@@ -80132,6 +80392,8 @@
       "EvidenceRow",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
+      "ExpectInput",
+      "ExpectOutput",
       "ExpectedSpend",
       "ExperimentKind",
       "ExperimentNode",
@@ -80170,10 +80432,17 @@
       "FederationGrantRole",
       "FederationPactScope",
       "FederationPactStatus",
+      "FeedbackCategory",
+      "FeedbackPreviewRequest",
       "FeedbackProposal",
+      "FeedbackSendSubjectRequest",
+      "FeedbackSubjectPreview",
+      "FeedbackSubjectSent",
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
+      "FindInput",
+      "FindOutput",
       "FinishReason",
       "FoldCompactAsked",
       "FoldCompactRequest",
@@ -80213,6 +80482,7 @@
       "GeneratedUiActionDeclaration",
       "GeneratedUiActionTier",
       "GeneratedUiArchiveReason",
+      "GeneratedUiCard",
       "GeneratedUiCardLifecycle",
       "GeneratedUiCardPhase",
       "GeneratedUiCatalog",
@@ -80242,6 +80512,8 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HandoverInput",
+      "HandoverOutput",
       "HeapDropReport",
       "HeldAttempt",
       "HeldMedia",
@@ -80303,6 +80575,7 @@
       "IdentitySettled",
       "ImageBox",
       "ImageContent",
+      "ImageOutput",
       "ImagePin",
       "ImagePoint",
       "ImageViewRequest",
@@ -80413,6 +80686,7 @@
       "LensSlotDecision",
       "LensStatus",
       "LensTextSpan",
+      "LibraryCard",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -80434,15 +80708,30 @@
       "LinearProvenanceRequest",
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
+      "LiveRunRequestBatchInput",
+      "LiveRunRequestClickInput",
+      "LiveRunRequestCropInput",
+      "LiveRunRequestExpectInput",
       "LiveRunRequestFanoutBatchInput",
+      "LiveRunRequestFindInput",
+      "LiveRunRequestHandoverInput",
       "LiveRunRequestLeaderSplitInput",
       "LiveRunRequestMemorySupersedeInput",
+      "LiveRunRequestObserveInput",
+      "LiveRunRequestOpenInput",
+      "LiveRunRequestPointInput",
+      "LiveRunRequestScreenshotInput",
       "LiveRunRequestSecretGrantMintRequest",
       "LiveRunRequestSecretGrantRenewRequest",
       "LiveRunRequestSecretGrantTeardownRequest",
       "LiveRunRequestSecretGrantUseRequest",
+      "LiveRunRequestSelectInput",
       "LiveRunRequestSkillCallInput",
       "LiveRunRequestTaskRefuseInput",
+      "LiveRunRequestTypeInput",
+      "LiveRunRequestViewInput",
+      "LiveRunRequestWaitForInput",
+      "LiveRunRequestZoomInput",
       "LiveVoiceAckKind",
       "LiveVoiceAckRequest",
       "LiveVoiceAudioRequest",
@@ -80469,6 +80758,7 @@
       "LlmResponse",
       "LlmToolSpec",
       "LlmUsage",
+      "LocalMinuteWindow",
       "LocalRunnerBudgetCounter",
       "LocalRunnerBudgetRequest",
       "LocalRunnerBudgetView",
@@ -80585,7 +80875,10 @@
       "NotificationRow",
       "NotificationSource",
       "Observation",
+      "Observation2",
       "ObservationIssue",
+      "ObservationPage",
+      "ObserveInput",
       "Of360Ar3MetricTier",
       "Of360CaseEvalReport",
       "Of360CaseExtractionOutput",
@@ -80665,6 +80958,7 @@
       "OfficeFormat",
       "OmittedKnowledge",
       "OpaqueChange",
+      "OpenInput",
       "OpenSpendLeaseRequest",
       "OracleReceipt",
       "OrganWaitView",
@@ -80680,6 +80974,7 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OwnStandingBlockRequest",
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
@@ -80725,6 +81020,7 @@
       "PairedReading",
       "Paragraph",
       "PartialResultHold",
+      "PartialTree",
       "ParticipantView",
       "ParticipantsPage",
       "ParticipantsRequest",
@@ -80747,6 +81043,7 @@
       "PlannedSpawnObservation",
       "PlannedSpawnRead",
       "PlannerRung",
+      "PointInput",
       "PolicyActionOutcome",
       "PolicyAxes",
       "PolicyBargeInKill",
@@ -80860,11 +81157,17 @@
       "QuestionDefinition",
       "QuestionEditRequest",
       "QuestionMedia",
+      "QuestionOutcomes",
+      "QuestionOutcomesProjectRequest",
+      "QuestionOutcomesProjected",
+      "QuestionOutcomesRequest",
       "QuestionPauseRequest",
       "QuestionPaused",
       "QuestionReadRequest",
       "QuestionRecord",
       "QuestionRefreshRequest",
+      "QuestionScheduleHead",
+      "QuestionScheduleRequest",
       "QueueTaskBrief",
       "QuickFilterAtom",
       "QuoteAnchor",
@@ -80879,6 +81182,7 @@
       "RecallTelemetry",
       "RecallWorlds",
       "ReceiptAtom",
+      "ReceiptEvidence",
       "ReceiptKind",
       "ReceiptRecord",
       "RecipientRole",
@@ -80910,10 +81214,20 @@
       "ReplyStripsRequest",
       "RepoProposalStatus",
       "ReportDisclosure",
+      "ReportDisclosureChoice",
+      "ReportDisclosureRequest",
+      "ReportIssue",
       "ReportKind",
+      "ReportOutboundRequest",
+      "ReportOutboundView",
+      "ReportPayloadView",
       "ReportReceipt",
       "ReportRequest",
+      "ReportReview",
       "ReportRoute",
+      "ReportRouteReceipt",
+      "ReportRouteRequest",
+      "ReportSignatureView",
       "ReportStatus",
       "RequiredParty",
       "RescopeConnect",
@@ -81072,6 +81386,7 @@
       "RoomWaitKind",
       "RouteObservation",
       "RoutineOutcome",
+      "Row",
       "RowBirth",
       "RsiSettlement",
       "RsiSpendPurpose",
@@ -81147,6 +81462,10 @@
       "ScratchpadRecallRequest",
       "ScratchpadSealRequest",
       "ScratchpadWriteReply",
+      "ScreenshotInput",
+      "ScreenshotOutput",
+      "ScreenshotTrigger",
+      "ScrollDirection",
       "SealAtom",
       "SealLevel",
       "SearchAxis",
@@ -81176,6 +81495,7 @@
       "SectionAtom",
       "SegmentedControl",
       "SelectControl",
+      "SelectInput",
       "SelectionBenchmark",
       "SelectionRanking",
       "SelectionReceipt",
@@ -81360,7 +81680,12 @@
       "SpaceMoveState",
       "SpaceProbe",
       "SpaceRef",
+      "SpawnAskKnobString",
+      "SpawnAskKnobU32",
+      "SpawnAskKnobU64",
       "SpawnCare",
+      "SpawnIntentReply",
+      "SpawnIntentRequest",
       "SpawnKnobSpawnPattern",
       "SpawnKnobString",
       "SpawnKnobU32",
@@ -81379,6 +81704,12 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StandingBlockConfigureRequest",
+      "StandingBlockEditReceipt",
+      "StandingBlockEditRequest",
+      "StandingBlockRequest",
+      "StandingBlockView",
+      "StandingBlocksRequest",
       "StandingGrantBound",
       "StateFamilyRef",
       "StatusDotAtom",
@@ -81394,6 +81725,7 @@
       "StepXfrm",
       "StopCause",
       "StoredShapeSeed",
+      "SubgoalStatus",
       "SufficiencyCard",
       "SufficiencyInput",
       "SufficiencyVerdict",
@@ -81545,6 +81877,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "TierPrecedence",
+      "TimeRangeWire",
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
@@ -81580,6 +81913,7 @@
       "TurnTagsView",
       "TwoClocksAtom",
       "TypeByteFamily",
+      "TypeInput",
       "TypeRef",
       "TypeStamp",
       "TypedDecision",
@@ -81595,6 +81929,7 @@
       "VadBadge",
       "VerdictBinding",
       "VerdictMode",
+      "ViewInput",
       "VoiceBankClipInput",
       "VoiceBankInspectRequest",
       "VoiceBankInspection",
@@ -81618,6 +81953,8 @@
       "VoiceTargetReceipt",
       "VoiceVendorDeleteStatus",
       "VoiceVendorEviction",
+      "WaitForInput",
+      "WaitForOutput",
       "WakePolicySetRequest",
       "WeaveDigestRequest",
       "WeaveDigestView",
@@ -81702,13 +82039,14 @@
       "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
-      "XlsxValue"
+      "XlsxValue",
+      "ZoomInput"
      ],
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 594,
-      "struct": 1686
+      "enum": 612,
+      "struct": 1791
      }
     },
     {
