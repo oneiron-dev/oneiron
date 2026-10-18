@@ -165,6 +165,8 @@ class FacadeReceipt(TypedDict):
     actor_ref: str | None
     content_kind: str
     claim_ref: str | None
+    # That claim as a typed record ref, labelled with its kind and id.
+    claim: RecordRef | None
     fields: NotRequired[dict[str, str]]
 
 
@@ -205,20 +207,8 @@ class KeyValueNamespaces(TypedDict):
     limit: NotRequired[int]
     offset: NotRequired[int]
 
-class TasksOverflow(TypedDict):
-    known_omitted_rows: int
-    source_exhausted: bool
-
-class TasksSectionDescription(TypedDict):
-    kind: Literal["tasks_section"]
-    rows: list[dict[str, Any]]
-    overflow: TasksOverflow | None
-
-class TaskCardDescription(TypedDict):
-    kind: Literal["task_card"]
-    lines: list[str]
-
-TaskDescription = TasksSectionDescription | TaskCardDescription
+# `describe`'s answer, every variant the engine writes (the generated type).
+TaskDescription = Facade.TaskDescription
 
 class TaskCancelReceipt(TypedDict):
     approval: Literal["auto", "proposed", "approved", "rejected"]
@@ -387,6 +377,8 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
+    @property
+    def host(self) -> "Oneiron._HostVerbs": ...
     def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
         """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
@@ -765,6 +757,8 @@ class Oneiron:
         def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
+        @property
+        def hyde(self) -> "Oneiron._VaultRetrievalHydeVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
         def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
@@ -791,6 +785,17 @@ class Oneiron:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
         def configure(self, spec: Facade.RetrievalWeightsConfigureRequest) -> Facade.RetrievalWeightsReceipt:
             """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
+    class _VaultRetrievalHydeVerbs:
+        def configure(self, spec: Facade.HydeHostConfigureRequest) -> Facade.HydeHostConfiguration:
+            """The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.HydeHostConfiguration:
+            """The owner reads the serving host HyDE binding, grounding and bounded retry options."""
+        def pending(self, spec: Facade.HydeHostPendingRequest) -> list[Facade.HydeHostWork]:
+            """Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."""
+        def complete(self, spec: Facade.HydeHostCompleteRequest) -> Facade.HydeHostReceipt:
+            """Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."""
+        def receipt(self, spec: Facade.HydeHostReceiptRequest) -> Facade.HydeHostReceipt | None:
+            """Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."""
     class _VaultRetrievalOutcomesVerbs:
         def put(self, spec: Facade.RetrievalOutcome) -> list[Facade.RetrievalOutcomeRecord]:
             """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
@@ -2178,6 +2183,8 @@ class Oneiron:
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
     class _VaultCalendarVerbs:
+        @property
+        def passports(self) -> "Oneiron._VaultCalendarPassportsVerbs": ...
         def create(self, spec: Facade.CalendarEventCreateRequest) -> Facade.CalendarEventCreated:
             """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
         @property
@@ -2194,6 +2201,11 @@ class Oneiron:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
+    class _VaultCalendarPassportsVerbs:
+        def read(self, spec: Facade.CalendarPassportReadRequest) -> Facade.ScopedReadResult[Facade.CalendarPassportRevision | None]:
+            """Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence."""
+        def history(self, spec: Facade.CalendarPassportReadRequest) -> Facade.ScopedReadResult[list[Facade.CalendarPassportRevision]]:
+            """Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate."""
     class _VaultCalendarIcsVerbs:
         def import_(self, spec: Facade.CalendarIcsImportRequest) -> Facade.CalendarIcsImportReceipt:
             """The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."""
@@ -2642,6 +2654,16 @@ class Oneiron:
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+    class _HostVerbs:
+        def compact(self, spec: Facade.HostCompactRequest) -> Facade.HostCompactResult:
+            """Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."""
+        def wake(self, spec: Facade.HostWakeRequest) -> Facade.HostWakeResult:
+            """Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."""
+        @property
+        def budget(self) -> "Oneiron._HostBudgetVerbs": ...
+    class _HostBudgetVerbs:
+        def hit(self, spec: Facade.HostBudgetHitRequest) -> Facade.HostBudgetHitResult:
+            """Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."""
     class _AiVerbs:
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
@@ -2725,9 +2747,18 @@ class Oneiron:
         def invite(self, spec: Facade.CalendarInviteSurfaceInput) -> Facade.OutboundIntentReceipt:
             """Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."""
         @property
+        def ics(self) -> "Oneiron._CalendarIcsVerbs": ...
+        @property
         def connector(self) -> "Oneiron._CalendarConnectorVerbs": ...
         @property
         def imip(self) -> "Oneiron._CalendarImipVerbs": ...
+    class _CalendarIcsVerbs:
+        def configure(self, spec: Facade.CalendarIcsFeedConfigureRequest) -> Facade.CalendarIcsFeedRegistration:
+            """Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent."""
+        def poll(self, spec: Facade.CalendarIcsFeedRequest) -> Facade.CalendarIcsPollCompletion:
+            """Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence."""
+        def status(self, spec: Facade.CalendarIcsFeedRequest) -> Facade.CalendarIcsFeedStatus | None:
+            """Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL."""
     class _CalendarConnectorVerbs:
         def configure(self, spec: Facade.CalendarConnectorConfigureRequest) -> Facade.CalendarConnectorRegistration:
             """Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."""
