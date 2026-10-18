@@ -10,11 +10,14 @@ use super::*;
 /// member is onboarded into `workspace_ref`, or earlier when an owner
 /// establishes the workspace, and every later onboarding into the same
 /// `workspace_ref` must agree with it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WorkspaceRosterPreset {
     /// Host-side workspace handle (e.g. a Slack workspace key). Opaque here.
     pub workspace_ref: String,
     /// Shared vault the member grant is scoped to. Never zero.
+    #[serde(with = "crate::federation::vault_id_decimal")]
+    #[schemars(with = "String")]
     pub workspace_vault_id: u64,
     /// The `ORG` the house mind stands behind.
     pub org_ref: EntityId,

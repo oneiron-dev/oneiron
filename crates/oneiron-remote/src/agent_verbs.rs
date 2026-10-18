@@ -576,6 +576,24 @@ impl OneironClient {
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
+                "vault.agents.create" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AgentDefinitionView,
+                >(client, verb, &input),
+                "vault.agents.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AgentDefinitionView,
+                >(client, verb, &input),
+                "vault.agents.update" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AgentDefinitionView,
+                >(client, verb, &input),
+                "vault.workspace.establish" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkspacePresetReceipt,
+                >(client, verb, &input),
+                "vault.workspace.members.onboard" => remote_agent_verb_output::<
+                    oneiron::workspace_roster::MemberOnboardingOutcome,
+                >(client, verb, &input),
+                "vault.workspace.roster" => remote_agent_verb_output::<
+                    Vec<oneiron::workspace_roster::WorkspaceRosterEntry>,
+                >(client, verb, &input),
                 "vault.agents.export_pack" => remote_agent_verb_output::<
                     oneiron::share_travel::AgentPackExport,
                 >(client, verb, &input),
@@ -3224,6 +3242,78 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.artifacts.export", value)
+    }
+    pub fn vault_agents_create(
+        &self,
+        input: &oneiron::task_verb::sdk::AgentDefinitionCreateRequest,
+    ) -> Result<oneiron::task_verb::sdk::AgentDefinitionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.create", value)
+    }
+    pub fn vault_agents_get(
+        &self,
+        input: &oneiron::task_verb::sdk::AgentDefinitionRequest,
+    ) -> Result<oneiron::task_verb::sdk::AgentDefinitionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.get", value)
+    }
+    pub fn vault_agents_update(
+        &self,
+        input: &oneiron::task_verb::sdk::AgentDefinitionUpdateRequest,
+    ) -> Result<oneiron::task_verb::sdk::AgentDefinitionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.update", value)
+    }
+    pub fn vault_workspace_establish(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkspacePresetRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkspacePresetReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.establish", value)
+    }
+    pub fn vault_workspace_members_onboard(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkspaceMemberOnboardRequest,
+    ) -> Result<oneiron::workspace_roster::MemberOnboardingOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.members.onboard", value)
+    }
+    pub fn vault_workspace_roster(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkspaceRosterRequest,
+    ) -> Result<Vec<oneiron::workspace_roster::WorkspaceRosterEntry>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workspace.roster", value)
     }
     /// The agent's travelling AgentPack folder (files base64) and what stayed home.
     pub fn vault_agents_export_pack(

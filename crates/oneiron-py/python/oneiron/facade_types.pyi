@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 320 facade rows, 1287 declarations.
-Inputs: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 277 of 320 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 326 facade rows, 1306 declarations.
+Inputs: 283 of 326 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 283 of 326 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 74; unread shapes: 0.
 """
 
@@ -3982,6 +3982,111 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+class AgentSkillInput(TypedDict):
+    skill_id: str
+    min_version: NotRequired[str | None]
+class AgentMcpInput(TypedDict):
+    key: str
+    min_version: NotRequired[str | None]
+class AgentScopeInputAll(TypedDict):
+    kind: Literal["all"]
+class AgentScopeInputBase(TypedDict):
+    kind: Literal["base"]
+class AgentScopeInputWorld(TypedDict):
+    kind: Literal["world"]
+    world: EntityId
+AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
+AgentCeilingInput = Literal["auto", "proposed"]
+class AgentDefinitionSpec(TypedDict):
+    agent_id: str
+    desc: str
+    version: str
+    instructions: NotRequired[str | None]
+    skills: NotRequired[list[AgentSkillInput]]
+    connectors: NotRequired[list[str]]
+    code_mode_mcps: NotRequired[list[AgentMcpInput]]
+    model_tier: NotRequired[str | None]
+    scope: NotRequired[AgentScopeInput]
+    ceiling: NotRequired[AgentCeilingInput]
+    forked_from: NotRequired[EntityId | None]
+    enabled: NotRequired[bool]
+    display_name: NotRequired[str | None]
+class AgentDefinitionCreateRequest(TypedDict):
+    agent_def_ref: EntityId
+    definition: AgentDefinitionSpec
+AgentDefinitionLifecycle = Literal["active", "superseded", "retracted"]
+class AgentDefinitionView(TypedDict):
+    agent_def_ref: EntityId
+    definition: AgentDefinitionSpec
+    approval_status: ClaimApprovalStatus
+    lifecycle_status: AgentDefinitionLifecycle
+class AgentDefinitionRequest(TypedDict):
+    agent_def_ref: EntityId
+class AgentDefinitionUpdateRequest(TypedDict):
+    agent_def_ref: EntityId
+    expected_version: str
+    definition: AgentDefinitionSpec
+class WorkspaceRosterPreset(TypedDict):
+    workspace_ref: str
+    workspace_vault_id: str
+    org_ref: EntityId
+    venture_name: str
+    house_display_name: NotRequired[str | None]
+    house_actor_ref: EntityId
+    house_identity_ref: NotRequired[EntityId | None]
+WorkCompanionPolicy = Literal["choose", "suggest", "require"]
+class WorkspacePresetRequest(TypedDict):
+    preset: WorkspaceRosterPreset
+    work_companion: NotRequired[WorkCompanionPolicy]
+class WorkspacePresetReceipt(TypedDict):
+    workspace_ref: str
+    work_companion: WorkCompanionPolicy
+class WorkspaceCompanionInputWork(TypedDict):
+    kind: Literal["work"]
+    person_ref: EntityId
+    actor_ref: EntityId
+    work_facet_ref: EntityId
+    profile_grant_ref: EntityId
+    actor_definition: AgentDefinitionSpec
+    display_name: str
+class WorkspaceCompanionInputBring(TypedDict):
+    kind: Literal["bring"]
+    person_ref: EntityId
+    actor_ref: EntityId
+    work_facet_ref: EntityId
+WorkspaceCompanionInput = WorkspaceCompanionInputWork | WorkspaceCompanionInputBring
+class WorkspaceMemberOnboardRequest(TypedDict):
+    onboarding_id: str
+    workspace: WorkspaceRosterPreset
+    person_ref: EntityId
+    actor_ref: EntityId
+    actor_definition: AgentDefinitionSpec
+    work_facet_ref: EntityId
+    federation_grant_ref: EntityId
+    companion: WorkspaceCompanionInput
+    occurred_at: int
+class MemberOnboardingOutcome(TypedDict):
+    onboarding_id: str
+    person_ref: EntityId
+    actor_ref: EntityId
+    federation_grant_ref: EntityId
+    companion_person_ref: NotRequired[EntityId | None]
+    companion_actor_ref: NotRequired[EntityId | None]
+    work_companion_suggested: bool
+    delegated_identity_ref: NotRequired[EntityId | None]
+    completed_at: int
+class WorkspaceRosterRequest(TypedDict):
+    workspace_ref: str
+WorkspaceRosterRole = Literal["house_mind", "principal_companion"]
+class WorkspaceRosterEntry(TypedDict):
+    workspace_ref: str
+    role: WorkspaceRosterRole
+    principal_ref: NotRequired[EntityId | None]
+    actor_ref: EntityId
+    subject_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+    identity_ref: NotRequired[EntityId | None]
+    display_name: str
 class AgentPackExportRequest(TypedDict):
     agent_ref: str
     travel: NotRequired[TravelChoice | None]
@@ -5013,7 +5118,6 @@ class CompanionSharingSetRequest(TypedDict):
     expected_delta: str
 class WorkspaceRefRequest(TypedDict):
     workspace_ref: str
-WorkCompanionPolicy = Literal["choose", "suggest", "require"]
 class WorkCompanionSetRequest(TypedDict):
     workspace_ref: str
     policy: WorkCompanionPolicy

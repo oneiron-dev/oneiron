@@ -1001,6 +1001,12 @@ fn mcp_agent_verb_input(
         "vault.code.proposal_view" => a.spec.clone().ok_or_else(invalid),
         "vault.code.repo_diff" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.create" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.update" => a.spec.clone().ok_or_else(invalid),
+        "vault.workspace.establish" => a.spec.clone().ok_or_else(invalid),
+        "vault.workspace.members.onboard" => a.spec.clone().ok_or_else(invalid),
+        "vault.workspace.roster" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.export_pack" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.born_from" => a.spec.clone().ok_or_else(invalid),
         "vault.artifacts.proposals" => a.spec.clone().ok_or_else(invalid),
@@ -1837,6 +1843,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.artifacts.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.create" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.update" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.workspace.establish" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.workspace.members.onboard" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.workspace.roster" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.agents.export_pack" => {
@@ -5089,6 +5113,117 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_artifacts_export(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.create" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.create", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentDefinitionCreateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_agents_create(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentDefinitionRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_agents_get(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.update" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.update", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentDefinitionUpdateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_agents_update(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.workspace.establish" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.workspace.establish", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::WorkspacePresetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_workspace_establish(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.workspace.members.onboard" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.workspace.members.onboard", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::WorkspaceMemberOnboardRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_workspace_members_onboard(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.workspace.roster" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.workspace.roster", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::WorkspaceRosterRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_workspace_roster(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "vault.agents.export_pack" => {

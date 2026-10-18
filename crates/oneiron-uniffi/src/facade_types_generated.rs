@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 320 facade rows, 1190 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 288.
+// UniFFI census: 326 facade rows, 1209 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 294.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -11549,6 +11549,367 @@ pub struct ArtifactExportFile {
     pub content_base64: String,
 }
 
+/// `oneiron::task_verb::sdk_agents::AgentSkillInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentSkillInput {
+    #[serde(rename = "skill_id")]
+    pub skill_id: String,
+    #[serde(
+        rename = "min_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_version: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentMcpInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentMcpInput {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(
+        rename = "min_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub min_version: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentScopeInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum AgentScopeInput {
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "base")]
+    Base,
+    #[serde(rename = "world")]
+    World {
+        #[serde(rename = "world")]
+        world: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentCeilingInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentCeilingInput {
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "proposed")]
+    Proposed,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentDefinitionSpec`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDefinitionSpec {
+    #[serde(rename = "agent_id")]
+    pub agent_id: String,
+    #[serde(rename = "desc")]
+    pub desc: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(
+        rename = "instructions",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub instructions: Option<String>,
+    #[serde(rename = "skills", default, skip_serializing_if = "Option::is_none")]
+    pub skills: Option<Vec<AgentSkillInput>>,
+    #[serde(
+        rename = "connectors",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub connectors: Option<Vec<String>>,
+    #[serde(
+        rename = "code_mode_mcps",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub code_mode_mcps: Option<Vec<AgentMcpInput>>,
+    #[serde(
+        rename = "model_tier",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub model_tier: Option<String>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<AgentScopeInput>,
+    #[serde(rename = "ceiling", default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<AgentCeilingInput>,
+    #[serde(
+        rename = "forked_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub forked_from: Option<String>,
+    #[serde(rename = "enabled", default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(
+        rename = "display_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub display_name: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentDefinitionCreateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDefinitionCreateRequest {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+    #[serde(rename = "definition")]
+    pub definition: AgentDefinitionSpec,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentDefinitionLifecycle`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AgentDefinitionLifecycle {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "superseded")]
+    Superseded,
+    #[serde(rename = "retracted")]
+    Retracted,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentDefinitionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentDefinitionView {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+    #[serde(rename = "definition")]
+    pub definition: AgentDefinitionSpec,
+    #[serde(rename = "approval_status")]
+    pub approval_status: ClaimApprovalStatus,
+    #[serde(rename = "lifecycle_status")]
+    pub lifecycle_status: AgentDefinitionLifecycle,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentDefinitionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDefinitionRequest {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_agents::AgentDefinitionUpdateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDefinitionUpdateRequest {
+    #[serde(rename = "agent_def_ref")]
+    pub agent_def_ref: String,
+    #[serde(rename = "expected_version")]
+    pub expected_version: String,
+    #[serde(rename = "definition")]
+    pub definition: AgentDefinitionSpec,
+}
+
+/// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRosterPreset {
+    #[serde(rename = "workspace_ref")]
+    pub workspace_ref: String,
+    #[serde(rename = "workspace_vault_id")]
+    pub workspace_vault_id: String,
+    #[serde(rename = "org_ref")]
+    pub org_ref: String,
+    #[serde(rename = "venture_name")]
+    pub venture_name: String,
+    #[serde(
+        rename = "house_display_name",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub house_display_name: Option<String>,
+    #[serde(rename = "house_actor_ref")]
+    pub house_actor_ref: String,
+    #[serde(
+        rename = "house_identity_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub house_identity_ref: Option<String>,
+}
+
+/// `oneiron::workspace_roster::work_companion::WorkCompanionPolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WorkCompanionPolicy {
+    #[serde(rename = "choose")]
+    Choose,
+    #[serde(rename = "suggest")]
+    Suggest,
+    #[serde(rename = "require")]
+    Require,
+}
+
+/// `oneiron::task_verb::sdk_workspace::WorkspacePresetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspacePresetRequest {
+    #[serde(rename = "preset")]
+    pub preset: WorkspaceRosterPreset,
+    #[serde(
+        rename = "work_companion",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub work_companion: Option<WorkCompanionPolicy>,
+}
+
+/// `oneiron::task_verb::sdk_workspace::WorkspacePresetReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkspacePresetReceipt {
+    #[serde(rename = "workspace_ref")]
+    pub workspace_ref: String,
+    #[serde(rename = "work_companion")]
+    pub work_companion: WorkCompanionPolicy,
+}
+
+/// `oneiron::task_verb::sdk_workspace::WorkspaceCompanionInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum WorkspaceCompanionInput {
+    #[serde(rename = "work")]
+    Work {
+        #[serde(rename = "person_ref")]
+        person_ref: String,
+        #[serde(rename = "actor_ref")]
+        actor_ref: String,
+        #[serde(rename = "work_facet_ref")]
+        work_facet_ref: String,
+        #[serde(rename = "profile_grant_ref")]
+        profile_grant_ref: String,
+        #[serde(rename = "actor_definition")]
+        actor_definition: AgentDefinitionSpec,
+        #[serde(rename = "display_name")]
+        display_name: String,
+    },
+    #[serde(rename = "bring")]
+    Bring {
+        #[serde(rename = "person_ref")]
+        person_ref: String,
+        #[serde(rename = "actor_ref")]
+        actor_ref: String,
+        #[serde(rename = "work_facet_ref")]
+        work_facet_ref: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_workspace::WorkspaceMemberOnboardRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceMemberOnboardRequest {
+    #[serde(rename = "onboarding_id")]
+    pub onboarding_id: String,
+    #[serde(rename = "workspace")]
+    pub workspace: WorkspaceRosterPreset,
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "actor_definition")]
+    pub actor_definition: AgentDefinitionSpec,
+    #[serde(rename = "work_facet_ref")]
+    pub work_facet_ref: String,
+    #[serde(rename = "federation_grant_ref")]
+    pub federation_grant_ref: String,
+    #[serde(rename = "companion")]
+    pub companion: WorkspaceCompanionInput,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+}
+
+/// `oneiron::workspace_roster::records::MemberOnboardingOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MemberOnboardingOutcome {
+    #[serde(rename = "onboarding_id")]
+    pub onboarding_id: String,
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "federation_grant_ref")]
+    pub federation_grant_ref: String,
+    #[serde(
+        rename = "companion_person_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub companion_person_ref: Option<String>,
+    #[serde(
+        rename = "companion_actor_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub companion_actor_ref: Option<String>,
+    #[serde(rename = "work_companion_suggested")]
+    pub work_companion_suggested: bool,
+    #[serde(
+        rename = "delegated_identity_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delegated_identity_ref: Option<String>,
+    #[serde(rename = "completed_at")]
+    pub completed_at: u64,
+}
+
+/// `oneiron::task_verb::sdk_workspace::WorkspaceRosterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkspaceRosterRequest {
+    #[serde(rename = "workspace_ref")]
+    pub workspace_ref: String,
+}
+
+/// `oneiron::workspace_roster::records::WorkspaceRosterRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WorkspaceRosterRole {
+    #[serde(rename = "house_mind")]
+    HouseMind,
+    #[serde(rename = "principal_companion")]
+    PrincipalCompanion,
+}
+
+/// `oneiron::workspace_roster::records::WorkspaceRosterEntry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkspaceRosterEntry {
+    #[serde(rename = "workspace_ref")]
+    pub workspace_ref: String,
+    #[serde(rename = "role")]
+    pub role: WorkspaceRosterRole,
+    #[serde(
+        rename = "principal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub principal_ref: Option<String>,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "facet_ref", default, skip_serializing_if = "Option::is_none")]
+    pub facet_ref: Option<String>,
+    #[serde(
+        rename = "identity_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub identity_ref: Option<String>,
+    #[serde(rename = "display_name")]
+    pub display_name: String,
+}
+
 /// `oneiron::share_travel::agent_pack_export::AgentPackExportRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -14885,17 +15246,6 @@ pub struct CompanionSharingSetRequest {
 pub struct WorkspaceRefRequest {
     #[serde(rename = "workspace_ref")]
     pub workspace_ref: String,
-}
-
-/// `oneiron::workspace_roster::work_companion::WorkCompanionPolicy`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum WorkCompanionPolicy {
-    #[serde(rename = "choose")]
-    Choose,
-    #[serde(rename = "suggest")]
-    Suggest,
-    #[serde(rename = "require")]
-    Require,
 }
 
 /// `oneiron::task_verb::sdk::WorkCompanionSetRequest`.

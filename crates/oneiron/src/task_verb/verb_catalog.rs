@@ -177,6 +177,12 @@ pub enum AgentVerb {
     VaultCodeProposalView,
     VaultCodeRepoDiff,
     VaultArtifactsExport,
+    VaultAgentsCreate,
+    VaultAgentsGet,
+    VaultAgentsUpdate,
+    VaultWorkspaceEstablish,
+    VaultWorkspaceMembersOnboard,
+    VaultWorkspaceRoster,
     VaultAgentsExportPack,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
@@ -543,6 +549,12 @@ impl AgentVerb {
         Self::VaultCodeProposalView,
         Self::VaultCodeRepoDiff,
         Self::VaultArtifactsExport,
+        Self::VaultAgentsCreate,
+        Self::VaultAgentsGet,
+        Self::VaultAgentsUpdate,
+        Self::VaultWorkspaceEstablish,
+        Self::VaultWorkspaceMembersOnboard,
+        Self::VaultWorkspaceRoster,
         Self::VaultAgentsExportPack,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
@@ -916,6 +928,12 @@ impl AgentVerb {
             Self::VaultCodeProposalView => "vault.code.proposal_view",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultArtifactsExport => "vault.artifacts.export",
+            Self::VaultAgentsCreate => "vault.agents.create",
+            Self::VaultAgentsGet => "vault.agents.get",
+            Self::VaultAgentsUpdate => "vault.agents.update",
+            Self::VaultWorkspaceEstablish => "vault.workspace.establish",
+            Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
+            Self::VaultWorkspaceRoster => "vault.workspace.roster",
             Self::VaultAgentsExportPack => "vault.agents.export_pack",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
@@ -1281,6 +1299,12 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsGet
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
+                | Self::VaultWorkspaceRoster
                 | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1654,6 +1678,12 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsGet
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
+                | Self::VaultWorkspaceRoster
                 | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1840,6 +1870,7 @@ impl AgentVerb {
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
+                | Self::VaultWorkspaceRoster
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::Peek
@@ -2053,6 +2084,12 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsGet
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
+                | Self::VaultWorkspaceRoster
                 | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -2350,6 +2387,10 @@ impl AgentVerb {
                 | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
@@ -2667,6 +2708,12 @@ impl AgentVerb {
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
+            Self::VaultAgentsCreate => &["spec"],
+            Self::VaultAgentsGet => &["spec"],
+            Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultWorkspaceEstablish => &["spec"],
+            Self::VaultWorkspaceMembersOnboard => &["spec"],
+            Self::VaultWorkspaceRoster => &["spec"],
             Self::VaultAgentsExportPack => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -3034,6 +3081,12 @@ impl AgentVerb {
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
+            Self::VaultAgentsCreate => &["spec"],
+            Self::VaultAgentsGet => &["spec"],
+            Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultWorkspaceEstablish => &["spec"],
+            Self::VaultWorkspaceMembersOnboard => &["spec"],
+            Self::VaultWorkspaceRoster => &["spec"],
             Self::VaultAgentsExportPack => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -3717,6 +3770,24 @@ impl AgentVerb {
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
+            }
+            Self::VaultAgentsCreate => {
+                "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."
+            }
+            Self::VaultAgentsGet => {
+                "The owner reads one saved agent composition and its version and approval state."
+            }
+            Self::VaultAgentsUpdate => {
+                "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."
+            }
+            Self::VaultWorkspaceEstablish => {
+                "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."
+            }
+            Self::VaultWorkspaceMembersOnboard => {
+                "A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate."
+            }
+            Self::VaultWorkspaceRoster => {
+                "The owner reads the workspace house and companion roster with their actor, subject and facet refs."
             }
             Self::VaultAgentsExportPack => {
                 "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home."

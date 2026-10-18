@@ -203,6 +203,12 @@ vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
 vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
+vaultAgentsCreate(input: unknown): unknown
+vaultAgentsGet(input: unknown): unknown
+vaultAgentsUpdate(input: unknown): unknown
+vaultWorkspaceEstablish(input: unknown): unknown
+vaultWorkspaceMembersOnboard(input: unknown): unknown
+vaultWorkspaceRoster(input: unknown): unknown
 vaultAgentsExportPack(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
