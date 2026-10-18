@@ -10,6 +10,9 @@
 //! Erase rewrites every kept pad: each upkeep tick strips every world whose
 //! keys were destroyed here, and that this machine has not swept yet, from
 //! every pad object the home keeps (`Vault::drop_world_from_key_pads`).
+//!
+//! A commit names the recovery root this machine pins, so a kit-only restore
+//! can read the generation through the home's kit door (`kit_fetch`).
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -18,6 +21,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
 
+use super::kit_fetch::KitHome;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::authority::{Destination, PeerMachine};
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -29,7 +33,7 @@ use crate::sync::residence::{
 };
 use crate::sync::transport::TransportError;
 use crate::world_keys::{
-    SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
+    RecoveryRootId, SEALED_BUNDLE_KEEP, SealedBundleGeneration, SealedKeyPads, SealedVaultBundle,
     sealed_bundle_slot,
 };
 use crate::{EntityId, Vault};
@@ -62,6 +66,16 @@ fn holder_destination(vault: &Vault, home: PeerMachine) -> Destination {
         PeerMachine::Proven { machine, .. } => Destination::Machine(machine),
         PeerMachine::Unknown => Destination::Unknown,
     }
+}
+
+/// The recovery root this machine pins, when it pins one: a commit names it
+/// for the kit door.
+fn pinned_root(vault: &Vault) -> crate::error::Result<Option<RecoveryRootId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .authority_view_readonly_in_txn(&txn)?
+        .pinned_root
+        .map(|pin| pin.id))
 }
 
 /// What one bundle relay moved.
@@ -189,7 +203,7 @@ impl SyncClient {
         let Some(mut rpc) = ResidenceRpc::connect(&self.vault, &self.config, budgets).await? else {
             return Err(TransportError::Storage("home node offline".into()));
         };
-        fetch_generation(&mut rpc, generation).await
+        fetch_generation(&mut PartSource::Machine(&mut rpc), generation).await
     }
 }
 
@@ -267,7 +281,7 @@ impl SlotRelay<'_> {
             if let Some(newest) =
                 latest.filter(|newest| cursor.taken.is_none_or(|taken| *newest > taken))
             {
-                let (bundle, pads) = fetch_generation(rpc, Some(newest))
+                let (bundle, pads) = fetch_generation(&mut PartSource::Machine(rpc), Some(newest))
                     .await?
                     .ok_or_else(refused)?;
                 let manager = Arc::clone(self.manager);
@@ -299,7 +313,7 @@ impl SlotRelay<'_> {
                     .is_none_or(|(bundle, _)| bundle.generation() != newest)
             {
                 held = Some(
-                    fetch_generation(rpc, Some(newest))
+                    fetch_generation(&mut PartSource::Machine(rpc), Some(newest))
                         .await?
                         .ok_or_else(refused)?,
                 );
@@ -326,6 +340,12 @@ impl SlotRelay<'_> {
                     return Err(storage(error));
                 }
             };
+            // The root whose kit holds a capsule in the upload.
+            let root = if upload.kit {
+                pinned_root(vault).map_err(storage)?
+            } else {
+                None
+            };
             let generation = upload.bundle.generation();
             if put_object(
                 rpc,
@@ -341,7 +361,7 @@ impl SlotRelay<'_> {
                     upload.pads.as_bytes(),
                 )
                 .await?
-                && commit_generation(rpc, &generation, latest).await?
+                && commit_generation(rpc, &generation, latest, root).await?
             {
                 cursor.taken = Some(generation);
                 relay.published = Some(generation);
@@ -377,9 +397,13 @@ async fn sweep_erased(
     for generation in list_generations(rpc).await? {
         // A kept object that does not come back is swept on a later tick:
         // a world is never marked swept past an object it did not see.
-        let (_, bytes) = read_object(rpc, Some(generation), SealedBundleObject::Pads)
-            .await?
-            .ok_or_else(refused)?;
+        let (_, bytes) = read_object(
+            &mut PartSource::Machine(rpc),
+            Some(generation),
+            SealedBundleObject::Pads,
+        )
+        .await?
+        .ok_or_else(refused)?;
         let pads = SealedKeyPads::from_bytes(&bytes).map_err(|_| refused())?;
         if pads.generation() != generation {
             return Err(refused());
@@ -439,10 +463,44 @@ async fn list_generations(
     Ok(generations)
 }
 
+/// Where a read's slices come from: this machine's residence socket, or the
+/// home's kit door for a restore with the kit alone (`kit_fetch`).
+pub(super) enum PartSource<'a> {
+    Machine(&'a mut ResidenceRpc),
+    Kit(&'a KitHome),
+}
+
+impl PartSource<'_> {
+    /// One slice of a kept object from `offset`, as the home sends it:
+    /// `generation` names one, `None` the newest. A refused or missing slice
+    /// is `InvalidPayload`.
+    async fn get(
+        &mut self,
+        generation: Option<SealedBundleGeneration>,
+        object: SealedBundleObject,
+        offset: u64,
+    ) -> Result<serde_json::Value, TransportError> {
+        match self {
+            Self::Machine(rpc) => {
+                rpc.request(
+                    "residence.bundle.get",
+                    json!({
+                        "generation": generation.as_ref().map(sealed_generation_hex),
+                        "object": object.name(),
+                        "offset": offset,
+                    }),
+                )
+                .await
+            }
+            Self::Kit(home) => home.part(generation, object, offset).await,
+        }
+    }
+}
+
 /// Reads one kept object in slices: `generation` names one, `None` the newest.
 /// `None` when the home keeps no such generation.
 async fn read_object(
-    rpc: &mut ResidenceRpc,
+    source: &mut PartSource<'_>,
     generation: Option<SealedBundleGeneration>,
     object: SealedBundleObject,
 ) -> Result<Option<(SealedBundleGeneration, Vec<u8>)>, TransportError> {
@@ -450,17 +508,7 @@ async fn read_object(
     let mut bytes = Vec::new();
     let mut whole: Option<(u64, [u8; 32])> = None;
     loop {
-        let reply = match rpc
-            .request(
-                "residence.bundle.get",
-                json!({
-                    "generation": named.as_ref().map(sealed_generation_hex),
-                    "object": object.name(),
-                    "offset": bytes.len(),
-                }),
-            )
-            .await
-        {
+        let reply = match source.get(named, object, bytes.len() as u64).await {
             Ok(reply) => reply,
             Err(TransportError::InvalidPayload(_)) if bytes.is_empty() => return Ok(None),
             Err(error) => return Err(error),
@@ -501,18 +549,18 @@ async fn read_object(
 
 /// One kept generation's bundle and pad object: `generation` names one, `None`
 /// the newest. `None` when the home keeps no such generation.
-async fn fetch_generation(
-    rpc: &mut ResidenceRpc,
+pub(super) async fn fetch_generation(
+    source: &mut PartSource<'_>,
     generation: Option<SealedBundleGeneration>,
 ) -> Result<Option<(SealedVaultBundle, SealedKeyPads)>, TransportError> {
     let Some((generation, bytes)) =
-        read_object(rpc, generation, SealedBundleObject::Bundle).await?
+        read_object(source, generation, SealedBundleObject::Bundle).await?
     else {
         return Ok(None);
     };
     let bundle = SealedVaultBundle::from_bytes(&bytes).map_err(|_| refused())?;
     drop(bytes);
-    let Some((_, bytes)) = read_object(rpc, Some(generation), SealedBundleObject::Pads).await?
+    let Some((_, bytes)) = read_object(source, Some(generation), SealedBundleObject::Pads).await?
     else {
         return Ok(None);
     };
@@ -558,12 +606,13 @@ async fn put_object(
     Ok(true)
 }
 
-/// Commits the generation staged here on `parent`; `false` when the home
-/// refused it.
+/// Commits the generation staged here on `parent`, naming `root`, the
+/// recovery root whose kit may read it; `false` when the home refused it.
 async fn commit_generation(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
+    root: Option<RecoveryRootId>,
 ) -> Result<bool, TransportError> {
     match rpc
         .request(
@@ -571,6 +620,7 @@ async fn commit_generation(
             json!({
                 "generation": sealed_generation_hex(generation),
                 "parent": parent.as_ref().map(sealed_generation_hex),
+                "root": root.as_ref().map(|root| sealed_digest_hex(&root.0)),
             }),
         )
         .await
