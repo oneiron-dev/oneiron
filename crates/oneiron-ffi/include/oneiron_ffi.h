@@ -43,6 +43,50 @@
 #include <stdlib.h>
 
 /**
+ * Status code returned by every fallible C entry point.
+ */
+typedef enum OneironStatus {
+  /**
+   * Operation completed successfully.
+   */
+  OneironStatus_Ok = 0,
+  /**
+   * A required pointer argument was null.
+   */
+  OneironStatus_NullArg = 1,
+  /**
+   * A scalar, length, enum discriminant, or ID value failed validation.
+   */
+  OneironStatus_InvalidArg = 2,
+  /**
+   * The requested optional value was not found.
+   */
+  OneironStatus_NotFound = 3,
+  /**
+   * The engine returned an error.
+   */
+  OneironStatus_EngineError = 4,
+  /**
+   * A Rust panic was caught before it crossed the C ABI boundary.
+   */
+  OneironStatus_Panic = 5,
+  /**
+   * Reserved for caller-owned buffer APIs.
+   */
+  OneironStatus_BufferTooSmall = 6,
+  /**
+   * Input bytes were not valid UTF-8.
+   */
+  OneironStatus_Utf8 = 7,
+  /**
+   * The request needs a model this library does not serve: a context
+   * pack's media needs the `ai.embed` rung its space names (OF-370).
+   * Retry without it, or on a server that serves that rung.
+   */
+  OneironStatus_ModelUnavailable = 8,
+} OneironStatus;
+
+/**
  * Why the last engine call on this thread failed `EngineError`, read with
  * `oneiron_engine_last_error`.
  */
@@ -98,50 +142,6 @@ typedef enum OneironEngineErrorCode {
    */
   OneironEngineErrorCode_BadRequest = 11,
 } OneironEngineErrorCode;
-
-/**
- * Status code returned by every fallible C entry point.
- */
-typedef enum OneironStatus {
-  /**
-   * Operation completed successfully.
-   */
-  OneironStatus_Ok = 0,
-  /**
-   * A required pointer argument was null.
-   */
-  OneironStatus_NullArg = 1,
-  /**
-   * A scalar, length, enum discriminant, or ID value failed validation.
-   */
-  OneironStatus_InvalidArg = 2,
-  /**
-   * The requested optional value was not found.
-   */
-  OneironStatus_NotFound = 3,
-  /**
-   * The engine returned an error.
-   */
-  OneironStatus_EngineError = 4,
-  /**
-   * A Rust panic was caught before it crossed the C ABI boundary.
-   */
-  OneironStatus_Panic = 5,
-  /**
-   * Reserved for caller-owned buffer APIs.
-   */
-  OneironStatus_BufferTooSmall = 6,
-  /**
-   * Input bytes were not valid UTF-8.
-   */
-  OneironStatus_Utf8 = 7,
-  /**
-   * The request needs a model this library does not serve: a context
-   * pack's media needs the `ai.embed` rung its space names (OF-370).
-   * Retry without it, or on a server that serves that rung.
-   */
-  OneironStatus_ModelUnavailable = 8,
-} OneironStatus;
 
 /**
  * Opaque embedded-engine handle returned by `oneiron_engine_start`.
@@ -807,6 +807,34 @@ enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
                                                const uint8_t *id_ptr,
                                                size_t id_len,
                                                uint8_t *out_exists);
+
+/**
+ * `oneiron_vault_open`, then this install's own machine profile from the
+ * vault's host root secret, so the owner's acts carry from it.
+ *
+ * `host_root_secret_ptr` and `host_root_secret_len` are the exact bytes of
+ * the server's configured `auth_secret`: null with length 0 names none, and
+ * the open is `oneiron_vault_open`'s; a non-null empty secret is
+ * `InvalidArg`. `initialize_root` is 0 or 1, and 1 needs a secret: it roots
+ * the vault under the secret when this open creates its store and its
+ * authority log is empty, a new local-origin vault. Never pass 1 for a
+ * replica awaiting its root. A secret that cannot profile the install is
+ * `EngineError` with `out_vault` left null; the engine logs the reason.
+ *
+ * # Safety
+ *
+ * As `oneiron_vault_open`, and a non-null `host_root_secret_ptr` covers
+ * `host_root_secret_len` readable bytes, borrowed for this call only.
+ */
+enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
+                                                     size_t path_len,
+                                                     size_t dimensions,
+                                                     const struct OneironByteSlice *dict_search_paths,
+                                                     size_t dict_search_paths_len,
+                                                     const uint8_t *host_root_secret_ptr,
+                                                     size_t host_root_secret_len,
+                                                     uint8_t initialize_root,
+                                                     struct OneironVault **out_vault);
 
 /**
  * Store a directed edge between two entities. A bound handle stores it as
