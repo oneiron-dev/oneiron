@@ -2220,6 +2220,21 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
             return json.loads(_translate(lambda: self._client.vault_hooks_replay(json.dumps(spec))))
+        @property
+        def regen(self) -> "Oneiron._VaultHooksRegenVerbs":
+            return Oneiron._VaultHooksRegenVerbs(self._client)
+    class _VaultHooksRegenVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def due(self, spec=None):
+            """List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_due(json.dumps({} if spec is None else spec))))
+        def get(self, spec):
+            """Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_get(json.dumps(spec))))
+        def adopt(self, spec):
+            """Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."""
+            return json.loads(_translate(lambda: self._client.vault_hooks_regen_adopt(json.dumps(spec))))
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

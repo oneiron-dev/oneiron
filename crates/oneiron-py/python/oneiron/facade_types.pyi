@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 660 facade rows, 2423 declarations.
-Inputs: 608 of 660 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 590 of 660 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 663 facade rows, 2432 declarations.
+Inputs: 611 of 663 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 593 of 663 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 93; unread shapes: 0.
 """
 
@@ -6398,6 +6398,43 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
+class HookRegenBindingRequest(TypedDict):
+    binding: EntityId
+class HookContractStamp(TypedDict):
+    verb_table: str
+    sandbox: str
+class HookGoldenDiff(TypedDict):
+    cases: int
+    changed: list[str]
+HookRegenFailurePhase = Literal["intent", "generate", "validate", "golden_replay"]
+class HookRegenFailure(TypedDict):
+    phase: HookRegenFailurePhase
+    message: str
+class HookRegenOutcomeAutoAdopt(TypedDict):
+    outcome: Literal["auto_adopt"]
+    candidate: str
+    target: HookContractStamp
+    diff: HookGoldenDiff
+class HookRegenOutcomeNeedsHumanStamp(TypedDict):
+    outcome: Literal["needs_human_stamp"]
+    candidate: str
+    target: HookContractStamp
+    diff: HookGoldenDiff
+class HookRegenOutcomeRolledBack(TypedDict):
+    outcome: Literal["rolled_back"]
+    failure: HookRegenFailure
+HookRegenOutcome = HookRegenOutcomeAutoAdopt | HookRegenOutcomeNeedsHumanStamp | HookRegenOutcomeRolledBack
+class HookRegenRecord(TypedDict):
+    body_hash: str
+    stamp: HookContractStamp
+    intent: NotRequired[str | None]
+    pending: NotRequired[HookRegenOutcome | None]
+class HookRegenView(TypedDict):
+    record: HookRegenRecord
+    candidate_hash: NotRequired[str | None]
+class HookRegenAdoptRequest(TypedDict):
+    binding: EntityId
+    candidate_hash: str
 ArtifactPointerChannel = Literal["published", "preview"]
 CodebaseForkHash = list[int]
 class ArtifactExportRefForkHash(TypedDict):

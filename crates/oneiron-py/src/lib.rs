@@ -2994,6 +2994,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_hooks_regen_due(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.hooks.regen.due")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.hooks.regen.due", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_hooks_regen_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.hooks.regen.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.hooks.regen.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_hooks_regen_adopt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.hooks.regen.adopt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.hooks.regen.adopt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_artifacts_publish_approval(
         &self,
         py: Python<'_>,

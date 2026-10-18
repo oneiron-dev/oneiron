@@ -1566,6 +1566,21 @@ export_facade! {
     let output = client.vault_hooks_replay(&input)?;
     crate::codec::lift_record("vault.hooks.replay", &output)
 };
+"vault.hooks.regen.due" => fn vault_hooks_regen_due(&self) -> Vec<String> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.hooks.regen.due")?;
+    let output = client.vault_hooks_regen_due(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.due", &output)
+};
+"vault.hooks.regen.get" => fn vault_hooks_regen_get(&self, input: HookRegenBindingRequest) -> Option<HookRegenView> = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest = crate::codec::lower_record("vault.hooks.regen.get", input)?;
+    let output = client.vault_hooks_regen_get(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.get", &output)
+};
+"vault.hooks.regen.adopt" => fn vault_hooks_regen_adopt(&self, input: HookRegenAdoptRequest) -> PackPutReceipt = |client| {
+    let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest = crate::codec::lower_record("vault.hooks.regen.adopt", input)?;
+    let output = client.vault_hooks_regen_adopt(&input)?;
+    crate::codec::lift_record("vault.hooks.regen.adopt", &output)
+};
 "vault.artifacts.publish_approval" => fn vault_artifacts_publish_approval(&self, input: ArtifactPublishRequest) -> ArtifactPublishApproval = |client| {
     let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest = crate::codec::lower_record("vault.artifacts.publish_approval", input)?;
     let output = client.vault_artifacts_publish_approval(&input)?;

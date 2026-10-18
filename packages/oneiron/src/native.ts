@@ -343,6 +343,9 @@ vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
+vaultHooksRegenDue(input: unknown): unknown
+vaultHooksRegenGet(input: unknown): unknown
+vaultHooksRegenAdopt(input: unknown): unknown
 vaultArtifactsPublishApproval(input: unknown): unknown
 vaultArtifactsPublish(input: unknown): unknown
 vaultArtifactsRepoint(input: unknown): unknown
