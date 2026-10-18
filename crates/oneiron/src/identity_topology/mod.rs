@@ -90,6 +90,7 @@ mod topology_queries;
 mod transition_table;
 mod wire_keys;
 
+pub(crate) use act_admission::topology_seal_revision_for_store_in_txn;
 pub use act_admission::{
     EngineCause, SEAL_NO_STANDING, SealAuthority, SealStanding, TOPOLOGY_SEAL_REVISION_CONTEXT,
     TopologySeal, TopologySealBy,

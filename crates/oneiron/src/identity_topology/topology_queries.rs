@@ -123,6 +123,14 @@ impl Vault {
     /// writer stated, which is what keeps an unmerge possible (r6).
     pub fn claims_assigned_to(&self, target: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
+        self.claims_assigned_to_in_txn(&rtxn, target)
+    }
+
+    pub(crate) fn claims_assigned_to_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        target: &EntityId,
+    ) -> Result<Vec<EntityId>> {
         // The destination half of the index carries no payload — the key is
         // the whole row — so every scanned row is kept.
         let mut claims = reassignment_claims_for_prefix_in_txn(
@@ -151,6 +159,14 @@ impl Vault {
     /// the claim could not be attributed. Never force-assigned to a head.
     pub fn ambiguous_residue_claims(&self, origin: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
+        self.ambiguous_residue_claims_in_txn(&rtxn, origin)
+    }
+
+    pub(crate) fn ambiguous_residue_claims_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        origin: &EntityId,
+    ) -> Result<Vec<EntityId>> {
         let assigned = self.assigned_away_from_in_txn(&rtxn, origin)?;
         let residue = reassignment_claims_for_prefix_in_txn(
             &self.store,
@@ -174,6 +190,14 @@ impl Vault {
     /// subject is provenance; the assignment is the current reading.
     pub fn claims_remaining_on_origin(&self, origin: &EntityId) -> Result<Vec<EntityId>> {
         let rtxn = self.store.env.read_txn()?;
+        self.claims_remaining_on_origin_in_txn(&rtxn, origin)
+    }
+
+    pub(crate) fn claims_remaining_on_origin_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        origin: &EntityId,
+    ) -> Result<Vec<EntityId>> {
         let assigned = self.assigned_away_from_in_txn(&rtxn, origin)?;
         Ok(self
             .claims_for_subject_in_txn(&rtxn, origin)?
