@@ -3893,7 +3893,7 @@ impl AgentVerb {
                 "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserObserve => {
-                "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+                "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."
             }
             Self::SelfBrowserFind => {
                 "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
@@ -3947,7 +3947,7 @@ impl AgentVerb {
                 "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfDesktopObserve => {
-                "Observes the current window of the run's desktop guest, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+                "Observes the current window of the run's desktop guest, in pages read on with observe and an answer's next cursor; a tree walk cut short answers partial, and its last page's next walks the window again."
             }
             Self::SelfDesktopFind => {
                 "Finds the window rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."

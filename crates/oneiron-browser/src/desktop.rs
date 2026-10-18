@@ -27,7 +27,11 @@
 //! budget and no offset, so a walk the budget cut is read again with a
 //! larger one until it ends. A long tree is answered in pages, as a page's
 //! outline is: `next` names the cursor `observe` reads the rest from, and
-//! `find` and `wait_for` page their rows the same way.
+//! `find` and `wait_for` page their rows the same way. A walk still cut at
+//! the longest time a read asks for answers what it reached, marked
+//! `partial`, and is never a silent cut: the cursor of its last page walks
+//! the window again, longer, and reads on with the rows past those already
+//! answered.
 //!
 //! A person can take the desktop over (CUA-001), asked by the agent's
 //! `handover` or not. While the agent waits on its ask, and while a person
@@ -43,10 +47,10 @@ use crate::{
     BatchInput, BatchOutput, BrowserDriver, BrowserError, ClickInput, CropInput, DesktopWindow,
     EFFECT_SEND, EffectReceipt, ExpectInput, ExpectOutput, FindInput, FindOutput, HandoverInput,
     HandoverOutput, HotkeyInput, ImageOutput, KeyInput, NoDecider, Observation, ObservationPage,
-    ObserveInput, OpenInput, PointInput, PressMode, ReceiptEvidenceSink, RoutineDecider, Row,
-    ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput, SelectInput, SendPolicy,
-    TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput, WindowsInput, WindowsOutput,
-    ZoomInput,
+    ObserveInput, OpenInput, PartialTree, PointInput, PressMode, ReceiptEvidenceSink,
+    RoutineDecider, Row, ScreenshotInput, ScreenshotOutput, ScreenshotTrigger, ScrollInput,
+    SelectInput, SendPolicy, TypeInput, ViewInput, WaitForInput, WaitForOutput, WindowInput,
+    WindowsInput, WindowsOutput, ZoomInput,
 };
 use oneiron_container::{GuestLimits, SessionLease, SessionManifest, SessionTransport};
 use serde::{Deserialize, Serialize};
@@ -74,6 +78,11 @@ const FIRST_BUDGET: u64 = 1000;
 /// The longest walk a read asks for once a walk ran out of its time (the
 /// driver's default is one second): within one driver call's bound.
 const WALK_MS_MOST: u64 = 12_000;
+/// The longest walk a walk on asks for: cua-driver's own ceiling on
+/// `timeout_ms` (120 s in 0.36.0, the guest's pinned build). Each walk on
+/// asks four times its last walk's time, up to this; one cut here still
+/// walks on at this.
+const WALK_ON_MS_MOST: u64 = 120_000;
 /// Observations a `since` diff can name.
 const HISTORY: usize = 8;
 /// Screenshots the session holds for a later image read.
@@ -373,6 +382,8 @@ struct Snapshot {
     lines: Vec<Line>,
     secrets: Vec<Secret>,
     no_tree: bool,
+    /// Where the walk stopped, when it stopped before the tree's end.
+    partial: Option<PartialTree>,
     /// The screenshot, with its pixels per screen pixel.
     shot: Option<(Vec<u8>, f64)>,
 }
@@ -776,10 +787,33 @@ impl DesktopSession {
 
     /// Reads window `key` whole: a walk cua-driver cut at its node budget
     /// reads again with a larger budget, and one cut at its time budget with
-    /// a longer one, up to [`WALK_MS_MOST`].
+    /// a longer one, up to [`WALK_MS_MOST`]. A walk still cut answers what
+    /// it reached, with where it stopped as its `partial`.
     fn read(&self, key: WindowKey, shot: bool) -> Result<Snapshot, BrowserError> {
-        let mut budget = FIRST_BUDGET;
-        let mut walk_ms = None;
+        self.walk(key, shot, None)
+    }
+
+    /// Reads window `key`, as [`Self::read`] does, or, with `on`, walks on
+    /// from a walk cut there: one walk of four times its time, at least
+    /// [`WALK_MS_MOST`] and at most [`WALK_ON_MS_MOST`], with a node budget
+    /// past every node it saw, and no longer one after it.
+    fn walk(
+        &self,
+        key: WindowKey,
+        shot: bool,
+        on: Option<&PartialTree>,
+    ) -> Result<Snapshot, BrowserError> {
+        let (mut budget, mut walk_ms, most) = match on {
+            None => (FIRST_BUDGET, None, WALK_MS_MOST),
+            Some(cut) => {
+                let ms = cut
+                    .walk_ms
+                    .saturating_mul(4)
+                    .clamp(WALK_MS_MOST, WALK_ON_MS_MOST);
+                let seen = cut.visited.saturating_add(cut.pending);
+                (FIRST_BUDGET.max(seen.saturating_mul(2)), Some(ms), ms)
+            }
+        };
         let reply = loop {
             let mut arguments = json!({
                 "pid": key.pid,
@@ -793,7 +827,12 @@ impl DesktopSession {
             if !shot {
                 arguments["include_screenshot"] = Value::Bool(false);
             }
-            let reply = self.tool("get_window_state", arguments)?;
+            // The call's bound leaves the walk its whole time.
+            let bound = CALL + Duration::from_millis(walk_ms.unwrap_or(0));
+            let reply = self
+                .mcp
+                .tool("get_window_state", arguments, Instant::now() + bound)
+                .map_err(BrowserError::from)?;
             let state = &reply.output;
             let count = |name: &str| state.get(name).and_then(Value::as_u64).unwrap_or(0);
             let cut = (state.get("truncated").and_then(Value::as_bool) == Some(true))
@@ -805,13 +844,25 @@ impl DesktopSession {
                 Some("node_budget") => {
                     budget = budget.saturating_mul(2).max(seen.saturating_add(1));
                 }
-                Some("timeout") if spent < WALK_MS_MOST => {
-                    walk_ms = Some(spent.saturating_mul(4).min(WALK_MS_MOST));
+                Some("timeout") if spent < most => {
+                    walk_ms = Some(spent.saturating_mul(4).min(most));
                 }
                 _ => break reply,
             }
         };
         let state = &reply.output;
+        let count = |name: &str| state.get(name).and_then(Value::as_u64).unwrap_or(0);
+        let partial =
+            (state.get("truncated").and_then(Value::as_bool) == Some(true)).then(|| PartialTree {
+                reason: state
+                    .get("truncation_reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("truncated")
+                    .to_owned(),
+                visited: count("nodes_visited"),
+                pending: count("nodes_pending"),
+                walk_ms: count("timeout_ms").max(1000),
+            });
         let elements = state
             .get("elements")
             .and_then(Value::as_array)
@@ -842,6 +893,7 @@ impl DesktopSession {
                 || state.get("degraded").and_then(Value::as_bool) == Some(true),
             lines,
             secrets,
+            partial,
             shot,
         })
     }
@@ -880,8 +932,11 @@ impl DesktopSession {
             .iter()
             .map(|row| (row.target.clone(), row.clone()))
             .collect();
-        // A diff only against an observation of the same window.
+        // A diff only against an observation of the same window, and only
+        // from a walk that reached the tree's end: a partial one cannot
+        // tell a ref gone from a ref past its cut.
         let before = since
+            .filter(|_| snapshot.partial.is_none())
             .and_then(|since| {
                 self.history
                     .iter()
@@ -917,7 +972,39 @@ impl DesktopSession {
             receipt: None,
             library: Vec::new(),
             no_tree: snapshot.no_tree,
+            partial: snapshot.partial,
         })
+    }
+
+    /// Walks on from a partial observation (Rule 5) when `cursor` reads on
+    /// at its end, or, with `anywhere`, at any place in it: its window is
+    /// walked again, longer, and the rows the walk reached past those it
+    /// held join the observation for the cursor to read, under the new
+    /// walk's cut, or none once it reached the tree's end. The walk reads
+    /// the window as it is now.
+    fn walk_on(&mut self, cursor: &str, anywhere: bool) -> Result<(), BrowserError> {
+        let Some((seq, url, cut)) = self.pages.walk_on(cursor, anywhere)? else {
+            return Ok(());
+        };
+        let key = url
+            .rsplit_once('#')
+            .and_then(|(_, key)| WindowKey::parse(key))
+            .ok_or_else(|| BrowserError::Input(format!("{cursor} names no window")))?;
+        let snapshot = self.walk(key, false, Some(&cut))?;
+        let rows: Vec<Row> = snapshot.lines.into_iter().map(|line| line.row).collect();
+        // A later diff against the observation knows these rows too.
+        if let Some((_, _, held)) = self
+            .history
+            .iter_mut()
+            .find(|(at, window, _)| *at == seq && *window == key)
+        {
+            for row in &rows {
+                held.entry(row.target.clone())
+                    .or_insert_with(|| row.clone());
+            }
+        }
+        self.pages.walked_on(seq, rows, snapshot.partial);
+        Ok(())
     }
 
     /// Runs `act` on the desktop as `read` saw it, then returns the settled
@@ -1026,14 +1113,20 @@ impl DesktopSession {
             .ok_or_else(|| BrowserError::NoImage(image.to_owned()))
     }
 
-    fn matching(&mut self, keep: impl Fn(&Row) -> bool) -> Result<Vec<Row>, BrowserError> {
-        Ok(self
-            .snapshot(false)?
+    /// The rows `keep` admits as the window reads now, and where its walk
+    /// stopped when it did.
+    fn matching(
+        &mut self,
+        keep: impl Fn(&Row) -> bool,
+    ) -> Result<(Vec<Row>, Option<PartialTree>), BrowserError> {
+        let snapshot = self.snapshot(false)?;
+        let rows = snapshot
             .lines
             .into_iter()
             .map(|line| line.row)
             .filter(keep)
-            .collect())
+            .collect();
+        Ok((rows, snapshot.partial))
     }
 
     /// The element token of the row `target` names, as read now.
@@ -1425,8 +1518,12 @@ impl BrowserDriver for DesktopSession {
     fn observe(&mut self, input: ObserveInput) -> Result<Observation, BrowserError> {
         self.live()?;
         match input.cursor.as_deref() {
-            // Unpaged, a cursor reads the whole rest of its observation.
-            Some(cursor) => self.pages.rest(cursor),
+            // Unpaged, a cursor reads the whole rest of its observation,
+            // walking on first from a partial one.
+            Some(cursor) => {
+                self.walk_on(cursor, true)?;
+                self.pages.rest(cursor)
+            }
             None => self.observation(input.since),
         }
     }
@@ -1446,19 +1543,29 @@ impl BrowserDriver for DesktopSession {
                 "observe reads since or a cursor, not both".to_owned(),
             ));
         }
+        // The cursor at a partial observation's end walks on first.
+        self.walk_on(cursor, false)?;
         self.pages.next(cursor)
     }
 
     fn find(&mut self, input: FindInput) -> Result<FindOutput, BrowserError> {
         self.live()?;
-        let (rows, next) = match find_cursor(&input)? {
-            Some(cursor) => self.pages.next_rows(cursor)?,
+        let (rows, next, partial) = match find_cursor(&input)? {
+            Some(cursor) => {
+                let (rows, next) = self.pages.next_rows(cursor)?;
+                (rows, next, None)
+            }
             None => {
-                let rows = self.matching(|row| input.matches(row))?;
-                self.pages.first_rows(rows)
+                let (rows, partial) = self.matching(|row| input.matches(row))?;
+                let (rows, next) = self.pages.first_rows(rows);
+                (rows, next, partial)
             }
         };
-        Ok(FindOutput { rows, next })
+        Ok(FindOutput {
+            rows,
+            next,
+            partial,
+        })
     }
 
     fn click(&mut self, input: ClickInput) -> Result<Observation, BrowserError> {
@@ -1607,6 +1714,7 @@ impl BrowserDriver for DesktopSession {
                 timed_out: false,
                 waited_ms: 0,
                 next,
+                partial: None,
             });
         }
         let wanted = input
@@ -1615,7 +1723,7 @@ impl BrowserDriver for DesktopSession {
         let bound = wanted.min(self.wait_cap);
         let start = Instant::now();
         loop {
-            let rows = self.matching(|row| input.matches(row))?;
+            let (rows, partial) = self.matching(|row| input.matches(row))?;
             let waited = start.elapsed();
             if !rows.is_empty() || waited >= bound {
                 let timed_out = rows.is_empty();
@@ -1625,6 +1733,7 @@ impl BrowserDriver for DesktopSession {
                     timed_out,
                     waited_ms: u64::try_from(waited.as_millis()).unwrap_or(u64::MAX),
                     next,
+                    partial,
                 });
             }
             std::thread::sleep(POLL * 2);
@@ -1633,7 +1742,9 @@ impl BrowserDriver for DesktopSession {
 
     fn expect(&mut self, input: ExpectInput) -> Result<ExpectOutput, BrowserError> {
         self.live()?;
-        let rows = self.snapshot(false)?.lines.into_iter().map(|line| line.row);
+        let snapshot = self.snapshot(false)?;
+        let partial = snapshot.partial;
+        let rows = snapshot.lines.into_iter().map(|line| line.row);
         let query = input.query();
         let row = match &input.target {
             Some(target) => rows.into_iter().find(|row| &row.target == target),
@@ -1647,7 +1758,7 @@ impl BrowserDriver for DesktopSession {
                 .as_ref()
                 .is_none_or(|want| row.value.as_ref() == Some(want)),
         };
-        Ok(ExpectOutput { met, row })
+        Ok(ExpectOutput { met, row, partial })
     }
 
     fn screenshot(&mut self, input: ScreenshotInput) -> Result<ScreenshotOutput, BrowserError> {

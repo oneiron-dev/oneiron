@@ -85,6 +85,59 @@ pub struct Observation {
     /// or `click_at`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub no_tree: bool,
+    /// The desktop window's tree as far as its walk got (Rule 5): the walk
+    /// stopped before the tree's end, so rows past the cut are missing and
+    /// the observation is whole, never a diff, since a ref past the cut is
+    /// not gone. Every page carries it, and the last page's `next` walks
+    /// the window again, longer, for the rest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<PartialTree>,
+}
+
+/// Where a desktop window's tree walk stopped short of its end (Rule 5):
+/// cua-driver reads a window's tree as a pre-order walk under a time
+/// budget, and a walk cut at the longest one a read asks for answers what
+/// it reached. Every row it carries is real; rows after the cut are
+/// missing until a walk on reads them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartialTree {
+    /// Why the walk stopped, as cua-driver names it: `timeout`,
+    /// `app_unresponsive`, `app_lookup_timeout` or `huge_container`.
+    pub reason: String,
+    /// The nodes the walk visited.
+    pub visited: u64,
+    /// The nodes it found and had not reached when it stopped, at least.
+    pub pending: u64,
+    /// The walk's time budget, in milliseconds.
+    pub walk_ms: u64,
+}
+
+/// The agent's verbs moved to another tab of the browser (CUA-001): a tab
+/// opened since (a popup, a tab a link opened) came to the front, as a
+/// browser shows it, or the tab they drove closed and gave way to the tab
+/// that opened it, else the newest. The next answer carries it once, as
+/// `switched`. The observations held were of the tab before, so the next
+/// observation is whole.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TabSwitch {
+    /// The tab the agent's verbs drive now.
+    pub tab: String,
+    /// Its page when the switch found it.
+    pub url: String,
+    pub title: String,
+    /// The tab they drove before.
+    pub from: String,
+    pub why: TabSwitchCause,
+}
+
+/// Why the agent's verbs moved to another tab.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabSwitchCause {
+    /// A tab opened since came to the front.
+    Opened,
+    /// The tab they drove closed.
+    Closed,
 }
 
 /// One effect's receipt: what acted, on which page, under which press, and
@@ -175,6 +228,11 @@ pub struct FindOutput {
     /// The cursor of the next page; absent on the last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+    /// The desktop window's tree the rows were found in was cut, as an
+    /// observation's `partial` says: rows past the cut were not searched.
+    /// `observe` and its last page's `next` walk on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<PartialTree>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -245,6 +303,10 @@ pub struct WaitForOutput {
     /// The cursor of the next page of `rows`; absent on the last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+    /// The desktop window's tree the wait last read was cut, as `find`'s
+    /// `partial` says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<PartialTree>,
 }
 
 /// A check on the page as it is now: the row named by `ref`, or else the
@@ -271,6 +333,10 @@ pub struct ExpectOutput {
     pub met: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub row: Option<Row>,
+    /// The desktop window's tree the check read was cut, as `find`'s
+    /// `partial` says: a row past the cut reads as absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub partial: Option<PartialTree>,
 }
 
 /// Why a screenshot may be taken. There is no screenshot by default: a step
@@ -673,6 +739,10 @@ pub enum BatchStep {
 /// matches them) and the step clicks it, types `text` into it or selects
 /// `option` in it. With `locate`, the decider finds the target in a
 /// screenshot instead and the step clicks at its centre.
+///
+/// Past [`ROUTINE_MAX_CANDIDATES`] candidates, the decider reads them in
+/// pages of that many, and NONE on one page moves to the next: a step is
+/// never refused, cut or sampled for its count (Rule 5).
 ///
 /// The decider may answer NONE or reobserve: the step looks again, with a
 /// screenshot from the second such answer in a row, up to
@@ -1170,8 +1240,9 @@ pub trait BrowserDriver: Send {
     }
 }
 
-/// Candidates one routine Choice may offer: the contract's 64 options less
-/// NONE, reobserve and "too complicated, ask up".
+/// Candidates one routine Choice offers: the contract's 64 options less
+/// NONE, reobserve and "too complicated, ask up". A step with more asks
+/// them in pages of this many (Rule 5), never refused or cut.
 pub const ROUTINE_MAX_CANDIDATES: usize = 61;
 
 /// A batch's routine steps: the decider, the subgoal's one clock, the NONE
@@ -1223,7 +1294,13 @@ impl Routine<'_> {
             cursor: None,
         };
         let mut trigger = step.locate.then_some(ScreenshotTrigger::OutlineThin);
-        let no_row = || BrowserError::AskUp("no row on the page matches the step".to_owned());
+        let no_row = |page: &Observation| {
+            BrowserError::AskUp(if page.partial.is_some() {
+                "no row before the cut of the window's tree walk matches the step; observe and walk on with its cursor".to_owned()
+            } else {
+                "no row on the page matches the step".to_owned()
+            })
+        };
         let mut waited = false;
         let mut looks = 0;
         while looks < ROUTINE_LOOKS {
@@ -1261,7 +1338,7 @@ impl Routine<'_> {
                 // rows, so it does not wait.
                 let wait = self.wait_ms();
                 if waited || page.no_tree || wait == 0 {
-                    return Err(no_row());
+                    return Err(no_row(&page));
                 }
                 waited = true;
                 let rows = driver.wait_for(WaitForInput {
@@ -1272,16 +1349,11 @@ impl Routine<'_> {
                     cursor: None,
                 })?;
                 if rows.timed_out {
-                    return Err(no_row());
+                    return Err(no_row(&page));
                 }
                 continue;
             }
             looks += 1;
-            if candidates.len() > ROUTINE_MAX_CANDIDATES {
-                return Err(BrowserError::Input(format!(
-                    "a decide step offers at most {ROUTINE_MAX_CANDIDATES} rows; name its targets, role or name"
-                )));
-            }
             let shot = match look {
                 Some(trigger) => {
                     let shot = driver.screenshot(ScreenshotInput { trigger })?;
@@ -1292,19 +1364,7 @@ impl Routine<'_> {
                 }
                 None => None,
             };
-            let reply = self.decider.decide(RoutineAsk {
-                question: &step.question,
-                options: candidates.iter().map(|(label, _)| label.clone()).collect(),
-                image: shot
-                    .as_ref()
-                    .map(|(image, png)| (image.as_str(), png.as_slice())),
-                state: serde_json::json!({"url": page.url, "title": page.title}),
-                misses: self.misses,
-                until_ms: self.until_ms,
-                no_model: self.no_model,
-            })?;
-            self.until_ms = reply.until_ms.or(self.until_ms);
-            self.decisions.push(reply.decision);
+            let reply = self.ask(&step.question, &candidates, shot.as_ref(), &page)?;
             match reply.answer {
                 RoutineAnswer::Act { candidate } if !locate => {
                     self.misses = 0;
@@ -1332,6 +1392,14 @@ impl Routine<'_> {
                     })?;
                     return driver.click_at(PointInput { image, x, y });
                 }
+                // A window whose tree walk was cut offered only the rows
+                // before the cut: none of them fits, so the step goes up
+                // rather than look again at the same cut.
+                RoutineAnswer::None if !locate && page.partial.is_some() => {
+                    return Err(BrowserError::AskUp(
+                        "the window's tree walk stopped before its end and no row before the cut fits; observe and walk on with its cursor".to_owned(),
+                    ));
+                }
                 RoutineAnswer::None | RoutineAnswer::Reobserve => {
                     self.misses = self.misses.saturating_add(1);
                     trigger = if reply.screenshot {
@@ -1355,6 +1423,55 @@ impl Routine<'_> {
         Err(BrowserError::AskUp(format!(
             "no target after {ROUTINE_LOOKS} looks"
         )))
+    }
+
+    /// One look's ask (Rule 5): the step's candidates in row order, in
+    /// pages of at most [`ROUTINE_MAX_CANDIDATES`], or none for a locate
+    /// step. Many candidates are never refused, cut or sampled: NONE on a
+    /// page with more after it asks the next page, and any other answer, or
+    /// NONE on the last page, is the look's. Each page is its own decision,
+    /// asked under the look's misses, and the state names the page.
+    fn ask(
+        &mut self,
+        question: &str,
+        candidates: &[(String, Row)],
+        shot: Option<&(String, Vec<u8>)>,
+        page: &Observation,
+    ) -> Result<RoutineReply, BrowserError> {
+        let offered: Vec<&[(String, Row)]> = if candidates.is_empty() {
+            vec![candidates]
+        } else {
+            candidates.chunks(ROUTINE_MAX_CANDIDATES).collect()
+        };
+        let pages = offered.len();
+        let mut state = serde_json::json!({"url": page.url, "title": page.title});
+        if let Some(partial) = &page.partial {
+            state["partial"] = serde_json::json!(partial);
+        }
+        for (index, offered) in offered.into_iter().enumerate() {
+            if pages > 1 {
+                state["candidates"] = serde_json::json!({
+                    "page": index + 1,
+                    "pages": pages,
+                    "rows": candidates.len(),
+                });
+            }
+            let mut reply = self.decider.decide(RoutineAsk {
+                question,
+                options: offered.iter().map(|(label, _)| label.clone()).collect(),
+                image: shot.map(|(image, png)| (image.as_str(), png.as_slice())),
+                state: state.clone(),
+                misses: self.misses,
+                until_ms: self.until_ms,
+                no_model: self.no_model,
+            })?;
+            self.until_ms = reply.until_ms.or(self.until_ms);
+            self.decisions.push(std::mem::take(&mut reply.decision));
+            if index + 1 == pages || !matches!(reply.answer, RoutineAnswer::None) {
+                return Ok(reply);
+            }
+        }
+        Err(BrowserError::Decider("the look asked no page".to_owned()))
     }
 }
 
