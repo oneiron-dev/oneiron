@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 898 facade rows, 3083 declarations.
+Census: 898 facade rows, 3085 declarations.
 Inputs: 844 of 898 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 814 of 898 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
@@ -4420,9 +4420,13 @@ class HubHookReplay(TypedDict):
 class HubHookQualificationReceipt(TypedDict):
     put: PackPutReceipt
     replays: list[HubHookReplay]
-class PackFileInput(TypedDict):
+class PackTextFile(TypedDict):
     path: str
     text: str
+class PackBytesFile(TypedDict):
+    path: str
+    content_base64: str
+PackFileInput = PackTextFile | PackBytesFile
 class PackPutRequest(TypedDict):
     files: list[PackFileInput]
 class SlatePackSource(TypedDict):
@@ -11911,6 +11915,7 @@ class AiVerdict(TypedDict):
     outcome: NotRequired[RoutineOutcome | None]
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
+    evidence_cut_at_bytes: NotRequired[int | None]
 DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):

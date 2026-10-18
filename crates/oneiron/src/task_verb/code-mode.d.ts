@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 935 code-mode rows (911 host rows, 24 run rows), 3130 declarations.
+// Census: 935 code-mode rows (911 host rows, 24 run rows), 3132 declarations.
 // Replies: 844 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
@@ -917,7 +917,9 @@ declare namespace Sdk {
   type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
   type HubHookReplay = { hook: string; entries: HookReplayRow[] };
   type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
-  type PackFileInput = { path: string; text: string };
+  type PackTextFile = { path: string; text: string };
+  type PackBytesFile = { path: string; content_base64: string };
+  type PackFileInput = PackTextFile | PackBytesFile;
   type PackPutRequest = { files: PackFileInput[] };
   type SlatePackSource = { source_ref: string; content_hash: string };
   type SlateDataClass = "public" | "personal" | "secret" | "header";
@@ -2386,7 +2388,7 @@ declare namespace Sdk {
   type AiVerdictReversibility = "reversible_read" | "outbound_effect";
   type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null };
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
-  type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
+  type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null };
   type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
   type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };
@@ -4723,7 +4725,7 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent. */
     install(input: Sdk.HubImportRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
-    /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
+    /** The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks. */
     put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
     remove(input: Sdk.PackRemoveRequest): Promise<Sdk.PackInstallReceipt | StoredResult>;

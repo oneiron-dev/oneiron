@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
+use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{self, *};
 
-use super::host_doors::{Listed, MaybeListed, internal, owner_proof, refused};
+use super::host_doors::{Listed, MaybeListed, internal, no_hook_sandbox, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -380,15 +380,11 @@ pub(crate) async fn vault_packs_hooks_qualify(
     };
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        let Some(runtime) = server.hook_runtime.get().cloned() else {
-            return (
-                Err(MemoryError::new(
-                    MEMORY_CODE_MODEL_UNAVAILABLE,
-                    "no hook sandbox runs on this server",
-                    &["Serve with fact hooks enabled on a build with the code sandbox."],
-                )),
-                Some(Vec::new()),
-            );
+        // The one sandbox, taken here when no runner took it: `--no-hooks`
+        // stops the runner, not an explicit qualification (FIX 1122).
+        let runtime = match crate::commands::hook_sandbox(&server) {
+            Ok(runtime) => runtime,
+            Err(reason) => return (Err(no_hook_sandbox(reason)), Some(Vec::new())),
         };
         match sdk::hub_hooks_qualify_as_owner_listing(
             server.vault(),

@@ -96,6 +96,7 @@ pub use reembed::reembed;
 mod device;
 pub use device::device_enrol;
 mod serve;
+pub(crate) use self::serve::hook_sandbox;
 use self::serve::serve_with_config;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::serve::spawn_fact_hooks;

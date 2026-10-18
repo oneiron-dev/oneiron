@@ -23,8 +23,9 @@ mod vision;
 mod voices;
 mod waves;
 
-// The facade's `ai.speech` door binds its voice as this wire does (OF-410).
-pub(crate) use media::{VoiceRefusal, bind_voice};
+// The facade's `ai.*` media doors prepare and admit each call as this wire
+// does, under one typed refusal (OF-410, FIX 779).
+pub(crate) use media::{MediaCallParts, MediaCallRefusal, VoiceRefusal, prepare_media_call};
 // Every `ai.options` door lists through one projection (FIX 2942).
 pub(crate) use options::{caller_options, run_options};
 // The owner's `vault.voices.*` doors run the bank's provisioning and vendor

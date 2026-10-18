@@ -37,18 +37,19 @@ use oneiron::llm::decision::catalogue::{AI_VERDICT, AI_VERDICT_ROUTINE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionImage, DecisionProvider, DecisionRung, EvidenceVersion,
     LocatedDecision, MAX_DECISION_STATE_BYTES, ModelDecisionProvider, RoutineOutcome, RoutineTrail,
-    routine_choice,
+    cut_text, fit_state, routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
-    BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL,
+    BlobArtifactInput, BlobVersionView, EntityView, ImageViewRequest, MEMORY_CODE_INTERNAL,
     MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult,
 };
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdict, AiVerdictRequest};
 use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EdgeActorClass, EntityId, WriteActor};
+use serde_json::Value;
 
 use crate::ai_host::LocalVisionModel;
 use crate::server::SyncServer;
@@ -321,23 +322,14 @@ fn answer_verdict(
         .map(|view| EntityId::from_hex(&view.id_hex))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| internal())?;
-    let state = serde_json::json!({
-        "state": request.state.clone().unwrap_or(serde_json::Value::Null),
-        "evidence": views
-            .iter()
-            .map(|view| serde_json::json!({
-                "ref": view.id_hex,
-                "kind": view.kind,
-                "body": view.body,
-            }))
-            .collect::<Vec<_>>(),
-    });
+    let caller_state = request.state.clone().unwrap_or(Value::Null);
+    let (state, cut_at) = verdict_state(&caller_state, &views);
     if serde_json::to_vec(&state).map_or(true, |bytes| bytes.len() > MAX_DECISION_STATE_BYTES) {
         return Err(MemoryError::bad_request_with(
             format!(
-                "the state and the evidence views pass the ladder's {MAX_DECISION_STATE_BYTES}-byte state"
+                "the state and the evidence views pass the ladder's {MAX_DECISION_STATE_BYTES}-byte state, even with every evidence text cut"
             ),
-            &["Name fewer or smaller evidence refs, or a smaller state."],
+            &["Name fewer evidence refs, or a smaller state."],
         ));
     }
     let images = match (&request.image, held) {
@@ -422,6 +414,7 @@ fn answer_verdict(
             outcome,
             screenshot,
             until_ms: Some(until_ms),
+            evidence_cut_at_bytes: cut_at,
             ..located_verdict(located)
         });
     }
@@ -447,6 +440,7 @@ fn answer_verdict(
             outcome: Some(routine.outcome),
             screenshot,
             until_ms: Some(until_ms),
+            evidence_cut_at_bytes: cut_at,
             ..routine.decision.into()
         });
     }
@@ -465,8 +459,87 @@ fn answer_verdict(
         .map_err(failed)?;
     Ok(AiVerdict {
         until_ms: Some(until_ms),
+        evidence_cut_at_bytes: cut_at,
         ..decision.into()
     })
+}
+
+/// The ladder's state for a verdict, fitted by the engine's own cut step
+/// ([`fit_state`], FIX 1124): the caller's `state` whole, and each evidence
+/// view by its ref and kind, whole, beside its body with every text in it
+/// cut to the same bytes ([`cut_text`]), halving until the whole fits. A cut
+/// state says where (`cut_at_bytes`) and each cut view says it is (`cut`),
+/// so a provider knows it reads a cut text; beside it, the cut. A state the
+/// rest does not let fit comes back over the bound, for its caller to refuse.
+fn verdict_state(caller_state: &Value, views: &[EntityView]) -> (Value, Option<u64>) {
+    let longest = views
+        .iter()
+        .filter_map(|view| view.body.as_ref())
+        .map(longest_text)
+        .max()
+        .unwrap_or(0);
+    let chosen = std::cell::Cell::new(None);
+    let state = fit_state(longest, |cut| {
+        chosen.set(cut);
+        let evidence = views
+            .iter()
+            .map(|view| {
+                let mut cut_any = false;
+                let body = view
+                    .body
+                    .as_ref()
+                    .map(|body| cut_texts(body, cut, &mut cut_any));
+                let mut entry =
+                    serde_json::json!({"ref": view.id_hex, "kind": view.kind, "body": body});
+                if cut_any {
+                    entry["cut"] = Value::Bool(true);
+                }
+                entry
+            })
+            .collect::<Vec<_>>();
+        let mut state = serde_json::json!({"state": caller_state, "evidence": evidence});
+        if let Some(bytes) = cut {
+            state["cut_at_bytes"] = serde_json::json!(bytes);
+        }
+        state
+    });
+    let cut_at = chosen.get().and_then(|bytes| u64::try_from(bytes).ok());
+    (state, cut_at)
+}
+
+/// The bytes of the longest text anywhere in `value`.
+fn longest_text(value: &Value) -> usize {
+    match value {
+        Value::String(text) => text.len(),
+        Value::Array(items) => items.iter().map(longest_text).max().unwrap_or(0),
+        Value::Object(fields) => fields.values().map(longest_text).max().unwrap_or(0),
+        _ => 0,
+    }
+}
+
+/// `value` with every text in it cut to `cut` bytes ([`cut_text`]), its
+/// keys, numbers and shape whole; `cut_any` says whether one was cut.
+fn cut_texts(value: &Value, cut: Option<usize>, cut_any: &mut bool) -> Value {
+    match value {
+        Value::String(text) => {
+            let kept = cut_text(text, cut);
+            *cut_any |= kept.len() < text.len();
+            Value::String(kept.to_owned())
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| cut_texts(item, cut, cut_any))
+                .collect(),
+        ),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, item)| (key.clone(), cut_texts(item, cut, cut_any)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 /// The request's answer contract, as the call asks it: a Box or a Point

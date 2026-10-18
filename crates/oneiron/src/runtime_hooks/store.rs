@@ -316,6 +316,30 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
     format!("hook:{}", hex_lower(key))
 }
 
+/// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
+/// run's memo's reads, else a verb run's saved record's. `None` when the key
+/// names no kept run. The receipt family screens a Hook receipt on them for
+/// a caller off this device (FIX 1119).
+pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
+    let Some(key) = crate::deletion::parse_hex::<32>(run_key) else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let reads = match MEMOS.get(&vault.store, &rtxn, &key)? {
+        Some(memo) => memo.reads,
+        None => match super::verb::VERB_RUNS.get(&vault.store, &rtxn, &key)? {
+            Some(run) => run.reads,
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(
+        reads
+            .into_iter()
+            .flat_map(|pin| pin.rows.into_iter().map(|row| row.id))
+            .collect(),
+    ))
+}
+
 /// The Hook receipt projector: runs, newest first within the query's bound.
 pub(crate) fn hook_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;

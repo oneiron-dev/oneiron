@@ -298,9 +298,8 @@ impl AiAnswer {
     }
 }
 
-/// The owner's call of `operation`, admitted against the vault's inference
-/// policy for the model it names, ready for its seat's ladder, with the
-/// banked voice it renders in, if any.
+/// The owner's call of `operation`, [`prepare_media_call`]ed, each refusal
+/// under this wire's codes.
 fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -318,55 +317,134 @@ fn admit(
     if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
         return Err(error.into_response());
     }
-    let media = server.ai.model_runtime().media();
-    let Some((seat, _)) = media.seat(operation) else {
-        return Err(refusal(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "media_unavailable",
-            format!("no [models.media.{}] seat serves", operation.as_str()),
-        ));
-    };
-    let mut model = body.model.unwrap_or(seat);
-    if media.locality(operation, &model).is_none() {
-        return Err(refusal(
-            StatusCode::BAD_REQUEST,
-            "unknown_model",
-            format!("{model} serves no {} call here", operation.as_str()),
-        ));
-    }
-    let (voice, voices) =
-        bind_voice(server, operation, &mut model, body.voice).map_err(|refused| {
-            let status = if refused.is_conflict() {
-                StatusCode::CONFLICT
-            } else {
-                StatusCode::BAD_REQUEST
-            };
-            refusal(status, refused.code(), refused.message())
-        })?;
-    let Some(locality) = media.locality(operation, &model) else {
-        return Err(refusal(
-            StatusCode::BAD_REQUEST,
-            "unknown_model",
-            format!("{model} serves no {} call here", operation.as_str()),
-        ));
-    };
-    let mut parts = Vec::new();
-    if let Some(prompt) = body.prompt {
-        parts.push(MediaPart::Text { text: prompt });
-    }
     let decoded = |parts: Vec<WirePart>| {
         parts
             .into_iter()
             .map(WirePart::into_part)
             .collect::<Option<Vec<_>>>()
     };
-    let (Some(input), Some(references)) = (decoded(body.input), decoded(body.references)) else {
-        return Err(refusal(
+    let call = MediaCallParts {
+        model: body.model,
+        prompt: body.prompt,
+        input: decoded(body.input),
+        references: decoded(body.references),
+        params: body.params,
+        voice: body.voice,
+    };
+    prepare_media_call(server, operation, call).map_err(|refused| refused_here(operation, refused))
+}
+
+/// A refused media call under this wire's codes.
+fn refused_here(operation: AiOperation, refused: MediaCallRefusal) -> Response {
+    match refused {
+        MediaCallRefusal::NoSeat => refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "media_unavailable",
+            format!("no [models.media.{}] seat serves", operation.as_str()),
+        ),
+        MediaCallRefusal::UnservedModel(model) => refusal(
+            StatusCode::BAD_REQUEST,
+            "unknown_model",
+            format!("{model} serves no {} call here", operation.as_str()),
+        ),
+        MediaCallRefusal::Voice(refused) => {
+            let status = if refused.is_conflict() {
+                StatusCode::CONFLICT
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            refusal(status, refused.code(), refused.message())
+        }
+        MediaCallRefusal::InvalidPart => refusal(
             StatusCode::BAD_REQUEST,
             "invalid_part",
             "each part is text, or an image or audio with base64 data",
-        ));
+        ),
+        MediaCallRefusal::Admission(MediaRefusal::UnknownModel) => refusal(
+            StatusCode::BAD_REQUEST,
+            "unknown_model",
+            format!("the model serves no {} call here", operation.as_str()),
+        ),
+        MediaCallRefusal::Admission(MediaRefusal::SelectorOverride(key)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": {"code": "route_selector_forbidden", "key": key}})),
+        )
+            .into_response(),
+        MediaCallRefusal::Admission(MediaRefusal::Denied(_)) => refusal(
+            StatusCode::FORBIDDEN,
+            "inference_denied",
+            "the vault's inference policy refuses this call",
+        ),
+    }
+}
+
+/// One media call as its transport decoded it, for [`prepare_media_call`]:
+/// this wire's [`AiCallBody`] and the facade's `AiCallRequest` alike.
+pub(crate) struct MediaCallParts {
+    /// A row's id to use it alone, or its seat's id; the operation's seat
+    /// when absent.
+    pub(crate) model: Option<ModelId>,
+    /// The instruction, the script or the one text: a first text part.
+    pub(crate) prompt: Option<String>,
+    /// The parts sent; `None` when one is neither text nor an image or audio
+    /// with base64 data.
+    pub(crate) input: Option<Vec<MediaPart>>,
+    /// The images an image call edits, or a video call starts from; `None`
+    /// as for `input`.
+    pub(crate) references: Option<Vec<MediaPart>>,
+    pub(crate) params: BTreeMap<String, JsonValue>,
+    /// A speech call's voice; the provider's default when absent.
+    pub(crate) voice: Option<AiVoice>,
+}
+
+/// Why a media call was refused before its seat's ladder (FIX 779), typed
+/// once for this wire and the facade; each maps it to its own codes.
+pub(crate) enum MediaCallRefusal {
+    /// No `[models.media.<operation>]` seat serves.
+    NoSeat,
+    /// The model the call names serves no call of its operation here.
+    UnservedModel(ModelId),
+    /// The voice the call names does not bind ([`bind_voice`]).
+    Voice(VoiceRefusal),
+    /// A part is neither text nor an image or audio with base64 data.
+    InvalidPart,
+    /// The vault's inference policy, or the call's own route selector,
+    /// refused it ([`admit_media`]).
+    Admission(MediaRefusal),
+}
+
+/// A call of `operation`, ready for its seat's ladder, with the banked voice
+/// it renders in, if any: its model the one it names or its seat, its voice
+/// bound by [`bind_voice`], its parts after its prompt, and the whole
+/// admitted on the vault's inference policy by [`admit_media`], the
+/// admission engine code's media door makes. Who may make the call is its
+/// door's question, answered first and kept apart: the owner's at `/v1/ai`
+/// and on the facade, a run's own line at a run's door.
+pub(crate) fn prepare_media_call(
+    server: &SyncServer,
+    operation: AiOperation,
+    call: MediaCallParts,
+) -> Result<(MediaRequest, Option<RungVoices>), MediaCallRefusal> {
+    let media = server.ai.model_runtime().media();
+    let Some((seat, _)) = media.seat(operation) else {
+        return Err(MediaCallRefusal::NoSeat);
     };
+    let mut model = call.model.unwrap_or(seat);
+    if media.locality(operation, &model).is_none() {
+        return Err(MediaCallRefusal::UnservedModel(model));
+    }
+    let (voice, voices) =
+        bind_voice(server, operation, &mut model, call.voice).map_err(MediaCallRefusal::Voice)?;
+    let Some(locality) = media.locality(operation, &model) else {
+        return Err(MediaCallRefusal::UnservedModel(model));
+    };
+    let (Some(input), Some(references)) = (call.input, call.references) else {
+        return Err(MediaCallRefusal::InvalidPart);
+    };
+    let mut parts = Vec::new();
+    if let Some(prompt) = call.prompt {
+        parts.push(MediaPart::Text { text: prompt });
+    }
     parts.extend(input);
     let purpose = CallPurpose::Other {
         name: format!("ai.{}", operation.as_str()),
@@ -388,33 +466,16 @@ fn admit(
         operation,
         parts,
         references,
-        params: body.params,
+        params: call.params,
         voice,
     };
-    // The same admission as engine code's media door.
     let request = admit_media(
         &server.vault,
         media,
         server.extraction_egress.as_deref(),
         request,
     )
-    .map_err(|refused| match refused {
-        MediaRefusal::UnknownModel => refusal(
-            StatusCode::BAD_REQUEST,
-            "unknown_model",
-            format!("the model serves no {} call here", operation.as_str()),
-        ),
-        MediaRefusal::SelectorOverride(key) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({"error": {"code": "route_selector_forbidden", "key": key}})),
-        )
-            .into_response(),
-        MediaRefusal::Denied(_) => refusal(
-            StatusCode::FORBIDDEN,
-            "inference_denied",
-            "the vault's inference policy refuses this call",
-        ),
-    })?;
+    .map_err(MediaCallRefusal::Admission)?;
     Ok((request, voices))
 }
 

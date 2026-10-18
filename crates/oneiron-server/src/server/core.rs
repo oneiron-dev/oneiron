@@ -178,8 +178,9 @@ pub struct SyncServer {
     /// attaches.
     pub(crate) decisions: crate::decision_host::DecisionHost,
     /// The hook sandbox the fact-hook runner runs bodies on, set by `serve`
-    /// once it loads; `vault.hooks.replay` replays on the same one. Empty
-    /// under `--no-hooks`, or when the sandbox did not load.
+    /// once it loads, or by the first explicit replay under `--no-hooks`
+    /// ([`crate::commands::hook_sandbox`]); `vault.hooks.replay` replays on
+    /// the same one. Empty until then, or when the sandbox did not load.
     pub(crate) hook_runtime: std::sync::OnceLock<Arc<dyn oneiron::runtime_hooks::HookBodyRuntime>>,
     /// The checked built-in channels this host serves (OF-519), kept by
     /// `builtin_host::spawn` and read by their provider webhooks.

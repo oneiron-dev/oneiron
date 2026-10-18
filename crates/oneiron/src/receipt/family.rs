@@ -232,7 +232,10 @@ fn receipt_family_query(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<Recei
     ))
 }
 
-fn collect_receipt_records(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
+pub(super) fn collect_receipt_records(
+    vault: &Vault,
+    query: &ReceiptQuery,
+) -> Result<Vec<ReceiptRecord>> {
     let mut records = Vec::new();
     if query.includes_kind(ReceiptKind::Outbound) {
         records.extend(
