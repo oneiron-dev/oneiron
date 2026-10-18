@@ -160,6 +160,18 @@ pub(crate) fn deliver_wait_in_txn(
     Ok(delivered)
 }
 
+/// The reply `wait_id` settled with, read in the caller's transaction, as the
+/// side-row wall stored it and as every waiter parked on it is delivered it.
+pub(crate) fn settled_wait_reply_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wait_id: EntityId,
+) -> Result<Option<String>> {
+    Ok(SETTLED
+        .get(&vault.store, txn, &(SETTLED_TAG, wait_id))?
+        .map(|settled| settled.reply))
+}
+
 /// Writes one waiter's delivery unless it has one, and wakes the trap bound
 /// to it in the same transaction; `true` when this call delivered.
 fn deliver_in_txn(
@@ -348,9 +360,11 @@ impl ExecutorStorage<'_> {
     }
 
     /// Retires `key`'s waiter, delivery and trap rows once the resumed record
-    /// committed; idempotent. A room's rows stay until the room goes: its
-    /// route writes and never deletes, and the resumed record already names
-    /// the next generation, so nothing reads them again.
+    /// committed; idempotent. It is cleanup, never a consumer: a code
+    /// consent wait's consumption was committed with the record, in its own
+    /// row, which this never touches. A room's rows stay until the room goes:
+    /// its route writes and never deletes, and the resumed record already
+    /// names the next generation, so nothing reads them again.
     pub(crate) fn clear_wait(&self, key: &WaitKey) -> Result<()> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|txn| {
@@ -560,15 +574,22 @@ pub(crate) fn deliver_changed_wait_in_txn(
 }
 
 impl ExecutorStorage<'_> {
-    /// Commits the replay record of a run resumed from `key`'s reply. When
-    /// that reply is an ask's Changed status, the run's seen-change cursor
-    /// rises in the same transaction, so a failed append acknowledges
-    /// nothing. A room's record commits as any other append does.
+    /// Commits the replay record of a run resumed from `key`'s reply, the
+    /// result of its parked step `step_seq` at `resumed_path`. When that
+    /// reply is an ask's Changed status, the run's seen-change cursor rises
+    /// in the same transaction, so a failed append acknowledges nothing. A
+    /// bound code consent wait's settlement is consumed in it (DOOR-079 1b):
+    /// its reply must be delivered and verify, or the record does not
+    /// commit. Retiring the wait's rows afterwards consumes nothing and
+    /// deletes no consumption. A room's record commits as any other append
+    /// does.
     pub(crate) fn put_code_run_wait_resume_record(
         &self,
         record: &crate::code_run::CodeRunReplayRecord,
         expected: Option<crate::code_run::CodeRunReplayGeneration>,
         key: &WaitKey,
+        step_seq: u64,
+        resumed_path: &str,
     ) -> Result<crate::code_run::CodeRunReplayGeneration> {
         match self {
             Self::Canonical(vault) => vault.put_code_run_replay_record_if_generation_with_heal_and(
@@ -576,7 +597,20 @@ impl ExecutorStorage<'_> {
                 expected,
                 None,
                 |txn| {
-                    let Some(delivery) = DELIVERIES.get(&vault.store, txn, &key.row())? else {
+                    let delivery = DELIVERIES.get(&vault.store, txn, &key.row())?;
+                    let resume = crate::code_run::CodeConsentResume {
+                        record,
+                        key: *key,
+                        step_seq,
+                        resumed_path,
+                    };
+                    let delivered = delivery.as_ref().map(|delivery| delivery.reply.as_str());
+                    if crate::code_run::consume_code_consent_wait_in_txn(
+                        vault, txn, &resume, delivered,
+                    )? {
+                        return Ok(());
+                    }
+                    let Some(delivery) = delivery else {
                         return Ok(());
                     };
                     if let Ok(crate::task_verb::TaskAskStatus::Changed { generation, .. }) =
