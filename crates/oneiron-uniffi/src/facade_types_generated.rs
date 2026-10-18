@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 716 facade rows, 2527 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 672.
+// UniFFI census: 717 facade rows, 2532 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 673.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -13732,6 +13732,79 @@ pub enum ResidencePruneAnswer {
     Applied(ResidencePruned),
     #[serde(rename = "queued")]
     Queued(ResidenceQueued),
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceDirectivesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResidenceDirectivesRequest {
+    #[serde(rename = "machine", default, skip_serializing_if = "Option::is_none")]
+    pub machine: Option<String>,
+    #[serde(rename = "directive", default, skip_serializing_if = "Option::is_none")]
+    pub directive: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceActView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ResidenceActView {
+    #[serde(rename = "sync_all")]
+    SyncAll,
+    #[serde(rename = "sync_opened")]
+    SyncOpened,
+    #[serde(rename = "open")]
+    Open {
+        #[serde(rename = "window")]
+        window: String,
+        #[serde(rename = "item")]
+        item: String,
+    },
+    #[serde(rename = "index")]
+    Index,
+    #[serde(rename = "prune")]
+    Prune {
+        #[serde(rename = "before")]
+        before: u64,
+    },
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceResultStatusName`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ResidenceResultStatusName {
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "refused")]
+    Refused,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceResultView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceResultView {
+    #[serde(rename = "finished_at")]
+    pub finished_at: u64,
+    #[serde(rename = "status")]
+    pub status: ResidenceResultStatusName,
+    #[serde(rename = "count")]
+    pub count: u64,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_residence::ResidenceDirectiveView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResidenceDirectiveView {
+    #[serde(rename = "directive")]
+    pub directive: String,
+    #[serde(rename = "machine")]
+    pub machine: String,
+    #[serde(rename = "issued_at")]
+    pub issued_at: u64,
+    #[serde(rename = "act")]
+    pub act: ResidenceActView,
+    #[serde(rename = "entry")]
+    pub entry: String,
+    #[serde(rename = "result", default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ResidenceResultView>,
 }
 
 /// `oneiron::task_verb::sdk_off_record::OffRecordEnterMode`.

@@ -1623,6 +1623,9 @@ class Oneiron:
         def prune(self, spec):
             """Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_prune(json.dumps(spec))))
+        def directives(self, spec):
+            """The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."""
+            return json.loads(_translate(lambda: self._client.vault_residence_directives(json.dumps(spec))))
     class _VaultOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

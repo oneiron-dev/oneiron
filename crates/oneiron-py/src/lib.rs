@@ -2189,6 +2189,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_residence_directives(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.residence.directives")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.residence.directives", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_off_record_start(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.off_record.start")?;
         let output = py

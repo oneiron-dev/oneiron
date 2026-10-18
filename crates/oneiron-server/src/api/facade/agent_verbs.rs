@@ -244,6 +244,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.residence.open", post(facade_route))
         .route("/vault.residence.index", post(facade_route))
         .route("/vault.residence.prune", post(facade_route))
+        .route("/vault.residence.directives", post(facade_route))
         .route("/vault.off_record.start", post(facade_route))
         .route("/vault.off_record.status", post(facade_route))
         .route("/vault.off_record.witness", post(facade_route))

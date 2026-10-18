@@ -1927,6 +1927,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_residence_directives(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.residence.directives", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_off_record_start(
         &self,
         input: serde_json::Value,

@@ -722,6 +722,9 @@ impl OneironClient {
                 "vault.residence.prune" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResidencePruneAnswer,
                 >(client, verb, &input),
+                "vault.residence.directives" => remote_agent_verb_output::<
+                    Vec<oneiron::task_verb::sdk::ResidenceDirectiveView>,
+                >(client, verb, &input),
                 "vault.off_record.start" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::OffRecordSessionView,
                 >(client, verb, &input),
@@ -5008,6 +5011,19 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.residence.prune", value)
+    }
+    pub fn vault_residence_directives(
+        &self,
+        input: &oneiron::task_verb::sdk::ResidenceDirectivesRequest,
+    ) -> Result<Vec<oneiron::task_verb::sdk::ResidenceDirectiveView>, MemoryError> {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.residence.directives", value)
     }
     pub fn vault_off_record_start(
         &self,

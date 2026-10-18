@@ -1106,6 +1106,11 @@ export_facade! {
     let output = client.vault_residence_prune(&input)?;
     crate::codec::lift_record("vault.residence.prune", &output)
 };
+"vault.residence.directives" => fn vault_residence_directives(&self, input: ResidenceDirectivesRequest) -> Vec<ResidenceDirectiveView> = |client| {
+    let input: oneiron::task_verb::sdk::ResidenceDirectivesRequest = crate::codec::lower_record("vault.residence.directives", input)?;
+    let output = client.vault_residence_directives(&input)?;
+    crate::codec::lift_record("vault.residence.directives", &output)
+};
 "vault.off_record.start" => fn vault_off_record_start(&self, input: OffRecordStartRequest) -> OffRecordSessionView = |client| {
     let input: oneiron::task_verb::sdk::OffRecordStartRequest = crate::codec::lower_record("vault.off_record.start", input)?;
     let output = client.vault_off_record_start(&input)?;

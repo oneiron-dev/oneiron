@@ -1173,6 +1173,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.residence.open"
         | "vault.residence.index"
         | "vault.residence.prune"
+        | "vault.residence.directives"
         | "vault.courtesy_delete.send"
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"
