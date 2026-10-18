@@ -63,6 +63,10 @@ pub const COACH_TRAINING_OFFERS_FACET: &str = "coach.training_offers";
 /// Autoresearch (OF-351): one selection round for each bound campaign whose
 /// measured evidence moved, under the campaign's lease.
 pub const COACH_RESEARCH_SELECT_FACET: &str = "coach.research_select";
+/// Autoresearch execution (FIX 886): each campaign bound with an execution
+/// spec has its host continuations advanced through
+/// [`Vault::run_coach_research`]. The host queues it while work is pending.
+pub const COACH_RESEARCH_RUN_FACET: &str = "coach.research_run";
 /// Observe, learning upkeep: the cell re-projection that keeps the window
 /// fading runs no new evidence reached, and the coordination re-derivation
 /// of every labeled or projected run.
@@ -229,6 +233,30 @@ impl DreamerRunnerStore<'_> {
         input: AdmitDreamerAttempt,
     ) -> Result<DreamerAdmissionOutcome> {
         self.admit_next_kind(COACH_HOST_QUEUE_KIND, input)
+    }
+
+    /// Queues the host's research job, keyed as the nightly host jobs are: an
+    /// unleased one absorbs the next request.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors; the queue's own enqueue errors.
+    pub fn enqueue_coach_research_run(&self, now: u64) -> Result<()> {
+        self.vault.with_write_txn_grouped(|txn| {
+            self.enqueue_kind_in_txn(
+                txn,
+                COACH_HOST_QUEUE_KIND,
+                DreamerAttemptPayload {
+                    attempt_type: COACH_RESEARCH_RUN_FACET.into(),
+                    input: Value::Nil,
+                    parent_attempt: None,
+                },
+                Some(COACH_RESEARCH_RUN_FACET.into()),
+                None,
+                now,
+            )?;
+            Ok(())
+        })
     }
 }
 
@@ -424,6 +452,18 @@ impl Vault {
         // The digest deadline re-reads: a pending offer arms it.
         self.store.notify_proactivity_changes();
         Ok(offer)
+    }
+
+    /// Advances the autoresearch host continuations as the Coach, under a
+    /// leased `coach.research_run` attempt. Selection stays the nightly
+    /// `coach.research_select` job's.
+    pub fn run_coach_research(&self, attempt: &DreamerAdmittedAttempt, now: u64) -> Result<()> {
+        self.require_coach_attempt(attempt, COACH_RESEARCH_RUN_FACET)?;
+        crate::autoreason_campaign::research::advance_research_continuations(
+            self,
+            attempt.status.attempt.id,
+            now,
+        )
     }
 
     /// Records what the receipts since showed against one offer's promise,

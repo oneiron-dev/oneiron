@@ -57,12 +57,14 @@ static bool proposal_path_allowed(const guest_string_t *path) {
     return true;
 }
 
+/* Deletions, renames and claims. A proposed file is not here: its bytes
+   already streamed to the host through the proposal imports. */
 static bool proposals_from_js(JSContext *ctx, JSValueConst value, guest_step_result_t *out) {
     JSValue length_value = JS_GetPropertyStr(ctx, value, "length");
     uint32_t length;
     int result = JS_ToUint32(ctx, &length, length_value);
     JS_FreeValue(ctx, length_value);
-    if (result < 0 || length > 256) return bad_value(ctx);
+    if (result < 0) return bad_value(ctx);
     out->proposals.ptr = calloc(length, sizeof(*out->proposals.ptr));
     if (length && !out->proposals.ptr) return bad_value(ctx);
     out->proposals.len = length;
@@ -73,11 +75,7 @@ static bool proposals_from_js(JSContext *ctx, JSValueConst value, guest_step_res
         const char *name = JS_ToCString(ctx, tag);
         guest_proposal_delta_t *delta = &out->proposals.ptr[i];
         bool ok = false;
-        if (name && !strcmp(name, "file-write")) {
-            delta->tag = GUEST_PROPOSAL_DELTA_FILE_WRITE;
-            ok = from_file_proposal(ctx, val, &delta->val.file_write);
-            if (ok && !proposal_path_allowed(&delta->val.file_write.path)) ok = bad_value(ctx);
-        } else if (name && !strcmp(name, "file-delete")) {
+        if (name && !strcmp(name, "file-delete")) {
             delta->tag = GUEST_PROPOSAL_DELTA_FILE_DELETE;
             ok = from_file_delete_proposal(ctx, val, &delta->val.file_delete);
             if (ok && (!proposal_path_allowed(&delta->val.file_delete.path) ||
