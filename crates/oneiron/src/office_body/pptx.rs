@@ -61,7 +61,8 @@ use oneiron_docedit::live::deck_export::PROJECTOR_VERSION;
 use oneiron_docedit::live::{
     ApproveScope, AttributionIndex, DeckFork, DeckOp, ExportOutcome, ExportProfile, Gate,
     HeldAssets, Landing, LandingReceipt, LiveDeck, LiveError, NodeId, OracleReceipt,
-    PreflightReport, StampedOp, attach_evidence, check_picture, land, preflight, project,
+    PreflightReport, StampedOp, attach_evidence, check_picture, effect_receipt, land, preflight,
+    project,
 };
 use oneiron_docedit::retained_opc::{Limits, Package};
 use serde::{Deserialize, Serialize};
@@ -166,7 +167,9 @@ impl Vault {
                 op: op.clone(),
             })
             .collect();
-        self.edit_live(
+        // What the operations did PowerPoint's way, for the receipt.
+        let mut effects = Vec::new();
+        let mut edit = self.edit_live(
             artifact,
             OfficeBodyKind::Pptx,
             base,
@@ -175,7 +178,8 @@ impl Vault {
             |doc| {
                 let mut body = doc::read(doc)?;
                 for op in &stamped {
-                    body.deck.apply(op).map_err(live)?;
+                    let (_, done) = body.deck.apply_with_effects(op).map_err(live)?;
+                    effects.extend(done.iter().map(effect_receipt));
                 }
                 doc::sync_to(doc, &body.deck)?;
                 doc::append_log(doc, &stamped)?;
@@ -185,7 +189,9 @@ impl Vault {
                     .map(|id| id.0.to_string())
                     .collect())
             },
-        )
+        )?;
+        edit.effects = effects;
+        Ok(edit)
     }
 
     /// The opener's operations on its open deck fork, one Loro commit on the
@@ -218,11 +224,13 @@ impl Vault {
                 return Err(invalid("only the opener writes to its open fork"));
             }
             let writer = writer(OfficeBodyKind::Pptx, actor, made_by);
+            let mut effects = Vec::new();
             let (_, commit) =
                 edit_typed_body_fork_in_txn(self, wtxn, artifact, fork, writer, |doc| {
                     let mut body = doc::read(doc)?;
                     for op in &stamped {
-                        body.deck.apply(op).map_err(live)?;
+                        let (_, done) = body.deck.apply_with_effects(op).map_err(live)?;
+                        effects.extend(done.iter().map(effect_receipt));
                     }
                     doc::sync_to(doc, &body.deck)?;
                     doc::append_log(doc, &stamped)
@@ -237,7 +245,7 @@ impl Vault {
                     .map(|id| id.0.to_string())
                     .collect(),
                 receipt: commit.receipt,
-                effects: Vec::new(),
+                effects,
             })
         })
     }
@@ -539,6 +547,12 @@ impl Vault {
                         "projector": key.projector,
                         "document_version": export.outcome.document_version,
                         "changed_parts": export.outcome.changed_parts,
+                        "effects": export
+                            .outcome
+                            .effects
+                            .iter()
+                            .map(effect_receipt)
+                            .collect::<Vec<_>>(),
                     }
                 }),
                 made_by: Some(made_by.clone()),
