@@ -51066,7 +51066,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 701
+      "fn": 702
      }
     },
     {
@@ -52117,7 +52117,7 @@
      "path": "src/team/door_reads.rs",
      "purpose": "The joins behind the owner's spawn observation (DOOR-111, S6): what the stores hold for one spawned agent…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -52157,7 +52157,24 @@
       "const": 1,
       "enum": 3,
       "fn": 3,
+      "re-export": 1,
       "struct": 23
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SpawnAskKnob",
+      "SpawnIntentReply",
+      "SpawnIntentRequest"
+     ],
+     "path": "src/team/doors/spawn.rs",
+     "purpose": "The owner's planned spawn door (DOOR-111, slice 10): the owner launches one reserved planned agent or team…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 2
      }
     },
     {
@@ -58215,7 +58232,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section"
     },
     "team": {
-     "files": 13,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58378,7 +58395,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3561,
+   "source_files": 3562,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66908,7 +66925,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 665
+      "fn": 666
      }
     },
     {
@@ -67957,7 +67974,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 666
+      "fn": 667
      }
     },
     {
@@ -71074,13 +71091,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -81651,7 +81668,12 @@
       "SpaceMoveState",
       "SpaceProbe",
       "SpaceRef",
+      "SpawnAskKnobString",
+      "SpawnAskKnobU32",
+      "SpawnAskKnobU64",
       "SpawnCare",
+      "SpawnIntentReply",
+      "SpawnIntentRequest",
       "SpawnKnobSpawnPattern",
       "SpawnKnobString",
       "SpawnKnobU32",
@@ -82011,8 +82033,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 609,
-      "struct": 1783
+      "enum": 612,
+      "struct": 1785
      }
     },
     {
