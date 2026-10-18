@@ -2677,7 +2677,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/authority/guest_revoke.rs",
-     "purpose": "OF-232: the owner mints an ask guest's capability slip, bound to its grant, and withdraws one guest's access…",
+     "purpose": "OF-232: the owner mints an Ask or Connect guest's capability slip, bound to its grant, and withdraws one…",
      "surface": {
       "crate-vis": 2,
       "fn": 2
@@ -2872,6 +2872,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LocalOpenProfile"
+     ],
+     "path": "src/authority/local_open.rs",
+     "purpose": "A raw open's own machine profile, from the host's root secret (FIX 4730)",
+     "surface": {
+      "enum": 1,
+      "fn": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -2941,7 +2954,7 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 6,
       "enum": 1,
       "fn": 11,
       "struct": 3
@@ -3045,14 +3058,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
       "crate-vis": 26,
-      "re-export": 42
+      "re-export": 43
      }
     },
     {
@@ -3384,7 +3397,7 @@
      "path": "src/authority/slip_vault/connect_lifecycle.rs",
      "purpose": "Owner-bound doors over the existing federation lifecycle fold",
      "surface": {
-      "fn": 5,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -49746,7 +49759,7 @@
      "purpose": "Selector wire types, strict MessagePack encode/decode with key validators, and the filtered-doc/envelope…",
      "surface": {
       "const": 1,
-      "crate-vis": 13,
+      "crate-vis": 14,
       "enum": 2,
       "fn": 14,
       "struct": 2
@@ -49786,6 +49799,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/selector/guest_document.rs",
+     "purpose": "The shared guest-document export door: owner sharing and recipient fetching",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/selector/held_retire.rs",
      "purpose": "Retirement of the facet stamps federation admission holds ahead of their rows (Astra-b F2 on #1432): by age…",
      "surface": {
@@ -49810,7 +49833,7 @@
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
       "crate-vis": 13,
-      "re-export": 6
+      "re-export": 7
      }
     },
     {
@@ -51646,7 +51669,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 60,
+      "re-export": 61,
       "struct": 36
      }
     },
@@ -52083,7 +52106,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 859
+      "fn": 862
      }
     },
     {
@@ -52111,6 +52134,22 @@
      "surface": {
       "fn": 12,
       "struct": 15
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GuestDocumentContext",
+      "GuestDocumentEnvelope",
+      "GuestDocumentShareRequest"
+     ],
+     "path": "src/task_verb/sdk_guest_document.rs",
+     "purpose": "Typed guest document sharing over live Connect grants (ARCH-0043)",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1,
+      "struct": 3
      }
     },
     {
@@ -58115,7 +58154,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 158,
+     "files": 159,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59375,7 +59414,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 182,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59403,7 +59442,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 176,
+     "files": 177,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59573,7 +59612,7 @@
    },
    "over_bar": 198,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3634,
+   "source_files": 3637,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65758,6 +65797,7 @@
      "path": "src/lib/entity.rs",
      "purpose": "Free fns plus vault lifecycle, health, and entity entry points",
      "surface": {
+      "crate-vis": 1,
       "fn": 13
      }
     },
@@ -65775,10 +65815,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/lib/host_root.rs",
+     "purpose": "`oneiron_vault_open_with_host_root`: the raw open that profiles this install from the vault's host root…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -65836,7 +65886,7 @@
    ],
    "modules": {
     "lib": {
-     "files": 9,
+     "files": 10,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -65845,7 +65895,7 @@
    },
    "over_bar": 0,
    "purpose": "C ABI for on-device iOS and macOS access to the Oneiron vault",
-   "source_files": 9,
+   "source_files": 10,
    "test_files": 1
   },
   "oneiron-guest": {
@@ -66351,7 +66401,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeviceKeystore",
@@ -68080,7 +68130,7 @@
      "purpose": "VaultBridge root and ActorScopedVault handle plus the facade() accessor",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -68106,7 +68156,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 828
+      "fn": 831
      }
     },
     {
@@ -68301,6 +68351,19 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HostRootOpenOptions"
+     ],
+     "path": "src/lib/host_root.rs",
+     "purpose": "The host root secret the raw openers take (FIX 4730): `NapiVault` and `VaultBridge` opens that profile this…",
+     "surface": {
+      "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib/mod.rs",
      "purpose": "—",
@@ -68318,7 +68381,7 @@
      "path": "src/lib/vault.rs",
      "purpose": "Legacy buffer-oriented NapiVault binding and all its verbs",
      "surface": {
-      "fn": 28,
+      "fn": 29,
       "struct": 1
      }
     },
@@ -68358,7 +68421,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): napi lift of the engine memory facade"
     },
     "lib": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -68374,7 +68437,7 @@
    },
    "over_bar": 2,
    "purpose": "—",
-   "source_files": 20,
+   "source_files": 21,
    "test_files": 1
   },
   "oneiron-organ-host": {
@@ -69155,7 +69218,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 829
+      "fn": 832
      }
     },
     {
@@ -72585,6 +72648,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/guest_document_doors.rs",
+     "purpose": "Guest document envelopes under the owner's or the recipient's own proof",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/guest_doors.rs",
      "purpose": "The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke`",
      "surface": {
@@ -72608,7 +72681,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 139
+      "crate-vis": 140
      }
     },
     {
@@ -80468,7 +80541,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 403,
+     "files": 404,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80897,7 +80970,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 749,
+   "source_files": 750,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82051,6 +82124,7 @@
       "FatalLlmError",
       "FederationDirectionScope",
       "FederationGrantRole",
+      "FederationGrantScope",
       "FederationPactScope",
       "FederationPactStatus",
       "FeedbackCategory",
@@ -82168,11 +82242,16 @@
       "GraphNode",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
+      "GuestDocumentContext",
+      "GuestDocumentEnvelope",
+      "GuestDocumentShareRequest",
       "GuestPactStanding",
       "GuestRevokeCourtesyTargetView",
       "GuestRevokeDisclosure",
       "GuestRevokeRequest",
       "GuestRevokeResponse",
+      "GuestShareEnvelope",
+      "GuestShareEnvelopeBody",
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
@@ -83931,8 +84010,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 695,
-      "struct": 2141
+      "enum": 696,
+      "struct": 2146
      }
     },
     {
