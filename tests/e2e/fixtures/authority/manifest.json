@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "area": "authority",
+  "assets": [
+    {
+      "id": "authority-pairing-law",
+      "path": "pairing-law.json",
+      "source": {
+        "uri": "independent-oracle:owner-e2e-authority-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "920bdb53c1d644da84cdc93eb1fa54ba483730fa1d73634cc5b27d2f232a3c29",
+      "expectedFacts": {
+        "lifetimeSeconds": 300,
+        "unauthorizedCode": "UNAUTHORIZED"
+      },
+      "scenarios": [
+        "AUTHORITY-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "authority-host-note",
+      "path": "host-note.json",
+      "source": {
+        "uri": "independent-oracle:owner-e2e-authority-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "6fde41465ba4030fe257b53a55777ad3eb9f21715b6a4fb074d3fe8efe3a2a44",
+      "expectedFacts": {
+        "namespace": [
+          "authority",
+          "handoff"
+        ],
+        "key": "harbour-note",
+        "value": "The harbour lantern is amber.",
+        "requestId": "e2e-authority-08-preserve-note"
+      },
+      "scenarios": [
+        "AUTHORITY-08"
+      ],
+      "requires": []
+    }
+  ]
+}
