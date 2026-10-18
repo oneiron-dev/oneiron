@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 633 code-mode rows (612 host rows, 21 run rows), 2286 declarations.
-// Replies: 555 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 636 code-mode rows (615 host rows, 21 run rows), 2291 declarations.
+// Replies: 558 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1635,6 +1635,11 @@ declare namespace Sdk {
   type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string };
   type SkillForkRequest = { parent: string; id?: string | null; skill_id: string };
   type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown };
+  type SkillPackReceiptRequest = { attempt_receipt: string };
+  type SkillPackReceipt = { receipt: ReceiptRecord; loaded_skills: string[]; attribution: PackAttributionFields };
+  type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
+  type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
+  type SkillPackCreditRequest = { receipt_id: string };
   type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
@@ -3708,6 +3713,14 @@ declare const vault: Sdk.VaultHost & {
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
+    outcomes: {
+      /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
+      get(input: Sdk.SkillPackCreditRequest): Promise<Sdk.LateCreditReceipt | null | StoredResult>;
+      /** Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win. */
+      project(input: Sdk.SkillPackOutcomeRequest): Promise<Sdk.SkillPackOutcomeProjection | StoredResult>;
+    };
+    /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
+    pack_receipt(input: Sdk.SkillPackReceiptRequest): Promise<Sdk.SkillPackReceipt | StoredResult>;
     permissions: {
       /** The owner answers one imported skill permission ask at its exact hub source. */
       approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

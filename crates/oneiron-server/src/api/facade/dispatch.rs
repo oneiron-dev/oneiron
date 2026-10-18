@@ -9148,6 +9148,78 @@ async fn self_skills_callables(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_skills_pack_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.pack_receipt")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.pack_receipt", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.pack_receipt", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_skills_pack_receipt(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_skills_outcomes_project(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.outcomes.project")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.outcomes.project", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.outcomes.project", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_skills_outcomes_project(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
+async fn vault_skills_outcomes_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.outcomes.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.outcomes.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.outcomes.get", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_skills_outcomes_get(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 async fn ai_steps_submit(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13439,6 +13511,31 @@ async fn self_leader_split(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn self_skills_call(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.skills.call")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.skills.call", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.skills.call", value).await?;
+    let output = facade_output(
+        super::host_doors::self_skills_call(
+            server,
+            auth,
+            call.session()?,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -13989,6 +14086,9 @@ pub(crate) async fn call_verb(
         "self.skills.save" => self_skills_save(server, call, input).await,
         "self.skills.fork" => self_skills_fork(server, call, input).await,
         "self.skills.callables" => self_skills_callables(server, call, input).await,
+        "vault.skills.pack_receipt" => vault_skills_pack_receipt(server, call, input).await,
+        "vault.skills.outcomes.project" => vault_skills_outcomes_project(server, call, input).await,
+        "vault.skills.outcomes.get" => vault_skills_outcomes_get(server, call, input).await,
         "ai.steps.submit" => ai_steps_submit(server, call, input).await,
         "ai.steps.receipt" => ai_steps_receipt(server, call, input).await,
         "ai.reply" => ai_reply(server, call, input).await,
@@ -14251,6 +14351,7 @@ pub(crate) async fn call_verb(
         "self.folds" => self_folds(server, call, input).await,
         "self.agents.spawn" => self_agents_spawn(server, call, input).await,
         "self.leader.split" => self_leader_split(server, call, input).await,
+        "self.skills.call" => self_skills_call(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
@@ -14301,7 +14402,6 @@ pub(crate) async fn call_verb(
         | "tasks.refuse"
         | "self.leader.advice"
         | "self.leader.pattern"
-        | "self.skills.call"
         | "self.team.start"
         | "self.team.record"
         | "self.team.submit"
