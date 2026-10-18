@@ -2471,7 +2471,7 @@ export type LandingReceipt = { proposal: string; proposer: string; settler: stri
 /** `oneiron::office_body::pptx::verbs::DeckExportRequest` */
 export type DeckExportRequest = { artifact_ref: string; run_ref: string; made_by?: unknown | null }
 /** `oneiron::office_body::pptx::verbs::DeckExportView` */
-export type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null }
+export type DeckExportView = { frontier: number[]; profile: string; projector: string; authoritative: boolean; noop: boolean; changed_parts: string[]; effects: string[]; record?: OfficeBodyExportRecord | null; proposed?: PendingProposalView | null }
 /** `oneiron::office_body::pptx::verbs::DeckGateRequest` */
 export type DeckGateRequest = { profile?: string | null }
 /** `oneiron_docedit::live::deck_export::StepOutcome` */
