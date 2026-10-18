@@ -24,6 +24,8 @@
 //! unchanged from the flat-file era.
 
 pub mod affect;
+pub mod coping_doors;
+pub mod wellness_doors;
 mod answer_boundary;
 mod archive_purge;
 mod artifact_hosting_doors;
@@ -36,6 +38,7 @@ mod claim_conflict;
 mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
+mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 pub mod run_review;
@@ -139,6 +142,10 @@ pub use claims::{
     RecordRefusal, RefusalReason, SafeDeleteReason,
 };
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
+pub use diagnostics::{
+    BlockedReportView, CoachInspectRequest, CoachInspectionView, CoachProposalView,
+    CoachWorkingSetView, DiagnosticEventView, DiagnosticsGetRequest, DiagnosticsListRequest,
+};
 pub use diary_read::{
     DIARY_READ_VERB, DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold,
     DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord, DiaryReadRequest, DiaryReadsRequest,
