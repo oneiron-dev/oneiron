@@ -26,7 +26,7 @@ use oneiron::memory::{
 use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::{
     AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiVerdict, AiVerdictRequest,
-    AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, HookReplayRow,
+    AiVideoCancelled, AiVideoJob, AiVideoJobRequest, AiVideoTicket, AiVoice, HookReplayRow,
     HooksReplayRequest, PackPutReceipt, PackPutRequest,
 };
 use oneiron::{
@@ -632,46 +632,88 @@ fn unavailable(operation: AiOperation, error: &LlmError, retry_after: u64) -> Me
     refusal
 }
 
-/// `ai.image`: one image out; reference images make it an edit.
+/// `ai.image`: one image out; reference images make it an edit. Beside it,
+/// no row: its parts come inline and its model from the seat's ladder, and
+/// the inference policy only admits it.
 pub(crate) async fn ai_image(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiCallRequest,
-) -> MemoryResult<AiAnswer> {
-    answered(server, auth, AiOperation::Image, input).await
+) -> Listed<AiAnswer> {
+    record_free(answered(server, auth, AiOperation::Image, input).await)
 }
 
 /// `ai.speech`: speech audio out of text, in the voice the call names.
+/// Beside it, for a banked voice, the person whose voice it renders: the
+/// owner of the voice's identity. The bank's packs, clips, targets and
+/// render consent are side tables. A stock voice lists no row, as
+/// [`ai_image`] lists none; `None` when the identity cannot be read again.
 pub(crate) async fn ai_speech(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiCallRequest,
-) -> MemoryResult<AiAnswer> {
-    answered(server, auth, AiOperation::Speech, input).await
+) -> MaybeListed<AiAnswer> {
+    let banked = match &input.voice {
+        Some(AiVoice::Bank { voice_id, .. }) => Some(voice_id.clone()),
+        Some(AiVoice::Stock { .. }) | None => None,
+    };
+    let answer = answered(server, auth, AiOperation::Speech, input).await;
+    let rows = match (&answer, banked) {
+        (Ok(_), Some(voice_id)) => voice_owner(server, &voice_id),
+        _ => Some(Vec::new()),
+    };
+    (answer, rows)
 }
 
-/// `ai.transcribe`: text out of speech audio.
+/// The person a banked voice is: its identity's owner, `None` when the
+/// identity cannot be read.
+fn voice_owner(server: &SyncServer, voice_id: &str) -> Option<Vec<EntityId>> {
+    server
+        .vault
+        .voice_identity(voice_id)
+        .ok()
+        .flatten()
+        .map(|identity| vec![identity.owner])
+}
+
+/// `ai.transcribe`: text out of speech audio. Beside it, no row, as
+/// [`ai_image`] lists none.
 pub(crate) async fn ai_transcribe(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiCallRequest,
-) -> MemoryResult<AiAnswer> {
-    answered(server, auth, AiOperation::Transcribe, input).await
+) -> Listed<AiAnswer> {
+    record_free(answered(server, auth, AiOperation::Transcribe, input).await)
 }
 
-/// `ai.embed`: one vector per input text.
+/// `ai.embed`: one vector per input text. Beside it, no row, as
+/// [`ai_image`] lists none.
 pub(crate) async fn ai_embed(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiCallRequest,
-) -> MemoryResult<AiAnswer> {
-    answered(server, auth, AiOperation::Embed, input).await
+) -> Listed<AiAnswer> {
+    record_free(answered(server, auth, AiOperation::Embed, input).await)
+}
+
+/// A media door's answer, which no row derives: beside it, an empty list.
+fn record_free<T>(answer: MemoryResult<T>) -> Listed<T> {
+    (answer, Vec::new())
 }
 
 /// `ai.video`: the clip renders as a provider job; the answer is its ticket.
 /// It is the owner's call, as [`answered`]'s is, so its job bills the vault
-/// owner, and so does each later take-up of it.
+/// owner, and so does each later take-up of it. Beside it, no row: its job
+/// lives at its provider and in the media runtime.
 pub(crate) async fn ai_video(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AiCallRequest,
+) -> Listed<AiVideoTicket> {
+    record_free(ai_video_answer(server, auth, input).await)
+}
+
+async fn ai_video_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiCallRequest,
@@ -692,8 +734,17 @@ pub(crate) async fn ai_video(
 }
 
 /// `ai.video.poll`: where a video job stands; a finished one answers with
-/// its clip on every poll until `ai.video.cancel` deletes it.
+/// its clip on every poll until `ai.video.cancel` deletes it. Beside it, no
+/// row, as [`ai_video`] lists none.
 pub(crate) async fn ai_video_poll(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AiVideoJobRequest,
+) -> Listed<AiVideoJob> {
+    record_free(ai_video_poll_answer(server, auth, input).await)
+}
+
+async fn ai_video_poll_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiVideoJobRequest,
@@ -709,8 +760,17 @@ pub(crate) async fn ai_video_poll(
     Ok(state.into())
 }
 
-/// `ai.video.cancel`: stops a video job at its provider.
+/// `ai.video.cancel`: stops a video job at its provider. Beside it, no
+/// row, as [`ai_video`] lists none.
 pub(crate) async fn ai_video_cancel(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: AiVideoJobRequest,
+) -> Listed<AiVideoCancelled> {
+    record_free(ai_video_cancel_answer(server, auth, input).await)
+}
+
+async fn ai_video_cancel_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: AiVideoJobRequest,
@@ -1037,7 +1097,7 @@ pub(super) fn refused<T>(refusal: MemoryError) -> Listed<T> {
 }
 
 /// The rows hex ids name; a value that is no id names none.
-fn hex_rows<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> Vec<EntityId> {
+pub(super) fn hex_rows<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> Vec<EntityId> {
     ids.into_iter()
         .filter_map(|hex| EntityId::from_hex(hex.as_ref()).ok())
         .collect()
