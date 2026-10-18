@@ -8,9 +8,12 @@
 //! principal and locality, so only the connected handle that rendered a card
 //! drives it. A handle served in process (`connect_in_process`, OF-237) is
 //! one: both calls cross its transport to the server this process runs, with
-//! the same headers and the same replies, a queued callback included. An
-//! embedded handle holds no frame and refuses both calls; this crate keeps no
-//! second frame store.
+//! the same headers and the same replies, a queued callback included. That
+//! served client is the path for interactive frames in an app that runs its
+//! engine in process (`EmbeddedEngine.client` in the UniFFI binding): render,
+//! send events and close on that one handle. An embedded handle holds no
+//! frame and refuses both calls; this crate keeps no second frame store and
+//! no bare renderer.
 //!
 //! The bodies are the server's wire shapes, camelCase as it spells them.
 
@@ -73,15 +76,23 @@ pub struct CloseLensFrameReply {
     pub closed: bool,
 }
 
-/// An embedded handle's answer to both calls: it rendered no card here.
+/// What an embedded handle answers both calls with (G47): a card's frame
+/// lives only on the served host that rendered it, and an embedded handle
+/// renders with no host to keep one. The served client is the path; there is
+/// no bare renderer. One constant, so a later ruling changes one line.
+const EMBEDDED_LENS_FRAME_REFUSAL: &str =
+    "lens frames live on the served host that rendered the card, and an embedded handle keeps none; render the lens and send its events through a served client";
+
+/// The paths [`EMBEDDED_LENS_FRAME_REFUSAL`] names, in order.
+const EMBEDDED_LENS_FRAME_SUGGESTIONS: &[&str] = &[
+    "In this process, render the lens through the in-process served client (OneironClient::connect_in_process; EmbeddedEngine.client in an app) and send its events and close on that same handle.",
+    "Or connect to the oneiron-server that rendered the card and send its events through that handle.",
+    "A card an embedded handle rendered has no frame to drive: render it again through the served client.",
+];
+
+/// An embedded handle's answer to both calls: it holds no frame.
 fn embedded_refusal() -> MemoryError {
-    crate::error::bad_request(
-        "lens frames live on the server that rendered the card; connect to it",
-        &[
-            "Connect to the oneiron-server that rendered the card and send its events through that handle.",
-            "In an app that runs its engine in process, render and send through a handle the engine serves (EmbeddedEngine.client).",
-        ],
-    )
+    crate::error::bad_request(EMBEDDED_LENS_FRAME_REFUSAL, EMBEDDED_LENS_FRAME_SUGGESTIONS)
 }
 
 impl OneironClient {
@@ -92,7 +103,8 @@ impl OneironClient {
     /// render the lens again. A model round-trip action queues its callback
     /// for the agent that emitted the card; a card no agent emitted refuses
     /// `INVALID_STATE`. A handle served in process sends it to the server
-    /// this process runs; an embedded handle refuses `BAD_REQUEST`.
+    /// this process runs; an embedded handle refuses `BAD_REQUEST`, naming
+    /// the served client to render through.
     pub fn lens_frame_event(
         &self,
         card_id: &str,
