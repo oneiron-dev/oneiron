@@ -38,7 +38,10 @@ const ADMISSIONS: SideTable<EntityId, Vec<u8>, Raw> =
 const DELETE_RESERVATIONS: SideTable<EntityId, [u8; 1], Raw> =
     SideTable::new(&side_table::SHARE_BRIEF_DELETE_RESERVATION);
 
+mod actor_erase;
 mod admission_refs;
+pub(crate) use actor_erase::erase_admission_actor_in_txn;
+pub use actor_erase::{ACTOR_ERASE_SHARE_ADMISSION, ShareAdmissionErase};
 pub(crate) use admission_refs::share_gate_decision_refs_in_txn;
 
 /// A typed AccessGrant. Only the opaque brief handle and redaction maximum are stored.
@@ -281,28 +284,48 @@ pub(crate) fn check_generic_grant_write(
 }
 
 /// Immutable creation provenance plus a monotonic local revocation latch.
+/// An actor's erase takes that actor out of both (FIX 3520): an erased
+/// issuer's admission grants nothing and stays as history, and an erased
+/// revoker's revocation stays, naming no one. No one is stored as an
+/// all-zero actor, which no actor's id is.
 pub(crate) struct ShareAdmission {
-    pub(crate) issuer: WriteActor,
+    /// The issuer; `None` once it was erased.
+    pub(crate) issuer: Option<WriteActor>,
     pub(crate) gate_id: GateDecisionId,
     digest: [u8; 32],
     revoked_at: Option<u64>,
+    /// Who revoked it; `None` while it is not revoked, or once that actor
+    /// was erased.
     pub(crate) revoker: Option<WriteActor>,
+}
+
+/// One actor as its class byte and its id, or no one as 17 zero bytes.
+fn push_actor(bytes: &mut Vec<u8>, actor: Option<WriteActor>) {
+    bytes.push(actor.map_or(0, |actor| actor.actor_class() as u8));
+    bytes.extend_from_slice(&actor.map_or([0; 16], |actor| *actor.entity_ref().as_bytes()));
+}
+
+/// The actor 17 stored bytes name, or no one for 17 zero bytes; `None` when
+/// they name neither.
+fn read_actor(bytes: &[u8]) -> Option<Option<WriteActor>> {
+    if *bytes == [0; 17] {
+        return Some(None);
+    }
+    Some(Some(WriteActor::new(
+        EntityId::from_bytes(bytes.get(1..17)?.try_into().ok()?).ok()?,
+        EdgeActorClass::try_from_u8(*bytes.first()?)?,
+    )))
 }
 
 impl ShareAdmission {
     fn encode(&self) -> Vec<u8> {
-        let mut bytes = vec![1, self.issuer.actor_class() as u8];
-        bytes.extend_from_slice(self.issuer.entity_ref().as_bytes());
+        let mut bytes = vec![1];
+        push_actor(&mut bytes, self.issuer);
         bytes.extend_from_slice(&self.gate_id.as_bytes());
         bytes.extend_from_slice(&self.digest);
         bytes.push(u8::from(self.revoked_at.is_some()));
         bytes.extend_from_slice(&self.revoked_at.unwrap_or(0).to_be_bytes());
-        bytes.push(self.revoker.map_or(0, |actor| actor.actor_class() as u8));
-        bytes.extend_from_slice(
-            &self
-                .revoker
-                .map_or([0; 16], |actor| *actor.entity_ref().as_bytes()),
-        );
+        push_actor(&mut bytes, self.revoker);
         bytes
     }
 
@@ -310,32 +333,23 @@ impl ShareAdmission {
         if bytes.len() != 92 || bytes[0] != 1 {
             return None;
         }
-        let class = EdgeActorClass::try_from_u8(bytes[1])?;
         let timestamp = u64::from_be_bytes(bytes[67..75].try_into().ok()?);
         let revoked_at = match bytes[66] {
             0 if timestamp == 0 => None,
             1 => Some(timestamp),
             _ => return None,
         };
+        let revoker = read_actor(&bytes[75..92])?;
+        // Only a revoked share names its revoker.
+        if revoked_at.is_none() && revoker.is_some() {
+            return None;
+        }
         Some(Self {
-            issuer: WriteActor::new(
-                EntityId::from_bytes(bytes[2..18].try_into().ok()?).ok()?,
-                class,
-            ),
+            issuer: read_actor(&bytes[1..18])?,
             gate_id: GateDecisionId::from_bytes(bytes[18..34].try_into().ok()?),
             digest: bytes[34..66].try_into().ok()?,
             revoked_at,
-            revoker: if revoked_at.is_some() {
-                Some(WriteActor::new(
-                    EntityId::from_bytes(bytes[76..92].try_into().ok()?).ok()?,
-                    EdgeActorClass::try_from_u8(bytes[75])?,
-                ))
-            } else {
-                if bytes[75..92] != [0; 17] {
-                    return None;
-                }
-                None
-            },
+            revoker,
         })
     }
 }
@@ -368,7 +382,9 @@ pub(crate) fn share_effect_target(
     ))
 }
 
-fn read_admitted_share_in_txn(
+/// The share `id` names and its admission, as stored: nothing is proved but
+/// that both decode.
+fn stored_share_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -394,8 +410,23 @@ fn read_admitted_share_in_txn(
     let Some(admission) = ShareAdmission::decode(&bytes) else {
         return Ok(None);
     };
+    Ok(Some((share, admission)))
+}
+
+fn read_admitted_share_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(Share, ShareAdmission)>> {
+    let Some((share, admission)) = stored_share_in_txn(store, txn, id)? else {
+        return Ok(None);
+    };
+    // An erased issuer's admission is history: it proves no grant.
+    let Some(issuer) = admission.issuer else {
+        return Ok(None);
+    };
     let travel = crate::share_travel::brief_travel_for_store_in_txn(store, txn, id)?;
-    let target = share_effect_target(id, &admission.issuer, &share, &travel)?;
+    let target = share_effect_target(id, &issuer, &share, &travel)?;
     let digest: [u8; 32] = Sha256::digest(target.as_bytes()).into();
     if admission.digest != digest || admission.revoked_at != share.revoked_at {
         return Ok(None);
@@ -414,15 +445,32 @@ pub(crate) fn read_share_in_txn(
     let Some(gate) = store.gate_decision_in_txn(txn, admission.gate_id)? else {
         return Ok(None);
     };
+    let Some(issuer) = admission.issuer else {
+        return Ok(None);
+    };
     if gate.outcome != "allow"
         || gate.redacted_at.is_some()
         || gate.content_kind != "external_effect"
-        || gate.actor_ref.as_deref() != Some(admission.issuer.entity_ref().to_hex().as_str())
-        || gate.actor_class != admission.issuer.actor_class().gate_actor_class()
+        || gate.actor_ref.as_deref() != Some(issuer.entity_ref().to_hex().as_str())
+        || gate.actor_class != issuer.actor_class().gate_actor_class()
     {
         return Ok(None);
     }
     Ok(Some((share, admission)))
+}
+
+/// [`read_share_in_txn`] for the share receipts: an admission whose issuer
+/// was erased grants nothing (FIX 3520), but its share, its Gate decision,
+/// its digest and its times still read as history.
+pub(crate) fn read_share_history_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(Share, ShareAdmission)>> {
+    if let Some(admitted) = read_share_in_txn(store, txn, id)? {
+        return Ok(Some(admitted));
+    }
+    Ok(stored_share_in_txn(store, txn, id)?.filter(|(_, admission)| admission.issuer.is_none()))
 }
 
 /// Explicit, currently effective brief grants for this entity. A facet stamp
@@ -607,7 +655,7 @@ impl Vault {
         }
         let target = share_effect_target(share_id, issuer, share, travel)?;
         let admission = ShareAdmission {
-            issuer: *issuer,
+            issuer: Some(*issuer),
             gate_id,
             digest: Sha256::digest(target.as_bytes()).into(),
             revoked_at: None,
@@ -632,7 +680,7 @@ impl Vault {
         let (mut share, mut admission) = read_admitted_share_in_txn(&self.store, &txn, share_id)?
             .ok_or(Error::EntityNotFound)?;
         verify_share_actor(&self.store, &txn, actor)?;
-        if *actor != admission.issuer {
+        if Some(*actor) != admission.issuer {
             let fold = self.authority_fold_readonly_in_txn(&txn)?;
             if actor.actor_class() != EdgeActorClass::Human
                 || fold.vault_root_is_conflicted()

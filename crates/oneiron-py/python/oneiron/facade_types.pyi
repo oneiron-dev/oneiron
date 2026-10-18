@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 377 facade rows, 1477 declarations.
+Census: 377 facade rows, 1478 declarations.
 Inputs: 334 of 377 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 334 of 377 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
@@ -5054,6 +5054,7 @@ class ProjectProposalCard(TypedDict):
     starting_skill_refs: list[str]
 class ProjectConversationRequest(TypedDict):
     conversation_ref: str
+RosterActor = str
 class ProjectCardStateMintedBody(TypedDict):
     project: EntityId
 class ProjectCardStateMinted(TypedDict):
@@ -5063,7 +5064,7 @@ class ProjectCardRecord(TypedDict):
     card: ProjectProposalCard
     conversation: EntityId
     detection: EntityId
-    drafted_by: EntityId
+    drafted_by: RosterActor
     state: ProjectCardState
     at: int
 class ProjectCardRequest(TypedDict):
@@ -5187,7 +5188,7 @@ class ConsentNeed(TypedDict):
     party: RequiredParty
 class JoinRefusalDeniedBody(TypedDict):
     part: ConsentPart
-    party: EntityId
+    party: RosterActor
     answer_ref: str
 class JoinRefusalDenied(TypedDict):
     denied: JoinRefusalDeniedBody
@@ -5212,7 +5213,7 @@ class JoinDecisionRefuse(TypedDict):
     refuse: JoinRefusal
 JoinDecision = Literal["ready"] | JoinDecisionHold | JoinDecisionRefuse
 class ConsentDenial(TypedDict):
-    party: EntityId
+    party: RosterActor
     answer_ref: str
 class ConsentStateMissing(TypedDict):
     missing: ConsentNeed
@@ -5223,7 +5224,7 @@ class ConsentStateDenied(TypedDict):
 ConsentState = ConsentStateMissing | ConsentStateGranted[T] | ConsentStateDenied
 class SpendConsentPaidBody(TypedDict):
     payer: EntityId
-    granted_by: EntityId
+    granted_by: RosterActor
     scope: SpendScopeId
     unit: LeaseUnit
     cap_units: int
@@ -5269,10 +5270,10 @@ class AdmissionConsent(TypedDict):
     room: EntityId
     branch: NotRequired[EntityId | None]
     subject: JoinSubject
-    granted_by: EntityId
+    granted_by: RosterActor
     basis: AdmissionBasis
 class ConsentSet(TypedDict):
-    subject: ConsentState[EntityId]
+    subject: ConsentState[RosterActor]
     spend: ConsentState[SpendConsent]
     membership: ConsentState[MembershipConsent]
     admission: ConsentState[AdmissionConsent]
@@ -5428,7 +5429,7 @@ class RoomHostRequest(TypedDict):
 HostPinKind = Literal["pinned", "handed_off"]
 class HostPin(TypedDict):
     agent: EntityId
-    by: EntityId
+    by: RosterActor
     kind: HostPinKind
     at: int
 class RoomHosting(TypedDict):

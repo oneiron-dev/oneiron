@@ -1,0 +1,81 @@
+//! An erased actor out of the offer cards (FIX 3520).
+//!
+//! A card keeps its row, its state, its join and its times, and names no
+//! one where it named the actor. An open card whose join waits on the actor
+//! goes with that join, which the join's own erase deletes
+//! ([`crate::workspace_roster::ACTOR_ERASE_PENDING_JOIN`]).
+
+use super::offers::{OFFER_CURRENT, OFFERS, OfferState, current_key};
+use crate::error::Result;
+use crate::store::Store;
+use crate::workspace_roster::JoinRequest;
+use crate::workspace_roster::join_receipt::names_no_actor;
+use crate::{EntityId, Vault};
+
+/// The intent key an offer card files its agent's join under, before the
+/// card's id.
+const OFFER_JOIN_INTENT: &str = "offer:";
+
+/// Erasing `actor` from the offer cards (FIX 3520): each card keeps its row,
+/// its state, its join and its times, and names no one where the actor
+/// minted it or answered it as the room's host. A ballot the actor cast
+/// leaves the card: it was one voter's advisory word, it decided nothing,
+/// and the tally counts no one who is gone. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a card row that cannot be read.
+pub(crate) fn erase_offer_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut erased = Vec::new();
+    for (offer_id, mut stored) in OFFERS.scan(&vault.store, wtxn)? {
+        let mut named = stored.minted_by.forget(*actor);
+        if let Some(answer) = &mut stored.answer {
+            named |= answer.by.forget(*actor);
+        }
+        named |= stored.votes.remove(actor).is_some();
+        if named {
+            erased.push((offer_id, stored));
+        }
+    }
+    for (offer_id, stored) in &erased {
+        OFFERS.put(&vault.store, wtxn, offer_id, stored)?;
+    }
+    Ok(())
+}
+
+/// Deletes the open card that filed `request`, the join `join_ref` names,
+/// and its current-card row when it points at the card: an actor's erase
+/// deleted that join (FIX 3520), so no answer can settle the card. A card in
+/// any other state keeps its row.
+pub(in crate::workspace_roster) fn drop_open_offer_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    join_ref: &str,
+    request: &JoinRequest,
+) -> Result<()> {
+    let Some(offer_id) = request.intent_key.strip_prefix(OFFER_JOIN_INTENT) else {
+        return Ok(());
+    };
+    let offer_id = offer_id.to_owned();
+    let Some(stored) = OFFERS.get(store, txn, &offer_id)? else {
+        return Ok(());
+    };
+    let card = &stored.card;
+    if card.join_ref != join_ref || !matches!(card.state, OfferState::Open { .. }) {
+        return Ok(());
+    }
+    OFFERS.delete(store, txn, &offer_id)?;
+    let key = current_key(card.room, card.branch, card.agent);
+    if OFFER_CURRENT.get(store, txn, &key)?.as_deref() == Some(offer_id.as_str()) {
+        OFFER_CURRENT.delete(store, txn, &key)?;
+    }
+    Ok(())
+}
