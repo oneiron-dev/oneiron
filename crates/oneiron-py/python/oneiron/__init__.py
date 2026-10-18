@@ -350,6 +350,9 @@ class Oneiron:
         def budget(self) -> "Oneiron._SelfBudgetVerbs":
             return Oneiron._SelfBudgetVerbs(self._client)
         @property
+        def credential(self) -> "Oneiron._SelfCredentialVerbs":
+            return Oneiron._SelfCredentialVerbs(self._client)
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
         def use(self, spec):
@@ -469,6 +472,12 @@ class Oneiron:
         def land(self, spec):
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
             return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
+    class _SelfCredentialVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attenuate(self, spec):
+            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
+            return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
     class _SelfOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -708,6 +717,9 @@ class Oneiron:
         def companions(self) -> "Oneiron._VaultCompanionsVerbs":
             return Oneiron._VaultCompanionsVerbs(self._client)
         @property
+        def voices(self) -> "Oneiron._VaultVoicesVerbs":
+            return Oneiron._VaultVoicesVerbs(self._client)
+        @property
         def graph(self) -> "Oneiron._VaultGraphVerbs":
             return Oneiron._VaultGraphVerbs(self._client)
         @property
@@ -758,6 +770,9 @@ class Oneiron:
         @property
         def habits(self) -> "Oneiron._VaultHabitsVerbs":
             return Oneiron._VaultHabitsVerbs(self._client)
+        @property
+        def productivity(self) -> "Oneiron._VaultProductivityVerbs":
+            return Oneiron._VaultProductivityVerbs(self._client)
         @property
         def esign(self) -> "Oneiron._VaultEsignVerbs":
             return Oneiron._VaultEsignVerbs(self._client)
@@ -878,6 +893,12 @@ class Oneiron:
         def admit(self, input: dict[str, Any]) -> Any:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
             return json.loads(_translate(lambda: self._client.vault_claims_admit(json.dumps(input, allow_nan=False))))
+        def vet(self, spec):
+            """Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."""
+            return json.loads(_translate(lambda: self._client.vault_claims_vet(json.dumps(spec))))
+        def vetting(self, spec):
+            """Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."""
+            return json.loads(_translate(lambda: self._client.vault_claims_vetting(json.dumps(spec))))
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
@@ -2300,6 +2321,36 @@ class Oneiron:
         def set(self, spec):
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
+    class _VaultVoicesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def packs(self) -> "Oneiron._VaultVoicesPacksVerbs":
+            return Oneiron._VaultVoicesPacksVerbs(self._client)
+        def render_consent(self, spec):
+            """The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs."""
+            return json.loads(_translate(lambda: self._client.vault_voices_render_consent(json.dumps(spec))))
+        @property
+        def targets(self) -> "Oneiron._VaultVoicesTargetsVerbs":
+            return Oneiron._VaultVoicesTargetsVerbs(self._client)
+        def inspect(self, spec):
+            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+            return json.loads(_translate(lambda: self._client.vault_voices_inspect(json.dumps(spec))))
+    class _VaultVoicesPacksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+            return json.loads(_translate(lambda: self._client.vault_voices_packs_put(json.dumps(spec))))
+    class _VaultVoicesTargetsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def provision(self, spec):
+            """The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call."""
+            return json.loads(_translate(lambda: self._client.vault_voices_targets_provision(json.dumps(spec))))
+        def evict(self, spec):
+            """The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay."""
+            return json.loads(_translate(lambda: self._client.vault_voices_targets_evict(json.dumps(spec))))
     class _VaultGraphVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2438,6 +2489,15 @@ class Oneiron:
         def checkin(self, input: dict[str, Any]) -> Any:
             """Appends one immutable check-in under a Habit TASK."""
             return json.loads(_translate(lambda: self._client.vault_habits_checkin(json.dumps(input, allow_nan=False))))
+    class _VaultProductivityVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def create(self, spec):
+            """Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write."""
+            return json.loads(_translate(lambda: self._client.vault_productivity_create(json.dumps(spec))))
+        def tree(self, spec):
+            """The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters."""
+            return json.loads(_translate(lambda: self._client.vault_productivity_tree(json.dumps(spec))))
     class _VaultEsignVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2474,6 +2534,12 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+        def promote(self, spec):
+            """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))
+        def evidence(self, spec):
+            """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_evidence(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

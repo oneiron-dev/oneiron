@@ -508,6 +508,7 @@ pub use super::sdk_connector::*;
 pub use super::sdk_connector_call::*;
 pub use super::sdk_connector_pack::*;
 pub use super::sdk_courtesy_delete::*;
+pub use super::sdk_credential::*;
 pub use super::sdk_diary::*;
 pub use super::sdk_disclosure::*;
 pub use super::sdk_embedding_space::*;
@@ -536,6 +537,7 @@ pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_trusted_contact::*;
+pub use super::sdk_voice_bank::*;
 pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 
