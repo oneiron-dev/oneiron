@@ -334,10 +334,12 @@ async fn qualify_hooks(
 ) -> OwnerReply<HookQualification> {
     let owner = owner(&auth, &server)?;
     let request = json_payload(payload)?;
-    let runtime = server.hook_runtime.get().cloned();
     let qualified = blocking(move || {
-        let runtime = runtime
-            .ok_or_else(|| OwnerError::Refused("no hook sandbox runs on this server".to_owned()))?;
+        // The one sandbox, taken here when no runner took it: `--no-hooks`
+        // stops the runner, not an explicit qualification (FIX 1122).
+        let runtime = crate::commands::hook_sandbox(&server).map_err(|reason| {
+            OwnerError::Refused(format!("no hook sandbox runs on this server: {reason}"))
+        })?;
         let source = EntityId::from_hex(&request.source)
             .map_err(|_| OwnerError::Invalid("source is not an entity id".to_owned()))?;
         let qualified = server

@@ -1009,16 +1009,12 @@ async fn vault_hooks_replay_answer(
     input: HooksReplayRequest,
 ) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<EntityId>>)> {
     let owner = owner_proof(auth, server, "vault.hooks.replay")?;
-    let Some(runtime) = server.hook_runtime.get().cloned() else {
-        return Err(MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            "no hook sandbox runs on this server",
-            &["Serve with fact hooks on (no --no-hooks), on a build with the code sandbox."],
-        ));
-    };
     let verdict = replay_verdict(server);
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
+        // The sandbox serve's runner runs on, taken here when no runner took
+        // it: `--no-hooks` stops the runner, not an explicit replay.
+        let runtime = crate::commands::hook_sandbox(&server).map_err(no_hook_sandbox)?;
         oneiron::task_verb::sdk::replay_hooks_as_owner_listing(
             server.vault(),
             &owner,
@@ -1029,6 +1025,16 @@ async fn vault_hooks_replay_answer(
     })
     .await
     .map_err(|_| internal("vault.hooks.replay"))?
+}
+
+/// An explicit replay's refusal when no hook sandbox loads: this build has
+/// none, or it did not build (`reason`).
+pub(super) fn no_hook_sandbox(reason: String) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_MODEL_UNAVAILABLE,
+        format!("no hook sandbox runs on this server: {reason}"),
+        &["Serve on a build with the code sandbox (code-sandbox-wasmtime)."],
+    )
 }
 
 /// The verdict host a replay's preview asks: the one the fact-hook runner
