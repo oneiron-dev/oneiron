@@ -7996,6 +7996,24 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarConnectorConfigureRequest",
+      "CalendarConnectorKillRequest",
+      "CalendarConnectorRegistration",
+      "CalendarConnectorRequest",
+      "CalendarConnectorWriteRequest",
+      "CalendarImipTransportConfig"
+     ],
+     "path": "src/calendar/connectors/door.rs",
+     "purpose": "Owner-installed calendar seats and host iMIP submission, with custody names only",
+     "surface": {
+      "fn": 9,
+      "struct": 6
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -8013,6 +8031,7 @@
      "path": "src/calendar/connectors/mod.rs",
      "purpose": "Shared calendar connector kernel (CAL-05, ONE-1787)",
      "surface": {
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -8030,7 +8049,7 @@
      "surface": {
       "crate-vis": 12,
       "enum": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 2
      }
     },
@@ -51319,7 +51338,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 728
+      "fn": 736
      }
     },
     {
@@ -57268,7 +57287,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 64,
+     "files": 65,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58656,7 +58675,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3578,
+   "source_files": 3579,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67186,7 +67205,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 692
+      "fn": 700
      }
     },
     {
@@ -68235,7 +68254,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 693
+      "fn": 701
      }
     },
     {
@@ -71218,7 +71237,7 @@
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 9
      }
     },
     {
@@ -74077,6 +74096,36 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host.rs",
+     "purpose": "The calendar host's real CalDAV wire and iMIP submission transport",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host/caldav.rs",
+     "purpose": "Real CalDAV discovery, sync-collection and conditional resource writes",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host/xml.rs",
+     "purpose": "Namespace-aware DAV multistatus decoding",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -79358,6 +79407,13 @@
      "layout": "file",
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
+    "calendar_host": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file+dir",
+     "purpose": "The calendar host's real CalDAV wire and iMIP submission transport"
+    },
     "campaign_enrollment": {
      "files": 1,
      "impl_vault": false,
@@ -79739,7 +79795,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 726,
+   "source_files": 729,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80162,6 +80218,14 @@
       "ButtonControl",
       "BypassExtent",
       "BypassScope",
+      "CalendarConnectorConfigureRequest",
+      "CalendarConnectorKillRequest",
+      "CalendarConnectorKillSwitchState",
+      "CalendarConnectorRegistration",
+      "CalendarConnectorRequest",
+      "CalendarConnectorSeatConfig",
+      "CalendarConnectorSeatState",
+      "CalendarConnectorWriteRequest",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
       "CalendarEventView",
@@ -80169,15 +80233,19 @@
       "CalendarFreebusyRequest",
       "CalendarIcsImportReceipt",
       "CalendarIcsImportRequest",
+      "CalendarImipTransportConfig",
       "CalendarImportClaimReceipt",
       "CalendarImportedEvent",
       "CalendarInstanceMoveRequest",
+      "CalendarInviteSurfaceInput",
+      "CalendarInviteSurfaceMethod",
       "CalendarOccurrenceView",
       "CalendarOccurrencesRequest",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
       "CalendarSel",
+      "CalendarSyncOutcome",
       "CalibrationPair",
       "CallClass",
       "CallEnvelope",
@@ -81552,6 +81620,7 @@
       "RelayClassifierMode",
       "RelayResolution",
       "ReleasedWait",
+      "RemoteWriteReceipt",
       "RemovalExportDelivery",
       "RenderPair",
       "RenderSide",
@@ -82408,8 +82477,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 626,
-      "struct": 1845
+      "enum": 628,
+      "struct": 1856
      }
     },
     {
