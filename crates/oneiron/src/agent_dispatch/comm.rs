@@ -13,7 +13,7 @@
 //! attempt that spawned it, across a registered workflow wrapper to that
 //! wrapper's own parent, never a run tag, a retry link or the render tree.
 
-use std::collections::BTreeSet;
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
@@ -321,7 +321,7 @@ fn descends_from(
 ) -> Result<bool> {
     let queue = AttemptQueue::new(dispatcher.vault);
     let mut cursor = dispatch.parent.map(|(id, _)| id);
-    let mut seen = BTreeSet::new();
+    let mut seen = HashSet::new();
     while let Some(id) = cursor {
         if id == ancestor {
             return Ok(true);
