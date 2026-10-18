@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 596 facade rows, 2260 declarations.
-Inputs: 544 of 596 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 527 of 596 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 597 facade rows, 2262 declarations.
+Inputs: 545 of 597 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 528 of 597 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -11280,6 +11280,14 @@ class SummaryRegenerateRequest(TypedDict):
     read_refs: list[str]
 class SummaryProposalRequest(TypedDict):
     proposal_ref: str
+class AuthorTakeTargetSubject(TypedDict):
+    subject: str
+class AuthorTakeTargetClaim(TypedDict):
+    claim: str
+AuthorTakeTarget = AuthorTakeTargetSubject | AuthorTakeTargetClaim
+class AuthorTakeRequest(TypedDict):
+    target: AuthorTakeTarget
+    markdown: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

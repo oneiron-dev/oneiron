@@ -604,6 +604,7 @@ pub enum AgentVerb {
     VaultSummariesProposalsSwitch,
     VaultSummariesProposalsReject,
     VaultNotesCreate,
+    VaultNotesAuthorTake,
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
@@ -1246,6 +1247,7 @@ impl AgentVerb {
         Self::VaultSummariesProposalsSwitch,
         Self::VaultSummariesProposalsReject,
         Self::VaultNotesCreate,
+        Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
@@ -1901,6 +1903,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => "vault.summaries.proposals.switch",
             Self::VaultSummariesProposalsReject => "vault.summaries.proposals.reject",
             Self::VaultNotesCreate => "vault.notes.create",
+            Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
@@ -2502,6 +2505,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3151,6 +3155,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3877,6 +3882,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4275,6 +4281,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4941,6 +4948,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -5584,6 +5592,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -7331,6 +7340,9 @@ impl AgentVerb {
             }
             Self::VaultNotesCreate => {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."
+            }
+            Self::VaultNotesAuthorTake => {
+                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."
             }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."
