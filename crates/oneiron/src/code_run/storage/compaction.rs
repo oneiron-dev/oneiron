@@ -3,21 +3,29 @@
 
 use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::EpochMint;
-use crate::compaction::{CompactionRequest, EpochSummaryBody, decode_epoch_summary_body};
+use crate::compaction::{
+    CompactionExecution, CompactionRequest, EpochSummaryBody, decode_epoch_summary_body,
+};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::ManifestDbs;
 use crate::{EntityId, Error, Result, Vault};
 
-/// One coverage row per (run id, minted SUMMARY id), in the fixed frame
-/// [`encode`] spells.
+/// One coverage row per (run id, minted SUMMARY id), in the frame [`encode`]
+/// spells: the fixed coverage, then a self-written summary's receipt.
 const COVERAGE: SideTable<(EntityId, EntityId), CodeRunCompactionCoverage, Raw> =
     SideTable::new(&side_table::CODE_RUN_COMPACTION);
+/// The same rows with their receipts: the mint writes through it.
+const WRITTEN: SideTable<(EntityId, EntityId), WrittenCoverage, Raw> =
+    SideTable::new(&side_table::CODE_RUN_COMPACTION);
 /// Version 2 adds the accepted body's digest; version 3 the calls its
-/// sources were read from. No vault holds an older row.
-const VERSION: u8 = 3;
+/// sources were read from; version 4 a self-written summary's receipt
+/// (FIX 4465). No vault holds an older row.
+const VERSION: u8 = 4;
+/// The fixed coverage, then the receipt's length.
 const BODY_LEN: usize = 1 + 16 * 3 + 8 * 4 + 32;
+const FRAME_LEN: usize = BODY_LEN + 4;
 
 /// A run-local span derived from the durable replay and the sealed compaction
 /// request, not from model-supplied bytes or an assembled context-vector length.
@@ -128,16 +136,46 @@ impl CodeRunCompactionCoverage {
 
 impl RawValue for CodeRunCompactionCoverage {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode(self))
+        Ok(encode(self, None)?)
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        Ok(decode(bytes)?)
+        Ok(decode(bytes)?.0)
     }
 }
 
-fn encode(row: &CodeRunCompactionCoverage) -> Vec<u8> {
-    let mut raw = Vec::with_capacity(BODY_LEN);
+/// A coverage row with the receipt of the self-written summary it binds
+/// (FIX 4465): what ran it, linked from the summary's birth by its digest.
+/// `None` for every other writer's summary.
+#[derive(Debug, Clone)]
+struct WrittenCoverage {
+    row: CodeRunCompactionCoverage,
+    writer: Option<CompactionExecution>,
+}
+
+impl RawValue for WrittenCoverage {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode(&self.row, self.writer.as_ref())?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (row, writer) = decode(bytes)?;
+        Ok(Self { row, writer })
+    }
+}
+
+fn encode(
+    row: &CodeRunCompactionCoverage,
+    writer: Option<&CompactionExecution>,
+) -> Result<Vec<u8>> {
+    let receipt = match writer {
+        Some(writer) => serde_json::to_vec(writer)
+            .map_err(|_| Error::InvariantViolation("a compaction receipt did not encode"))?,
+        None => Vec::new(),
+    };
+    let receipt_len = u32::try_from(receipt.len())
+        .map_err(|_| Error::ArithmeticOverflow("compaction receipt length"))?;
+    let mut raw = Vec::with_capacity(FRAME_LEN + receipt.len());
     raw.push(VERSION);
     raw.extend_from_slice(row.run_id.as_bytes());
     raw.extend_from_slice(row.session_ref.as_bytes());
@@ -147,14 +185,25 @@ fn encode(row: &CodeRunCompactionCoverage) -> Vec<u8> {
     raw.extend_from_slice(&row.last.to_be_bytes());
     raw.extend_from_slice(&row.calls.to_be_bytes());
     raw.extend_from_slice(&row.digest);
-    raw
+    raw.extend_from_slice(&receipt_len.to_be_bytes());
+    raw.extend_from_slice(&receipt);
+    Ok(raw)
 }
 
-fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
+fn decode(raw: &[u8]) -> Result<(CodeRunCompactionCoverage, Option<CompactionExecution>)> {
     let corrupt = || Error::CorruptedIndex("code-run compaction coverage");
-    if raw.len() != BODY_LEN || raw[0] != VERSION {
+    if raw.len() < FRAME_LEN || raw[0] != VERSION {
         return Err(corrupt());
     }
+    let receipt_len: [u8; 4] = raw[BODY_LEN..FRAME_LEN].try_into().map_err(|_| corrupt())?;
+    let receipt_len = usize::try_from(u32::from_be_bytes(receipt_len)).map_err(|_| corrupt())?;
+    if raw.len() != FRAME_LEN.saturating_add(receipt_len) {
+        return Err(corrupt());
+    }
+    let writer = match &raw[FRAME_LEN..] {
+        [] => None,
+        receipt => Some(serde_json::from_slice(receipt).map_err(|_| corrupt())?),
+    };
     let id = |start| {
         let bytes: [u8; 16] = raw[start..start + 16].try_into().map_err(|_| corrupt())?;
         EntityId::from_bytes(bytes).map_err(|_| corrupt())
@@ -171,12 +220,12 @@ fn decode(raw: &[u8]) -> Result<CodeRunCompactionCoverage> {
         first: number(57)?,
         last: number(65)?,
         calls: number(73)?,
-        digest: raw[81..].try_into().map_err(|_| corrupt())?,
+        digest: raw[81..BODY_LEN].try_into().map_err(|_| corrupt())?,
     };
     if row.epoch == 0 || row.first > row.last {
         return Err(corrupt());
     }
-    Ok(row)
+    Ok((row, writer))
 }
 
 /// The bound SUMMARY's prose, or `None` once it is withdrawn: erased, stale
@@ -217,13 +266,15 @@ impl ExecutorOutputSpan {
     /// Called only by the epoch mint's transaction, after its actual SUMMARY
     /// row has been put, on the target it was put on: base, or the run's
     /// room. A post-write refusal rolls back both rows.
+    /// A self-written summary's `writer` receipt rides its row (FIX 4465).
     pub(crate) fn put_coverage_in(
         &self,
         dbs: &impl ManifestDbs,
         txn: &mut heed::RwTxn<'_>,
         mint: &EpochMint,
+        writer: Option<&CompactionExecution>,
     ) -> Result<()> {
-        put_coverage_in(dbs, txn, self, mint)
+        put_coverage_in(dbs, txn, self, mint, writer)
     }
 }
 
@@ -232,6 +283,7 @@ fn put_coverage_in(
     txn: &mut heed::RwTxn<'_>,
     span: &ExecutorOutputSpan,
     mint: &EpochMint,
+    writer: Option<&CompactionExecution>,
 ) -> Result<()> {
     if span.session_ref != mint.session_ref()
         || span.first != mint.turn_start()
@@ -295,7 +347,15 @@ fn put_coverage_in(
             "duplicate executor compaction coverage",
         ));
     }
-    COVERAGE.put(dbs, txn, &key, &row)?;
+    WRITTEN.put(
+        dbs,
+        txn,
+        &key,
+        &WrittenCoverage {
+            row,
+            writer: writer.cloned(),
+        },
+    )?;
     #[cfg(test)]
     if span.fail_after_write {
         return Err(Error::InvariantViolation(
@@ -351,8 +411,9 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         span: &ExecutorOutputSpan,
         mint: &EpochMint,
+        writer: Option<&CompactionExecution>,
     ) -> Result<()> {
-        span.put_coverage_in(&self.store, txn, mint)
+        span.put_coverage_in(&self.store, txn, mint, writer)
     }
 
     /// The run's coverage rows, verified as [`Self::code_run_compaction_epochs`].
