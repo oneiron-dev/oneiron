@@ -188,6 +188,12 @@ impl SyncClient {
         // The stamps the update holds are charged with it, and a deferred
         // update holds none (Astra-b F2 on #1432).
         let writes = admitted.writes();
+        // Review sees every part the update lands as, each under the window
+        // it imports into; the work stays the request's (FIX 3662).
+        let parts = admitted
+            .parts()
+            .map(|part| (part.key().as_str(), part.bytes()))
+            .collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,
             &peer,
@@ -195,7 +201,7 @@ impl SyncClient {
             kind,
             update,
             writes,
-            Some(admitted.bytes()),
+            Some(parts.as_slice()),
         )
         .map_err(map_federated_admission_err)?;
         if let FederationBurstDecision::Defer { request_id, inputs }
