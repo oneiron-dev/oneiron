@@ -64,9 +64,11 @@ vaultFanoutAck(input: unknown): unknown
 tasksUpdate(input: unknown): unknown
 tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
-vaultClaimsUpsert(claim: ClaimInput): CommitReceipt
+vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
 vaultExport(input: unknown): unknown
+vaultScopeCeiling(input: unknown): unknown
+vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
@@ -88,6 +90,22 @@ vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
+vaultSkillHubsPut(input: unknown): unknown
+vaultSkillHubsGet(input: unknown): unknown
+vaultSkillHubsPublishersAdmit(input: unknown): unknown
+vaultSkillHubsPublishersRevoke(input: unknown): unknown
+vaultSkillHubsRefsGet(input: unknown): unknown
+vaultSkillHubsRefsSet(input: unknown): unknown
+vaultPacksInstall(input: unknown): unknown
+vaultPacksSync(input: unknown): unknown
+vaultPacksGet(input: unknown): unknown
+vaultSkillsImport(input: unknown): unknown
+vaultSkillsSync(input: unknown): unknown
+vaultSkillsReceipts(input: unknown): unknown
+vaultSkillsPermissionsApprove(input: unknown): unknown
+vaultPacksHooksBind(input: unknown): unknown
+vaultPacksHooksList(input: unknown): unknown
+vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
@@ -303,6 +321,10 @@ vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
+vaultBookingPageToken(input: unknown): unknown
+vaultCalendarRead(input: unknown): unknown
+vaultCalendarSearch(input: unknown): unknown
+vaultCalendarFreebusy(input: unknown): unknown
 vaultClaimsList(input: unknown): unknown
 vaultClaimsHistory(input: unknown): unknown
 vaultDelete(input: unknown): unknown

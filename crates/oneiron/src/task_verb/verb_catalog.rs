@@ -41,6 +41,8 @@ pub enum AgentVerb {
     VaultClaimsUpsert,
     VaultRecall,
     VaultExport,
+    VaultScopeCeiling,
+    VaultExportScoped,
     VaultReceipts,
     VaultImagesView,
     VaultReceiptsGet,
@@ -62,6 +64,22 @@ pub enum AgentVerb {
     VaultWeaveOwnerLinkWrong,
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
+    VaultSkillHubsPut,
+    VaultSkillHubsGet,
+    VaultSkillHubsPublishersAdmit,
+    VaultSkillHubsPublishersRevoke,
+    VaultSkillHubsRefsGet,
+    VaultSkillHubsRefsSet,
+    VaultPacksInstall,
+    VaultPacksSync,
+    VaultPacksGet,
+    VaultSkillsImport,
+    VaultSkillsSync,
+    VaultSkillsReceipts,
+    VaultSkillsPermissionsApprove,
+    VaultPacksHooksBind,
+    VaultPacksHooksList,
+    VaultPacksHooksQualify,
     VaultPacksPut,
     VaultPacksRemove,
     VaultConnectorsSubscriptionsPut,
@@ -317,6 +335,10 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingPageToken,
+    VaultCalendarRead,
+    VaultCalendarSearch,
+    VaultCalendarFreebusy,
     VaultClaimsList,
     VaultClaimsHistory,
     VaultDelete,
@@ -440,6 +462,8 @@ impl AgentVerb {
         Self::VaultClaimsUpsert,
         Self::VaultRecall,
         Self::VaultExport,
+        Self::VaultScopeCeiling,
+        Self::VaultExportScoped,
         Self::VaultReceipts,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
@@ -461,6 +485,22 @@ impl AgentVerb {
         Self::VaultWeaveOwnerLinkWrong,
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
+        Self::VaultSkillHubsPut,
+        Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsPublishersAdmit,
+        Self::VaultSkillHubsPublishersRevoke,
+        Self::VaultSkillHubsRefsGet,
+        Self::VaultSkillHubsRefsSet,
+        Self::VaultPacksInstall,
+        Self::VaultPacksSync,
+        Self::VaultPacksGet,
+        Self::VaultSkillsImport,
+        Self::VaultSkillsSync,
+        Self::VaultSkillsReceipts,
+        Self::VaultSkillsPermissionsApprove,
+        Self::VaultPacksHooksBind,
+        Self::VaultPacksHooksList,
+        Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
         Self::VaultPacksRemove,
         Self::VaultConnectorsSubscriptionsPut,
@@ -716,6 +756,10 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingPageToken,
+        Self::VaultCalendarRead,
+        Self::VaultCalendarSearch,
+        Self::VaultCalendarFreebusy,
         Self::VaultClaimsList,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
@@ -842,6 +886,8 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => "vault.claims.upsert",
             Self::VaultRecall => "vault.recall",
             Self::VaultExport => "vault.export",
+            Self::VaultScopeCeiling => "vault.scope.ceiling",
+            Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
@@ -863,6 +909,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
+            Self::VaultSkillHubsPut => "vault.skill_hubs.put",
+            Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
+            Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
+            Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
+            Self::VaultSkillHubsRefsSet => "vault.skill_hubs.refs.set",
+            Self::VaultPacksInstall => "vault.packs.install",
+            Self::VaultPacksSync => "vault.packs.sync",
+            Self::VaultPacksGet => "vault.packs.get",
+            Self::VaultSkillsImport => "vault.skills.import",
+            Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsReceipts => "vault.skills.receipts",
+            Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
+            Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
+            Self::VaultPacksHooksList => "vault.packs.hooks.list",
+            Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksRemove => "vault.packs.remove",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
@@ -1122,6 +1184,10 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::VaultCalendarRead => "vault.calendar.read",
+            Self::VaultCalendarSearch => "vault.calendar.search",
+            Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
@@ -1248,6 +1314,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::VaultScopeCeiling
+                | Self::VaultExportScoped
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
@@ -1269,6 +1337,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -1484,6 +1568,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingPageToken
+                | Self::VaultCalendarRead
+                | Self::VaultCalendarSearch
+                | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -1654,6 +1742,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultExport
+                | Self::VaultScopeCeiling
+                | Self::VaultExportScoped
                 | Self::VaultReceipts
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
@@ -1675,6 +1765,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -1890,6 +1996,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingPageToken
+                | Self::VaultCalendarRead
+                | Self::VaultCalendarSearch
+                | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -1997,6 +2107,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
                 | Self::VaultMeshPathReceipts
                 | Self::VaultSharedOutcomes
                 | Self::VaultMembersInvitations
@@ -2045,6 +2157,14 @@ impl AgentVerb {
                 | Self::SelfInboxList
                 | Self::SelfInboxMark
                 | Self::Describe
+                | Self::VaultClaimsUpsert
+                | Self::VaultRecall
+                | Self::VaultScopeCeiling
+                | Self::VaultExportScoped
+                | Self::VaultCommit
+                | Self::VaultCalendarRead
+                | Self::VaultCalendarSearch
+                | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
@@ -2053,6 +2173,7 @@ impl AgentVerb {
                 | Self::VaultRefsLinks
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
+                | Self::VaultClaimsSeed
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
                 | Self::VaultNotesEditorBind
@@ -2088,8 +2209,6 @@ impl AgentVerb {
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
                 | Self::VaultWitness
-                | Self::VaultClaimsUpsert
-                | Self::VaultRecall
                 | Self::VaultExport
                 | Self::VaultReceipts
                 | Self::VaultImagesView
@@ -2112,6 +2231,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -2363,10 +2498,10 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
-                | Self::VaultCommit
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingPageToken
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -2408,7 +2543,6 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
-                | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
                 | Self::VaultChannelIdentitiesFulfill
@@ -2475,6 +2609,17 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -2753,6 +2898,8 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultScopeCeiling => &["spec"],
+            Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
@@ -2774,6 +2921,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultSkillHubsPut => &["spec"],
+            Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsPublishersAdmit => &["spec"],
+            Self::VaultSkillHubsPublishersRevoke => &["spec"],
+            Self::VaultSkillHubsRefsGet => &["spec"],
+            Self::VaultSkillHubsRefsSet => &["spec"],
+            Self::VaultPacksInstall => &["spec"],
+            Self::VaultPacksSync => &["spec"],
+            Self::VaultPacksGet => &["spec"],
+            Self::VaultSkillsImport => &["spec"],
+            Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultPacksHooksBind => &["spec"],
+            Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
@@ -3029,6 +3192,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarRead => &["spec"],
+            Self::VaultCalendarSearch => &["spec"],
+            Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3153,6 +3320,8 @@ impl AgentVerb {
             Self::VaultClaimsUpsert => &["spec"],
             Self::VaultRecall => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultScopeCeiling => &["spec"],
+            Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
@@ -3174,6 +3343,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultSkillHubsPut => &["spec"],
+            Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsPublishersAdmit => &["spec"],
+            Self::VaultSkillHubsPublishersRevoke => &["spec"],
+            Self::VaultSkillHubsRefsGet => &["spec"],
+            Self::VaultSkillHubsRefsSet => &["spec"],
+            Self::VaultPacksInstall => &["spec"],
+            Self::VaultPacksSync => &["spec"],
+            Self::VaultPacksGet => &["spec"],
+            Self::VaultSkillsImport => &["spec"],
+            Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultPacksHooksBind => &["spec"],
+            Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
@@ -3429,6 +3614,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarRead => &["spec"],
+            Self::VaultCalendarSearch => &["spec"],
+            Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3614,13 +3803,19 @@ impl AgentVerb {
                 "Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch."
             }
             Self::VaultClaimsUpsert => {
-                "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate."
+                "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."
             }
             Self::VaultRecall => {
                 "Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting."
             }
             Self::VaultExport => {
                 "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only."
+            }
+            Self::VaultScopeCeiling => {
+                "Reads the caller credential ceiling as a typed ceiling, never as a record position."
+            }
+            Self::VaultExportScoped => {
+                "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding."
             }
             Self::VaultReceipts => {
                 "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."
@@ -3684,6 +3879,52 @@ impl AgentVerb {
             }
             Self::VaultWeaveOwnerItemWrong => {
                 "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
+            Self::VaultSkillHubsPut => {
+                "The owner registers or revises a hub source; hub trust never grants activation authority."
+            }
+            Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsPublishersAdmit => {
+                "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
+            }
+            Self::VaultSkillHubsPublishersRevoke => {
+                "The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running."
+            }
+            Self::VaultSkillHubsRefsGet => {
+                "Reads one hub ref policy, pin and separate seen and trusted revisions as the owner."
+            }
+            Self::VaultSkillHubsRefsSet => {
+                "The owner changes one hub ref policy and pin without fetching or trusting new bytes."
+            }
+            Self::VaultPacksInstall => {
+                "The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent."
+            }
+            Self::VaultPacksSync => {
+                "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent."
+            }
+            Self::VaultPacksGet => {
+                "Reads an installed pack and its exact source, pin, publisher and requested powers as the owner."
+            }
+            Self::VaultSkillsImport => {
+                "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."
+            }
+            Self::VaultSkillsSync => {
+                "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsReceipts => {
+                "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
+            }
+            Self::VaultSkillsPermissionsApprove => {
+                "The owner answers one imported skill permission ask at its exact hub source."
+            }
+            Self::VaultPacksHooksBind => {
+                "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
+            }
+            Self::VaultPacksHooksList => {
+                "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."
+            }
+            Self::VaultPacksHooksQualify => {
+                "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."
             }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
@@ -4367,6 +4608,18 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingPageToken => {
+                "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
+            }
+            Self::VaultCalendarRead => {
+                "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
+            }
+            Self::VaultCalendarSearch => {
+                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."
+            }
+            Self::VaultCalendarFreebusy => {
+                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."

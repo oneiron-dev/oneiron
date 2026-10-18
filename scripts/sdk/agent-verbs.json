@@ -566,37 +566,22 @@
     },
     {
       "name": "vault.claims.upsert",
-      "description": "Commits one claim through the gate, superseding the prior active claim on the same subject, scope and predicate.",
-      "refs": ["/subject_ref", "/world_ref", "/relationship_ref"],
-      "input": "crate::memory::ClaimInput",
+      "description": "Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance.",
+      "refs": [
+        "/subject_ref",
+        "/evidence_turn_refs/*"
+      ],
+      "input": "crate::memory::ScopedClaimInput",
       "output": "crate::memory::CommitReceipt",
-      "call": "memory.claim_upsert(&input)?",
+      "call": "memory.claim_upsert_scoped(&input)?",
       "scope": "Write",
       "proposes": true,
       "admission": {
-        "validate": "crate::memory::caps::check_claim_input(&input)?;"
+        "claim_record_scope": true
       },
       "section": false,
       "mcp_served_output": "[Some(output.claim_short_id.as_str()), output.superseded_short_id.as_deref()].into_iter().flatten().filter_map(|reference| oneiron::memory::resolve_entity_ref(&server.vault, reference).ok())",
-      "binding": {
-        "args": [
-          {
-            "name": "claim",
-            "kind": "claim"
-          }
-        ],
-        "docs": {
-          "remote": "    /// Upserts one claim through the gated claim-candidate path.\n",
-          "ts": "/** Upserts one claim. The consent gate, not this call, decides approval. */",
-          "py": "Upserts one claim. The consent gate, not this call, decides approval."
-        }
-      },
-      "uniffi": {
-        "args": {
-          "claim": "ClaimInput"
-        },
-        "output": "CommitReceipt"
-      }
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.recall",
@@ -673,7 +658,8 @@
           "query_affect": "Option<QueryAffect>"
         },
         "output": "MemoryPack"
-      }
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.export",
@@ -703,6 +689,32 @@
           "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
         }
       }
+    },
+    {
+      "name": "vault.scope.ceiling",
+      "description": "Reads the caller credential ceiling as a typed ceiling, never as a record position.",
+      "input": "EmptyRequest",
+      "output": "crate::memory::CredentialCeiling",
+      "call": "memory.credential_ceiling()?",
+      "scope": "Read",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.export.scoped",
+      "description": "Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding.",
+      "input": "crate::memory::ScopedExportRequest",
+      "output": "crate::memory::ScopedExport",
+      "call": "memory.export_scoped(&input)?",
+      "scope": "Read",
+      "admission": {
+        "scoped_export": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
     },
     {
       "name": "vault.receipts",
@@ -1072,6 +1084,229 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.put",
+      "description": "The owner registers or revises a hub source; hub trust never grants activation authority.",
+      "input": "SkillHubPutRequest",
+      "output": "crate::task_verb::sdk::SkillHubConfigured",
+      "call": "crate::task_verb::sdk::skill_hub_put_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.put\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.get",
+      "description": "Reads one configured hub as the owner.",
+      "input": "SkillHubRequest",
+      "output": "crate::skill_hub::SkillHubRecord",
+      "call": "crate::task_verb::sdk::skill_hub_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.publishers.admit",
+      "description": "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else.",
+      "input": "SkillPublisherRequest",
+      "output": "crate::task_verb::sdk::SkillPublisherAdmission",
+      "call": "crate::task_verb::sdk::skill_publisher_admit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.admit\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.publishers.revoke",
+      "description": "The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running.",
+      "input": "SkillPublisherRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::skill_publisher_revoke_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.publishers.revoke\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.refs.get",
+      "description": "Reads one hub ref policy, pin and separate seen and trusted revisions as the owner.",
+      "input": "HubRefRequest",
+      "output": "Option<crate::skill_hub::TrackedHubRef>",
+      "call": "crate::task_verb::sdk::hub_ref_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.refs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skill_hubs.refs.set",
+      "description": "The owner changes one hub ref policy and pin without fetching or trusting new bytes.",
+      "input": "HubRefSetRequest",
+      "output": "crate::skill_hub::TrackedHubRef",
+      "call": "crate::task_verb::sdk::hub_ref_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skill_hubs.refs.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.install",
+      "description": "The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent.",
+      "input": "HubImportRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::hub_pack_install_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.install\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.sync",
+      "description": "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent.",
+      "input": "HubPackRequest",
+      "output": "crate::task_verb::sdk::PackPutReceipt",
+      "call": "crate::task_verb::sdk::hub_pack_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.sync\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.get",
+      "description": "Reads an installed pack and its exact source, pin, publisher and requested powers as the owner.",
+      "input": "HubPackRequest",
+      "output": "Option<crate::skill_hub::pack_catalog::PackInstallReceipt>",
+      "call": "crate::task_verb::sdk::hub_pack_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.import",
+      "description": "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask.",
+      "input": "HubImportRequest",
+      "output": "crate::task_verb::sdk::HubSkillImported",
+      "call": "crate::task_verb::sdk::hub_skill_import_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.import\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.sync",
+      "description": "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::HubSkillSyncReceipt",
+      "call": "crate::task_verb::sdk::hub_skill_sync_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.sync\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.receipts",
+      "description": "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::HubSkillReceipts",
+      "call": "crate::task_verb::sdk::hub_skill_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.receipts\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.permissions.approve",
+      "description": "The owner answers one imported skill permission ask at its exact hub source.",
+      "input": "HubSkillPermissionRequest",
+      "output": "crate::task_verb::sdk::HubConsentReceipt",
+      "call": "crate::task_verb::sdk::hub_skill_permissions_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.permissions.approve\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.bind",
+      "description": "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign.",
+      "input": "HubHookBindRequest",
+      "output": "Vec<crate::EntityId>",
+      "call": "crate::task_verb::sdk::hub_hooks_bind_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.bind\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.list",
+      "description": "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants.",
+      "input": "EmptyRequest",
+      "output": "Vec<crate::task_verb::sdk::HubHookBindingRow>",
+      "call": "crate::task_verb::sdk::hub_hooks_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.list\")?, &crate::task_verb::sdk::EmptyRequest {})?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.packs.hooks.qualify",
+      "description": "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks.",
+      "input": "HubHookQualifyRequest",
+      "output": "crate::task_verb::sdk::HubHookQualificationReceipt",
+      "call": "crate::task_verb::sdk::hub_hooks_qualify_embedded(memory, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
       "section": false
     },
     {
@@ -4530,26 +4765,25 @@
     {
       "name": "vault.commit",
       "description": "Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted.",
-      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
-      "uniffi": {
-        "args": {
-          "claims": "Vec<ClaimInput>"
-        },
-        "output": "Vec<CommitOutcome>"
-      },
-      "input": "CommitRequest",
+      "refs": [
+        "/claims/*/subject_ref",
+        "/claims/*/evidence_turn_refs/*"
+      ],
+      "input": "crate::memory::ScopedCommitRequest",
       "output": "Vec<crate::memory::CommitOutcome>",
-      "call": "memory.commit(&input.claims)?",
+      "call": "memory.commit_scoped(&input.claims, false)?",
       "scope": "Write",
       "admission": {
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+        "claim_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
       },
       "section": false,
       "binding": {
         "native": "agent_verb",
         "request": true
       },
-      "proposes": true
+      "proposes": true,
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.remember",
@@ -4616,6 +4850,58 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.booking.page_token",
+      "description": "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority.",
+      "input": "crate::task_verb::sdk::BookingPageTokenRequest",
+      "output": "crate::task_verb::sdk::BookingPageTokenResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.page_token\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.calendar.read",
+      "description": "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt.",
+      "input": "crate::calendar::CalendarReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>",
+      "call": "memory.calendar_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.search",
+      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt.",
+      "input": "crate::calendar::CalendarSearchRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>",
+      "call": "memory.calendar_search(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.freebusy",
+      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt.",
+      "input": "crate::task_verb::sdk::CalendarFreebusyRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>",
+      "call": "memory.calendar_freebusy(&input.calendars, input.range.to_time_range())?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
     },
     {
       "name": "vault.claims.list",
@@ -5814,19 +6100,17 @@
     {
       "name": "vault.claims.seed",
       "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
-      "refs": ["/claims/*/subject_ref", "/claims/*/world_ref", "/claims/*/relationship_ref"],
-      "uniffi": {
-        "args": {
-          "claims": "Vec<ClaimInput>"
-        },
-        "output": "Vec<CommitOutcome>"
-      },
-      "input": "CommitRequest",
+      "refs": [
+        "/claims/*/subject_ref",
+        "/claims/*/evidence_turn_refs/*"
+      ],
+      "input": "crate::memory::ScopedCommitRequest",
       "output": "Vec<crate::memory::CommitOutcome>",
-      "call": "memory_requests::seed_claims(memory, input)?",
+      "call": "memory.commit_scoped(&input.claims, true)?",
       "scope": "Write",
       "admission": {
-        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?; for claim in &input.claims { crate::memory::caps::check_claim_input(claim)?; }"
+        "claim_record_scope": true,
+        "validate": "crate::memory::caps::check_batch_len(\"claims\", input.claims.len())?;"
       },
       "section": false,
       "binding": {
@@ -5834,8 +6118,10 @@
         "request": true
       },
       "proposes": true,
-      "mcp_fields": {"spec": "$"},
-      "mcp_scope": "unrestricted"
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "filtered"
     },
     {
       "name": "vault.channel_identities.provision",

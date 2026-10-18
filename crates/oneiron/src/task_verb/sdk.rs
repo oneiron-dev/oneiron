@@ -498,6 +498,7 @@ pub use super::recall_door::{
     recall_with_vector,
 };
 pub use super::sdk_agents::*;
+pub use super::sdk_calendar::*;
 pub use super::sdk_workspace::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
@@ -513,6 +514,7 @@ pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
+pub use super::sdk_hub::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_live_run::*;
 pub use super::sdk_mesh::*;

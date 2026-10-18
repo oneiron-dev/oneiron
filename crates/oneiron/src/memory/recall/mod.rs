@@ -123,6 +123,12 @@ pub struct RecallScope {
     /// WORLD entity ref; scopes to that world plus base reality. Unset reads
     /// base plus the actor's active world (ARCH-0022), never every world.
     pub world_ref: Option<String>,
+    /// Explicit All, Base or world/set selection; a non-base selection can decline base.
+    #[serde(default)]
+    pub worlds: Option<super::RecallWorlds>,
+    /// Project audience ids. Empty requests add no narrowing to the credential.
+    #[serde(default)]
+    pub project_refs: Vec<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
     /// Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset
@@ -253,6 +259,8 @@ pub struct MemoryItem {
     pub world: Option<String>,
     /// Facet hex, when faceted.
     pub facet: Option<String>,
+    /// The claim's explicit project audience, not a topic or a WORLD.
+    pub project_ref: Option<String>,
     /// Salience, when stamped.
     pub salience: Option<f32>,
     /// A conversation record's current reactions, one grouped line per
@@ -622,16 +630,20 @@ impl Memory<'_> {
                 .vault
                 .scoped_read_in_session(canonical_lane.actor_key().clone(), view),
             None => canonical_lane,
-        }
-        .within_worlds(worlds.clone());
+        };
+        let lane = match &worlds {
+            Some(worlds) => lane.within_worlds(worlds.clone()),
+            None => lane,
+        };
+        let projects = self.selected_projects(scope)?;
         let mut receipt = lane.read_receipt(None, 0)?;
         let (plan_filter, plan_policy) = lane.recall_plan()?;
         let effective = effort;
         let deep_pending = None;
-        let world_scope = if worlds.include_base() && worlds.worlds().is_empty() {
-            WorldScope::Base
-        } else {
-            WorldScope::WorldSet(worlds.clone())
+        let world_scope = match &worlds {
+            None => WorldScope::All,
+            Some(worlds) if worlds.include_base() && worlds.worlds().is_empty() => WorldScope::Base,
+            Some(worlds) => WorldScope::WorldSet(worlds.clone()),
         };
         let pack_format = format.map(parse_pack_format).transpose()?;
         if receipt.applied.deny_all {
@@ -793,6 +805,7 @@ impl Memory<'_> {
                 pipeline = pipeline
                     .facet(&facet_id, FacetMode::Strict)
                     .world(world_scope)
+                    .corpus(projects.clone())
                     .retrieval_effort(effective, &seeds)
                     .authority_filter(plan_filter.clone());
                 // A caller off this device: no row a device-local world
@@ -893,6 +906,7 @@ impl Memory<'_> {
                 builder = builder
                     .limit(limit)
                     .world(world_scope)
+                    .corpus(projects.clone())
                     .retrieval_effort(effective, &seeds)
                     .authority_filter(plan_filter.clone());
                 builder = builder.filter_candidates(&admitted);
@@ -1046,8 +1060,9 @@ impl Memory<'_> {
             ready.retrieval_meta.partial = true;
             on_cut(ready);
         }
-        pack.scope_honesty =
-            self.out_of_scope_worlds(&census, &mut pack.narrowing, &worlds, execution.deadline)?;
+        if let Some(worlds) = &worlds {
+            pack.scope_honesty = self.out_of_scope_worlds(&census, &mut pack.narrowing, worlds, execution.deadline)?;
+        }
         Ok(pack)
     }
 }
@@ -1084,26 +1099,16 @@ impl Memory<'_> {
     fn recall_worlds(
         &self,
         scope: &RecallScope,
-    ) -> MemoryResult<crate::pipeline::WorldAuthoritySet> {
-        let requested = match &scope.world_ref {
-            Some(world_ref) => {
-                crate::pipeline::WorldAuthoritySet::new(true, [self.resolve_ref(world_ref)?])?
-            }
-            None => self
-                .reading_defaults(&[self.actor])?
-                .pop()
-                .expect("one default per actor"),
-        };
+    ) -> MemoryResult<Option<crate::pipeline::WorldAuthoritySet>> {
+        let requested = self.selected_worlds(scope)?;
         let room = match self.room_turn_now()? {
             Some(turn) => crate::context_board::scope_worlds(&turn.terms.get().worlds)?,
             None => None,
         };
-        Ok(match room {
-            Some(room) => crate::pipeline::WorldAuthoritySet::new(
-                requested.include_base() && room.include_base(),
-                requested.worlds().intersection(room.worlds()).copied(),
-            )?,
-            None => requested,
+        Ok(match (requested, room) {
+            (Some(requested), Some(room)) => Some(requested.meet(&room)),
+            (requested, None) => requested,
+            (None, room) => room,
         })
     }
 }
