@@ -14254,6 +14254,7 @@
      "path": "src/commitment/write.rs",
      "purpose": "Vault commitment write verbs over the gated claim path",
      "surface": {
+      "crate-vis": 1,
       "fn": 6
      }
     },
@@ -14284,6 +14285,7 @@
      "purpose": "Commitment fulfillment and gap-decay lifecycle (CMT-4, ONE-1541)",
      "surface": {
       "const": 2,
+      "crate-vis": 2,
       "fn": 7,
       "struct": 3
      }
@@ -14356,7 +14358,7 @@
      "path": "src/commitment_schedule/projection.rs",
      "purpose": "The durable projection layer: series indexing, occurrence minting, and the close hook",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -32418,6 +32420,50 @@
      "bucket": "m",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/commitment_doors/mod.rs",
+     "purpose": "Typed indexed commitment birth, observation and explicit lifecycle effects",
+     "surface": {
+      "fn": 7,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CommitmentBirthKind",
+      "CommitmentBirthProvenance",
+      "CommitmentCloseRequest",
+      "CommitmentContent",
+      "CommitmentCreateReceipt",
+      "CommitmentCreateRequest",
+      "CommitmentFulfillRequest",
+      "CommitmentFulfillmentSource",
+      "CommitmentIndexOutcome",
+      "CommitmentLifecycleReceipt",
+      "CommitmentObligor",
+      "CommitmentObligorKind",
+      "CommitmentOccurrence",
+      "CommitmentQuotaWindow",
+      "CommitmentRefRequest",
+      "CommitmentSchedule",
+      "CommitmentStatus",
+      "CommitmentStrength",
+      "CommitmentView",
+      "CommitmentWakePhase",
+      "CommitmentWakeProposal"
+     ],
+     "path": "src/memory/commitment_doors/types.rs",
+     "purpose": "Public commitment shapes",
+     "surface": {
+      "enum": 9,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/conflict_settle.rs",
      "purpose": "The authorised responder's door to a parked contradiction (OF-023)",
      "surface": {
@@ -32934,7 +32980,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 19,
+      "mod": 20,
       "re-export": 47
      }
     },
@@ -52329,7 +52375,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 892
+      "fn": 899
      }
     },
     {
@@ -59220,7 +59266,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 197,
+     "files": 199,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59901,7 +59947,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3654,
+   "source_files": 3656,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68445,7 +68491,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 861
+      "fn": 868
      }
     },
     {
@@ -69508,7 +69554,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 862
+      "fn": 869
      }
     },
     {
@@ -72658,6 +72704,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/commitment_doors.rs",
+     "purpose": "Owner-bound projections of the typed commitment lifecycle",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/compliance_doors.rs",
      "purpose": "Compliance owner decisions use the request's owner proof and its own Memory",
      "surface": {
@@ -72981,7 +73037,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 144
+      "crate-vis": 145
      }
     },
     {
@@ -80901,7 +80957,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 408,
+     "files": 409,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81330,7 +81386,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 757,
+   "source_files": 758,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82056,6 +82112,27 @@
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CommitmentBirthKind",
+      "CommitmentBirthProvenance",
+      "CommitmentCloseRequest",
+      "CommitmentContent",
+      "CommitmentCreateReceipt",
+      "CommitmentCreateRequest",
+      "CommitmentFulfillRequest",
+      "CommitmentFulfillmentSource",
+      "CommitmentIndexOutcome",
+      "CommitmentLifecycleReceipt",
+      "CommitmentObligor",
+      "CommitmentObligorKind",
+      "CommitmentOccurrence",
+      "CommitmentQuotaWindow",
+      "CommitmentRefRequest",
+      "CommitmentSchedule",
+      "CommitmentStatus",
+      "CommitmentStrength",
+      "CommitmentView",
+      "CommitmentWakePhase",
+      "CommitmentWakeProposal",
       "CompactionWindowMessage",
       "CompanionAccessRequestAnswer",
       "CompanionAccessRequestAnswerRequest",
@@ -84468,8 +84545,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 722,
-      "struct": 2218
+      "enum": 731,
+      "struct": 2230
      }
     },
     {
