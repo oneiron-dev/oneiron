@@ -19,7 +19,7 @@ pub(super) const TASK_REALIZE_ATTEMPT_KIND: &str = "tasks.realize";
 pub(super) const TASK_FOLLOW_UP_NAMESPACE: &str = "tasks.followup.v1";
 /// The ONE-1699 follow-up stage.
 pub const TASK_FOLLOW_UP_STAGE_CONSULT_EXPIRED: &str = "consult_expired";
-/// Page size for the bounded TASK walk in [`Memory::settle_due_consults`](crate::memory::Memory::settle_due_consults).
+/// Page size for the paged TASK walk in [`Vault::settle_due_consults`](crate::Vault::settle_due_consults).
 pub(super) const CONSULT_SETTLE_PAGE: usize = 256;
 pub(super) const TASK_CREATE_PROPOSAL_PREDICATE: &str = "tasks.create";
 /// The stored predicate of a cancel proposal claim. It is a storage string, not

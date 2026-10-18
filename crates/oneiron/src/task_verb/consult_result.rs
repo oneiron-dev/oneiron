@@ -134,16 +134,24 @@ pub struct ConsultFanOutReceipt {
     pub shipped_policy_rows: Vec<String>,
 }
 
-/// Host-supplied addressing for the ARCH-0046 expiry digest, plus the typed
-/// recovery choices the lens renders.
+/// Host-resolved native addressing for ONE asker's ARCH-0046 expiry digest.
+/// It carries no sending authority: the digest goes out as the task's own
+/// create owner, and its recovery choices are the engine's fixed
+/// `CONSULT_EXPIRY_RECOVERY`, offered whether or not a route exists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConsultDigestRoute {
     pub verb: String,
     pub channel: String,
     pub target: String,
-    pub on_behalf_of: Option<String>,
-    pub recovery: Vec<ConsultRecovery>,
 }
+
+/// The typed recovery choices every consult expiry offers. One constant, so a
+/// later ruling on what an expiry offers changes one line.
+pub(super) const CONSULT_EXPIRY_RECOVERY: [ConsultRecovery; 3] = [
+    ConsultRecovery::RetryAssignee,
+    ConsultRecovery::NudgeAssignee,
+    ConsultRecovery::TryPeer(None),
+];
 
 /// Outcome of one TTL reconciliation sweep.
 #[derive(Debug, Clone, PartialEq, Eq)]

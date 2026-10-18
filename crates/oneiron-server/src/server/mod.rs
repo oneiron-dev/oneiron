@@ -4,6 +4,7 @@ mod board_publisher;
 mod browser_seats;
 mod connector_events;
 mod connector_sends;
+mod consult_settle;
 mod cooperative_deletion;
 mod core;
 mod desktop_seats;

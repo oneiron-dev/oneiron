@@ -54,6 +54,18 @@ pub(crate) fn human_followup_record_in_txn(
     storage::followup_record_in_txn(vault, rtxn, task_ref)
 }
 
+/// [`resolve_native_human_route`] for the identity `sender_ref` sends from, in
+/// a read snapshot of its own: a route only on the identity the outbound
+/// chokepoint selects for that sender, with the person's `comm.*` vetoes.
+pub fn resolve_native_human_route_for_actor(
+    vault: &crate::Vault,
+    person_ref: crate::EntityId,
+    sender_ref: crate::EntityId,
+) -> HumanTaskResult<NativeHumanRoute> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    resolve_native_human_route_for_actor_in(vault, &txn, person_ref, sender_ref, &mut Vec::new())
+}
+
 #[cfg(test)]
 mod followup_tests;
 #[cfg(test)]

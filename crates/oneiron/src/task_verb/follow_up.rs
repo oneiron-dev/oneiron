@@ -7,6 +7,7 @@ use crate::side_table::{self, SideKey, SideTable};
 
 use super::consts::TASK_FOLLOW_UP_NAMESPACE;
 use super::consult_payload::ConsultRecovery;
+use super::terminal_state::TaskLapseCause;
 use super::wire_decode::{decode_entity_ref, task_body_field};
 use super::wire_encode::entity_ref_value;
 use crate::error::RecordError;
@@ -107,16 +108,19 @@ pub(super) fn peer_handle_in(
     Ok(String::from_utf8(raw).ok())
 }
 
-/// The durable expiry artifact. It carries TYPED recovery choices — the
-/// consuming lens localizes the human sentence, so no product prose lives here.
+/// The durable expiry artifact. It names the engine-caused lapse that settled
+/// the task and carries TYPED recovery choices — the consuming lens localizes
+/// the human sentence, so no product prose lives here.
 pub(super) fn consult_expiry_artifact_value(
     task_ref: EntityId,
-    deadline_at: u64,
+    cause: TaskLapseCause,
     expired_at: u64,
     recovery: &[ConsultRecovery],
 ) -> Value {
+    let TaskLapseCause::ConsultDeadlineElapsed { deadline_at } = cause;
     Value::Map(vec![
         (Value::from("kind"), Value::from("consult.expiry")),
+        (Value::from("cause"), Value::from(cause.as_str())),
         (Value::from("task_ref"), entity_ref_value(task_ref)),
         (Value::from("deadline_at"), Value::from(deadline_at)),
         (Value::from("expired_at"), Value::from(expired_at)),
@@ -132,8 +136,9 @@ pub(super) fn consult_expiry_artifact_value(
                             (
                                 Value::from("actor_ref"),
                                 match choice {
+                                    // `Nil` is the generic "try another peer".
                                     ConsultRecovery::TryPeer(actor_ref) => {
-                                        entity_ref_value(actor_ref)
+                                        actor_ref.map_or(Value::Nil, entity_ref_value)
                                     }
                                     ConsultRecovery::RetryAssignee
                                     | ConsultRecovery::NudgeAssignee => Value::Nil,
@@ -172,10 +177,15 @@ pub fn decode_consult_expiry_recovery(artifact_body: &[u8]) -> Result<Vec<Consul
             match task_body_field(entry, "choice")?.as_str() {
                 Some("retry_assignee") => Ok(ConsultRecovery::RetryAssignee),
                 Some("nudge_assignee") => Ok(ConsultRecovery::NudgeAssignee),
-                Some("try_peer") => Ok(ConsultRecovery::TryPeer(decode_entity_ref(
-                    task_body_field(entry, "actor_ref")?,
-                    "tasks.consult.expiry",
-                )?)),
+                Some("try_peer") => {
+                    let actor_ref = task_body_field(entry, "actor_ref")?;
+                    let peer = if actor_ref.is_nil() {
+                        None
+                    } else {
+                        Some(decode_entity_ref(actor_ref, "tasks.consult.expiry")?)
+                    };
+                    Ok(ConsultRecovery::TryPeer(peer))
+                }
                 _ => Err(Error::Record(RecordError::InvalidTaskBody(
                     "tasks.consult.expiry",
                 ))),

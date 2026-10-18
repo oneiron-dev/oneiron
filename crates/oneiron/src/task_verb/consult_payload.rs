@@ -203,7 +203,9 @@ impl ConsultPayload {
 pub enum ConsultRecovery {
     RetryAssignee,
     NudgeAssignee,
-    TryPeer(EntityId),
+    /// Ask a peer instead: the named one, or `None` for "try another peer",
+    /// which leaves the choice of peer to whoever takes the recovery.
+    TryPeer(Option<EntityId>),
 }
 
 impl ConsultRecovery {
