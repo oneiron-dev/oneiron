@@ -4,8 +4,8 @@ use std::ops::Bound;
 use serde::{Deserialize, Serialize};
 
 use super::field_set::{
-    FIELD_EXECUTOR_SEAT, append_pack_attribution_fields, append_pack_manifest_fields,
-    append_task_type_fields, append_team_receipt_fields,
+    FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, append_pack_attribution_fields,
+    append_pack_manifest_fields, append_task_type_fields, append_team_receipt_fields,
 };
 #[cfg(test)]
 use super::kernel::ATTEMPT_PACK_SCAN_CAPPED;
@@ -137,6 +137,14 @@ pub(crate) fn stamp_attempt_pack_receipt_in_txn(
             receipt
                 .fields
                 .insert(FIELD_EXECUTOR_SEAT.to_owned(), seat.clone());
+        }
+        // OF-578: the functional role it ran as, in the role's serde token.
+        if let Some(role) = record.executor_role {
+            let token = serde_json::to_value(role)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .ok_or(Error::InvalidClaimBody("executor role has no token"))?;
+            receipt.fields.insert(FIELD_EXECUTOR_ROLE.to_owned(), token);
         }
         append_pack_manifest_fields(&mut receipt, record.manifest())?;
         if attributed {
