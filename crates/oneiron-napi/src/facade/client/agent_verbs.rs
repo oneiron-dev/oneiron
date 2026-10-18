@@ -361,6 +361,42 @@ impl NativeClient {
         memory_pack_from_engine(output).map_err(boundary_error)
     }
     #[napi]
+    pub fn vault_retrieval_weights_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.weights.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_weights_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.weights.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_annotations_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.annotations.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_affect_claims_consolidate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.affect.claims.consolidate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_retrieval_recall(
         &self,
         input: serde_json::Value,
@@ -3635,6 +3671,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_pack_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.pack_receipt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_outcomes_project(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.outcomes.project", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_outcomes_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.outcomes.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_steps_submit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.steps.submit", input)
@@ -3707,6 +3770,12 @@ impl NativeClient {
     pub fn ai_voice_close(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.voice.close", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_anonymous_chat(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.anonymous_chat", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -5381,6 +5450,12 @@ impl NativeClient {
     pub fn self_leader_split(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.leader.split", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_skills_call(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.skills.call", input)
             .map_err(facade_error)
     }
 }

@@ -51,6 +51,10 @@ both bindings and their export-census tests in one change.
 - `vault.witness`
 - `vault.claims.upsert`
 - `vault.recall`
+- `vault.retrieval.weights.get`
+- `vault.retrieval.weights.configure`
+- `vault.affect.annotations.put`
+- `vault.affect.claims.consolidate`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
 - `vault.retrieval.run`
@@ -402,6 +406,9 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `vault.skills.pack_receipt`
+- `vault.skills.outcomes.project`
+- `vault.skills.outcomes.get`
 - `ai.steps.submit`
 - `ai.steps.receipt`
 - `ai.reply`
@@ -414,6 +421,7 @@ both bindings and their export-census tests in one change.
 - `ai.voice.tool`
 - `ai.voice.end`
 - `ai.voice.close`
+- `ai.anonymous_chat`
 - `ai.options`
 - `ai.image`
 - `ai.speech`
