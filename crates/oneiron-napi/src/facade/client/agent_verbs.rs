@@ -3449,6 +3449,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_agents_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.agents.spawn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_tasks_cancel_force(
         &self,
         input: serde_json::Value,

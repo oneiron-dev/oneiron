@@ -3669,6 +3669,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agents_spawn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.spawn")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.spawn", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_tasks_cancel_force(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.tasks.cancel_force")?;
         let output = py

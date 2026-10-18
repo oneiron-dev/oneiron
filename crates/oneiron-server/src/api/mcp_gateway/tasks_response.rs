@@ -1244,6 +1244,7 @@ fn mcp_agent_verb_input(
         "vault.task_types.pin" => a.spec.clone().ok_or_else(invalid),
         "vault.task_types.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.spawn.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.spawn" => a.spec.clone().ok_or_else(invalid),
         "vault.tasks.cancel_force" => a.spec.clone().ok_or_else(invalid),
         "vault.runs.branches.get" => a.spec.clone().ok_or_else(invalid),
         "vault.consults.get" => a.spec.clone().ok_or_else(invalid),
@@ -2858,6 +2859,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.agents.spawn.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.spawn" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.tasks.cancel_force" => {
@@ -10456,6 +10460,24 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_agents_spawn_get(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.spawn" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.spawn", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::team::doors::SpawnIntentRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_agents_spawn(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

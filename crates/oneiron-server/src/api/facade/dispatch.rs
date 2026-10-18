@@ -9114,6 +9114,27 @@ async fn vault_agents_spawn_get(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_agents_spawn(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.agents.spawn")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.agents.spawn", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.agents.spawn", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_agents_spawn(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_tasks_cancel_force(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16174,6 +16195,7 @@ pub(crate) async fn call_verb(
         "vault.task_types.pin" => vault_task_types_pin(server, call, input).await,
         "vault.task_types.get" => vault_task_types_get(server, call, input).await,
         "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
+        "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
         "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
         "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
         "vault.consults.get" => vault_consults_get(server, call, input).await,

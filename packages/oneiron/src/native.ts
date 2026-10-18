@@ -420,6 +420,7 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultConsultsGet(input: unknown): unknown

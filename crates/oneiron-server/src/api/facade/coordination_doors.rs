@@ -1,6 +1,7 @@
 //! The owner's task-type tree doors (DOOR-111), with the owner's own proof:
 //! store an authored tree on an open team-shape fork as a candidate, and
-//! read the tree in force or one kept version; and the owner's read of one
+//! read the tree in force or one kept version; and the owner's launch of one
+//! planned agent or team on this host's planner, and the owner's read of one
 //! spawned agent by its attempt; and the owner's run doors over one TASK's
 //! branches (DOOR-100): the unrefusable force-stop of every live branch,
 //! and the read of every branch; and the owner's read of one consult's
@@ -8,20 +9,33 @@
 //! generated HTTP facade handler and the MCP dispatcher call them by the
 //! name every host door has.
 use std::sync::Arc;
+use std::time::Instant;
 
+use oneiron::agent_dispatch::PlannerDecisions;
+use oneiron::code_run::HostPlannerBinding;
+use oneiron::consent::AuthenticatedOwner;
+use oneiron::memory::{MemoryError, MemoryResult};
+use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::run_doors::{
     CancelForceReceipt, CancelForceRequest, ConsultInspection, ConsultReadRequest,
     ConsultSummaryView, RunBranchesRequest, RunBranchesView,
 };
+use oneiron::team::PlannedSpawnHost;
 use oneiron::team::doors::{
-    CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, TaskTypeTreePin,
-    TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply,
+    CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, SpawnIntentReply,
+    SpawnIntentRequest, TaskTypeTreePin, TaskTypeTreePinReceipt, TaskTypeTreeRead,
+    TaskTypeTreeReadReply,
 };
 
 use super::host_doors::{MaybeListed, owner_proof};
 use super::shared_act_doors::as_person_naming;
 use crate::auth::CoreAuth;
-use crate::server::SyncServer;
+use crate::server::{SyncServer, seated_planner};
+
+/// The placement adapter the owner's served launch is stated under: this
+/// host's own placement and planner, which keep no idempotency key.
+const OWNER_SPAWN_ADAPTER: &str = "server.owner_spawn.v1";
 
 /// A pin names the fork it stored the tree on.
 pub(crate) async fn vault_task_types_pin(
@@ -55,6 +69,114 @@ pub(crate) async fn vault_task_types_get(
         |read| Some(read.in_force_skill_ref.into_iter().collect()),
     )
     .await
+}
+
+/// A launch names each attempt it queued, the AGENT_DEF its plan seats and
+/// each skill revision its plan read or selected.
+pub(crate) async fn vault_agents_spawn(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SpawnIntentRequest,
+) -> MaybeListed<SpawnIntentReply> {
+    const VERB: &str = "vault.agents.spawn";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| served_spawn(server, &owner, input),
+        spawn_intent_rows,
+    )
+    .await
+}
+
+/// The owner's launch on this host's planner (DOOR-111): the seats and
+/// skills a leased run's planner resolves, the code-mode template's model
+/// as the executor, and the host's ladder for the type placement and the
+/// shape pick, each on a fresh hard clock of its budget. The launch is
+/// stated under no spend scope and no adapter key; the team's start is
+/// written on the house pattern runner. A host that lends no planner
+/// passes none, and the engine refuses before it reserves anything.
+fn served_spawn(
+    server: &Arc<SyncServer>,
+    owner: &AuthenticatedOwner,
+    input: SpawnIntentRequest,
+) -> MemoryResult<SpawnIntentReply> {
+    let vault = server.vault();
+    let at = vault.now_recorded_at();
+    let runner = server.pattern_launch_runner();
+    let Some(planner) = owner_planner(server, owner)? else {
+        return oneiron::team::doors::spawn_as_owner(vault, owner, input, None, runner, at);
+    };
+    // Built from the binding's own fields, as a leased run's are; the
+    // helpers that build those are the engine's.
+    let decisions = planner.decisions.as_ref();
+    let started = Instant::now();
+    let placement_clock =
+        decisions.map(|host| RetrievalDeadline::hard(started, host.placement_budget));
+    let planner_clock = decisions.map(|host| RetrievalDeadline::hard(started, host.planner_budget));
+    let placement = decisions
+        .zip(placement_clock.as_ref())
+        .map(|(host, deadline)| PlacementDecisions {
+            ladder: host.ladder.ladder(),
+            principal: host.principal,
+            dial: host.placement_dial,
+            bands: host.bands.clone(),
+            wording: host.placement_wording.clone(),
+            deadline,
+        });
+    let shape = decisions
+        .zip(planner_clock.as_ref())
+        .map(|(host, deadline)| PlannerDecisions {
+            ladder: host.ladder.ladder(),
+            principal: host.principal,
+            bands: host.bands.clone(),
+            wording: host.planner_wording.clone(),
+            deadline,
+        });
+    let host = PlannedSpawnHost {
+        seats: &planner.seats,
+        skills: &planner.skills,
+        executor: &planner.executor,
+        placement: placement.as_ref(),
+        planner: shape.as_ref(),
+        spend: None,
+        placement_adapter: OWNER_SPAWN_ADAPTER,
+        placement_key: None,
+    };
+    oneiron::team::doors::spawn_as_owner(vault, owner, input, Some(&host), runner, at)
+}
+
+/// This host's planner for the owner: the `[models.planner]` seats whose
+/// AGENT_DEF this vault holds and the shipped skills, through
+/// [`seated_planner`], on the code-mode template's model and the host's
+/// ladder for the owner. `None` when no code-mode host, no planner settings
+/// or no seat that resolves serves one.
+fn owner_planner<'s>(
+    server: &'s SyncServer,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<Option<HostPlannerBinding<'s>>> {
+    let Some(host) = server
+        .code_execution_host()
+        .and_then(|host| host.engine_native())
+    else {
+        return Ok(None);
+    };
+    let provider = host.provider();
+    let Some(settings) = provider.planner() else {
+        return Ok(None);
+    };
+    let vault = server.vault();
+    let principal = owner.revalidate(vault)?;
+    // The template seat's config, of which only the model is read: no run
+    // is entered on it, so the owner's id stands in for a run's.
+    let template = provider.executor_config(vault, principal, "")?;
+    seated_planner(
+        vault,
+        settings,
+        template.model.as_str(),
+        server.decision_host().host_planner_decisions(principal),
+    )
+    .map_err(MemoryError::bad_request)
 }
 
 /// A spawn read names the attempt, every attempt that launched with it and
@@ -148,6 +270,26 @@ fn consult_rows(read: &ConsultInspection) -> Option<Vec<oneiron::EntityId>> {
             None => {}
         }
         rows.extend(terminal.counter_task_ref);
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
+}
+
+fn spawn_intent_rows(reply: &SpawnIntentReply) -> Option<Vec<oneiron::EntityId>> {
+    let mut rows: Vec<_> = reply
+        .root_attempt
+        .into_iter()
+        .chain(reply.member_attempts.iter().copied())
+        .chain(reply.agent_def_ref)
+        .collect();
+    if let Some(plan) = &reply.plan {
+        rows.extend(
+            [&plan.team_shape, &plan.pattern_skill, &plan.rung_skill]
+                .into_iter()
+                .flatten()
+                .map(|skill| skill.skill_ref),
+        );
     }
     rows.sort_unstable();
     rows.dedup();

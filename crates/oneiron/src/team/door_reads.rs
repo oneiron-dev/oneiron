@@ -164,7 +164,7 @@ fn agent_dispatch(record: &AttemptRecord) -> Result<Option<AgentDispatchInput>> 
 }
 
 /// An attempt's id as the entity id its run and its wire ref carry.
-fn entity(attempt: AttemptId) -> Result<EntityId> {
+pub(super) fn entity(attempt: AttemptId) -> Result<EntityId> {
     EntityId::from_bytes(*attempt.as_bytes())
 }
 
@@ -350,7 +350,7 @@ fn leader_loaded(
     }))
 }
 
-fn plan_view(receipt: &SpawnPlanReceipt) -> PlanObservation {
+pub(super) fn plan_view(receipt: &SpawnPlanReceipt) -> PlanObservation {
     let plan = &receipt.plan;
     PlanObservation {
         type_ref: TypeStamp::from(&receipt.asked.type_ref),
