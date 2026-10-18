@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "board-large-output-recipe",
+  "encoding": "utf-8",
+  "kind": "text",
+  "mime": "text/plain",
+  "head": "BOARD-RESULT-HEAD-v1\n",
+  "row": "cedar|north-workshop|bay-east-4|measurement=42-grams|source=fixture\n",
+  "repeatCount": 18000,
+  "tail": "BOARD-RESULT-TAIL-cobalt-7319\n",
+  "canonInlineDefaultBytes": 1048576,
+  "expansion": "head + row.repeat(repeatCount) + tail; fixture text, never engine output",
+  "expected": {
+    "bytes": 1224051,
+    "sha256": "1eb8a1c6ff6555a5138846bfcb1a315e931b11f59a5dca72330a9833cf0062ce",
+    "tailStartByte": 1224021,
+    "complete": true
+  }
+}

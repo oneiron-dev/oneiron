@@ -1,0 +1,116 @@
+{
+  "version": 1,
+  "area": "learning",
+  "assets": [
+    {
+      "id": "learning-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-task-learning-synthetic-fixtures",
+        "revision": "learning-v1-2026-10-18"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "730f83579be3dc86f30bde720a7453213b4a9f99bb9e85eadcb5f745d1b524d4",
+      "expectedFacts": {
+        "planned_tests": 9,
+        "oracle": "independently authored synthetic labels",
+        "runnable_flows": 0,
+        "blocked_flows": 9
+      },
+      "scenarios": [
+        "LEARNING-01",
+        "LEARNING-02",
+        "LEARNING-03",
+        "LEARNING-04",
+        "LEARNING-05",
+        "LEARNING-06",
+        "LEARNING-07",
+        "LEARNING-08",
+        "LEARNING-09"
+      ],
+      "requires": []
+    },
+    {
+      "id": "learning-eval-families",
+      "path": "eval-families.json",
+      "source": {
+        "uri": "independent-oracle:owner-task-learning-synthetic-fixtures",
+        "revision": "learning-v1-2026-10-18"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4e65f3f431a605e0badc5d76ab1fd5cf86732971009d611c866d64cb4e40613b",
+      "expectedFacts": {
+        "source_families_split_atomically": true,
+        "rare_floor_verdict": "unknown",
+        "exposed_family_retires": "exposed-c",
+        "fixed_reference": "reference-f"
+      },
+      "scenarios": [
+        "LEARNING-03",
+        "LEARNING-06",
+        "LEARNING-07",
+        "LEARNING-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "learning-training-pairs",
+      "path": "training-pairs.json",
+      "source": {
+        "uri": "independent-oracle:owner-task-learning-synthetic-fixtures",
+        "revision": "learning-v1-2026-10-18"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "bb32e3976e709d843f05b57980b76d7546128284c7647097c98b03316dda38bc",
+      "expectedFacts": {
+        "permitted_pairs": [
+          "on-record-consented-a",
+          "on-record-consented-b"
+        ],
+        "unconsented_and_off_record_pairs_excluded": true,
+        "payloads": "fictional corrections, not vault seeds"
+      },
+      "scenarios": [
+        "LEARNING-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "learning-public-bindings",
+      "path": "bindings.json",
+      "source": {
+        "uri": "repository:oneiron-public-surface-inspection",
+        "revision": "f8e2f8397685bc63405bc1a303b65f94aa26c33d"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "00d7ed3ec8c0bde508efb0e95a8edf0c4d7aace056187e38dfc2aa1f1bdc0568",
+      "expectedFacts": {
+        "binding_head": "f8e2f8397685bc63405bc1a303b65f94aa26c33d",
+        "blocked_ids": [
+          "LEARNING-01",
+          "LEARNING-02",
+          "LEARNING-03",
+          "LEARNING-04",
+          "LEARNING-05",
+          "LEARNING-06",
+          "LEARNING-07",
+          "LEARNING-08",
+          "LEARNING-09"
+        ],
+        "basis": "public source shapes, not behavioral expected values"
+      },
+      "scenarios": [
+        "LEARNING-01",
+        "LEARNING-02",
+        "LEARNING-03",
+        "LEARNING-04",
+        "LEARNING-05",
+        "LEARNING-06",
+        "LEARNING-07",
+        "LEARNING-08",
+        "LEARNING-09"
+      ],
+      "requires": []
+    }
+  ]
+}
