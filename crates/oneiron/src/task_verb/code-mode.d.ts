@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 640 code-mode rows (619 host rows, 21 run rows), 2301 declarations.
-// Replies: 562 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 642 code-mode rows (621 host rows, 21 run rows), 2311 declarations.
+// Replies: 564 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -987,6 +987,16 @@ declare namespace Sdk {
   type AuthorityHandoffAlarmAck = { by: string; at: number };
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
+  type CleanupRunRequest = Record<string, never>;
+  type CleanupPosture = "propose_first" | "auto_with_digest";
+  type CleanupKind = "claimless_extraction_person" | "empty_summary" | "completed_task" | "completed_attempt" | "retained_note";
+  type CleanupCandidate = { entity: EntityId; kind: CleanupKind };
+  type CleanupRunView = { attempt: string; posture: CleanupPosture; candidates: CleanupCandidate[]; proposal?: EntityId | null; archived: EntityId[]; digest?: EntityId | null };
+  type EntityResolutionCandidate = { subject: EntityId; confidence_claim_ref: EntityId };
+  type EntityMentionRequest = { candidates: EntityResolutionCandidate[]; high_collision_mention?: boolean };
+  type ScoredEntityResolutionCandidate = { candidate: EntityResolutionCandidate; effective_confidence: number };
+  type EntityResolutionRoute = "hard_link" | "soft_link" | "soft_link_low" | "provisional_entity";
+  type EntityResolutionWaterfallDecision = { ranked: ScoredEntityResolutionCandidate[]; claims_suppressed: number; selected?: EntityId | null; selected_effective_confidence?: number | null; route: EntityResolutionRoute; requires_async_verification: boolean };
   type LegalHoldTarget = { record: EntityId } | { gate_partition: EntityId | null };
   type LegalHoldPlaceRequest = { targets: LegalHoldTarget[]; matter_ref?: string | null };
   type LegalHoldKind = "customer" | "host_order";
@@ -2873,6 +2883,10 @@ declare const vault: Sdk.VaultHost & {
     /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
     vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
+  cleanup: {
+    /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
+    run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
+  };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
     blame(input: Sdk.CodeStateRequest): Promise<Sdk.CodeBlameView | null | StoredResult>;
@@ -3070,6 +3084,10 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Drops a declared space that no slot binds and no open move names, with its vector rows. */
     retire(input: Sdk.EmbeddingSpaceRequest): Promise<Sdk.EmbeddingSpacesView | StoredResult>;
+  };
+  entities: {
+    /** The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate. */
+    mention(input: Sdk.EntityMentionRequest): Promise<Sdk.EntityResolutionWaterfallDecision | StoredResult>;
   };
   esign: {
     /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */

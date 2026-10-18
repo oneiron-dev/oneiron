@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 584 facade rows, 2213 declarations.
-Inputs: 533 of 584 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 516 of 584 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 586 facade rows, 2223 declarations.
+Inputs: 535 of 586 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 518 of 586 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -4846,6 +4846,37 @@ class AuthorityHandoffAlarm(TypedDict):
     seen: list[str]
 class HandoffAlarmRequest(TypedDict):
     signer: str
+class CleanupRunRequest(TypedDict):
+    ...
+CleanupPosture = Literal["propose_first", "auto_with_digest"]
+CleanupKind = Literal["claimless_extraction_person", "empty_summary", "completed_task", "completed_attempt", "retained_note"]
+class CleanupCandidate(TypedDict):
+    entity: EntityId
+    kind: CleanupKind
+class CleanupRunView(TypedDict):
+    attempt: str
+    posture: CleanupPosture
+    candidates: list[CleanupCandidate]
+    proposal: NotRequired[EntityId | None]
+    archived: list[EntityId]
+    digest: NotRequired[EntityId | None]
+class EntityResolutionCandidate(TypedDict):
+    subject: EntityId
+    confidence_claim_ref: EntityId
+class EntityMentionRequest(TypedDict):
+    candidates: list[EntityResolutionCandidate]
+    high_collision_mention: NotRequired[bool]
+class ScoredEntityResolutionCandidate(TypedDict):
+    candidate: EntityResolutionCandidate
+    effective_confidence: float
+EntityResolutionRoute = Literal["hard_link", "soft_link", "soft_link_low", "provisional_entity"]
+class EntityResolutionWaterfallDecision(TypedDict):
+    ranked: list[ScoredEntityResolutionCandidate]
+    claims_suppressed: int
+    selected: NotRequired[EntityId | None]
+    selected_effective_confidence: NotRequired[float | None]
+    route: EntityResolutionRoute
+    requires_async_verification: bool
 class LegalHoldTargetRecord(TypedDict):
     record: EntityId
 class LegalHoldTargetGatePartition(TypedDict):

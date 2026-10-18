@@ -1170,6 +1170,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.cleanup.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::vault_cleanup::surface::CleanupRunRequest,
+                >(),
+            ),
+            (
+                "vault.entities.mention",
+                crate::code_run::vault_read::request_schema::<crate::ingest::EntityMentionRequest>(
+                ),
+            ),
+            (
                 "vault.legal_holds.place",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LegalHoldPlaceRequest,
@@ -3433,6 +3444,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.research.create_child",
     "vault.evals.cohorts.setup",
+    "vault.cleanup.run",
+    "vault.entities.mention",
     "vault.policy.owner.get",
     "vault.policy.owner.configure",
     "vault.policy.owner.row.change",
@@ -3854,6 +3867,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
             crate::skill_optimize::EvalAuthoringReport,
+        >(),
+        "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
+            crate::vault_cleanup::surface::CleanupRunView,
+        >(),
+        "vault.entities.mention" => crate::code_run::vault_read::request_schema::<
+            crate::ingest::EntityResolutionWaterfallDecision,
         >(),
         "vault.policy.owner.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::OwnerPolicyConfigurationView,
@@ -5877,6 +5896,20 @@ pub fn mcp_arguments_schema_from_input(
         }
         "vault.authority.handoff_alarms" => &[],
         "vault.authority.handoff_alarms.acknowledge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cleanup.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.entities.mention" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9139,6 +9172,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.authority.handoff_alarms.acknowledge" => {
             let _input: crate::task_verb::sdk::HandoffAlarmRequest = decode(value.clone())?;
         }
+        "vault.cleanup.run" => {
+            let _input: crate::vault_cleanup::surface::CleanupRunRequest = decode(value.clone())?;
+        }
+        "vault.entities.mention" => {
+            let _input: crate::ingest::EntityMentionRequest = decode(value.clone())?;
+        }
         "vault.legal_holds.place" => {
             let _input: crate::task_verb::sdk::LegalHoldPlaceRequest = decode(value.clone())?;
         }
@@ -10830,6 +10869,8 @@ pub fn invoke(
         "vault.authority.handoff_alarms.acknowledge" => encode(
             vault_authority_handoff_alarms_acknowledge(memory, decode(value)?)?,
         ),
+        "vault.cleanup.run" => encode(vault_cleanup_run(memory, decode(value)?)?),
+        "vault.entities.mention" => encode(vault_entities_mention(memory, decode(value)?)?),
         "vault.legal_holds.place" => encode(vault_legal_holds_place(memory, decode(value)?)?),
         "vault.legal_holds.widen" => encode(vault_legal_holds_widen(memory, decode(value)?)?),
         "vault.legal_holds.list" => encode(vault_legal_holds_list(memory, decode(value)?)?),
@@ -13438,6 +13479,28 @@ pub fn vault_authority_handoff_alarms_acknowledge(
         &memory.embedded_owner("vault.authority.handoff_alarms.acknowledge")?,
         input,
     )
+}
+pub fn vault_cleanup_run(
+    memory: &Memory<'_>,
+    input: crate::vault_cleanup::surface::CleanupRunRequest,
+) -> MemoryResult<crate::vault_cleanup::surface::CleanupRunView> {
+    crate::vault_cleanup::surface::run_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.cleanup.run")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_entities_mention(
+    memory: &Memory<'_>,
+    input: crate::ingest::EntityMentionRequest,
+) -> MemoryResult<crate::ingest::EntityResolutionWaterfallDecision> {
+    crate::ingest::mention_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.entities.mention")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_legal_holds_place(
     memory: &Memory<'_>,

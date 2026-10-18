@@ -225,6 +225,8 @@ pub enum AgentVerb {
     VaultResearchRecordBenchmark,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
+    VaultCleanupRun,
+    VaultEntitiesMention,
     VaultLegalHoldsPlace,
     VaultLegalHoldsWiden,
     VaultLegalHoldsList,
@@ -855,6 +857,8 @@ impl AgentVerb {
         Self::VaultResearchRecordBenchmark,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
+        Self::VaultCleanupRun,
+        Self::VaultEntitiesMention,
         Self::VaultLegalHoldsPlace,
         Self::VaultLegalHoldsWiden,
         Self::VaultLegalHoldsList,
@@ -1492,6 +1496,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
             }
+            Self::VaultCleanupRun => "vault.cleanup.run",
+            Self::VaultEntitiesMention => "vault.entities.mention",
             Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
             Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
@@ -2127,6 +2133,8 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsList
@@ -2764,6 +2772,8 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsList
@@ -3456,6 +3466,8 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsList
@@ -3982,6 +3994,8 @@ impl AgentVerb {
                 | Self::VaultResearchRefundWork
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
@@ -4480,6 +4494,8 @@ impl AgentVerb {
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultCleanupRun => &["spec"],
+            Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
             Self::VaultLegalHoldsList => &[],
@@ -5111,6 +5127,8 @@ impl AgentVerb {
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultCleanupRun => &["spec"],
+            Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
             Self::VaultLegalHoldsList => &[],
@@ -6162,6 +6180,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "The owner acknowledges one saved handoff fork alarm."
+            }
+            Self::VaultCleanupRun => {
+                "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
+            }
+            Self::VaultEntitiesMention => {
+                "The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."
             }
             Self::VaultLegalHoldsPlace => {
                 "The owner places a customer legal hold on the named records or gate partitions."
