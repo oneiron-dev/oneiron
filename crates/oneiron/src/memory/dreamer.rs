@@ -30,7 +30,7 @@ pub struct ConsolidationAttemptInput {
 }
 
 /// Reference to one queued Dreamer attempt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DreamerAttemptRef {
     /// 32-hex attempt id (poll via [`Memory::dreamer_attempt_status`]).
     pub job_ref: String,

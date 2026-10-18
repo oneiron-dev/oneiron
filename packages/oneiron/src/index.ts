@@ -496,12 +496,17 @@ export class Oneiron {
       /** The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role. */
       report: (input: Facade.WeaveReportRequest): Facade.WeaveReportView => this.#call(() => this.#client.vaultWeaveReport(input) as Facade.WeaveReportView),
       /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
-      digest: (input: Facade.WeaveDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveDigest(input) as Facade.WeaveDigestView | null),
+      digest: Object.assign((input: Facade.WeaveDigestRequest): Facade.WeaveDigestView | null => this.#call(() => this.#client.vaultWeaveDigest(input) as Facade.WeaveDigestView | null), {
+        /** Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due. */
+        render: (input: Facade.EmptyRequest = {}): Facade.WeaveDigestRendered | null => this.#call(() => this.#client.vaultWeaveDigestRender(input) as Facade.WeaveDigestRendered | null),
+      }),
       /** Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events. */
       lens: (input: Facade.WeaveReportRequest): Facade.LensFrameCard => this.#call(() => this.#client.vaultWeaveLens(input) as Facade.LensFrameCard),
       link: {
         /** A person labels a link in their own lens as wrong; the label teaches the loops and the link stays. */
         wrong: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView => this.#call(() => this.#client.vaultWeaveLinkWrong(input) as Facade.WeaveLinkCorrectionView),
+        /** Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link. */
+        corrections: (input: Facade.WeaveWrongLinkRequest): Facade.WeaveLinkCorrectionView[] => this.#call(() => this.#client.vaultWeaveLinkCorrections(input) as Facade.WeaveLinkCorrectionView[]),
       },
       owner: {
         link: {
@@ -512,11 +517,35 @@ export class Oneiron {
           /** The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays. */
           wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveOwnerItemWrong(input) as Facade.WeaveItemCorrectionView),
         },
+        digest: {
+          /** Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due. */
+          render: (input: Facade.EmptyRequest = {}): Facade.WeaveDigestRendered | null => this.#call(() => this.#client.vaultWeaveOwnerDigestRender(input) as Facade.WeaveDigestRendered | null),
+        },
       },
       item: {
         /** A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays. */
         wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
+      /** Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion. */
+      enqueue: (input: Facade.WeaveEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultWeaveEnqueue(input) as Facade.DreamerAttemptRef),
+      schedules: {
+        /** Lists every reader's daily or weekly weave digest schedule under the owner's proof. */
+        list: (input: Facade.EmptyRequest = {}): Facade.WeaveScheduleView[] => this.#call(() => this.#client.vaultWeaveSchedulesList(input) as Facade.WeaveScheduleView[]),
+        /** Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof. */
+        put: (input: Facade.WeaveScheduleView): Facade.WeaveScheduleView => this.#call(() => this.#client.vaultWeaveSchedulesPut(input) as Facade.WeaveScheduleView),
+        /** Stops one reader's digest schedule under the owner's proof, keeping its saved periods. */
+        clear: (input: Facade.WeaveReaderRef): Facade.WeaveScheduleCleared => this.#call(() => this.#client.vaultWeaveSchedulesClear(input) as Facade.WeaveScheduleCleared),
+      },
+    },
+    inbox: {
+      concerns: {
+        /** Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows. */
+        review: (input: Facade.EmptyRequest = {}): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultInboxConcernsReview(input) as Facade.DreamerAttemptRef),
+      },
+      /** Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent. */
+      lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.vaultInboxLens(input) as Facade.InboxLensPage),
+      /** Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof. */
+      groups: (input: Facade.InboxRunGroupsRequest): Facade.InboxGroup[] => this.#call(() => this.#client.vaultInboxGroups(input) as Facade.InboxGroup[]),
     },
     skill_hubs: {
       /** The owner registers or revises a hub source; hub trust never grants activation authority. */
@@ -1868,6 +1897,8 @@ export class Oneiron {
         outcome: (input: Facade.ConcernOutcomeRequest): Facade.ConcernCardSummary => this.#call(() => this.#client.selfInboxConcernOutcome(input) as Facade.ConcernCardSummary),
         move: (input: Facade.ConcernMoveRequest): Facade.ConcernMoveOutcome => this.#call(() => this.#client.selfInboxConcernMove(input) as Facade.ConcernMoveOutcome),
       }),
+      /** Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page. */
+      lens: (input: Facade.InboxLensRequest): Facade.InboxLensPage => this.#call(() => this.#client.selfInboxLens(input) as Facade.InboxLensPage),
     },
     /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
     message: (input: Facade.MessagePersonRequest): Facade.MessagePersonReceipt => this.#call(() => this.#client.selfMessage(input) as Facade.MessagePersonReceipt),

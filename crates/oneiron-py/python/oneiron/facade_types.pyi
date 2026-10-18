@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 717 facade rows, 2575 declarations.
-Inputs: 665 of 717 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 642 of 717 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 728 facade rows, 2599 declarations.
+Inputs: 676 of 728 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 653 of 728 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -2979,6 +2979,122 @@ class WeaveItemCorrectionView(TypedDict):
     project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
+class WeaveEnqueueRequest(TypedDict):
+    skill_ref: str
+    subject_ref: str
+    evidence_ref: str
+class DreamerAttemptRef(TypedDict):
+    job_ref: str
+    state: str
+    existing: bool
+WeaveReaderKind = Literal["person", "owner", "agent"]
+class WeaveReaderRef(TypedDict):
+    kind: WeaveReaderKind
+    reader_ref: str
+WeaveDigestCadence = Literal["daily", "weekly"]
+class WeaveScheduleHold(TypedDict):
+    until: int
+    because: NotRequired[str | None]
+class WeaveScheduleView(TypedDict):
+    reader: WeaveReaderRef
+    cadence: WeaveDigestCadence
+    next_due_at: int
+    sections: list[WeaveSectionInput]
+    held: NotRequired[WeaveScheduleHold | None]
+class WeaveScheduleCleared(TypedDict):
+    cleared: bool
+class WeaveDigestRendered(TypedDict):
+    scheduled_for: int
+    rendered_at: int
+    narrowing: ScopedReadReceipt
+class InboxLensRequest(TypedDict):
+    identity: NotRequired[str | None]
+    agent: NotRequired[str | None]
+    limit: NotRequired[int | None]
+    before_impact: NotRequired[int | None]
+    before_at: NotRequired[int | None]
+    before_id: NotRequired[str | None]
+InboxLensKind = Literal["conversation", "waiting_on_you", "coordination_update", "concern"]
+InboxLensPile = Literal["conversations", "waiting_on_you", "updates"]
+class InboxLensParticipant(TypedDict):
+    identity: str
+    actor: str
+class InboxLensConcern(TypedDict):
+    agent: str
+    signal: str
+    tone: str
+class InboxLensDiaryReview(TypedDict):
+    request: str
+    reader: str
+    reader_class: str
+    reason: str
+class InboxLensRow(TypedDict):
+    item_id: str
+    kind: InboxLensKind
+    pile: InboxLensPile
+    thread_ref: NotRequired[str | None]
+    identity: str
+    actor: str
+    facet: NotRequired[str | None]
+    participants: list[InboxLensParticipant]
+    impact: int
+    occurred_at: int
+    receipt_ref: NotRequired[str | None]
+    payload_ref: NotRequired[str | None]
+    concern: NotRequired[InboxLensConcern | None]
+    diary_review: NotRequired[InboxLensDiaryReview | None]
+class InboxConcernGroup(TypedDict):
+    agent: str
+    items: list[str]
+class InboxLensPage(TypedDict):
+    items: list[InboxLensRow]
+    concern_groups: list[InboxConcernGroup]
+class InboxRunGroupsRequest(TypedDict):
+    limit: NotRequired[int | None]
+InboxExceptionClass = Literal["checker_hedge", "manifest_critical", "supersedes_user_stated", "conflict", "meeting_outcome_check_in", "plugin_install"]
+ReceiptKind = Literal["outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle", "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook", "reference_refusal", "task_lifecycle"]
+class ReceiptRecord(TypedDict):
+    receipt_id: str
+    receipt_kind: ReceiptKind
+    occurred_at: int
+    actor: NotRequired[str | None]
+    on_behalf_of: NotRequired[str | None]
+    outcome: str
+    job_ref: NotRequired[str | None]
+    trigger_ref: NotRequired[str | None]
+    policy_trace: NotRequired[list[str]]
+    fields: NotRequired[dict[str, str]]
+class ReceiptView(TypedDict):
+    component: str
+    receipt: ReceiptRecord
+class InboxGroupMember(TypedDict):
+    claim_id: str
+    created_at: int
+    age_secs: int
+    hold_reasons: NotRequired[list[str]]
+    exception_classes: NotRequired[list[InboxExceptionClass]]
+    verb_class: str
+    duplicate_claim_ids: NotRequired[list[str]]
+    receipt_view: ReceiptView
+class InboxPointerRow(TypedDict):
+    claim_id: str
+    duplicate_of_claim_id: str
+    duplicate_of_group_key: str
+class InboxSubCluster(TypedDict):
+    key: str
+    member_claim_ids: list[str]
+class InboxGroup(TypedDict):
+    group_key: str
+    run_id: str
+    headline: str
+    created_at: int
+    members: NotRequired[list[InboxGroupMember]]
+    held_member_count: int
+    pointer_rows: NotRequired[list[InboxPointerRow]]
+    sub_clusters: NotRequired[list[InboxSubCluster]]
+    new_claim_count: int
+    update_count: int
+    conflict_count: int
 SkillHubKind = Literal["git", "http-index", "local-dir"]
 SkillHubTrustTier = Literal["untrusted", "community", "verified"]
 HubSyncPolicy = Literal["pinned-ref", "pinned-commit", "content-hash-frozen", "mirror-of-hub"]
@@ -8762,18 +8878,6 @@ class NativeOutputRequest(TypedDict):
     content_base64: str
     report: NotRequired[Any]
     made_by: NotRequired[Any | None]
-ReceiptKind = Literal["outbound", "gate", "identity_lifecycle", "scoped_read", "share", "artifact_settle", "proposal_outcome", "commitment_lifecycle", "extraction", "served_form", "hook", "reference_refusal", "task_lifecycle"]
-class ReceiptRecord(TypedDict):
-    receipt_id: str
-    receipt_kind: ReceiptKind
-    occurred_at: int
-    actor: NotRequired[str | None]
-    on_behalf_of: NotRequired[str | None]
-    outcome: str
-    job_ref: NotRequired[str | None]
-    trigger_ref: NotRequired[str | None]
-    policy_trace: NotRequired[list[str]]
-    fields: NotRequired[dict[str, str]]
 class KeptProposal(TypedDict):
     version: ArtifactVersionView
     stranded: bool
@@ -12040,10 +12144,6 @@ class ConsolidationEnqueueRequest(TypedDict):
     run_id: NotRequired[str | None]
     dedupe_key: NotRequired[str | None]
     now: NotRequired[int | None]
-class DreamerAttemptRef(TypedDict):
-    job_ref: str
-    state: str
-    existing: bool
 class ConsolidationStatusRequest(TypedDict):
     job_ref: str
 DreamerParkCauseView = Literal["provider_unavailable", "executor_error", "checkpoint", "cancelled", "signal", "other"]

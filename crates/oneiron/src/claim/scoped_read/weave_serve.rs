@@ -88,7 +88,7 @@ pub struct WeaveWrongLinkRequest {
 }
 
 impl WeaveWrongLinkRequest {
-    fn link(&self) -> MemoryResult<EdgeRef> {
+    pub(super) fn link(&self) -> MemoryResult<EdgeRef> {
         let entity = |hex: &str| {
             EntityId::from_hex(hex)
                 .map_err(|_| MemoryError::bad_request("a weave link names entity ids"))
@@ -104,7 +104,7 @@ impl WeaveWrongLinkRequest {
 
 /// One filed wrong-link label. It labels the link for the loops; the link
 /// itself stays.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WeaveLinkCorrectionView {
     pub label_ref: String,
     pub source_ref: String,
@@ -115,7 +115,7 @@ pub struct WeaveLinkCorrectionView {
 }
 
 impl WeaveLinkCorrectionView {
-    fn from_correction(correction: &WeaveLinkCorrection) -> Self {
+    pub(super) fn from_correction(correction: &WeaveLinkCorrection) -> Self {
         Self {
             label_ref: correction.id.to_hex(),
             source_ref: correction.link.source.to_hex(),
@@ -303,7 +303,7 @@ impl WeaveDigestFramed {
 }
 
 /// Who a schedule is for, on the owner's wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaveReaderKind {
     Person,
@@ -311,7 +311,7 @@ pub enum WeaveReaderKind {
     Agent,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveReaderRef {
     pub kind: WeaveReaderKind,
@@ -344,7 +344,7 @@ impl WeaveReaderRef {
 }
 
 /// One reader's schedule row on the owner's wire.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveScheduleView {
     pub reader: WeaveReaderRef,
@@ -391,7 +391,7 @@ impl WeaveScheduleView {
 impl Memory<'_> {
     /// The bound actor's lens: an owner proof reads the owner lens, a
     /// person the person lens, an agent its own.
-    fn weave_reader<'a>(
+    pub(super) fn weave_reader<'a>(
         &self,
         owner: Option<&'a AuthenticatedOwner>,
     ) -> MemoryResult<WeaveReader<'a>> {

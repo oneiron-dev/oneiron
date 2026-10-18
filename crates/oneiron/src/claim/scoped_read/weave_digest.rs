@@ -123,7 +123,7 @@ impl WeaveDigestReader {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WeaveDigestCadence {
     Daily,
@@ -163,7 +163,7 @@ pub struct StoredWeaveDigest {
 
 /// Why the timer left a schedule row: until when, and the refusal that held
 /// it. An owner's due notice holds its row with no refusal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveScheduleHold {
     pub until: u64,
@@ -592,20 +592,18 @@ impl Vault {
         owner: &AuthenticatedOwner,
         row: &WeaveDigestSchedule,
     ) -> Result<()> {
-        let reader = match row.reader {
-            WeaveDigestReader::Person(id) => WeaveReader::Person(id),
-            WeaveDigestReader::Owner(id) if id == owner.revalidate(self)? => {
-                WeaveReader::Owner(owner)
-            }
-            WeaveDigestReader::Owner(_) => return Err(invalid()),
-            WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
-        };
         if row.recipe.is_empty() {
             return Err(invalid());
         }
         let bytes = serde_json::to_vec(&WireSchedule::from_row(row)).map_err(|_| invalid())?;
         self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let reader = match row.reader {
+                WeaveDigestReader::Person(id) => WeaveReader::Person(id),
+                WeaveDigestReader::Owner(id) if id == actor => WeaveReader::Owner(owner),
+                WeaveDigestReader::Owner(_) => return Err(invalid()),
+                WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
+            };
             let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
             super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
             self.store

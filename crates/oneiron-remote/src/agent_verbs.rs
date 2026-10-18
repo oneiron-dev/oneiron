@@ -376,6 +376,41 @@ impl OneironClient {
                 "vault.weave.owner.item.wrong" => remote_agent_verb_output::<
                     oneiron::claim::WeaveItemCorrectionView,
                 >(client, verb, &input),
+                "vault.weave.enqueue" => remote_agent_verb_output::<
+                    oneiron::memory::DreamerAttemptRef,
+                >(client, verb, &input),
+                "vault.weave.schedules.list" => remote_agent_verb_output::<
+                    Vec<oneiron::claim::WeaveScheduleView>,
+                >(client, verb, &input),
+                "vault.weave.schedules.put" => remote_agent_verb_output::<
+                    oneiron::claim::WeaveScheduleView,
+                >(client, verb, &input),
+                "vault.weave.schedules.clear" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WeaveScheduleCleared,
+                >(client, verb, &input),
+                "vault.weave.owner.digest.render" => remote_agent_verb_output::<
+                    Option<oneiron::claim::WeaveDigestRendered>,
+                >(client, verb, &input),
+                "vault.inbox.concerns.review" => remote_agent_verb_output::<
+                    oneiron::memory::DreamerAttemptRef,
+                >(client, verb, &input),
+                "vault.inbox.lens" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxLensPage,
+                >(client, verb, &input),
+                "vault.inbox.groups" => {
+                    remote_agent_verb_output::<Vec<oneiron::inbox::InboxGroup>>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.weave.digest.render" => remote_agent_verb_output::<
+                    Option<oneiron::claim::WeaveDigestRendered>,
+                >(client, verb, &input),
+                "vault.weave.link.corrections" => remote_agent_verb_output::<
+                    Vec<oneiron::claim::WeaveLinkCorrectionView>,
+                >(client, verb, &input),
+                "self.inbox.lens" => remote_agent_verb_output::<
+                    oneiron::agent_inbox_lens::InboxLensPage,
+                >(client, verb, &input),
                 "vault.skill_hubs.put" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::SkillHubConfigured,
                 >(client, verb, &input),
@@ -3642,6 +3677,138 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.weave.owner.item.wrong", value)
+    }
+    pub fn vault_weave_enqueue(
+        &self,
+        input: &oneiron::task_verb::sdk::WeaveEnqueueRequest,
+    ) -> Result<oneiron::memory::DreamerAttemptRef, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.enqueue", value)
+    }
+    pub fn vault_weave_schedules_list(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::claim::WeaveScheduleView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.schedules.list", value)
+    }
+    pub fn vault_weave_schedules_put(
+        &self,
+        input: &oneiron::claim::WeaveScheduleView,
+    ) -> Result<oneiron::claim::WeaveScheduleView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.schedules.put", value)
+    }
+    pub fn vault_weave_schedules_clear(
+        &self,
+        input: &oneiron::claim::WeaveReaderRef,
+    ) -> Result<oneiron::task_verb::sdk::WeaveScheduleCleared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.schedules.clear", value)
+    }
+    pub fn vault_weave_owner_digest_render(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Option<oneiron::claim::WeaveDigestRendered>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.owner.digest.render", value)
+    }
+    pub fn vault_inbox_concerns_review(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::memory::DreamerAttemptRef, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inbox.concerns.review", value)
+    }
+    pub fn vault_inbox_lens(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxLensRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxLensPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inbox.lens", value)
+    }
+    pub fn vault_inbox_groups(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxRunGroupsRequest,
+    ) -> Result<Vec<oneiron::inbox::InboxGroup>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.inbox.groups", value)
+    }
+    pub fn vault_weave_digest_render(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Option<oneiron::claim::WeaveDigestRendered>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.digest.render", value)
+    }
+    pub fn vault_weave_link_corrections(
+        &self,
+        input: &oneiron::claim::WeaveWrongLinkRequest,
+    ) -> Result<Vec<oneiron::claim::WeaveLinkCorrectionView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.weave.link.corrections", value)
+    }
+    pub fn self_inbox_lens(
+        &self,
+        input: &oneiron::agent_inbox_lens::InboxLensRequest,
+    ) -> Result<oneiron::agent_inbox_lens::InboxLensPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.inbox.lens", value)
     }
     pub fn vault_skill_hubs_put(
         &self,

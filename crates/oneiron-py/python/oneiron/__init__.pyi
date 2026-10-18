@@ -441,6 +441,8 @@ class Oneiron:
         @property
         def weave(self) -> "Oneiron._VaultWeaveVerbs": ...
         @property
+        def inbox(self) -> "Oneiron._VaultInboxVerbs": ...
+        @property
         def skill_hubs(self) -> "Oneiron._VaultSkillHubsVerbs": ...
         @property
         def packs(self) -> "Oneiron._VaultPacksVerbs": ...
@@ -808,8 +810,8 @@ class Oneiron:
     class _VaultWeaveVerbs:
         def report(self, spec: Facade.WeaveReportRequest) -> Facade.WeaveReportView:
             """The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."""
-        def digest(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
-            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
+        @property
+        def digest(self) -> "Oneiron._VaultWeaveDigestVerbs": ...
         def lens(self, spec: Facade.WeaveReportRequest) -> Facade.LensFrameCard:
             """Renders the caller's live weave report through the weave-report skill on the server's model, as a card whose wrong controls are its declared actions; the server holds its frame for the card's events."""
         @property
@@ -818,23 +820,56 @@ class Oneiron:
         def owner(self) -> "Oneiron._VaultWeaveOwnerVerbs": ...
         @property
         def item(self) -> "Oneiron._VaultWeaveItemVerbs": ...
+        def enqueue(self, spec: Facade.WeaveEnqueueRequest) -> Facade.DreamerAttemptRef:
+            """Admits a generated candidate weave recipe under the owner's proof and queues its pinned execution; poll vault.consolidation.status for completion."""
+        @property
+        def schedules(self) -> "Oneiron._VaultWeaveSchedulesVerbs": ...
+    class _VaultWeaveDigestVerbs:
+        def __call__(self, spec: Facade.WeaveDigestRequest) -> Facade.WeaveDigestView | None:
+            """One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none."""
+        def render(self, spec: Facade.EmptyRequest | None = None) -> Facade.WeaveDigestRendered | None:
+            """Publishes the bound reader's due digest through the same live scoped lens and returns its saved period and narrowing receipt, or null when nothing is due."""
     class _VaultWeaveLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """A person labels a link in their own lens as wrong; the label teaches the loops and the link stays."""
+        def corrections(self, spec: Facade.WeaveWrongLinkRequest) -> list[Facade.WeaveLinkCorrectionView]:
+            """Reads persisted wrong-link labels for a link still admitted by the caller's live weave lens, without changing the link."""
     class _VaultWeaveOwnerVerbs:
         @property
         def link(self) -> "Oneiron._VaultWeaveOwnerLinkVerbs": ...
         @property
         def item(self) -> "Oneiron._VaultWeaveOwnerItemVerbs": ...
+        @property
+        def digest(self) -> "Oneiron._VaultWeaveOwnerDigestVerbs": ...
     class _VaultWeaveOwnerLinkVerbs:
         def wrong(self, spec: Facade.WeaveWrongLinkRequest) -> Facade.WeaveLinkCorrectionView:
             """The owner labels a link in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the link stays."""
     class _VaultWeaveOwnerItemVerbs:
         def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
             """The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."""
+    class _VaultWeaveOwnerDigestVerbs:
+        def render(self, spec: Facade.EmptyRequest | None = None) -> Facade.WeaveDigestRendered | None:
+            """Publishes the owner's due digest through the live owner lens and returns the saved period and narrowing receipt, or null when nothing is due."""
     class _VaultWeaveItemVerbs:
         def wrong(self, spec: Facade.WeaveWrongItemRequest) -> Facade.WeaveItemCorrectionView:
             """A person labels a claim, project or budget item in their own lens as wrong; the label teaches the loops and the record stays."""
+    class _VaultWeaveSchedulesVerbs:
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.WeaveScheduleView]:
+            """Lists every reader's daily or weekly weave digest schedule under the owner's proof."""
+        def put(self, spec: Facade.WeaveScheduleView) -> Facade.WeaveScheduleView:
+            """Sets one reader's daily or weekly digest schedule and section recipe under the owner's proof."""
+        def clear(self, spec: Facade.WeaveReaderRef) -> Facade.WeaveScheduleCleared:
+            """Stops one reader's digest schedule under the owner's proof, keeping its saved periods."""
+    class _VaultInboxVerbs:
+        @property
+        def concerns(self) -> "Oneiron._VaultInboxConcernsVerbs": ...
+        def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
+            """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
+        def groups(self, spec: Facade.InboxRunGroupsRequest) -> list[Facade.InboxGroup]:
+            """Reads membership of real gate-held Dreamer consent proposals grouped by run, under the owner's proof."""
+    class _VaultInboxConcernsVerbs:
+        def review(self, spec: Facade.EmptyRequest | None = None) -> Facade.DreamerAttemptRef:
+            """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
     class _VaultSkillHubsVerbs:
         def put(self, spec: Facade.SkillHubPutRequest) -> Facade.SkillHubConfigured:
             """The owner registers or revises a hub source; hub trust never grants activation authority."""
@@ -2194,6 +2229,8 @@ class Oneiron:
             """Marks one delivered notification seen or acknowledged for the bound actor."""
         @property
         def concern(self) -> "Oneiron._SelfInboxConcernVerbs": ...
+        def lens(self, spec: Facade.InboxLensRequest) -> Facade.InboxLensPage:
+            """Reads the bound actor's own identity inbox slice in impact order, with optional identity filtering and concern groups; not a delivered-notification page."""
     class _SelfInboxConcernVerbs:
         def __call__(self, spec: Facade.ConcernCardRequest) -> Facade.AgentHealthCardView: ...
         def outcome(self, spec: Facade.ConcernOutcomeRequest) -> Facade.ConcernCardSummary: ...

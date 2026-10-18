@@ -11,6 +11,13 @@ use oneiron::claim::{
     WeaveLinkCorrectionView, WeaveReportRequest, WeaveWrongItemRequest, WeaveWrongLinkRequest,
 };
 use oneiron::consent::AuthenticatedOwner;
+
+use oneiron::agent_inbox_lens::{InboxLensPage, InboxLensRequest, InboxRunGroupsRequest};
+use oneiron::claim::{WeaveDigestRendered, WeaveReaderRef, WeaveScheduleView};
+use oneiron::inbox::InboxGroup;
+use oneiron::memory::DreamerAttemptRef;
+use oneiron::runtime_hooks::InvocationId;
+use oneiron::task_verb::sdk::{EmptyRequest, WeaveEnqueueRequest, WeaveScheduleCleared};
 use oneiron::lens::LensFrameCard;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::{EdgeActorClass, EntityId};
@@ -236,4 +243,148 @@ pub(crate) fn hold_weave_digest(
             .record(auth, frame, card.render.clone())?;
     }
     Ok(view)
+}
+
+pub(crate) async fn vault_weave_enqueue(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WeaveEnqueueRequest,
+) -> Listed<DreamerAttemptRef> {
+    const VERB: &str = "vault.weave.enqueue";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_enqueue(&memory, &owner, input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_weave_schedules_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    _input: EmptyRequest,
+) -> Listed<Vec<WeaveScheduleView>> {
+    const VERB: &str = "vault.weave.schedules.list";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_schedules(&memory, &owner)
+    })
+    .await
+}
+
+pub(crate) async fn vault_weave_schedules_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WeaveScheduleView,
+) -> Listed<WeaveScheduleView> {
+    const VERB: &str = "vault.weave.schedules.put";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_schedule_put(&memory, &owner, input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_weave_schedules_clear(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: WeaveReaderRef,
+) -> Listed<WeaveScheduleCleared> {
+    const VERB: &str = "vault.weave.schedules.clear";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::weave_schedule_clear(&memory, &owner, input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_weave_owner_digest_render(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    _input: EmptyRequest,
+) -> Listed<Option<WeaveDigestRendered>> {
+    const VERB: &str = "vault.weave.owner.digest.render";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.weave_digest_render(Some(&owner))
+    })
+    .await
+}
+
+pub(crate) async fn vault_inbox_concerns_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    _input: EmptyRequest,
+) -> Listed<DreamerAttemptRef> {
+    const VERB: &str = "vault.inbox.concerns.review";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        oneiron::task_verb::sdk::inbox_concerns_review(&memory, &owner)
+    })
+    .await
+}
+
+pub(crate) async fn vault_inbox_lens(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: InboxLensRequest,
+) -> Listed<InboxLensPage> {
+    const VERB: &str = "vault.inbox.lens";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.inbox_lens_as_owner(&owner, &input)
+    })
+    .await
+}
+
+pub(crate) async fn vault_inbox_groups(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    caller: (EntityId, EdgeActorClass),
+    _invocation: Option<InvocationId>,
+    input: InboxRunGroupsRequest,
+) -> Listed<Vec<InboxGroup>> {
+    const VERB: &str = "vault.inbox.groups";
+    let owner = match super::host_doors::owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(error) => return refused(error),
+    };
+    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+        memory.inbox_run_groups(&owner, &input)
+    })
+    .await
 }
