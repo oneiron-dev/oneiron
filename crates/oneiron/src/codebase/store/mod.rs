@@ -754,3 +754,24 @@ fn code_artifact_repo_ref_from_body(bytes: &[u8]) -> Result<RepoRef> {
         ))
     })
 }
+
+/// OF-222 (FIX 2768) archive seam: the codebase snapshot tables a whole-vault archive carries
+/// beside the CODE_ARTIFACT each snapshots (snapshot, custody report and the repo, project,
+/// fork and scope indexes), lent with their own key types and codec.
+pub(crate) fn archive_codebase_tables() -> [crate::batch::export::LentSideTable; 6] {
+    [
+        &SNAPSHOTS,
+        &CUSTODY_REPORTS,
+        &REPO_INDEX,
+        &PROJECT_INDEX,
+        &FORK_INDEX,
+        &SCOPE_INDEX,
+    ]
+}
+
+/// OF-222 (FIX 2768) archive seam: the ASSET a snapshot file's bytes are stored as.
+pub(crate) fn archive_codebase_asset_id(
+    content_hash: &[u8; CODEBASE_CONTENT_HASH_LEN],
+) -> Result<EntityId> {
+    codebase_asset_entity_id(content_hash)
+}
