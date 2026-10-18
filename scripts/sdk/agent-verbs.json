@@ -16,6 +16,81 @@
       "server_door": "report_off_runtime"
     },
     {
+      "name": "feedback.preview",
+      "description": "The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval.",
+      "input": "crate::task_verb::sdk::FeedbackPreviewRequest",
+      "output": "crate::task_verb::sdk::FeedbackSubjectPreview",
+      "call": "crate::task_verb::sdk::host_only(memory, \"feedback.preview\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "feedback.send",
+      "description": "The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate.",
+      "input": "crate::task_verb::sdk::FeedbackSendSubjectRequest",
+      "output": "crate::task_verb::sdk::FeedbackSubjectSent",
+      "call": "crate::task_verb::sdk::host_only(memory, \"feedback.send\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.disclosure",
+      "description": "The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny.",
+      "input": "crate::task_verb::sdk::ReportDisclosureRequest",
+      "output": "crate::feedback::ReportIssue",
+      "call": "crate::task_verb::sdk::decide_report_disclosure_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.disclosure\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.route",
+      "description": "The owner replaces one durable subject's maker route: the owner inbox, or one admitted publisher its feedback is delivered to.",
+      "input": "crate::task_verb::sdk::ReportRouteRequest",
+      "output": "crate::task_verb::sdk::ReportRouteReceipt",
+      "call": "crate::task_verb::sdk::set_report_route_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.route\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.reports.outbound",
+      "description": "The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it.",
+      "input": "crate::task_verb::sdk::ReportOutboundRequest",
+      "output": "crate::task_verb::sdk::ReportOutboundView",
+      "call": "crate::task_verb::sdk::report_outbound_as_owner(memory.vault(), &memory.embedded_owner(\"vault.reports.outbound\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "self.focus.refresh",
       "description": "Re-renders the run's context board as one frame, at the frame epoch the caller last saw.",
       "input": "BoardRefreshRequest",
@@ -5416,6 +5491,36 @@
       "openapi": true
     },
     {
+      "name": "vault.code.waits.resolve",
+      "description": "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken.",
+      "input": "crate::memory::code_wait_doors::CodeWaitResolveRequest",
+      "output": "crate::memory::code_wait_doors::CodeWaitReceiptView",
+      "call": "memory.code_wait_resolve_as(&memory.embedded_owner(\"vault.code.waits.resolve\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
+      "name": "vault.code.waits.receipt",
+      "description": "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait.",
+      "input": "crate::memory::code_wait_doors::CodeWaitReceiptRequest",
+      "output": "Option<crate::memory::code_wait_doors::CodeWaitReceiptView>",
+      "call": "memory.code_wait_receipt_as(&memory.embedded_owner(\"vault.code.waits.receipt\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true
+    },
+    {
       "name": "vault.results.status",
       "description": "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run.",
       "input": "crate::memory::result_doors::ResultRunRequest",
@@ -6009,6 +6114,21 @@
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.agents.spawn",
+      "description": "The owner launches one reserved planned agent or team under an intent key on this host's planner: the type placed, the plan frozen at the root, then queued; the same key answers what it kept.",
+      "input": "crate::team::doors::SpawnIntentRequest",
+      "output": "crate::team::doors::SpawnIntentReply",
+      "call": "crate::team::doors::spawn_as_owner(memory.vault(), &memory.embedded_owner(\"vault.agents.spawn\")?, input, None, None, crate::unix_seconds_now())?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
       },
@@ -7912,6 +8032,51 @@
       "section": false
     },
     {
+      "name": "vault.questions.outcomes",
+      "description": "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label.",
+      "input": "crate::receipt::QuestionOutcomesRequest",
+      "output": "crate::receipt::QuestionOutcomes",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.questions.outcomes.project",
+      "description": "Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label.",
+      "input": "crate::receipt::QuestionOutcomesProjectRequest",
+      "output": "crate::receipt::QuestionOutcomesProjected",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes.project\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.questions.schedule",
+      "description": "Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold.",
+      "input": "crate::receipt::QuestionScheduleRequest",
+      "output": "Option<crate::llm::decision::questions::QuestionScheduleHead>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.schedule\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.decisions.bands.read",
       "description": "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero.",
       "input": "crate::llm::decision::DecisionBandReadRequest",
@@ -8858,6 +9023,61 @@
         "request": true
       },
       "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.claims.demote",
+      "description": "Demotes one active claim by one rung through the caller credential: decay its claim_of weight, weaken it to a successor at lower confidence, or mark it stale in place so retrieval stops surfacing it.",
+      "refs": [
+        "/claim_ref"
+      ],
+      "input": "crate::memory::ClaimDemoteRequest",
+      "output": "crate::memory::ClaimDemoteView",
+      "call": "memory.claim_demote(&input)?",
+      "scope": "Write",
+      "admission": {},
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.list_filtered",
+      "description": "Lists surfaceable claims by subject, predicate and lifecycle under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+      "input": "crate::memory::ClaimFilteredListRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
+      "call": "memory.claim_list_filtered(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "crate::memory::caps::check_limit_nonzero(input.limit)?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.read_filtered",
+      "description": "Reads one claim as retrieval would surface it under the caller retrieval filter met with the actor ceiling, with the read narrowing receipt.",
+      "input": "crate::memory::ClaimFilteredReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::ClaimView>>",
+      "call": "memory.claim_read_filtered(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
     },
     {
       "name": "vault.claims.history",

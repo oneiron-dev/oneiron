@@ -10,18 +10,32 @@ use crate::side_table::{self, HexId, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::Vault;
 
+use super::act_admission::{ResolvedSeal, SealAuthority, SealStanding};
 use super::stored_event::{StoredIdentityOpAction, StoredIdentityOpEvent};
 
-const DOMAIN: &[u8] = b"oneiron.identity-topology.admission.v1\0";
-const BAD: &str = "identity topology admission disposition invalid";
+/// The seal transcript's domain: v2 signs the carrier and the deciding
+/// authority beside the core digest, verdict and reason (mesh PR2-topology).
+const DOMAIN: &[u8] = b"oneiron.identity-topology.admission.v2\0";
+/// Integrity: the fact's act, verdict or shape is malformed (an owner act of
+/// another kind or target, a verdict with a reason it never carries, a
+/// missing or doubled authority).
+const MALFORMED: &str = "identity topology admission disposition is malformed";
+/// Integrity: a fact names itself as the decision it seals.
+const SELF_TARGET: &str = "identity topology admission disposition targets itself";
+/// Integrity and key possession: the signature does not verify under the
+/// fact's signer key.
+const BAD_SIGNATURE: &str = "identity topology admission disposition signature does not verify";
 
 /// The seals this vault wrote itself, by fact row: signer key and signature.
 /// Local truth that never replicates, so no peer can vouch for its own seal,
-/// and a copy restored beside the vault keeps its history in force.
+/// and a copy restored beside the vault keeps its history in force. An
+/// engine seal stands here on it; for a decision seal it records provenance
+/// only (mesh PR2-topology).
 const SEALED_HERE: SideTable<HexId, [u8; 96], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_SEALED_HERE);
-/// Which install keys were mine signers when an authority write last
-/// reconciled the shell edges, as one digest. Local, like the marker.
+/// The seal standing an authority write last reconciled the shell edges
+/// under, as one digest: the mine signers, and the decision seals' carriers,
+/// owners and named Grants. Local, like the marker.
 const MINE_SIGNERS: SideTable<(), [u8; 32], Raw> =
     SideTable::new(&side_table::IDENTITY_TOPOLOGY_MINE_SIGNERS);
 
@@ -62,32 +76,106 @@ pub struct AdmissionDisposition {
     pub core_digest: [u8; 32],
     pub verdict: AdmissionVerdict,
     pub reason: Option<EntityId>,
+    /// The MACHINE whose install key signed: the seal's carrier.
+    pub carrier: EntityId,
+    /// Who decided, under the same signature: the owner's or an agent's
+    /// [`oneiron_authority::authority::OwnerAct`], or the engine's cause.
+    pub authority: SealAuthority,
     pub signer_pk: [u8; 32],
     pub signature: [u8; 64],
 }
 
 impl AdmissionDisposition {
+    /// The one signed transcript: the target, the core digest, the verdict,
+    /// the optional reason, the carrier and the deciding authority.
     fn transcript(
         target: &EntityId,
         digest: &[u8; 32],
         verdict: AdmissionVerdict,
         reason: Option<EntityId>,
-    ) -> Vec<u8> {
-        let mut bytes = Vec::with_capacity(DOMAIN.len() + 16 + 32 + 32);
+        carrier: &EntityId,
+        authority: &SealAuthority,
+    ) -> Result<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(DOMAIN.len() + 16 + 32 + 32 + 17 + 16 + 256);
         bytes.extend_from_slice(DOMAIN);
         bytes.extend_from_slice(target.as_bytes());
         bytes.extend_from_slice(digest);
         bytes.extend_from_slice(verdict.as_str().as_bytes());
         bytes.push(0);
-        if let Some(id) = reason {
-            bytes.extend_from_slice(id.as_bytes());
+        match reason {
+            Some(id) => {
+                bytes.push(1);
+                bytes.extend_from_slice(id.as_bytes());
+            }
+            None => bytes.push(0),
         }
-        bytes
+        bytes.extend_from_slice(carrier.as_bytes());
+        bytes.extend_from_slice(&authority.transcript_bytes()?);
+        Ok(bytes)
+    }
+
+    fn own_transcript(&self) -> Result<Vec<u8>> {
+        Self::transcript(
+            &self.target,
+            &self.core_digest,
+            self.verdict,
+            self.reason,
+            &self.carrier,
+            &self.authority,
+        )
+    }
+
+    /// The verified signed payload, a seal's immutable decision bytes: the
+    /// transcript, the signer key and its signature.
+    pub(super) fn signed_payload(&self) -> Result<Vec<u8>> {
+        let mut bytes = self.own_transcript()?;
+        bytes.extend_from_slice(&self.signer_pk);
+        bytes.extend_from_slice(&self.signature);
+        Ok(bytes)
+    }
+
+    /// A seal of `target`'s decision `core`, signed by `signer`'s carrier
+    /// with `authority`, in the one transcript.
+    pub(super) fn signed(
+        signer: &ResolvedSeal,
+        target: EntityId,
+        core: &StoredIdentityOpEvent,
+        verdict: AdmissionVerdict,
+        reason: Option<EntityId>,
+        authority: SealAuthority,
+    ) -> Result<Self> {
+        let core_digest = core_digest(core)?;
+        let carrier = signer.carrier();
+        let transcript =
+            Self::transcript(&target, &core_digest, verdict, reason, &carrier, &authority)?;
+        Ok(Self {
+            target,
+            core_digest,
+            verdict,
+            reason,
+            carrier,
+            authority,
+            signer_pk: signer.key().verifying_key().to_bytes(),
+            signature: signer.key().sign(&transcript).to_bytes(),
+        })
+    }
+
+    /// Records this seal as this vault's own under `fact`, the row that will
+    /// carry it.
+    pub(super) fn record_sealed_here(
+        &self,
+        vault: &Vault,
+        wtxn: &mut heed::RwTxn<'_>,
+        fact: EntityId,
+    ) -> Result<()> {
+        SEALED_HERE.put(&vault.store, wtxn, &HexId(fact), &self.seal_bytes())
     }
 
     /// Seals as this install's machine, whose key is the one pairing enrols,
+    /// an engine seal of a door signature that names no deciding authority,
     /// and records the seal as this vault's own under `fact`, the row that
     /// will carry it.
+    #[cfg(test)]
     pub(super) fn seal(
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
@@ -97,20 +185,17 @@ impl AdmissionDisposition {
         verdict: AdmissionVerdict,
         reason: Option<EntityId>,
     ) -> Result<Self> {
-        let (_, key) = crate::identity::machine_signer_in_txn(vault, wtxn)?;
-        let core_digest = core_digest(core)?;
-        let signature = key
-            .sign(&Self::transcript(&target, &core_digest, verdict, reason))
-            .to_bytes();
-        let sealed = Self {
+        let cause = super::act_admission::EngineCause::Unattributed;
+        let signer = ResolvedSeal::engine_in_txn(vault, wtxn, cause)?;
+        let sealed = Self::signed(
+            &signer,
             target,
-            core_digest,
+            core,
             verdict,
             reason,
-            signer_pk: key.verifying_key().to_bytes(),
-            signature,
-        };
-        SEALED_HERE.put(&vault.store, wtxn, &HexId(fact), &sealed.seal_bytes())?;
+            SealAuthority::Engine(cause),
+        )?;
+        sealed.record_sealed_here(vault, wtxn, fact)?;
         Ok(sealed)
     }
 
@@ -122,6 +207,7 @@ impl AdmissionDisposition {
     }
 
     pub(super) fn verify(&self) -> Result<()> {
+        let malformed = || Error::Sync(SyncError::InvalidIdentityTopologyEventBody(MALFORMED));
         if self.verdict == AdmissionVerdict::RefusedConflict
             || (matches!(
                 self.verdict,
@@ -132,17 +218,21 @@ impl AdmissionDisposition {
                 AdmissionVerdict::RefusedNonStructural | AdmissionVerdict::RefusedFacetMerge
             ) && self.reason.is_none())
         {
-            return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                BAD,
-            )));
+            return Err(malformed());
         }
-        let key = VerifyingKey::from_bytes(&self.signer_pk)
-            .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD)))?;
+        // A decision's act is a topology seal of exactly the sealed event.
+        if let SealAuthority::Decision(act) = &self.authority {
+            act.validate_carried(crate::authority::OwnerActKind::TopologySeal, self.target)
+                .map_err(|_| malformed())?;
+        }
+        let bad_signature =
+            || Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD_SIGNATURE));
+        let key = VerifyingKey::from_bytes(&self.signer_pk).map_err(|_| bad_signature())?;
         key.verify_strict(
-            &Self::transcript(&self.target, &self.core_digest, self.verdict, self.reason),
+            &self.own_transcript()?,
             &Signature::from_bytes(&self.signature),
         )
-        .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD)))
+        .map_err(|_| bad_signature())
     }
 
     pub(super) fn encode_entries(&self, entries: &mut Vec<(Value, Value)>) {
@@ -163,6 +253,11 @@ impl AdmissionDisposition {
             ));
         }
         entries.push((
+            BODY_KEY_CARRIER.into(),
+            Value::Binary(self.carrier.as_bytes().to_vec()),
+        ));
+        self.authority.encode_entry(entries);
+        entries.push((
             BODY_KEY_SIGNER.into(),
             Value::Binary(self.signer_pk.to_vec()),
         ));
@@ -175,42 +270,44 @@ impl AdmissionDisposition {
     pub(super) fn decode(map: &[(Value, Value)]) -> Result<Self> {
         use super::event_body_codec::{decode_id_value, map_field};
         use super::wire_keys::*;
+        let malformed = || Error::Sync(SyncError::InvalidIdentityTopologyEventBody(MALFORMED));
         let field = |key| {
             map_field(map, key)
                 .and_then(Value::as_slice)
-                .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                    BAD,
-                )))
+                .ok_or_else(malformed)
         };
         let target = decode_id_value(
-            map_field(map, BODY_KEY_TARGET).ok_or(Error::Sync(
-                SyncError::InvalidIdentityTopologyEventBody(BAD),
-            ))?,
-            BAD,
+            map_field(map, BODY_KEY_TARGET).ok_or_else(malformed)?,
+            MALFORMED,
         )?;
         let core_digest: [u8; 32] = field(BODY_KEY_CORE_DIGEST)?
             .try_into()
-            .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD)))?;
+            .map_err(|_| malformed())?;
         let verdict = map_field(map, BODY_KEY_VERDICT)
             .and_then(Value::as_str)
             .and_then(AdmissionVerdict::parse)
-            .ok_or(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-                BAD,
-            )))?;
+            .ok_or_else(malformed)?;
         let reason = map_field(map, BODY_KEY_REASON)
-            .map(|v| decode_id_value(v, BAD))
+            .map(|v| decode_id_value(v, MALFORMED))
             .transpose()?;
+        let carrier = decode_id_value(
+            map_field(map, BODY_KEY_CARRIER).ok_or_else(malformed)?,
+            MALFORMED,
+        )?;
+        let authority = SealAuthority::decode_entry(map, target, MALFORMED)?;
         let signer_pk: [u8; 32] = field(BODY_KEY_SIGNER)?
             .try_into()
-            .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD)))?;
+            .map_err(|_| malformed())?;
         let signature: [u8; 64] = field(BODY_KEY_SIGNATURE)?
             .try_into()
-            .map_err(|_| Error::Sync(SyncError::InvalidIdentityTopologyEventBody(BAD)))?;
+            .map_err(|_| malformed())?;
         let disposition = Self {
             target,
             core_digest,
             verdict,
             reason,
+            carrier,
+            authority,
             signer_pk,
             signature,
         };
@@ -227,7 +324,7 @@ pub(crate) fn core_digest(record: &StoredIdentityOpEvent) -> Result<[u8; 32]> {
         StoredIdentityOpAction::AdmissionDisposition(_)
     ) {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-            BAD,
+            MALFORMED,
         )));
     }
     let mut canonical = record.clone();
@@ -237,27 +334,20 @@ pub(crate) fn core_digest(record: &StoredIdentityOpEvent) -> Result<[u8; 32]> {
     Ok(*blake3::hash(&super::encode_identity_topology_event_body(&canonical)?).as_bytes())
 }
 
-/// Who may seal (H161): this vault, for the facts it sealed itself, and a live
-/// machine the owner marked mine. A fact anyone else sealed is stored but
-/// inert, verdict and refusal alike, until its signer is enrolled as mine.
-/// The roster is read once per pass, and only for a fact this vault did not
-/// seal.
+/// Who may seal. An engine seal (H161): this vault, for the facts it sealed
+/// itself, and a live machine the owner marked mine; a fact anyone else
+/// sealed is stored but inert, verdict and refusal alike, until its signer is
+/// enrolled as mine. A decision seal (mesh PR2-topology): the same rule on
+/// every replica, this one included, `act_admission`'s carrier, owner and
+/// Grant standing. The roster is read once per pass, and only for a fact the
+/// marker does not settle.
 #[derive(Default)]
 pub(crate) struct SealTrust {
     roster: Option<AuthorityFold>,
 }
 
 impl SealTrust {
-    fn attributed(
-        &mut self,
-        store: &Store,
-        rtxn: &heed::RoTxn<'_>,
-        id: &EntityId,
-        fact: &AdmissionDisposition,
-    ) -> Result<bool> {
-        if SEALED_HERE.get(store, rtxn, &HexId(*id))? == Some(fact.seal_bytes()) {
-            return Ok(true);
-        }
+    fn fold(&mut self, store: &Store, rtxn: &heed::RoTxn<'_>) -> Result<&AuthorityFold> {
         if self.roster.is_none() {
             self.roster = Some(crate::authority::authority_fold_readonly_for_store_in_txn(
                 store,
@@ -265,10 +355,52 @@ impl SealTrust {
                 rtxn,
             )?);
         }
-        Ok(self
-            .roster
-            .as_ref()
-            .is_some_and(|roster| signer_is_mine(roster, &fact.signer_pk)))
+        self.roster.as_ref().ok_or(Error::InvariantViolation(
+            "identity topology seal trust fold",
+        ))
+    }
+
+    /// How fact row `id`, sealing `core`, stands here.
+    pub(super) fn standing(
+        &mut self,
+        store: &Store,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        fact: &AdmissionDisposition,
+        core: &StoredIdentityOpEvent,
+    ) -> Result<SealStanding> {
+        match &fact.authority {
+            // Today's admission exactly: this vault's own seal, else a
+            // trusted machine's.
+            SealAuthority::Engine(_) => {
+                if SEALED_HERE.get(store, rtxn, &HexId(*id))? == Some(fact.seal_bytes())
+                    || signer_is_mine(self.fold(store, rtxn)?, &fact.signer_pk)
+                {
+                    Ok(SealStanding::Admitted)
+                } else {
+                    Ok(SealStanding::Refused)
+                }
+            }
+            // `SEALED_HERE` is provenance only: the carrier, owner and Grant
+            // rule every replica runs.
+            SealAuthority::Decision(act) => {
+                let fold = self.fold(store, rtxn)?;
+                super::act_admission::decision_standing_in_txn(
+                    store, rtxn, fold, fact, act, core.at,
+                )
+            }
+        }
+    }
+
+    pub(super) fn attributed(
+        &mut self,
+        store: &Store,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        fact: &AdmissionDisposition,
+        core: &StoredIdentityOpEvent,
+    ) -> Result<bool> {
+        Ok(self.standing(store, rtxn, id, fact, core)? == SealStanding::Admitted)
     }
 }
 
@@ -279,11 +411,14 @@ fn signer_is_mine(roster: &AuthorityFold, signer: &[u8; 32]) -> bool {
     roster.mine_machine_by_key(signer).is_some()
 }
 
-/// Whether the mine signers differ from those the last authority write
-/// reconciled against, recording the new set. A roster change decides again
-/// which seals count, so the stored shell edges must follow it; an authority
-/// write that changes no standing (a header-only replay, a slip mint) does
-/// not pay for a reconcile.
+/// Whether the seal standing differs from the one the last authority write
+/// reconciled against, recording the new digest: the mine signers, and the
+/// decision seals' carriers, owners and named Grants
+/// (`act_admission::decision_standing_digest_in_txn`). A roster change, a
+/// carrier's removal or an owner's or Grant's revocation decides again which
+/// seals count, so the stored shell edges must follow it; an authority write
+/// that changes no standing (a header-only replay, a slip mint) does not pay
+/// for a reconcile.
 pub(super) fn mine_signers_changed_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -305,6 +440,9 @@ pub(super) fn mine_signers_changed_in_txn(
     for signer in &signers {
         digest.update(signer);
     }
+    digest.update(&super::act_admission::decision_standing_digest_in_txn(
+        store, wtxn, &roster,
+    )?);
     let digest = *digest.finalize().as_bytes();
     if MINE_SIGNERS.get(store, wtxn, &())? == Some(digest) {
         return Ok(false);
@@ -349,7 +487,7 @@ pub(super) fn joined_verdict_for_store_in_txn(
         }
         fact.verify()
             .map_err(|_| Error::CorruptedIndex("identity topology admission signature"))?;
-        if !trust.attributed(store, rtxn, &id, &fact)? {
+        if !trust.attributed(store, rtxn, &id, &fact, core)? {
             continue;
         }
         if fact.verdict == AdmissionVerdict::Validated {
@@ -402,7 +540,7 @@ pub(crate) fn validate_incoming_disposition_in_txn(
     fact.verify()?;
     if fact.target == *incoming_id {
         return Err(Error::Sync(SyncError::InvalidIdentityTopologyEventBody(
-            BAD,
+            SELF_TARGET,
         )));
     }
     if let Some(row) = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
@@ -416,204 +554,6 @@ pub(crate) fn validate_incoming_disposition_in_txn(
         )));
     }
     Ok(())
-}
-
-/// Write a signed refusal for a wrong-class participant before its
-/// participant disappears. The immutable decision row is never rewritten. The
-/// generic store-only batch door cannot sign and refuses unsafe deletes instead.
-impl Vault {
-    /// On author erasure, retain the admission decision independently of
-    /// personal attribution. An observed wrong class is terminal, with no
-    /// actor ID in the refusal fact. An already validated event stays valid.
-    pub(crate) fn record_actor_disposition_before_redaction_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        target: EntityId,
-        actor: crate::write_envelope::WriteActor,
-    ) -> Result<()> {
-        let core =
-            self.identity_topology_event_in_txn(wtxn, &target)?
-                .ok_or(Error::CorruptedIndex(
-                    "identity topology attribution target",
-                ))?;
-        let existing = joined_verdict_for_store_in_txn(
-            &self.store,
-            wtxn,
-            &target,
-            &core,
-            &mut SealTrust::default(),
-        )?;
-        if existing.is_some_and(|verdict| verdict != AdmissionVerdict::Validated) {
-            return Ok(());
-        }
-        let Some(kind) =
-            super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn(
-                &self.store,
-                wtxn,
-                &actor.entity_ref(),
-            )?
-        else {
-            return Ok(());
-        };
-        if crate::provenance::validate_actor_class(kind, actor.actor_class()).is_err() {
-            return self.append_signed_identity_disposition_in_txn(
-                wtxn,
-                target,
-                &core,
-                AdmissionVerdict::RefusedActorClass,
-                None,
-            );
-        }
-        // No positive is minted here: this vault would seal a decision it
-        // never made, and its seal counts (H161). A decision still waiting
-        // for its own producer's seal keeps waiting for it.
-        Ok(())
-    }
-
-    pub(crate) fn append_signed_identity_disposition_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        target: EntityId,
-        core: &StoredIdentityOpEvent,
-        verdict: AdmissionVerdict,
-        reason: Option<EntityId>,
-    ) -> Result<()> {
-        use crate::batch::{BatchOp, apply_ops};
-        use crate::registry::ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT;
-        use crate::temporal::TimeRange;
-        let id = self.store.clock.entity_id()?;
-        let fact = AdmissionDisposition::seal(self, wtxn, id, target, core, verdict, reason)?;
-        let seq = self.next_identity_topology_seq_in_txn(wtxn)?;
-        let row = StoredIdentityOpEvent {
-            seq,
-            validated_at_write: false,
-            invalidated: false,
-            at: core.at,
-            actor: None,
-            source: core.source,
-            approval: crate::claim::ClaimApprovalStatus::Auto,
-            confidence: 1.0,
-            evidence: None,
-            action: StoredIdentityOpAction::AdmissionDisposition(fact),
-        };
-        apply_ops(
-            &self.store,
-            &self.config,
-            &self.analyzer,
-            wtxn,
-            vec![BatchOp::Put {
-                id,
-                entity_type: ENTITY_TYPE_IDENTITY_TOPOLOGY_EVENT,
-                occurred: TimeRange {
-                    start: core.at,
-                    end: core.at,
-                },
-                learned_at: core.at,
-                data: super::encode_identity_topology_event_body(&row)?,
-                allow_maintenance: true,
-                allow_reserved_predicate: false,
-                hub_sync_imported: false,
-            }],
-            self.text_index_trusted
-                .load(std::sync::atomic::Ordering::Acquire),
-            false,
-            true,
-        )?;
-        Ok(())
-    }
-
-    pub(crate) fn record_invalid_participant_dispositions_for_delete_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        participant: &EntityId,
-    ) -> Result<()> {
-        let mut pending = Vec::new();
-        let mut trust = SealTrust::default();
-        for event in super::store_entity_helpers::identity_topology_events_for_store_in_txn(
-            &self.store,
-            &*wtxn,
-        )? {
-            let super::ledger_fold::IdentityTopologyAction::Apply(op) = event.action else {
-                continue;
-            };
-            if !op.participants().contains(participant) {
-                continue;
-            }
-            let Some(kind) =
-                super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn(
-                    &self.store,
-                    &*wtxn,
-                    participant,
-                )?
-            else {
-                continue;
-            };
-            let invalid = if !crate::registry::is_structural_kind(kind) {
-                Some(AdmissionVerdict::RefusedNonStructural)
-            } else if matches!(op, super::op_vocabulary::IdentityTopologyOp::Merge(_))
-                && kind == crate::registry::ENTITY_TYPE_FACET
-            {
-                Some(AdmissionVerdict::RefusedFacetMerge)
-            } else {
-                None
-            };
-            let core = super::store_entity_helpers::identity_topology_event_for_store_in_txn(
-                &self.store,
-                &*wtxn,
-                &event.event_id,
-            )?
-            .ok_or(Error::CorruptedIndex("identity topology event index"))?;
-            let existing = joined_verdict_for_store_in_txn(
-                &self.store,
-                &*wtxn,
-                &event.event_id,
-                &core,
-                &mut trust,
-            )?;
-            if existing.is_some_and(|v| v != AdmissionVerdict::Validated) {
-                continue;
-            }
-            let (verdict, reason) = if let Some(invalid) = invalid {
-                (invalid, Some(*participant))
-            } else {
-                // Only an observed wrong actor class is recorded here, from
-                // fully checked refs. No positive is minted: this vault would
-                // seal a decision it never made, and its seal counts (H161).
-                if existing.is_some()
-                    || !matches!(
-                        super::store_entity_helpers::validate_identity_op_participants_for_store_in_txn(
-                            &self.store, &*wtxn, &op,
-                        )?,
-                        super::op_apply::IdentityTopologyParticipantValidation::Complete
-                    ) {
-                    continue;
-                }
-                let Some(actor) = super::admitted_author_in_txn(&self.store, wtxn, event.event_id)?
-                else {
-                    continue;
-                };
-                let Some(actor_kind) =
-                    super::store_entity_helpers::identity_topology_entity_type_for_store_in_txn(
-                        &self.store,
-                        wtxn,
-                        &actor.entity_ref(),
-                    )?
-                else {
-                    continue;
-                };
-                if crate::provenance::validate_actor_class(actor_kind, actor.actor_class()).is_ok()
-                {
-                    continue;
-                }
-                (AdmissionVerdict::RefusedActorClass, None)
-            };
-            pending.push((event.event_id, core, verdict, reason));
-        }
-        for (target, core, verdict, reason) in pending {
-            self.append_signed_identity_disposition_in_txn(wtxn, target, &core, verdict, reason)?;
-        }
-        Ok(())
-    }
 }
 
 /// A fact sealed by `key`, as an install this vault may not know seals it:
