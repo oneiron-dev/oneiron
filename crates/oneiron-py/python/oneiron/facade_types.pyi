@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 706 facade rows, 2544 declarations.
-Inputs: 654 of 706 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 631 of 706 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 95; unread shapes: 0.
+Census: 712 facade rows, 2566 declarations.
+Inputs: 658 of 712 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 633 of 712 fully typed, 79 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 97; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2489,6 +2489,142 @@ class ArchiveCampaignProgramRequest(TypedDict):
     campaign_ref: str
     program_ref: str
     expected_definition_version: int
+class SavedQueryScopeSpec(TypedDict):
+    worlds: NotRequired[list[EntityId]]
+    facets: NotRequired[list[str]]
+ClaimComparison = Literal["exists", "eq", "not_eq", "lt", "lte", "gt", "gte", "contains"]
+class SavedQueryFilterSpecTaskOwner(TypedDict):
+    op: Literal["task_owner"]
+    owner: EntityId
+class SavedQueryFilterSpecAll(TypedDict):
+    op: Literal["all"]
+    terms: list[SavedQueryFilterSpec]
+class SavedQueryFilterSpecAny(TypedDict):
+    op: Literal["any"]
+    terms: list[SavedQueryFilterSpec]
+class SavedQueryFilterSpecNot(TypedDict):
+    op: Literal["not"]
+    term: SavedQueryFilterSpec
+class SavedQueryFilterSpecClaim(TypedDict):
+    op: Literal["claim"]
+    predicate: str
+    cmp: ClaimComparison
+    value: NotRequired[Any]
+class SavedQueryFilterSpecEdgeExists(TypedDict):
+    op: Literal["edge_exists"]
+    edge_kind: str
+    target: NotRequired[EntityId | None]
+SavedQueryFilterSpec = SavedQueryFilterSpecTaskOwner | SavedQueryFilterSpecAll | SavedQueryFilterSpecAny | SavedQueryFilterSpecNot | SavedQueryFilterSpecClaim | SavedQueryFilterSpecEdgeExists
+class SavedQueryMatcherSpecHard(TypedDict):
+    kind: Literal["hard"]
+    expression: SavedQueryFilterSpec
+class SavedQueryMatcherSpecSemanticThreshold(TypedDict):
+    kind: Literal["semantic_threshold"]
+    exemplar_ref: EntityId
+    minimum_similarity_micros: int
+class SavedQueryMatcherSpecLlmJudge(TypedDict):
+    kind: Literal["llm_judge"]
+    model_id: str
+    rubric: NotRequired[Any]
+    rubric_version: str
+SavedQueryMatcherSpec = SavedQueryMatcherSpecHard | SavedQueryMatcherSpecSemanticThreshold | SavedQueryMatcherSpecLlmJudge
+EvalMode = Literal["reactive", "wake", "manual"]
+class SavedQueryEvalSpec(TypedDict):
+    mode: EvalMode
+    max_entities_per_wake: int
+    max_judges_per_wake: int
+class SavedQueryCreateRequest(TypedDict):
+    schema_version: NotRequired[int]
+    scope: NotRequired[SavedQueryScopeSpec]
+    filter: SavedQueryFilterSpec
+    matcher: SavedQueryMatcherSpec
+    eval: SavedQueryEvalSpec
+class SavedQueryLifecycleActive(TypedDict):
+    state: Literal["active"]
+class SavedQueryLifecyclePaused(TypedDict):
+    state: Literal["paused"]
+    error: str
+class SavedQueryLifecycleDisabled(TypedDict):
+    state: Literal["disabled"]
+class SavedQueryLifecycleArchived(TypedDict):
+    state: Literal["archived"]
+SavedQueryLifecycle = SavedQueryLifecycleActive | SavedQueryLifecyclePaused | SavedQueryLifecycleDisabled | SavedQueryLifecycleArchived
+class SavedQueryDefinitionView(TypedDict):
+    schema_version: int
+    owner_actor: EntityId
+    scope: SavedQueryScopeSpec
+    definition_version: int
+    filter: SavedQueryFilterSpec
+    matcher: SavedQueryMatcherSpec
+    eval: SavedQueryEvalSpec
+    lifecycle: SavedQueryLifecycle
+class SavedQueryRecordView(TypedDict):
+    query_ref: EntityId
+    definition: SavedQueryDefinitionView
+    created_at: int
+    updated_at: int
+class SavedQueryReadRequest(TypedDict):
+    query_ref: EntityId
+class SavedQueryReadResult(TypedDict):
+    found: bool
+    record: NotRequired[SavedQueryRecordView | None]
+class SavedQueryUpdateRequest(TypedDict):
+    query_ref: EntityId
+    expected_definition_version: int
+    scope: NotRequired[SavedQueryScopeSpec]
+    filter: SavedQueryFilterSpec
+    matcher: SavedQueryMatcherSpec
+    eval: SavedQueryEvalSpec
+class SavedQueryArchiveRequest(TypedDict):
+    query_ref: EntityId
+    expected_definition_version: int
+class SavedQueryMembersRequest(TypedDict):
+    query_ref: EntityId
+    cursor: NotRequired[str | None]
+    limit: NotRequired[int]
+    at_epoch: NotRequired[int | None]
+class SavedQueryMembershipRowView(TypedDict):
+    entity_ref: EntityId
+    state: str
+    entered_valid: int
+    entered_detected: int
+    exited_valid: NotRequired[int | None]
+    exited_detected: NotRequired[int | None]
+    cause: NotRequired[str | None]
+class SavedQueryMembershipPageView(TypedDict):
+    rows: list[SavedQueryMembershipRowView]
+    next_cursor: NotRequired[str | None]
+class SavedQueryEvaluateRequest(TypedDict):
+    query_ref: EntityId
+    candidates: NotRequired[list[EntityId]]
+    after: NotRequired[EntityId | None]
+MatchVerdict = Literal["match", "no_match"]
+class SavedQueryMemoReceipt(TypedDict):
+    definition_version: int
+    verdict: MatchVerdict
+    why: str
+    content_hash: str
+    model_id: str
+    version: str
+    params_hash: str
+    evaluated_at: int
+class SavedQueryEntityReceipt(TypedDict):
+    entity_ref: EntityId
+    verdict: MatchVerdict
+    why: str
+    evidence_hash: str
+    memo_hit: bool
+    judge_ran: bool
+    memo: NotRequired[SavedQueryMemoReceipt | None]
+class SavedQueryEvaluationReceipt(TypedDict):
+    query_ref: EntityId
+    owner_actor: EntityId
+    definition_version: int
+    evaluated: int
+    memo_hits: int
+    judges_run: int
+    resume_after: NotRequired[EntityId | None]
+    outcomes: list[SavedQueryEntityReceipt]
 WeaveSectionKind = Literal["changes", "projects", "open_asks", "links", "conflicts", "exceptions", "admissions", "budgets", "sieve_score", "digest"]
 class WeaveSectionInput(TypedDict):
     kind: WeaveSectionKind

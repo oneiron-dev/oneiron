@@ -77,10 +77,9 @@ pub use self::definition::{
     SAVED_QUERY_SHORT_ID_PREFIX, SavedQueryDefinition, SavedQueryLifecycle, SavedQueryRecord,
     UpdateSavedQueryRequest, register_saved_query_kind,
 };
-pub(crate) use self::evaluator::WakeVisit;
 pub use self::evaluator::{
     EvaluationRequest, SAVED_QUERY_WHY_ENTITY_OUTSIDE_SCOPE, SAVED_QUERY_WHY_SCOPE_CLOSED,
-    SavedQueryEvaluator, SavedQueryJudgeBinding,
+    SavedQueryEvaluator, SavedQueryJudgeBinding, WakeVisit,
 };
 pub use self::evidence::{
     EVIDENCE_HASH_LEN, EvaluationOutcome, MatchDecision, MatchVerdict, RelevantEvidence,

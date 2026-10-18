@@ -865,6 +865,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_saved_query_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_update(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.update", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_archive(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.archive", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_members(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.members", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_saved_query_evaluate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.saved_query.evaluate", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_weave_report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.weave.report", input)

@@ -1858,6 +1858,20 @@ export class Oneiron {
       /** Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted. */
       attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
     },
+    saved_query: {
+      /** Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller. */
+      create: (input: Facade.SavedQueryCreateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryCreate(input) as Facade.SavedQueryRecordView),
+      /** One saved query the caller owns; a query absent or not the caller's reads as not found. */
+      read: (input: Facade.SavedQueryReadRequest): Facade.SavedQueryReadResult => this.#call(() => this.#client.selfSavedQueryRead(input) as Facade.SavedQueryReadResult),
+      /** Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check. */
+      update: (input: Facade.SavedQueryUpdateRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryUpdate(input) as Facade.SavedQueryRecordView),
+      /** Archives a saved query under a definition-version check: it stays readable and is never evaluated again. */
+      archive: (input: Facade.SavedQueryArchiveRequest): Facade.SavedQueryRecordView => this.#call(() => this.#client.selfSavedQueryArchive(input) as Facade.SavedQueryRecordView),
+      /** One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved. */
+      members: (input: Facade.SavedQueryMembersRequest): Facade.SavedQueryMembershipPageView => this.#call(() => this.#client.selfSavedQueryMembers(input) as Facade.SavedQueryMembershipPageView),
+      /** Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity. */
+      evaluate: (input: Facade.SavedQueryEvaluateRequest): Facade.SavedQueryEvaluationReceipt => this.#call(() => this.#client.selfSavedQueryEvaluate(input) as Facade.SavedQueryEvaluationReceipt),
+    },
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),

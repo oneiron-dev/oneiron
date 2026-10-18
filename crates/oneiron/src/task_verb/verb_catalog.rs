@@ -100,6 +100,12 @@ pub enum AgentVerb {
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
     VaultCampaignProgramArchive,
+    SelfSavedQueryCreate,
+    SelfSavedQueryRead,
+    SelfSavedQueryUpdate,
+    SelfSavedQueryArchive,
+    SelfSavedQueryMembers,
+    SelfSavedQueryEvaluate,
     VaultWeaveReport,
     VaultWeaveDigest,
     VaultWeaveLens,
@@ -837,6 +843,12 @@ impl AgentVerb {
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
         Self::VaultCampaignProgramArchive,
+        Self::SelfSavedQueryCreate,
+        Self::SelfSavedQueryRead,
+        Self::SelfSavedQueryUpdate,
+        Self::SelfSavedQueryArchive,
+        Self::SelfSavedQueryMembers,
+        Self::SelfSavedQueryEvaluate,
         Self::VaultWeaveReport,
         Self::VaultWeaveDigest,
         Self::VaultWeaveLens,
@@ -1577,6 +1589,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
+            Self::SelfSavedQueryCreate => "self.saved_query.create",
+            Self::SelfSavedQueryRead => "self.saved_query.read",
+            Self::SelfSavedQueryUpdate => "self.saved_query.update",
+            Self::SelfSavedQueryArchive => "self.saved_query.archive",
+            Self::SelfSavedQueryMembers => "self.saved_query.members",
+            Self::SelfSavedQueryEvaluate => "self.saved_query.evaluate",
             Self::VaultWeaveReport => "vault.weave.report",
             Self::VaultWeaveDigest => "vault.weave.digest",
             Self::VaultWeaveLens => "vault.weave.lens",
@@ -2329,6 +2347,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -3088,6 +3112,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -3908,6 +3938,12 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryRead
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryMembers
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveReport
                 | Self::VaultWeaveDigest
                 | Self::VaultWeaveLens
@@ -4569,6 +4605,10 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
+                | Self::SelfSavedQueryCreate
+                | Self::SelfSavedQueryUpdate
+                | Self::SelfSavedQueryArchive
+                | Self::SelfSavedQueryEvaluate
                 | Self::VaultWeaveLinkWrong
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
@@ -5101,6 +5141,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::SelfSavedQueryCreate => &["spec"],
+            Self::SelfSavedQueryRead => &["spec"],
+            Self::SelfSavedQueryUpdate => &["spec"],
+            Self::SelfSavedQueryArchive => &["spec"],
+            Self::SelfSavedQueryMembers => &["spec"],
+            Self::SelfSavedQueryEvaluate => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -5839,6 +5885,12 @@ impl AgentVerb {
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
             Self::VaultCampaignProgramArchive => &["spec"],
+            Self::SelfSavedQueryCreate => &["spec"],
+            Self::SelfSavedQueryRead => &["spec"],
+            Self::SelfSavedQueryUpdate => &["spec"],
+            Self::SelfSavedQueryArchive => &["spec"],
+            Self::SelfSavedQueryMembers => &["spec"],
+            Self::SelfSavedQueryEvaluate => &["spec"],
             Self::VaultWeaveReport => &["spec"],
             Self::VaultWeaveDigest => &["spec"],
             Self::VaultWeaveLens => &["spec"],
@@ -6763,6 +6815,24 @@ impl AgentVerb {
             }
             Self::VaultCampaignProgramArchive => {
                 "Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops."
+            }
+            Self::SelfSavedQueryCreate => {
+                "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."
+            }
+            Self::SelfSavedQueryRead => {
+                "One saved query the caller owns; a query absent or not the caller's reads as not found."
+            }
+            Self::SelfSavedQueryUpdate => {
+                "Replaces a saved query's scope, filter, matcher and evaluation policy whole under a definition-version check."
+            }
+            Self::SelfSavedQueryArchive => {
+                "Archives a saved query under a definition-version check: it stays readable and is never evaluated again."
+            }
+            Self::SelfSavedQueryMembers => {
+                "One cursor-bounded page of the membership this saved query derived, entered and exited causes preserved."
+            }
+            Self::SelfSavedQueryEvaluate => {
+                "Evaluates a saved query the caller owns now, bounded by its per-wake caps, with one verdict and memo receipt per visited entity."
             }
             Self::VaultWeaveReport => {
                 "The live weave report for the bound actor, read through its own scope and the vault's weave policy for its role."

@@ -33,6 +33,7 @@ mod codec_json;
 mod membership;
 mod parse;
 mod program;
+mod saved_query;
 #[cfg(test)]
 mod tests;
 mod verbs;
@@ -61,11 +62,21 @@ pub use self::program::{
     CreateCampaignProgramRequest, UpdateCampaignProgramRequest,
 };
 pub(crate) use self::program::{CAMPAIGN_PROGRAM_STEP_REFS, campaign_program_record};
+pub use self::saved_query::{
+    SavedQueryArchiveRequest, SavedQueryCreateRequest, SavedQueryDefinitionView,
+    SavedQueryEntityReceipt, SavedQueryEvalSpec, SavedQueryEvaluateRequest,
+    SavedQueryEvaluationReceipt, SavedQueryFilterSpec, SavedQueryMatcherSpec,
+    SavedQueryMembersRequest, SavedQueryMembershipPageView, SavedQueryMembershipRowView,
+    SavedQueryMemoReceipt, SavedQueryReadRequest, SavedQueryReadResult, SavedQueryRecordView,
+    SavedQueryScopeSpec, SavedQueryUpdateRequest, saved_query_memo_receipt,
+};
+pub(crate) use self::saved_query::{saved_query_membership_page_view, saved_query_record_view};
 pub use self::verbs::{
     CAMPAIGN_PROGRAM_VERBS, CAMPAIGN_SELF_VERBS, CampaignSurfaceVerb, SELF_CAMPAIGN_ARCHIVE,
     SELF_CAMPAIGN_CREATE, SELF_CAMPAIGN_MEMBERS, SELF_CAMPAIGN_READ, SELF_CAMPAIGN_UPDATE,
-    SELF_SAVED_QUERY_ARCHIVE, SELF_SAVED_QUERY_CREATE, SELF_SAVED_QUERY_MEMBERS,
-    SELF_SAVED_QUERY_READ, SELF_SAVED_QUERY_UPDATE, SurfaceCall, SurfaceReply,
+    SELF_SAVED_QUERY_ARCHIVE, SELF_SAVED_QUERY_CREATE, SELF_SAVED_QUERY_EVALUATE,
+    SELF_SAVED_QUERY_MEMBERS, SELF_SAVED_QUERY_READ, SELF_SAVED_QUERY_UPDATE, SurfaceCall,
+    SurfaceReply,
     VAULT_CAMPAIGN_PROGRAM_ARCHIVE, VAULT_CAMPAIGN_PROGRAM_CREATE, VAULT_CAMPAIGN_PROGRAM_READ,
     VAULT_CAMPAIGN_PROGRAM_UPDATE, invoke_campaign_surface,
 };

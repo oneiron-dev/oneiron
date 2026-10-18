@@ -55,6 +55,7 @@ pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
+pub(crate) use super::saved_query_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 

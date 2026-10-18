@@ -1056,6 +1056,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_saved_query_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.saved_query.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.saved_query.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_saved_query_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.saved_query.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.saved_query.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_saved_query_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.saved_query.update")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.saved_query.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_saved_query_archive(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.saved_query.archive")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.saved_query.archive", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_saved_query_members(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.saved_query.members")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.saved_query.members", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_saved_query_evaluate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.saved_query.evaluate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.saved_query.evaluate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_weave_report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.weave.report")?;
         let output = py

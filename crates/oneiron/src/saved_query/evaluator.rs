@@ -898,11 +898,11 @@ fn no_match(why: &str) -> MatchDecision {
 /// module (the campaign enrollment wake) counts against the query's
 /// `max_entities_per_wake` and `max_judges_per_wake`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct WakeVisit {
+pub struct WakeVisit {
     /// The verdict came from the memo.
-    pub(crate) memo_hit: bool,
+    pub memo_hit: bool,
     /// A stage-2 judge actually ran.
-    pub(crate) judge_ran: bool,
+    pub judge_ran: bool,
 }
 
 impl SavedQueryEvaluator<'_> {
@@ -913,7 +913,7 @@ impl SavedQueryEvaluator<'_> {
     /// # Errors
     ///
     /// As [`Self::evaluate_entity`].
-    pub(crate) async fn evaluate_entity_visit(
+    pub async fn evaluate_entity_visit(
         &self,
         request: &EvaluationRequest<'_>,
     ) -> Result<(EvaluationOutcome, WakeVisit)> {

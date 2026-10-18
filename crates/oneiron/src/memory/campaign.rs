@@ -189,6 +189,80 @@ impl Memory<'_> {
         )?)
     }
 
+    // ── saved-query verb-table rows (`self.saved_query.*`) ──────────────
+    //
+    // The typed SDK doors over the ten-verb surface above: each takes its
+    // row's wire request whole, goes through the same owner-bound methods
+    // the resource routes reach, and answers the row's wire record. Manual
+    // evaluation is not here: a rubric judge runs on a server's own model
+    // seats, so `self.saved_query.evaluate` is a host door.
+
+    /// `self.saved_query.create` — a SAVED_QUERY owned by the bound actor.
+    pub fn create_saved_query(
+        &self,
+        request: &crate::campaign::surface::SavedQueryCreateRequest,
+    ) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
+        let record = self.saved_query_create(
+            &request.engine_request(),
+            self.vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::campaign::surface::saved_query_record_view(&record))
+    }
+
+    /// `self.saved_query.read` — a SAVED_QUERY the bound actor owns; any
+    /// other reads as not found.
+    pub fn read_saved_query(
+        &self,
+        request: &crate::campaign::surface::SavedQueryReadRequest,
+    ) -> MemoryResult<crate::campaign::surface::SavedQueryReadResult> {
+        let record = self.saved_query_read(request.query_ref)?;
+        Ok(crate::campaign::surface::SavedQueryReadResult {
+            found: record.is_some(),
+            record: record
+                .as_ref()
+                .map(crate::campaign::surface::saved_query_record_view),
+        })
+    }
+
+    /// `self.saved_query.update` — replaces a query's definition whole
+    /// under its version CAS.
+    pub fn update_saved_query(
+        &self,
+        request: &crate::campaign::surface::SavedQueryUpdateRequest,
+    ) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
+        let record = self.saved_query_update(
+            request.query_ref,
+            &request.engine_request(),
+            self.vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::campaign::surface::saved_query_record_view(&record))
+    }
+
+    /// `self.saved_query.archive` — the lifecycle transition, never a delete.
+    pub fn archive_saved_query(
+        &self,
+        request: &crate::campaign::surface::SavedQueryArchiveRequest,
+    ) -> MemoryResult<crate::campaign::surface::SavedQueryRecordView> {
+        let record = self.saved_query_archive(
+            request.query_ref,
+            request.expected_definition_version,
+            self.vault.store.clock.now_recorded_at(),
+        )?;
+        Ok(crate::campaign::surface::saved_query_record_view(&record))
+    }
+
+    /// `self.saved_query.members` — one page of the membership this query
+    /// derived, causes preserved.
+    pub fn saved_query_members_page(
+        &self,
+        request: &crate::campaign::surface::SavedQueryMembersRequest,
+    ) -> MemoryResult<crate::campaign::surface::SavedQueryMembershipPageView> {
+        let page = self.saved_query_members(&request.read_request())?;
+        Ok(crate::campaign::surface::saved_query_membership_page_view(
+            &page,
+        ))
+    }
+
     // ── campaign program `vault.campaign.program.*` verbs (decide-host 1193) ─
     //
     // The campaign doors' rule, unchanged: the BOUND actor is re-verified and
