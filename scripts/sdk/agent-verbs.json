@@ -10435,6 +10435,27 @@
       }
     },
     {
+      "name": "vault.notes.author_take",
+      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.",
+      "refs": [
+        "/target/subject",
+        "/target/claim"
+      ],
+      "input": "AuthorTakeRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory_requests::author_take(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
       "name": "vault.notes.from_entity",
       "description": "Creates a NOTE of a registered kind from an existing entity.",
       "refs": [

@@ -5425,6 +5425,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_notes_author_take(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.author_take", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_notes_from_entity(
         &self,
         input: serde_json::Value,
