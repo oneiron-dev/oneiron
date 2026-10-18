@@ -1,0 +1,394 @@
+{
+  "version": 1,
+  "scope": "Contract smoke only; no model quality, statistical superiority, 500-point or 10M-scale claim.",
+  "source_truth": {
+    "fixture": "shared-observatory-note",
+    "sha256": "62f8cdf37ab9fbfa64a425e820de0c504bccf490235f5ce2b6c068380a9ac331",
+    "source": {
+      "uri": "owner-authored:oneiron-e2e-support-20261018",
+      "revision": "1"
+    },
+    "rule": "QA labels select curator-supplied expectedFacts; never use an answerer/judge/engine output to create gold."
+  },
+  "admission": {
+    "scenario": "EVALUATION-01",
+    "supported_arm": "deterministic",
+    "required_pins": [
+      "dataset_sha256",
+      "arm_config_sha256",
+      "model_id@revision",
+      "params_sha256",
+      "answer_prompt_sha256",
+      "judge_prompt_sha256",
+      "producer_commit"
+    ],
+    "negative_variants": [
+      {
+        "mutation": "omit model revision",
+        "expect": "reject before answer/judge calls or result card"
+      },
+      {
+        "mutation": "mismatch declared dataset hash",
+        "expect": "reject before answer/judge calls or result card"
+      },
+      {
+        "mutation": "background_tier_enabled=false with a background-tier call purpose",
+        "expect": "purity refusal, no fabricated score"
+      },
+      {
+        "mutation": "request an arm whose public prerequisites are unavailable",
+        "expect": "explicit refusal/not-ready, no fabricated score"
+      }
+    ],
+    "future_tiers": {
+      "BEAM-500K": "not run",
+      "BEAM-1M": "not run",
+      "BEAM-10M": "not-yet-run (10M-gated)"
+    },
+    "limits": "Fixture smoke is not BEAM-128K accuracy merely because a token-budget field names 128K."
+  },
+  "scoring": {
+    "scenario": "EVALUATION-02",
+    "question": "What is the access word for the observatory visit?",
+    "gold_fact": "accessWord",
+    "answerer_cases": [
+      {
+        "id": "correct",
+        "scripted_answer": "cobalt-orchid",
+        "votes": [
+          1,
+          0,
+          1
+        ],
+        "majority": 1
+      },
+      {
+        "id": "half-credit-arithmetic",
+        "scripted_answer": "cobalt",
+        "votes": [
+          0,
+          0.5,
+          0.5
+        ],
+        "majority": 0.5
+      },
+      {
+        "id": "wrong",
+        "scripted_answer": "amber-iris",
+        "votes": [
+          0,
+          1,
+          0
+        ],
+        "majority": 0
+      }
+    ],
+    "votes_are": "Scripted scorer inputs, not independent human labels of partial-answer quality or evidence of judge intelligence.",
+    "columns": {
+      "beam-fixed": {
+        "judge_question": "real question",
+        "vote_case_scores": [
+          1,
+          0.5,
+          0
+        ]
+      },
+      "beam-replicate@3e12035": {
+        "judge_question": "<question>",
+        "vote_case_scores": [
+          1,
+          0,
+          0
+        ]
+      }
+    },
+    "separate_passes": true,
+    "not_a_replicate_column": "int-cast-saw-question",
+    "required_evidence": [
+      "separate answerer/judge origin and pin",
+      "exact judge prompt hash per pass",
+      "three calls per judgment",
+      "independent gold withheld from answerer",
+      "native score plus majority"
+    ]
+  },
+  "comparators": {
+    "scenario": "EVALUATION-03",
+    "same_inputs": [
+      "shared-observatory-note bytes",
+      "question set",
+      "gold",
+      "judge",
+      "telemetry schema"
+    ],
+    "paired_answerer_arms": [
+      "deterministic",
+      "vanilla_rag",
+      "agentic",
+      "backbone_solo"
+    ],
+    "controls": {
+      "backbone_solo": "empty context, zero vault reads",
+      "trajectory_only": "own steps on this question, no vault recall"
+    },
+    "separate_cheap_answerer_arm": "chat",
+    "vanilla_rag": "vector + BM25F, same turns and retrieval_k; no full engine fusion or agentic repair",
+    "comparison_axes": [
+      "benchmark_and_tier",
+      "oracle_vs_full_regime",
+      "native_metric_scale",
+      "answerer_and_backbone_solo",
+      "judge_identity_and_in_family",
+      "retrieval_k",
+      "provenance"
+    ],
+    "uncarded_row": "refuse, appendix or drop; never claim comparable",
+    "forbidden_answerer_inputs": [
+      "gold",
+      "arm identity",
+      "ability label"
+    ],
+    "forbidden_harness_actions": [
+      "rerank pack",
+      "summarize pack",
+      "repair pack"
+    ],
+    "confounds_to_disclose": [
+      "L0-to-L1 extractor model/revision",
+      "cheap chat is not agency lift",
+      "vector infrastructure cost is not accuracy"
+    ]
+  },
+  "cost": {
+    "scenario": "EVALUATION-04",
+    "efforts": [
+      "light",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "currency": "USD",
+    "prices": {
+      "source": "synthetic fixture prices, not a vendor quote",
+      "input_per_million": 1,
+      "output_per_million": 2
+    },
+    "query_usage": [
+      {
+        "purpose": "query_embedding",
+        "input_tokens": 10,
+        "output_tokens": 0,
+        "expected_usd": 1e-05
+      },
+      {
+        "purpose": "tool_routing",
+        "input_tokens": 20,
+        "output_tokens": 5,
+        "expected_usd": 3e-05
+      },
+      {
+        "purpose": "rerank",
+        "input_tokens": 15,
+        "output_tokens": 1,
+        "expected_usd": 1.7e-05
+      },
+      {
+        "purpose": "compression",
+        "input_tokens": 25,
+        "output_tokens": 3,
+        "expected_usd": 3.1e-05
+      },
+      {
+        "purpose": "agentic_repl",
+        "input_tokens": 30,
+        "output_tokens": 4,
+        "expected_usd": 3.8e-05
+      },
+      {
+        "purpose": "answer_gen",
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "pack_tokens_within_input": 30,
+        "re_prefill_tokens_within_input": 40,
+        "edited_block": "fixture-context",
+        "re_prefill_source": "provider_reported",
+        "expected_usd": 0.00012
+      }
+    ],
+    "judge_overhead": {
+      "calls": 3,
+      "input_tokens_per_call": 40,
+      "output_tokens_per_call": 2,
+      "expected_usd": 0.000132
+    },
+    "offline": {
+      "input_tokens": 200,
+      "output_tokens": 20,
+      "question_denominator": 2,
+      "expected_total_usd": 0.00024,
+      "expected_amortized_usd": 0.00012
+    },
+    "expected_query_usd": 0.000246,
+    "expected_all_in_usd_per_question": 0.000498,
+    "accounting": [
+      "No extra charge for re-prefill or pack tokens already included in provider input usage.",
+      "Record actual elapsed query/preprocessing latency; no fixed latency oracle.",
+      "Measure real target-tokenizer counts; bytes/characters are not tokens.",
+      "Report non-LLM ingest/index time even if no offline provider dollars.",
+      "Do not turn this synthetic usage vector into an accuracy improvement."
+    ]
+  },
+  "knowledge": {
+    "scenario": "EVALUATION-05",
+    "corpus_fixture": "shared-observatory-note",
+    "qa": [
+      {
+        "id": "person",
+        "question": "Who visits the observatory?",
+        "gold_fact": "person"
+      },
+      {
+        "id": "place",
+        "question": "Where does Mira visit?",
+        "gold_fact": "place"
+      },
+      {
+        "id": "time",
+        "question": "When is the visit, as a UTC instant?",
+        "gold_fact": "utc"
+      },
+      {
+        "id": "access",
+        "question": "What is the access word?",
+        "gold_fact": "accessWord"
+      }
+    ],
+    "evidence": "Each answer cites the matching span in the hash-pinned note; byte ranges must refer to that original UTF-8 source.",
+    "missing_prerequisites": [
+      "Curator-supplied source timestamps/session ordering for ParsedMessage import.",
+      "Independently curated Of360GoldDataset extraction/update operation labels and evidence IDs.",
+      "Negative hallucination/omission cases and an update history with dated supersession truth."
+    ],
+    "rule": "Do not mint model-created labels, backfill timestamps from import time, or accept matched_gold authored by the extractor as the oracle.",
+    "report": [
+      "fixture hash",
+      "source evidence",
+      "accuracy",
+      "errors",
+      "omissions",
+      "hallucinations",
+      "cost",
+      "seed_subset/smoke limitations"
+    ]
+  },
+  "edit": {
+    "scenario": "EVALUATION-06",
+    "task": "Change status() from returning the literal draft to returning the literal ready. Preserve the public function name, signature and all other bytes.",
+    "source_fixture": "evaluation-edit-source",
+    "expected_fixture": "evaluation-edit-expected",
+    "arms": [
+      "git-normal",
+      "typed-edit"
+    ],
+    "shared_budget": {
+      "model_calls": 2,
+      "output_tokens": 128
+    },
+    "oracle": "Compare the real public artifact bytes with the independently authored expected file; require the public tested/checker result, not a caller-supplied success.",
+    "measures": [
+      "tokens_to_parity",
+      "oracle_success",
+      "caught_regressions",
+      "elapsed_wall_time",
+      "usage_dollars"
+    ],
+    "not_allowed": [
+      "harness writes candidate",
+      "candidate changes oracle",
+      "assumed SDK winner",
+      "cargo compilation in E2E runner"
+    ]
+  },
+  "context": {
+    "scenario": "EVALUATION-07",
+    "marked_span": "retain-exactly: Å|Å|東京|00ff",
+    "state_updates": [
+      {
+        "key": "phase",
+        "value": "draft"
+      },
+      {
+        "key": "phase",
+        "value": "review"
+      },
+      {
+        "key": "phase",
+        "value": "ready"
+      }
+    ],
+    "expected_state": {
+      "phase": "ready"
+    },
+    "value_fixture": "evaluation-context-value",
+    "expected_value_bytes": 11553,
+    "expected_value_sha256": "0bdb26d4532b7b28a000a10be32a0ab3e0c7f9b8a14420b16adabbe3b734117c",
+    "diagnostic_inline_value_budget_bytes": 4096,
+    "budget_note": "Synthetic value-storage budget, NOT a product limit or a model token-window size. Activation also needs a fixed target-tokenizer query/read budget from the public diagnostic contract.",
+    "arms": [
+      "marked-span-retention",
+      "in-place-state-edit",
+      "offload-then-exact-recover"
+    ],
+    "board_comparison": [
+      "RESIDENT dynamic",
+      "STREAM incremental"
+    ],
+    "measures": [
+      "exact_bytes_correct",
+      "latest_state_correct",
+      "exact_restored_bytes",
+      "read_budget_valid",
+      "edit_tokens",
+      "re_prefill_tokens_and_source",
+      "dollars"
+    ],
+    "rule": "Do not normalize Unicode, recover only a preview, exceed the read budget, or substitute world knowledge/retrieval for retained context."
+  },
+  "observability": {
+    "scenario": "EVALUATION-08",
+    "attempts": [
+      {
+        "id": "success",
+        "expected": "explicit successful outcome with resolvable evidence"
+      },
+      {
+        "id": "budget-limited",
+        "expected": "reported limit and incomplete/failed attempt, not fabricated success"
+      }
+    ],
+    "turn_outcome": "disengagement",
+    "joins": [
+      "episode_id",
+      "turn_idx",
+      "run_id",
+      "actual turn reference",
+      "activation reference",
+      "receipt reference",
+      "replay parent/source hash"
+    ],
+    "existing_reads": [
+      "GET /v1/core/run-tree/observe?run_id=<actual-id> (SSE run-tree data)",
+      "vault.receipts.get",
+      "vault.receipts"
+    ],
+    "must_observe": [
+      "actual run/turn evidence",
+      "reported limits/failure",
+      "resolvable content-addressed receipts",
+      "original model/config/source hashes",
+      "replay lineage"
+    ],
+    "rule": "Silence is not success. Mark an explicit outcome via its typed call; do not write private telemetry tables or use local-vault outcome-ingest."
+  }
+}
