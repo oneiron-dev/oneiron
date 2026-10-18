@@ -578,6 +578,26 @@ export class Oneiron {
       sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
       /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
       receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
+      /** Converts selected messages through the configured refiner; user initiation approves conversion, never admission. */
+      convert: (input: Facade.SkillConvertRequest): Facade.SkillConvertReceipt => this.#call(() => this.#client.vaultSkillsConvert(input) as Facade.SkillConvertReceipt),
+      /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
+      get: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsGet(input) as Facade.SkillLibraryView),
+      /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
+      list: (input: Facade.SkillLibraryListRequest): Facade.SkillLibraryPage => this.#call(() => this.#client.vaultSkillsList(input) as Facade.SkillLibraryPage),
+      /** The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled. */
+      archive: (input: Facade.HubSkillRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsArchive(input) as Facade.SkillLibraryView),
+      /** The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring. */
+      restore: (input: Facade.SkillLibraryRestoreRequest): Facade.SkillLibraryRestoreReceipt => this.#call(() => this.#client.vaultSkillsRestore(input) as Facade.SkillLibraryRestoreReceipt),
+      /** The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable. */
+      fork: (input: Facade.SkillLibraryForkRequest): Facade.SkillLibraryView => this.#call(() => this.#client.vaultSkillsFork(input) as Facade.SkillLibraryView),
+      rules: {
+        /** The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose. */
+        set: (input: Facade.SkillHashRuleRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsRulesSet(input) as Facade.HubConsentReceipt),
+      },
+      code_auto_install: {
+        /** The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification. */
+        set: (input: Facade.SkillCodeAutoInstallRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsCodeAutoInstallSet(input) as Facade.HubConsentReceipt),
+      },
       permissions: {
         /** The owner answers one imported skill permission ask at its exact hub source. */
         approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),

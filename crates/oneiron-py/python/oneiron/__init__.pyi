@@ -887,8 +887,30 @@ class Oneiron:
             """The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."""
         def receipts(self, spec: Facade.HubSkillRequest) -> Facade.HubSkillReceipts:
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
+        def convert(self, spec: Facade.SkillConvertRequest) -> Facade.SkillConvertReceipt:
+            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
+        def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
+            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+        def list(self, spec: Facade.SkillLibraryListRequest) -> Facade.SkillLibraryPage:
+            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+        def archive(self, spec: Facade.HubSkillRequest) -> Facade.SkillLibraryView:
+            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
+        def restore(self, spec: Facade.SkillLibraryRestoreRequest) -> Facade.SkillLibraryRestoreReceipt:
+            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
+        def fork(self, spec: Facade.SkillLibraryForkRequest) -> Facade.SkillLibraryView:
+            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+        @property
+        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs": ...
+        @property
+        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs": ...
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs": ...
+    class _VaultSkillsRulesVerbs:
+        def set(self, spec: Facade.SkillHashRuleRequest) -> Facade.HubConsentReceipt:
+            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
+    class _VaultSkillsCodeAutoInstallVerbs:
+        def set(self, spec: Facade.SkillCodeAutoInstallRequest) -> Facade.HubConsentReceipt:
+            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
     class _VaultSkillsPermissionsVerbs:
         def approve(self, spec: Facade.HubSkillPermissionRequest) -> Facade.HubConsentReceipt:
             """The owner answers one imported skill permission ask at its exact hub source."""

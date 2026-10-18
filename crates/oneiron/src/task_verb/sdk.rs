@@ -551,6 +551,7 @@ pub use super::sdk_federation::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
 pub use super::sdk_hub::*;
+pub use super::sdk_skills::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_live_run::*;
 pub use super::sdk_mesh::*;

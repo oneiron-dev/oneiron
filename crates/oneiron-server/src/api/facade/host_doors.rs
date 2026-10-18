@@ -77,6 +77,7 @@ pub(crate) use super::courtesy_delete_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
@@ -1074,6 +1075,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.import"
         | "vault.skills.sync"
         | "vault.skills.receipts"
+        | "vault.skills.convert"
+        | "vault.skills.get"
+        | "vault.skills.list"
+        | "vault.skills.archive"
+        | "vault.skills.restore"
+        | "vault.skills.fork"
+        | "vault.skills.rules.set"
+        | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
