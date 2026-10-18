@@ -500,6 +500,53 @@ pub(crate) fn stamp_leader_project(
     )?;
     Ok(())
 }
+/// Births an imported claim into its topic's standing import audience (OF-492).
+/// `scope` is the claim's opaque scope as promotion is about to sign it, and
+/// `import_review` the history import its cited words came from. When the
+/// owner answered the topic's ask, read in `txn`, the project selector moves to
+/// the audience they chose: only me is the default (private) project and a
+/// project is that project. The source's own sharing keeps the evidence's
+/// stamp, since a history import carries no source audience. A claim from a
+/// batch that raised the ask, a topic with no settled rule, or a chosen project
+/// no longer visible keeps `scope` as it was. Never called on an existing row.
+pub(crate) fn stamp_import_audience_birth(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: rmpv::Value,
+    import_review: &str,
+) -> Result<rmpv::Value> {
+    let Some((topic, _)) = crate::ingest::import_audience_topic(Some(&scope))? else {
+        return Ok(scope);
+    };
+    let Some((audience, raising)) = vault.import_audience_rule_in_txn(txn, &topic)? else {
+        return Ok(scope);
+    };
+    if raising.iter().any(|review| review == import_review) {
+        return Ok(scope);
+    }
+    let project = match audience {
+        crate::ingest::ImportAudience::Source => return Ok(scope),
+        crate::ingest::ImportAudience::OnlyMe => crate::claim::default_project_id(),
+        crate::ingest::ImportAudience::Project { project } => {
+            match vault.project_in_txn(txn, project)? {
+                Some(record) if record.role != crate::workspace_roster::ProjectRole::Corpus => {
+                    project
+                }
+                _ => return Ok(scope),
+            }
+        }
+    };
+    let mut entries = match scope {
+        rmpv::Value::Map(entries) => entries,
+        other => return Ok(other),
+    };
+    entries.retain(|(key, _)| key.as_str() != Some("scopeProjectId"));
+    entries.push((
+        rmpv::Value::from("scopeProjectId"),
+        rmpv::Value::Binary(project.as_bytes().to_vec()),
+    ));
+    Ok(rmpv::Value::Map(entries))
+}
 /// Settles a BLOB_ARTIFACT's audience to `project` in the transaction that
 /// binds it to that project: a signing document drafted for a project, and
 /// the sealed copies and signature images it makes (OF-415). Like

@@ -152,7 +152,15 @@ impl Vault {
         topic: &EntityId,
     ) -> Result<Option<(ImportAudience, Vec<String>)>> {
         let txn = self.store.env.read_txn()?;
-        let Some(cluster) = self.import_audience_cluster_in_txn(&txn, topic)? else {
+        self.import_audience_rule_in_txn(&txn, topic)
+    }
+
+    pub(crate) fn import_audience_rule_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        topic: &EntityId,
+    ) -> Result<Option<(ImportAudience, Vec<String>)>> {
+        let Some(cluster) = self.import_audience_cluster_in_txn(txn, topic)? else {
             return Ok(None);
         };
         let ImportAudienceState::Settled {
@@ -163,7 +171,7 @@ impl Vault {
         else {
             return Ok(None);
         };
-        let Some(body) = read_stored_claim_body(&self.store, &txn, &rule)? else {
+        let Some(body) = read_stored_claim_body(&self.store, txn, &rule)? else {
             return Ok(None);
         };
         if body.predicate != PREDICATE_DISCLOSURE_IMPORT_AUDIENCE
