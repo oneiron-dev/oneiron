@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 512 facade rows, 1901 declarations.
-Inputs: 461 of 512 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 455 of 512 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 533 facade rows, 1972 declarations.
+Inputs: 482 of 533 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 476 of 533 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -1089,6 +1089,7 @@ class TaskCreateRequest(TypedDict):
     intent_key: NotRequired[str | None]
     brief: NotRequired[QueueTaskBrief | None]
     ttl: NotRequired[TaskTtl | None]
+    parent_ref: NotRequired[str | None]
 class TaskCreateReceipt(TypedDict):
     task_ref: NotRequired[EntityId | None]
     proposal_ref: NotRequired[EntityId | None]
@@ -3435,6 +3436,42 @@ class TrustedContactAuthorization(TypedDict):
     yes: bool
     outcome: TrustedContactAuthorizationOutcome
     system_notices: list[GateSystemNoticeRecord]
+class TrustedContactConcernRequest(TypedDict):
+    content_ref: str
+TrustedContactConcernFact = Literal["fact_of_concern"]
+class TrustedContactConcernProposal(TypedDict):
+    action: str
+    fact: NotRequired[TrustedContactConcernFact | None]
+    gate_receipt_ref: NotRequired[str | None]
+    open_asks: list[TrustedContactAsk]
+    system_notices: list[GateSystemNoticeRecord]
+class TrustedContactDeliverRequest(TypedDict):
+    ...
+class TrustedContactNoticeAuthorizationAsk(TypedDict):
+    origin: Literal["ask"]
+    ask_ref: str
+class TrustedContactNoticeAuthorizationPolicy(TypedDict):
+    origin: Literal["policy"]
+    row_ref: str
+    tier: TrustedContactTier
+TrustedContactNoticeAuthorization = TrustedContactNoticeAuthorizationAsk | TrustedContactNoticeAuthorizationPolicy
+class TrustedContactDeliveryReceipt(TypedDict):
+    fire_ref: str
+    person_ref: str
+    contact_ref: str
+    version: int
+    channel: str
+    verb: str
+    authorization: TrustedContactNoticeAuthorization
+    fact: TrustedContactConcernFact
+    outcome: str
+    gate_decision_id: NotRequired[str | None]
+    gate_outcome: str
+    gate_reason_codes: list[str]
+    receipt_id: str
+    occurred_at: int
+    provider_ref: NotRequired[str | None]
+    delivery_may_have_occurred: bool
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]
@@ -3469,6 +3506,48 @@ class GuestSlipMinted(TypedDict):
     slip_id: str
     slip: str
     expires_at: int
+SupportHolderClass = Literal["human", "agent"]
+class SupportGrantMintRequest(TypedDict):
+    holder: EntityId
+    holder_class: SupportHolderClass
+    holder_key: str
+    scope: Scope
+    records: NotRequired[list[EntityId]]
+    ttl_secs: NotRequired[int | None]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+SupportGrantStatus = Literal["active", "expired", "revoked", "ended"]
+class SupportGrantView(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    holder_class: str
+    scope: Scope
+    records: NotRequired[list[str]]
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    approved_at: int
+    wall_expires_at: int
+    status: SupportGrantStatus
+    revoke_command: str
+class SupportGrantMintAnswer(TypedDict):
+    slip: str
+    grant: SupportGrantView
+    decision_ref: str
+class SupportGrantListRequest(TypedDict):
+    include_inactive: NotRequired[bool]
+    limit: NotRequired[int | None]
+class SupportGrantList(TypedDict):
+    grants: list[SupportGrantView]
+class SupportGrantRevokeRequest(TypedDict):
+    grant_ref: str
+class SupportGrantRevokeAnswer(TypedDict):
+    grant_ref: str
+    holder: EntityId
+    changed: bool
+    revoked_at: NotRequired[int | None]
+    decision_ref: NotRequired[str | None]
+    delivered_recallable: bool
 ResidenceModeName = Literal["opened", "all"]
 class ResidenceModeRequest(TypedDict):
     machine: EntityId
@@ -4564,6 +4643,303 @@ class EmbeddingSpaceProbeDeleteRequest(TypedDict):
     id: str
 class EmbeddingSpaceProbeDeleted(TypedDict):
     ok: bool
+PolicyOutputContract = Literal["binary", "category_json", "rationale_json"]
+PolicyPatternRole = Literal["escalate", "decide", "log"]
+class PolicyPatternRule(TypedDict):
+    id: str
+    pattern: str
+    category: str
+    role: NotRequired[PolicyPatternRole]
+class OwnerPolicyConfiguration(TypedDict):
+    owner_policy_enabled: NotRequired[bool]
+    owner_policy_document: NotRequired[str | None]
+    owner_policy_output_contract: NotRequired[PolicyOutputContract | None]
+    owner_policy_patterns: NotRequired[list[PolicyPatternRule]]
+class OwnerPolicyConfigurationView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    read_frontier_hash: str
+    enabled: bool
+    configuration: OwnerPolicyConfiguration
+class OwnerPolicyConfigureRequest(TypedDict):
+    expected_body_hash: str
+    configuration: OwnerPolicyConfiguration
+class OwnerPolicyConfigurationReceipt(TypedDict):
+    configuration: OwnerPolicyConfigurationView
+    receipt_ref: str
+PolicyRowAction = Literal["warn", "reword", "block", "route_to_help"]
+class PolicyRowScopeWorld(TypedDict):
+    World: str
+class PolicyRowScopeProject(TypedDict):
+    Project: str
+class PolicyRowScopeWorldProjectBody(TypedDict):
+    world: str
+    project: str
+class PolicyRowScopeWorldProject(TypedDict):
+    WorldProject: PolicyRowScopeWorldProjectBody
+PolicyRowScope = Literal["Vault"] | PolicyRowScopeWorld | PolicyRowScopeProject | PolicyRowScopeWorldProject
+class PolicyRowChangeAddBody(TypedDict):
+    row_ref: str
+    text: str
+    action: PolicyRowAction
+    scope: PolicyRowScope
+class PolicyRowChangeAdd(TypedDict):
+    Add: PolicyRowChangeAddBody
+class PolicyRowChangeEditBody(TypedDict):
+    row_ref: str
+    text: str
+    action: PolicyRowAction
+    scope: PolicyRowScope
+class PolicyRowChangeEdit(TypedDict):
+    Edit: PolicyRowChangeEditBody
+class PolicyRowChangeRemoveBody(TypedDict):
+    row_ref: str
+    scope: PolicyRowScope
+class PolicyRowChangeRemove(TypedDict):
+    Remove: PolicyRowChangeRemoveBody
+class PolicyRowChangeAddWithWhyBody(TypedDict):
+    row_ref: str
+    text: str
+    action: PolicyRowAction
+    scope: PolicyRowScope
+    why: str
+class PolicyRowChangeAddWithWhy(TypedDict):
+    AddWithWhy: PolicyRowChangeAddWithWhyBody
+class PolicyRowChangeEditWithWhyBody(TypedDict):
+    row_ref: str
+    text: str
+    action: PolicyRowAction
+    scope: PolicyRowScope
+    why: str
+class PolicyRowChangeEditWithWhy(TypedDict):
+    EditWithWhy: PolicyRowChangeEditWithWhyBody
+class PolicyRowChangeDraftWhyBody(TypedDict):
+    row_ref: str
+    scope: PolicyRowScope
+    why: str
+class PolicyRowChangeDraftWhy(TypedDict):
+    DraftWhy: PolicyRowChangeDraftWhyBody
+PolicyRowChange = PolicyRowChangeAdd | PolicyRowChangeEdit | PolicyRowChangeRemove | PolicyRowChangeAddWithWhy | PolicyRowChangeEditWithWhy | PolicyRowChangeDraftWhy
+class PolicyRowChangeRequest(TypedDict):
+    change: PolicyRowChange
+class PolicyRowReceipt(TypedDict):
+    receipt_id: str
+    revision: int
+    author: str
+    change: PolicyRowChange
+    previous_receipt_id: NotRequired[str | None]
+    at: int
+PolicyClassifySubject = Literal["outbound_content", "action"]
+class PolicyOutboundRequest(TypedDict):
+    subject: PolicyClassifySubject
+    content: str
+    world_ref: NotRequired[str | None]
+    project_ref: NotRequired[str | None]
+PolicyEnforcementAction = Literal["allow", "warn", "reword", "block", "route_to_help", "hold", "skipped"]
+PolicySkipReason = Literal["no-backend", "no-document", "backend-unavailable", "response-unusable", "budget-exhausted", "policy-moving"]
+class PolicyClassifyDecisionSkipped(TypedDict):
+    skipped: PolicySkipReason
+PolicyClassifyDecision = Literal["allow", "warn", "reword", "block", "route-to-help", "hold"] | PolicyClassifyDecisionSkipped
+class PolicyVerdictCategoryNone(TypedDict):
+    category: Literal["none"]
+class PolicyVerdictCategoryOwnerPolicyContent(TypedDict):
+    row_ref: str
+class PolicyVerdictCategoryOwnerPolicy(TypedDict):
+    category: Literal["owner_policy"]
+    sub: PolicyVerdictCategoryOwnerPolicyContent
+class PolicyVerdictCategoryHostedLegalContent(TypedDict):
+    category: str
+    jurisdiction: str
+    policy_version: str
+    row_ref: str
+class PolicyVerdictCategoryHostedLegal(TypedDict):
+    category: Literal["hosted_legal"]
+    sub: PolicyVerdictCategoryHostedLegalContent
+PolicyVerdictCategory = PolicyVerdictCategoryNone | PolicyVerdictCategoryOwnerPolicy | PolicyVerdictCategoryHostedLegal
+PolicyHedgeBucket = Literal["certain", "high", "medium", "low"]
+class PolicyConfidence(TypedDict):
+    calibrated: float
+    hedge_bucket: PolicyHedgeBucket
+class PolicyContentBinding(TypedDict):
+    content_hash: list[int]
+    read_frontier_hash: list[int]
+RelayClassifierMode = Literal["classify_all", "pattern_gated"]
+class ImageBox(TypedDict):
+    top: float
+    bottom: float
+    left: float
+    right: float
+class ImagePoint(TypedDict):
+    x: float
+    y: float
+class DecisionAnswerNoul(TypedDict):
+    kind: Literal["noul"]
+    value: bool
+class DecisionAnswerChoice(TypedDict):
+    kind: Literal["choice"]
+    value: str
+class DecisionAnswerScore(TypedDict):
+    kind: Literal["score"]
+    value: float
+class DecisionAnswerBox(TypedDict):
+    kind: Literal["box"]
+    value: ImageBox | None
+class DecisionAnswerPoint(TypedDict):
+    kind: Literal["point"]
+    value: ImagePoint | None
+class DecisionAnswerAbstain(TypedDict):
+    kind: Literal["abstain"]
+DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class DecisionBand(TypedDict):
+    low: float
+    high: float
+class EvidenceVersion(TypedDict):
+    id: str
+    body_hash: list[int]
+class PairedReading(TypedDict):
+    provider: ProviderPin
+    question: str
+    question_version: int
+    probability: float
+StopCause = Literal["done", "deadline", "provider_failure"]
+ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
+class ReasoningNotNeeded(TypedDict):
+    state: Literal["not_needed"]
+class ReasoningRan(TypedDict):
+    state: Literal["ran"]
+    cause: ReasoningCause
+class ReasoningSkipped(TypedDict):
+    state: Literal["skipped"]
+    cause: ReasoningCause
+class ReasoningCut(TypedDict):
+    state: Literal["cut"]
+    cause: ReasoningCause
+Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
+class DecisionTime(TypedDict):
+    budget_ms: int
+    used_ms: int
+    stop: StopCause
+    answered: NotRequired[DecisionRung | None]
+    reasoning: Reasoning
+class ImagePin(TypedDict):
+    provider: ProviderPin
+    name: str
+    evidence: EvidenceVersion
+    width: int
+    height: int
+    frame: NotRequired[PixelRegion | None]
+    edge: NotRequired[int | None]
+    sent_width: int
+    sent_height: int
+class HostRuleRef(TypedDict):
+    id: str
+    revision: int
+class DecisionReceipt(TypedDict):
+    question: str
+    question_version: int
+    principal: str
+    providers: list[ProviderPin]
+    band: DecisionBand
+    band_version: NotRequired[int]
+    evidence_versions: NotRequired[list[EvidenceVersion]]
+    cost_per_thousand: NotRequired[float | None]
+    paired: NotRequired[list[PairedReading]]
+    person: NotRequired[list[PairedReading]]
+    time: NotRequired[DecisionTime | None]
+    images: NotRequired[list[ImagePin]]
+    think_row: NotRequired[int | None]
+    person_row: NotRequired[int | None]
+    rule: NotRequired[HostRuleRef | None]
+HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
+class TypedDecision(TypedDict):
+    answer: DecisionAnswer
+    probability: NotRequired[float | None]
+    evidence: list[str]
+    in_band: bool
+    receipt: DecisionReceipt
+    human_ask: NotRequired[HumanAskReason | None]
+class PolicyPassAudit(TypedDict):
+    matched_pattern_ids: NotRequired[list[str]]
+    acting_pattern_role: NotRequired[PolicyPatternRole | None]
+    model_rule_ids: NotRequired[list[str]]
+    model_rule_ids_dropped: NotRequired[int]
+    model_confidence: NotRequired[str | None]
+    model_rationale: NotRequired[str | None]
+    typed_decisions: NotRequired[list[TypedDecision]]
+PolicyPlane = Literal["owner_policy", "hosted_legal"]
+HostedOutagePolicy = Literal["halt", "proceed_receipted"]
+class HostedPlaneAttestation(TypedDict):
+    plane: PolicyPlane
+    policy_version: str
+    policy_hash: str
+    classifier_mode: NotRequired[RelayClassifierMode | None]
+    decision_binding: NotRequired[str | None]
+    outage_policy: NotRequired[HostedOutagePolicy | None]
+    degraded: NotRequired[bool | None]
+class PolicyClassifyVerdict(TypedDict):
+    decision: PolicyClassifyDecision
+    category: PolicyVerdictCategory
+    confidence: PolicyConfidence
+    binding: PolicyContentBinding
+    safeguard_binding: str
+    classifier_mode: NotRequired[RelayClassifierMode | None]
+    decision_binding: NotRequired[str | None]
+    audit: NotRequired[PolicyPassAudit | None]
+    hosted_attestation: NotRequired[HostedPlaneAttestation | None]
+    plane_minted: NotRequired[PolicyPlane | None]
+PolicyEnforcementVoice = Literal["persona", "system"]
+class PolicyHelpRouting(TypedDict):
+    category: PolicyVerdictCategory
+    message: str
+    diagnosis: NotRequired[str | None]
+    persona_present: bool
+    resources: NotRequired[list[GateSystemNoticeAction]]
+class PolicyRewordRequest(TypedDict):
+    row_ref: str
+    constraint: str
+    why: NotRequired[str | None]
+    rejected_binding: PolicyContentBinding
+class PolicyBargeInKill(TypedDict):
+    cancel_tts: bool
+    flush_playout_buffer: bool
+    cancel_llm: bool
+class PolicyModelEnforcement(TypedDict):
+    action: PolicyEnforcementAction
+    verdict: PolicyClassifyVerdict
+    final_content: NotRequired[str | None]
+    outbound_halted: bool
+    receipt_ref: NotRequired[str | None]
+    moderation_ref: NotRequired[str | None]
+    system_notice: NotRequired[str | None]
+    notice_voice: NotRequired[PolicyEnforcementVoice | None]
+    system_notices: NotRequired[list[GateSystemNoticeRecord]]
+    help_routing: NotRequired[PolicyHelpRouting | None]
+    reword: NotRequired[PolicyRewordRequest | None]
+    classify_trace: list[PolicyClassifyVerdict]
+    pre_display_block: bool
+    barge_in_kill: NotRequired[PolicyBargeInKill | None]
+    custom_tier_skipped: bool
+RelayBoundaryDegrade = Literal["safeguard_model_unavailable", "safeguard_model_response_unusable", "safeguard_model_tier_absent", "output_contract_undeclared", "policy_binding_moved_mid_pass"]
+RelayResolution = Literal["pattern_decided", "model_decided", "pattern_gated_allow", "log_only", "no_policy_in_play", "vault_side_decided", "unresolved"]
+class HostedPassEvidence(TypedDict):
+    version: str
+    policy_hash: str
+    verify_content_hash: list[int]
+class HostedRelayDecision(TypedDict):
+    service_identity: str
+    verdict: NotRequired[PolicyClassifyVerdict | None]
+    degraded: NotRequired[RelayBoundaryDegrade | None]
+    resolution: NotRequired[RelayResolution | None]
+    hosted_evidence: NotRequired[HostedPassEvidence | None]
+    receipt_ref: NotRequired[str | None]
+    final_content: NotRequired[str | None]
+    outbound_halted: bool
+    system_notice: NotRequired[str | None]
+    system_notices: list[GateSystemNoticeRecord]
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]
@@ -5158,8 +5534,8 @@ class CodeUnitVersionView(TypedDict):
 class CodeOperationView(TypedDict):
     operation_ref: str
     sequence: int
-    session_ref: str
-    actor_ref: str
+    session_ref: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
     actor_class: str
     turn_ref: NotRequired[str | None]
     activity_ref: NotRequired[str | None]
@@ -5282,6 +5658,11 @@ class CodeMutationEntry(TypedDict):
 class CodeMutationLog(TypedDict):
     repo: EntityId
     entries: list[CodeMutationEntry]
+class CodeRunModelHealCountRequest(TypedDict):
+    model_id: str
+class CodeRunModelHealCountView(TypedDict):
+    model_id: str
+    healed_turns: int
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]
@@ -5617,6 +5998,37 @@ class WorkflowRunView(TypedDict):
     results: list[WorkflowStepRun]
 class WorkflowRunRequest(TypedDict):
     root_attempt_ref: EntityId
+class TaskTypeNodeSpec(TypedDict):
+    node_id: str
+    parent: NotRequired[str | None]
+    name: str
+class TaskTypeTreePin(TypedDict):
+    fork_ref: EntityId
+    tree_version: int
+    nodes: list[TaskTypeNodeSpec]
+class TypeStamp(TypedDict):
+    node_id: str
+    tree_version: int
+class TaskTypeNodeView(TypedDict):
+    node_id: str
+    parent: NotRequired[str | None]
+    name: str
+    live: bool
+class TaskTypeTreeView(TypedDict):
+    tree_version: int
+    root: TypeStamp
+    nodes: list[TaskTypeNodeView]
+class TaskTypeTreePinReceipt(TypedDict):
+    fork_ref: EntityId
+    stored: TaskTypeTreeView
+    in_force: bool
+class TaskTypeTreeRead(TypedDict):
+    project_ref: NotRequired[EntityId | None]
+    tree_version: NotRequired[int | None]
+class TaskTypeTreeReadReply(TypedDict):
+    project_ref: NotRequired[EntityId | None]
+    in_force_skill_ref: NotRequired[EntityId | None]
+    tree: NotRequired[TaskTypeTreeView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str
@@ -5794,104 +6206,6 @@ class ArtifactAskSubmit(TypedDict):
     unit_budget_ms: NotRequired[int | None]
     deadline_ms: NotRequired[int | None]
     made_by: NotRequired[Any | None]
-class ImageBox(TypedDict):
-    top: float
-    bottom: float
-    left: float
-    right: float
-class ImagePoint(TypedDict):
-    x: float
-    y: float
-class DecisionAnswerNoul(TypedDict):
-    kind: Literal["noul"]
-    value: bool
-class DecisionAnswerChoice(TypedDict):
-    kind: Literal["choice"]
-    value: str
-class DecisionAnswerScore(TypedDict):
-    kind: Literal["score"]
-    value: float
-class DecisionAnswerBox(TypedDict):
-    kind: Literal["box"]
-    value: ImageBox | None
-class DecisionAnswerPoint(TypedDict):
-    kind: Literal["point"]
-    value: ImagePoint | None
-class DecisionAnswerAbstain(TypedDict):
-    kind: Literal["abstain"]
-DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
-class DecisionBand(TypedDict):
-    low: float
-    high: float
-class EvidenceVersion(TypedDict):
-    id: str
-    body_hash: list[int]
-class PairedReading(TypedDict):
-    provider: ProviderPin
-    question: str
-    question_version: int
-    probability: float
-StopCause = Literal["done", "deadline", "provider_failure"]
-ReasoningCause = Literal["paired_high", "small_margin", "second_measurement"]
-class ReasoningNotNeeded(TypedDict):
-    state: Literal["not_needed"]
-class ReasoningRan(TypedDict):
-    state: Literal["ran"]
-    cause: ReasoningCause
-class ReasoningSkipped(TypedDict):
-    state: Literal["skipped"]
-    cause: ReasoningCause
-class ReasoningCut(TypedDict):
-    state: Literal["cut"]
-    cause: ReasoningCause
-Reasoning = ReasoningNotNeeded | ReasoningRan | ReasoningSkipped | ReasoningCut
-class DecisionTime(TypedDict):
-    budget_ms: int
-    used_ms: int
-    stop: StopCause
-    answered: NotRequired[DecisionRung | None]
-    reasoning: Reasoning
-class ImagePin(TypedDict):
-    provider: ProviderPin
-    name: str
-    evidence: EvidenceVersion
-    width: int
-    height: int
-    frame: NotRequired[PixelRegion | None]
-    edge: NotRequired[int | None]
-    sent_width: int
-    sent_height: int
-class HostRuleRef(TypedDict):
-    id: str
-    revision: int
-class DecisionReceipt(TypedDict):
-    question: str
-    question_version: int
-    principal: str
-    providers: list[ProviderPin]
-    band: DecisionBand
-    band_version: NotRequired[int]
-    evidence_versions: NotRequired[list[EvidenceVersion]]
-    cost_per_thousand: NotRequired[float | None]
-    paired: NotRequired[list[PairedReading]]
-    person: NotRequired[list[PairedReading]]
-    time: NotRequired[DecisionTime | None]
-    images: NotRequired[list[ImagePin]]
-    think_row: NotRequired[int | None]
-    person_row: NotRequired[int | None]
-    rule: NotRequired[HostRuleRef | None]
-HumanAskReason = Literal["disagreement", "uncertain", "provider_unavailable", "owner_selected", "needs_person", "deadline", "exploration_budget"]
-class TypedDecision(TypedDict):
-    answer: DecisionAnswer
-    probability: NotRequired[float | None]
-    evidence: list[str]
-    in_band: bool
-    receipt: DecisionReceipt
-    human_ask: NotRequired[HumanAskReason | None]
 class UnitAbstention(TypedDict):
     unit: Any
     decision: NotRequired[TypedDecision | None]
@@ -6988,7 +7302,6 @@ class LiveVoiceEventsRequest(TypedDict):
     after: NotRequired[int]
     limit: NotRequired[int | None]
 LiveVoiceStopReason = Literal["user_barge_in", "safeguard", "roster_changed", "output_failed", "session_end"]
-PolicyEnforcementAction = Literal["allow", "warn", "reword", "block", "route_to_help", "hold", "skipped"]
 class LiveVoiceEventKindGenerationStarted(TypedDict):
     kind: Literal["generation_started"]
     run: str
@@ -9397,6 +9710,80 @@ class NoteHistoryView(TypedDict):
     operations: list[NoteAuthorship]
     shallow_since: list[int]
     complete: bool
+class NoteEditReplaceSpan(TypedDict):
+    kind: Literal["replace_span"]
+    start: NoteAnchor
+    end: NoteAnchor
+    text: str
+class NoteEditInsertAfter(TypedDict):
+    kind: Literal["insert_after"]
+    anchor: NoteAnchor
+    text: str
+class NoteEditAppendToSection(TypedDict):
+    kind: Literal["append_to_section"]
+    end: NoteAnchor
+    text: str
+class NoteEditWholeText(TypedDict):
+    kind: Literal["whole_text"]
+    text: str
+    timeout_ms: int
+    base: NotRequired[NoteVersion | None]
+class NoteEditRewrite(TypedDict):
+    kind: Literal["rewrite"]
+    text: str
+NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
+class NoteForkRequest(TypedDict):
+    note_ref: str
+    base: NoteVersion
+    edit: NoteEdit
+    reason: NotRequired[str | None]
+class NoteForkRecordView(TypedDict):
+    note_ref: str
+    fork_ref: str
+    parent: str
+    frontier: list[int]
+    actor: NotRequired[str | None]
+    rewrite: bool
+    proposal_ref: NotRequired[str | None]
+    decided: bool
+class NoteForkView(TypedDict):
+    record: NoteForkRecordView
+    markdown: NotRequired[str | None]
+class NoteForkReadRequest(TypedDict):
+    note_ref: str
+    fork_ref: str
+    reason: NotRequired[str | None]
+class NoteProposalForkRef(TypedDict):
+    note_ref: str
+    fork_ref: str
+class NoteProposalOpenRequest(TypedDict):
+    forks: list[NoteProposalForkRef]
+    explainer: str
+    reason: NotRequired[str | None]
+NoteVerdict = Literal["Merge", "Switch", "Reject"]
+class NoteLandingView(TypedDict):
+    receipt: str
+    note_ref: str
+    fork_ref: str
+    previous_head: str
+    head: str
+    verdict: NoteVerdict
+    actor: NotRequired[str | None]
+    at: int
+class NoteProposalView(TypedDict):
+    proposal_ref: str
+    waiting: list[NoteForkView]
+    landed: list[NoteLandingView]
+    explainer: str
+class NoteProposalRequest(TypedDict):
+    proposal_ref: str
+    reason: NotRequired[str | None]
+class NoteVersionTree(TypedDict):
+    version: NoteVersion
+    birth_author: str
+    born_at: int
+    forks: list[NoteForkRecordView]
+    receipts: list[NoteLandingView]
 class NoteHistoryPurgeRequest(TypedDict):
     note_ref: str
 class NoteHistoryPurgeReceipt(TypedDict):
@@ -9425,28 +9812,6 @@ class NoteEditorCloseRequest(TypedDict):
     binding: str
 class NoteEditorClosed(TypedDict):
     closed: bool
-class NoteEditReplaceSpan(TypedDict):
-    kind: Literal["replace_span"]
-    start: NoteAnchor
-    end: NoteAnchor
-    text: str
-class NoteEditInsertAfter(TypedDict):
-    kind: Literal["insert_after"]
-    anchor: NoteAnchor
-    text: str
-class NoteEditAppendToSection(TypedDict):
-    kind: Literal["append_to_section"]
-    end: NoteAnchor
-    text: str
-class NoteEditWholeText(TypedDict):
-    kind: Literal["whole_text"]
-    text: str
-    timeout_ms: int
-    base: NotRequired[NoteVersion | None]
-class NoteEditRewrite(TypedDict):
-    kind: Literal["rewrite"]
-    text: str
-NoteEdit = NoteEditReplaceSpan | NoteEditInsertAfter | NoteEditAppendToSection | NoteEditWholeText | NoteEditRewrite
 class EditNoteRequest(TypedDict):
     note_ref: str
     edit: NoteEdit

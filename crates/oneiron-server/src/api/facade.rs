@@ -35,15 +35,18 @@ mod call_context;
 mod campaign_split_doors;
 mod channel_doors;
 mod claim_settle_doors;
-mod consolidation_doors;
 mod code_doors;
+mod code_run_doors;
 mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
+mod consolidation_doors;
+mod coordination_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
-mod credential_doors;
+mod content_policy_doors;
 mod craft_candidate_doors;
+mod credential_doors;
 mod critic_review_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
@@ -82,6 +85,7 @@ mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
+mod support_grant_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod trusted_contact_doors;
@@ -613,10 +617,11 @@ pub(crate) struct RowHookResume {
 /// and as `actor` when it is `None`. A rewrite must pass the row's input
 /// check, then `check`, as if the caller sent it. An ask saves `resume`'s
 /// credential, and its drain permit marks the chain's thread as the drain's
-/// run of the call.
+/// run of the call. A hook's ask runs on `turn`, the task-work turn the
+/// calling operation already holds, if any.
 #[expect(
     clippy::too_many_arguments,
-    reason = "the row's call plus the caller's key, rewrite admission and resume"
+    reason = "the row's call plus the caller's key, rewrite admission, resume and turn"
 )]
 pub(crate) async fn row_hooks_pre_with(
     server: &Arc<SyncServer>,
@@ -628,6 +633,7 @@ pub(crate) async fn row_hooks_pre_with(
     verb: &str,
     args: serde_json::Value,
     resume: RowHookResume,
+    turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<VerbHookPre, MemoryError> {
     let server = Arc::clone(server);
     let verb = verb.to_owned();
@@ -652,7 +658,7 @@ pub(crate) async fn row_hooks_pre_with(
         };
         server
             .vault
-            .pre_verb_hooks_for_credential(call, args, &admit, resume.credential)?
+            .pre_verb_hooks_for_credential(call, args, &admit, resume.credential, turn)?
             .map_err(|stop| MemoryError::from(oneiron::Error::from(stop)))
     })
     .await
@@ -753,8 +759,9 @@ async fn facade_hooks_pre(
         },
     };
     let check = Some(facade_rewrite_admit(server, auth, &value));
+    // A host-door row holds no task-work turn before its pre chain.
     Ok(row_hooks_pre_with(
-        server, reader, check, actor, class, invocation, verb, value, resume,
+        server, reader, check, actor, class, invocation, verb, value, resume, None,
     )
     .await?)
 }
@@ -910,8 +917,13 @@ fn facade_invoke(
 }
 
 /// [`facade_invoke`] on the task-work turn the dispatch awaited for the call
-/// (Rule 5), bound on the surface the verb runs on: the engine's task work
-/// runs on that turn and waits for no other.
+/// (Rule 5), bound on the surface the verb runs on: the engine's task work,
+/// a verb hook's ask among it, runs on that turn and waits for no other.
+///
+/// The row runs off the async runtime ([`crate::server::blocking`]): its
+/// work blocks, and a hook's ask may wait in the task-work line. The
+/// surface, its room turn and the drain's scope are built on the thread that
+/// runs it.
 #[expect(
     clippy::too_many_arguments,
     reason = "the generated dispatch passes facade_invoke's inputs plus the turn it awaited"
@@ -926,35 +938,37 @@ fn facade_invoke_in_turn(
     producers: &oneiron::memory::ProducerRows,
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let auth = call.auth();
-    let memory = facade_invocation(
-        credential_memory(&server.vault, Some(auth), actor, class)
-            .at(auth.locality())
-            .listing_producers(producers),
-        call,
-    )?;
-    let memory = match turn {
-        Some(turn) => memory.with_task_work_turn(turn),
-        None => memory,
-    };
-    let memory = facade_task_decisions(server, verb, memory)?;
-    let memory = facade_rewrites_admitted(server, auth, &value, memory);
-    // Settlement's run of the call enters its boundary here as the drain's.
-    let _drain = call.drain().map(VerbAskDrainPermit::enter);
-    Ok(match call.room_turn()? {
-        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-        None => {
-            // The owner's own request on the owner's own full credential:
-            // owner-authored writes carry their own confirmation. Any other
-            // caller writes as itself; the owner's credential that no longer
-            // holds is refused. The work-companion setting takes the
-            // person's own proof instead (OF-417).
-            let memory = match direct_authorship(auth, server, verb)? {
-                Some(owner) => memory.with_owner_authorship(&owner),
-                None => memory,
-            };
-            oneiron::task_verb::sdk::invoke(&memory, verb, value)?
-        }
+    crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
+        let auth = call.auth();
+        let memory = facade_invocation(
+            credential_memory(&server.vault, Some(auth), actor, class)
+                .at(auth.locality())
+                .listing_producers(producers),
+            call,
+        )?;
+        let memory = match turn {
+            Some(turn) => memory.with_task_work_turn(turn),
+            None => memory,
+        };
+        let memory = facade_task_decisions(server, verb, memory)?;
+        let memory = facade_rewrites_admitted(server, auth, &value, memory);
+        // Settlement's run of the call enters its boundary here as the drain's.
+        let _drain = call.drain().map(VerbAskDrainPermit::enter);
+        Ok(match call.room_turn()? {
+            Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+            None => {
+                // The owner's own request on the owner's own full credential:
+                // owner-authored writes carry their own confirmation. Any other
+                // caller writes as itself; the owner's credential that no longer
+                // holds is refused. The work-companion setting takes the
+                // person's own proof instead (OF-417).
+                let memory = match direct_authorship(auth, server, verb)? {
+                    Some(owner) => memory.with_owner_authorship(&owner),
+                    None => memory,
+                };
+                oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+            }
+        })
     })
 }
 
@@ -1048,7 +1062,8 @@ fn facade_landing(
     })
 }
 
-/// [`facade_invoke`] for a verb that births records at `position`.
+/// [`facade_invoke`] for a verb that births records at `position`, off the
+/// async runtime as [`facade_invoke_in_turn`] runs.
 #[expect(
     clippy::too_many_arguments,
     reason = "the generated dispatch passes facade_invoke's inputs plus the birth position"
@@ -1063,26 +1078,28 @@ fn facade_invoke_born(
     position: BirthPosition,
     producers: &oneiron::memory::ProducerRows,
 ) -> Result<serde_json::Value, FacadeApiError> {
-    let auth = call.auth();
-    let memory = facade_invocation(
-        credential_memory(&server.vault, Some(auth), actor, class)
-            .at(auth.locality())
-            .with_birth_position(position)
-            .listing_producers(producers),
-        call,
-    )?;
-    let memory = facade_task_decisions(server, verb, memory)?;
-    let memory = facade_rewrites_admitted(server, auth, &value, memory);
-    let _drain = call.drain().map(VerbAskDrainPermit::enter);
-    Ok(match call.room_turn()? {
-        Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-        None => {
-            let memory = match direct_authorship(auth, server, verb)? {
-                Some(owner) => memory.with_owner_authorship(&owner),
-                None => memory,
-            };
-            oneiron::task_verb::sdk::invoke(&memory, verb, value)?
-        }
+    crate::server::blocking(move || -> Result<serde_json::Value, FacadeApiError> {
+        let auth = call.auth();
+        let memory = facade_invocation(
+            credential_memory(&server.vault, Some(auth), actor, class)
+                .at(auth.locality())
+                .with_birth_position(position)
+                .listing_producers(producers),
+            call,
+        )?;
+        let memory = facade_task_decisions(server, verb, memory)?;
+        let memory = facade_rewrites_admitted(server, auth, &value, memory);
+        let _drain = call.drain().map(VerbAskDrainPermit::enter);
+        Ok(match call.room_turn()? {
+            Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
+            None => {
+                let memory = match direct_authorship(auth, server, verb)? {
+                    Some(owner) => memory.with_owner_authorship(&owner),
+                    None => memory,
+                };
+                oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+            }
+        })
     })
 }
 

@@ -182,8 +182,13 @@ vaultTrustedContactsDialSet(input: unknown): unknown
 vaultTrustedContactsTierSet(input: unknown): unknown
 vaultTrustedContactsConcernAsks(input: unknown): unknown
 vaultTrustedContactsConcernAuthorize(input: unknown): unknown
+vaultTrustedContactsConcernPropose(input: unknown): unknown
+vaultTrustedContactsConcernDeliver(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
+vaultSupportGrantsMint(input: unknown): unknown
+vaultSupportGrantsList(input: unknown): unknown
+vaultSupportGrantsRevoke(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
 vaultResidenceOpen(input: unknown): unknown
 vaultResidenceIndex(input: unknown): unknown
@@ -242,6 +247,11 @@ vaultEmbeddingSpacesMoveAbandon(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
+vaultPolicyOwnerGet(input: unknown): unknown
+vaultPolicyOwnerConfigure(input: unknown): unknown
+vaultPolicyOwnerRowChange(input: unknown): unknown
+vaultPolicyOutboundDecide(input: unknown): unknown
+vaultPolicyRelayDecide(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
@@ -292,6 +302,7 @@ vaultCodeSymbolsRenew(input: unknown): unknown
 vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -318,6 +329,8 @@ vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown
 vaultWorkflowsDispatch(input: unknown): unknown
 vaultWorkflowsStatus(input: unknown): unknown
+vaultTaskTypesPin(input: unknown): unknown
+vaultTaskTypesGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown
@@ -519,6 +532,14 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesFork(input: unknown): unknown
+vaultNotesForksRead(input: unknown): unknown
+vaultNotesProposalsOpen(input: unknown): unknown
+vaultNotesProposalsRead(input: unknown): unknown
+vaultNotesProposalsMerge(input: unknown): unknown
+vaultNotesProposalsSwitch(input: unknown): unknown
+vaultNotesProposalsReject(input: unknown): unknown
+vaultNotesVersionTree(input: unknown): unknown
 vaultNotesHistoryPurge(input: unknown): unknown
 vaultNotesHistoryPurgeExecute(input: unknown): unknown
 vaultNotesHistoryPurgeReceipts(input: unknown): unknown

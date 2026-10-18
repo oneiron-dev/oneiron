@@ -285,6 +285,16 @@ impl AuthenticatedOwner {
         }
     }
 
+    /// Whether the credential this proof was carried under is a support
+    /// slip (OF-606). A support person or agent never acts as the owner, so
+    /// the support grant doors refuse such a proof outright, whatever else
+    /// it would pass.
+    pub(crate) fn carried_by_support_slip(&self) -> bool {
+        self.credential
+            .as_ref()
+            .is_some_and(|credential| credential.claims().delegation.is_some())
+    }
+
     /// The credential slip this proof was carried under, and that slip's
     /// parent, or the host root a host action acts under (FIX 2222). An
     /// offer refuses an answer from the lineage that opened it.
@@ -985,6 +995,17 @@ impl Vault {
                 .map(|(contact, clearance)| {
                     ConsentRegistryRow::from_contact_clearance(contact, clearance)
                 }),
+        );
+        // A support grant (OF-606) is reviewed here too, projected from its
+        // logged mint, with the support revoke door as its one-tap revoke.
+        rows.extend(
+            self.support_grant_rows_in_txn(&rtxn)?
+                .iter()
+                .filter(|grant| {
+                    query.include_revoked
+                        || grant.status == crate::authority::SupportGrantStatus::Active
+                })
+                .map(ConsentRegistryRow::from_support_grant),
         );
         drop(rtxn);
         rows.sort_by(|left, right| {

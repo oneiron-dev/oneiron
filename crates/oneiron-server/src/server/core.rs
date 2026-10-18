@@ -86,6 +86,7 @@ pub struct SyncServer {
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
     pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    pub(crate) policy_doors: super::policy_doors::PolicyDoors,
     /// Node-side account API key verifier (OF-448), installed by a host
     /// that supplies the control-plane checker. `None`: account keys are
     /// never admitted.
@@ -425,6 +426,7 @@ impl SyncServer {
             query_checks: super::read_shape::QueryChecks::default(),
             config,
             managed_issuer: None,
+            policy_doors: Default::default(),
             account_keys: None,
             mcp_registry,
             mcp_code_host: None,
