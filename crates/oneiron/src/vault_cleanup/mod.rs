@@ -98,6 +98,7 @@ mod retention;
 mod rollout;
 mod run_record;
 mod scan;
+pub mod surface;
 mod tripwire;
 mod visibility;
 

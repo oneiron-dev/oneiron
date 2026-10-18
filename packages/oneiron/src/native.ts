@@ -251,6 +251,8 @@ vaultResearchRefundWork(input: unknown): unknown
 vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
+vaultCleanupRun(input: unknown): unknown
+vaultEntitiesMention(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
 vaultLegalHoldsWiden(input: unknown): unknown
 vaultLegalHoldsList(input: unknown): unknown

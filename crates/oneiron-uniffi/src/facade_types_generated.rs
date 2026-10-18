@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 594 facade rows, 2191 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 554.
+// UniFFI census: 596 facade rows, 2200 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 556.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -14519,6 +14519,123 @@ pub struct AuthorityHandoffAlarm {
 pub struct HandoffAlarmRequest {
     #[serde(rename = "signer")]
     pub signer: String,
+}
+
+/// `oneiron::vault_cleanup::cleanup_types::CleanupPosture`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupPosture {
+    #[serde(rename = "propose_first")]
+    ProposeFirst,
+    #[serde(rename = "auto_with_digest")]
+    AutoWithDigest,
+}
+
+/// `oneiron::vault_cleanup::cleanup_types::CleanupKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CleanupKind {
+    #[serde(rename = "claimless_extraction_person")]
+    ClaimlessExtractionPerson,
+    #[serde(rename = "empty_summary")]
+    EmptySummary,
+    #[serde(rename = "completed_task")]
+    CompletedTask,
+    #[serde(rename = "completed_attempt")]
+    CompletedAttempt,
+    #[serde(rename = "retained_note")]
+    RetainedNote,
+}
+
+/// `oneiron::vault_cleanup::cleanup_types::CleanupCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupCandidate {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "kind")]
+    pub kind: CleanupKind,
+}
+
+/// `oneiron::vault_cleanup::surface::CleanupRunView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CleanupRunView {
+    #[serde(rename = "attempt")]
+    pub attempt: String,
+    #[serde(rename = "posture")]
+    pub posture: CleanupPosture,
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<CleanupCandidate>,
+    #[serde(rename = "proposal", default, skip_serializing_if = "Option::is_none")]
+    pub proposal: Option<String>,
+    #[serde(rename = "archived")]
+    pub archived: Vec<String>,
+    #[serde(rename = "digest", default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
+}
+
+/// `oneiron::ingest::resolution::EntityResolutionCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EntityResolutionCandidate {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "confidence_claim_ref")]
+    pub confidence_claim_ref: String,
+}
+
+/// `oneiron::ingest::resolution::EntityMentionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct EntityMentionRequest {
+    #[serde(rename = "candidates")]
+    pub candidates: Vec<EntityResolutionCandidate>,
+    #[serde(
+        rename = "high_collision_mention",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub high_collision_mention: Option<bool>,
+}
+
+/// `oneiron::ingest::resolution::ScoredEntityResolutionCandidate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScoredEntityResolutionCandidate {
+    #[serde(rename = "candidate")]
+    pub candidate: EntityResolutionCandidate,
+    #[serde(rename = "effective_confidence")]
+    pub effective_confidence: f64,
+}
+
+/// `oneiron::ingest::resolution::EntityResolutionRoute`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum EntityResolutionRoute {
+    #[serde(rename = "hard_link")]
+    HardLink,
+    #[serde(rename = "soft_link")]
+    SoftLink,
+    #[serde(rename = "soft_link_low")]
+    SoftLinkLow,
+    #[serde(rename = "provisional_entity")]
+    ProvisionalEntity,
+}
+
+/// `oneiron::ingest::resolution::EntityResolutionWaterfallDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EntityResolutionWaterfallDecision {
+    #[serde(rename = "ranked")]
+    pub ranked: Vec<ScoredEntityResolutionCandidate>,
+    #[serde(rename = "claims_suppressed")]
+    pub claims_suppressed: u64,
+    #[serde(rename = "selected", default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
+    #[serde(
+        rename = "selected_effective_confidence",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub selected_effective_confidence: Option<f64>,
+    #[serde(rename = "route")]
+    pub route: EntityResolutionRoute,
+    #[serde(rename = "requires_async_verification")]
+    pub requires_async_verification: bool,
 }
 
 /// `oneiron::deletion::legal_hold::types::LegalHoldTarget`.
