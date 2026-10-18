@@ -496,6 +496,69 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_budget(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.budget")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.budget", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_budget_land(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.budget.land")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.budget.land", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_lease_open(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.lease.open")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.lease.open", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_lease(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.lease")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.lease", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_lease_top_up(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.lease.top_up")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.lease.top_up", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_hold(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.hold")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.hold", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_hold_resume(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.hold.resume")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.hold.resume", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_local(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.local")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.local", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_budgets_settlements(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.budgets.settlements")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.budgets.settlements", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_fanout_resume(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.fanout.resume")?;
         let output = py
@@ -1745,6 +1808,20 @@ impl NativeClient {
                 self.inner
                     .agent_verb("vault.widen_proposals.decline", input)
             })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_review(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.review")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.review", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_settle(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.settle")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.settle", input))
             .map_err(raise)?;
         encode(&output)
     }

@@ -158,6 +158,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.budget",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::SelfBudgetRequest,
+                >(),
+            ),
+            (
+                "self.budget.land",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetLandRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::SpendScopeRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.lease.top_up",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.hold",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.hold.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.local",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+                >(),
+            ),
+            (
+                "vault.budgets.settlements",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_dispatch::budget_doors::RunSettlementsRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -903,6 +957,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::agent_dispatch::widen_doors::WidenProposalAnswer,
                 >(),
+            ),
+            (
+                "vault.claims.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimProposalReviewRequest,
+                >(),
+            ),
+            (
+                "vault.claims.settle",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
             ),
             (
                 "vault.craft_candidates",
@@ -2252,6 +2316,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     });
     SCHEMAS.get(verb)
 }
+/// The facade rows the server's OpenAPI document publishes, each beside its
+/// [`input_schema`] and [`output_schema`].
+pub const OPENAPI_ROWS: &[&str] = &["vault.claims.review", "vault.claims.settle"];
+/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
+pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
+    Some(match verb {
+        "vault.claims.review" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
+        }
+        "vault.claims.settle" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        _ => return None,
+    })
+}
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
 }
@@ -2514,6 +2593,69 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.fanout.launch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.budget" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.budget.land" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.lease.top_up" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.hold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.hold.resume" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.local" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.settlements" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3475,6 +3617,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.widen_proposals.decline" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.settle" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5127,6 +5283,42 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.fanout.launch" => {
             let _input: crate::task_verb::sdk::FanoutLaunchRequest = decode(value.clone())?;
         }
+        "self.budget" => {
+            let _input: crate::agent_dispatch::budget_doors::SelfBudgetRequest =
+                decode(value.clone())?;
+        }
+        "self.budget.land" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetLandRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease.open" => {
+            let _input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease" => {
+            let _input: crate::agent_dispatch::budget_doors::SpendScopeRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.lease.top_up" => {
+            let _input: crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.hold" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetHoldRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.hold.resume" => {
+            let _input: crate::agent_dispatch::budget_doors::BudgetHoldRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.local" => {
+            let _input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest =
+                decode(value.clone())?;
+        }
+        "vault.budgets.settlements" => {
+            let _input: crate::agent_dispatch::budget_doors::RunSettlementsRequest =
+                decode(value.clone())?;
+        }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
@@ -5588,6 +5780,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.widen_proposals.decline" => {
             let _input: crate::agent_dispatch::widen_doors::WidenProposalAnswer =
                 decode(value.clone())?;
+        }
+        "vault.claims.review" => {
+            let _input: crate::memory::ClaimProposalReviewRequest = decode(value.clone())?;
+        }
+        "vault.claims.settle" => {
+            let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
         }
         "vault.craft_candidates" => {
             let _input: crate::actor_claims::CraftCandidatesRequest = decode(value.clone())?;
@@ -6456,6 +6654,15 @@ pub fn invoke(
         "tasks.create" => encode(tasks_create(memory, decode(value)?)?),
         "tasks.wave" => encode(tasks_wave(memory, decode(value)?)?),
         "vault.fanout.launch" => encode(vault_fanout_launch(memory, decode(value)?)?),
+        "self.budget" => encode(self_budget(memory, decode(value)?)?),
+        "self.budget.land" => encode(self_budget_land(memory, decode(value)?)?),
+        "vault.budgets.lease.open" => encode(vault_budgets_lease_open(memory, decode(value)?)?),
+        "vault.budgets.lease" => encode(vault_budgets_lease(memory, decode(value)?)?),
+        "vault.budgets.lease.top_up" => encode(vault_budgets_lease_top_up(memory, decode(value)?)?),
+        "vault.budgets.hold" => encode(vault_budgets_hold(memory, decode(value)?)?),
+        "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
+        "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
+        "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -6703,6 +6910,8 @@ pub fn invoke(
         "vault.widen_proposals.decline" => {
             encode(vault_widen_proposals_decline(memory, decode(value)?)?)
         }
+        "vault.claims.review" => encode(vault_claims_review(memory, decode(value)?)?),
+        "vault.claims.settle" => encode(vault_claims_settle(memory, decode(value)?)?),
         "vault.craft_candidates" => encode(vault_craft_candidates(memory, decode(value)?)?),
         "vault.craft_candidates.answer" => {
             encode(vault_craft_candidates_answer(memory, decode(value)?)?)
@@ -7472,6 +7681,90 @@ pub fn vault_fanout_launch(
     input: crate::task_verb::sdk::FanoutLaunchRequest,
 ) -> MemoryResult<Option<crate::task_verb::sdk::FanoutLaunchView>> {
     crate::task_verb::sdk::read_fanout_launch(memory, input)
+}
+pub fn self_budget(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::SelfBudgetRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::AgentBudgetView> {
+    crate::agent_dispatch::budget_doors::self_budget(memory, &input)
+}
+pub fn self_budget_land(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetLandRequest,
+) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
+    crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)
+}
+pub fn vault_budgets_lease_open(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease.open")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_lease(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::SpendScopeRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_lease_top_up(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::SpendLeaseView> {
+    crate::agent_dispatch::budget_doors::top_up_spend_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.lease.top_up")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_hold(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+) -> MemoryResult<Option<crate::agent_dispatch::PartialResultHold>> {
+    crate::agent_dispatch::budget_doors::budget_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.hold")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_hold_resume(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::BudgetHoldRequest,
+) -> MemoryResult<crate::agent_dispatch::PartialResultHold> {
+    crate::agent_dispatch::budget_doors::resume_budget_hold_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.hold.resume")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_local(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::LocalRunnerBudgetView> {
+    crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.local")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_settlements(
+    memory: &Memory<'_>,
+    input: crate::agent_dispatch::budget_doors::RunSettlementsRequest,
+) -> MemoryResult<crate::agent_dispatch::budget_doors::RunSettlementsView> {
+    crate::task_verb::sdk::host_only(memory, "vault.budgets.settlements", &input)
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -8663,6 +8956,18 @@ pub fn vault_widen_proposals_decline(
         &input,
     )
     .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_claims_review(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimProposalReviewRequest,
+) -> MemoryResult<crate::memory::ClaimProposalReview> {
+    memory.claim_review_as_owner(&memory.embedded_owner("vault.claims.review")?, &input)
+}
+pub fn vault_claims_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimSettleRequest,
+) -> MemoryResult<crate::memory::ClaimSettlement> {
+    memory.claim_settle_as_owner(&memory.embedded_owner("vault.claims.settle")?, &input)
 }
 pub fn vault_craft_candidates(
     memory: &Memory<'_>,
