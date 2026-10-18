@@ -10,6 +10,64 @@ use crate::serialize::ExportBody;
 use std::collections::{BTreeMap, BTreeSet};
 
 impl WholeVaultDocument {
+    pub(super) fn validate_bundles(&self) -> Result<()> {
+        for bundle in &self.skills {
+            if bundle.source_tree.is_some() != bundle.source_format.is_some() {
+                return Err(invalid(
+                    "skill source format and tree must be present together",
+                ));
+            }
+            if let Some(tree) = &bundle.source_tree {
+                tree.validate()?;
+                if let Some(hash) = &tree.content_hash {
+                    let body = crate::skill::decode_skill_record(&bundle.entity.body.to_bytes()?)?;
+                    if body.content_hash.map(|h| h.to_hex()).as_ref() != Some(hash) {
+                        return Err(invalid("skill source hash disagrees with its native row"));
+                    }
+                    crate::skill_hub::package_from_source(
+                        &body,
+                        tree.import_files()?,
+                        bundle
+                            .source_format
+                            .ok_or_else(|| invalid("skill source format missing"))?,
+                    )?;
+                }
+            }
+        }
+        let mut bindings = BTreeMap::new();
+        let mut ids = BTreeSet::new();
+        for bundle in &self.agent_packs {
+            let id = document_import::parse_id(&bundle.entity_id)?;
+            if !ids.insert(id) {
+                return Err(invalid("duplicate agent source bundle"));
+            }
+            if let Some(hash) = &bundle.fork_hash {
+                crate::skill::SkillContentHash::parse_hex(hash)?;
+                bindings.insert(id, hash.clone());
+            }
+            if let Some(tree) = &bundle.source_tree {
+                tree.validate()?;
+            }
+        }
+        // Recompute every typed facet from the native AGENT_DEF and selected
+        // knowledge/skill records. A caller cannot replace policy.md or add code.
+        let mut expected = self.clone();
+        crate::serialize::populate_agent_bundles(
+            &mut expected,
+            &bindings,
+            KnowledgeFormat::CURRENT,
+        )?;
+        if self.agent_packs != expected.agent_packs {
+            // An archive an older engine wrote carries the first knowledge form.
+            crate::serialize::populate_agent_bundles(
+                &mut expected,
+                &bindings,
+                KnowledgeFormat::V1,
+            )?;
+            if self.agent_packs != expected.agent_packs {
+                return Err(invalid("agent facets disagree with native rows"));
+            }
+        }
         let (refusals, imports, bundles) = self.omission_ledger()?.finish();
         if self.manifest.import_omissions != imports
             || self.manifest.import_refusals != refusals
