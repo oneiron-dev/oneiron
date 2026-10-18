@@ -288,6 +288,16 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.snapshots.get", post(facade_route))
         .route("/vault.code.snapshots.read", post(facade_route))
         .route("/vault.code.symbols.definitions", post(facade_route))
+        .route("/vault.code.merge_queue.enqueue", post(facade_route))
+        .route("/vault.code.merge_queue.stage", post(facade_route))
+        .route("/vault.code.merge_queue.observe", post(facade_route))
+        .route(
+            "/vault.code.merge_queue.requeue_survivors",
+            post(facade_route),
+        )
+        .route("/vault.code.merge_queue.land_reviewed", post(facade_route))
+        .route("/vault.code.merge_queue.settle_slow", post(facade_route))
+        .route("/vault.code.merge_queue.recover", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
         .route("/vault.agents.create", post(facade_route))
         .route("/vault.agents.get", post(facade_route))

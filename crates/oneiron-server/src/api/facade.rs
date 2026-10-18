@@ -60,6 +60,7 @@ mod hub_doors;
 mod legal_hold_doors;
 mod linear_doors;
 mod live_run_doors;
+mod merge_queue_doors;
 mod model_step_doors;
 mod note_doors;
 mod off_record_doors;
