@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::gate::RetrievalFilter;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadScope {
     pub entity_types: Option<BTreeSet<u8>>,
     pub max_sensitivity_band: u8,
@@ -32,7 +32,7 @@ impl PartialEq for ReadScope {
 }
 impl Eq for ReadScope {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScopedReadReceipt {
     pub requested: ReadScope,
     pub actor_ceiling: ReadScope,

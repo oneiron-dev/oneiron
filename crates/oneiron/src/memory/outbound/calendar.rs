@@ -12,7 +12,7 @@ use crate::calendar::{
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::temporal::TimeRange;
 /// One source-redacted busy interval, half-open `[start_utc, end_utc)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarFreebusyIntervalDto {
     /// Inclusive half-open start, Unix seconds.
     pub start_utc: u64,

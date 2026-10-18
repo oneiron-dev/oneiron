@@ -58,7 +58,7 @@ pub struct DeliveryWindowPolicyRetractRequest {
     pub claim_ref: EntityId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowPolicyRow {
     pub claim_ref: EntityId,
     pub subject_ref: EntityId,
@@ -73,7 +73,7 @@ pub struct DeliveryWindowPolicyRow {
     pub stale: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowPolicies {
     pub rows: Vec<DeliveryWindowPolicyRow>,
 }
@@ -99,7 +99,7 @@ pub struct DeliveryWindowEvaluateRequest {
     pub apns_interruption_level: Option<DeliveryWindowApnsInterruptionLevel>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowPreview {
     pub policy_refs: Vec<EntityId>,
     pub resolution: DeliveryWindowResolution,
