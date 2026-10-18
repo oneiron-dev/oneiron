@@ -59877,6 +59877,7 @@
       "XlsxName",
       "XlsxSheet",
       "XlsxSheetPlan",
+      "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
       "XlsxTableShift",
@@ -59886,8 +59887,8 @@
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
      "surface": {
       "const": 2,
-      "enum": 4,
-      "fn": 14,
+      "enum": 5,
+      "fn": 16,
       "re-export": 2,
       "struct": 9
      }
@@ -75735,6 +75736,7 @@
       "XlsxProtection",
       "XlsxSheet",
       "XlsxSheetView",
+      "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
       "XlsxValue"
@@ -75742,7 +75744,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 312,
+      "enum": 313,
       "struct": 827
      }
     },
