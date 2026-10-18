@@ -17572,7 +17572,7 @@
      "path": "src/disclosure/import_audience.rs",
      "purpose": "The standing import audience rule (OF-492): the owner's answer to one sensitive-topic ask, kept as a private…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3
      }
     },
@@ -23058,7 +23058,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -41098,7 +41098,22 @@
      "purpose": "Callable skill execution through the caller's existing sandbox runtime and host",
      "surface": {
       "crate-vis": 1,
-      "fn": 1
+      "fn": 1,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CallableSkillAnswer"
+     ],
+     "path": "src/skill/call/answer.rs",
+     "purpose": "A callable skill's answer, spooled as it streams and checked against its return contract as it is read, with…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 2,
+      "struct": 1
      }
     },
     {
@@ -50836,6 +50851,8 @@
       "JoinRefusal",
       "JoinRequest",
       "MembershipConsent",
+      "RoomFunding",
+      "RoomSpend",
       "RoomWork",
       "SpendConsent"
      ],
@@ -50843,10 +50860,10 @@
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
       "crate-vis": 5,
-      "enum": 6,
-      "fn": 5,
+      "enum": 7,
+      "fn": 7,
       "re-export": 1,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -54324,7 +54341,7 @@
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables"
     },
     "skill": {
-     "files": 18,
+     "files": 19,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54613,7 +54630,7 @@
    },
    "over_bar": 189,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3321,
+   "source_files": 3322,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59860,6 +59877,7 @@
       "XlsxName",
       "XlsxSheet",
       "XlsxSheetPlan",
+      "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
       "XlsxTableShift",
@@ -59869,8 +59887,8 @@
      "purpose": "The XLSX face of a live office body (ARCH-0075: \"XLSX is a map keyed by sheet and address\")",
      "surface": {
       "const": 2,
-      "enum": 4,
-      "fn": 14,
+      "enum": 5,
+      "fn": 16,
       "re-export": 2,
       "struct": 9
      }
@@ -65485,7 +65503,7 @@
      "path": "src/ai_host/judge_swap.rs",
      "purpose": "The Coach's judge-swap upkeep on this server (OF-184)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -65531,7 +65549,7 @@
      "path": "src/ai_host/payer_funding.rs",
      "purpose": "Who pays for a model call that a room's spend scope bounds (OF-531, FIX 805)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -66375,13 +66393,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/context_pack/media_query.rs",
      "purpose": "The media query both retrieval doors take (OF-370): `POST /v1/core/context-pack` (and the Context Board's…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -68739,7 +68757,7 @@
      "path": "src/auth.rs",
      "purpose": "HTTP authentication for log-backed version-two capability slips",
      "surface": {
-      "crate-vis": 41
+      "crate-vis": 43
      }
     },
     {
@@ -71306,7 +71324,7 @@
      "purpose": "Managed wake ledger: entries, revision, and supervisor pushes",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 7,
       "struct": 1
      }
@@ -71439,7 +71457,7 @@
      "purpose": "Managed runtime state, the reap freeze gate, and the supervised serve loop",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 20,
       "struct": 3,
       "type": 1
@@ -73070,7 +73088,7 @@
      "path": "src/server/media_embedding.rs",
      "purpose": "The media embedder (OF-370; ARCH-0036 `#media-embedder`): one adapter over the `ai.embed` seat, the same…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -75718,6 +75736,7 @@
       "XlsxProtection",
       "XlsxSheet",
       "XlsxSheetView",
+      "XlsxSheetVisibility",
       "XlsxStyle",
       "XlsxTable",
       "XlsxValue"
@@ -75725,7 +75744,7 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 312,
+      "enum": 313,
       "struct": 827
      }
     },
@@ -75993,13 +76012,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ManagedOwnerAction",
+      "ManagedOwnerRequest",
       "ManagedWidenAction"
      ],
      "path": "src/lib/managed_holder.rs",
-     "purpose": "Host-attested account action for one managed widen request",
+     "purpose": "Host-attested account actions: one managed widen request, and one facade request the vault owner makes in…",
      "surface": {
-      "fn": 2,
-      "struct": 1
+      "const": 2,
+      "fn": 4,
+      "struct": 3
      }
     },
     {
