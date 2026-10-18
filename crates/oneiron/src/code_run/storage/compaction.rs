@@ -4,7 +4,8 @@
 use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::compaction::EpochMint;
 use crate::compaction::{
-    CompactionExecution, CompactionRequest, EpochSummaryBody, decode_epoch_summary_body,
+    CompactionExecution, CompactionLanding, CompactionLandingReceipt, CompactionRequest,
+    EpochSummaryBody, decode_epoch_summary_body,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_SUMMARY;
@@ -383,25 +384,72 @@ fn code_run_compaction_epochs_in(
         if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
             return Err(Error::CorruptedIndex("code-run compaction coverage key"));
         }
-        let mut text = verify_summary(dbs, txn, &row)?;
-        if text.is_some() && dbs.is_union() {
-            let summary = dbs
-                .port_entity_record(txn, &row.summary_id)?
-                .ok_or(Error::CorruptedIndex("code-run compaction summary binding"))?;
-            if !crate::compaction::epoch_exportable_in(
-                dbs,
-                txn,
-                &row.summary_id,
-                summary.entity_type,
-                &summary.body,
-                |_, _| Ok(true),
-            )? {
-                text = None;
-            }
-        }
+        let text = verified_text(dbs, txn, &row)?;
         rows.push((row, text));
     }
     Ok(rows)
+}
+
+/// The row's summary prose as a read through `dbs` may show it, `None` when
+/// withdrawn: on a room's union read, only while no record it came from is.
+fn verified_text(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    row: &CodeRunCompactionCoverage,
+) -> Result<Option<String>> {
+    let text = verify_summary(dbs, txn, row)?;
+    if text.is_some() && dbs.is_union() {
+        let summary = dbs
+            .port_entity_record(txn, &row.summary_id)?
+            .ok_or(Error::CorruptedIndex("code-run compaction summary binding"))?;
+        if !crate::compaction::epoch_exportable_in(
+            dbs,
+            txn,
+            &row.summary_id,
+            summary.entity_type,
+            &summary.body,
+            |_, _| Ok(true),
+        )? {
+            return Ok(None);
+        }
+    }
+    Ok(text)
+}
+
+/// The receipt of each self-written epoch of `run_id` (FIX 4465 B): the
+/// v4 tail its coverage row carries, read back with the row it binds and
+/// verified as every coverage read verifies it. Another writer's row
+/// carries no receipt and is passed over.
+fn code_run_epoch_receipts_in(
+    dbs: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    run_id: EntityId,
+) -> Result<Vec<CompactionLandingReceipt>> {
+    let mut receipts = Vec::new();
+    for item in WRITTEN.iter_from(dbs, txn, run_id.as_bytes())? {
+        let ((key_run, key_summary), written) = item?;
+        let row = written.row;
+        if (key_run, key_summary) != (row.run_id, row.summary_id) || row.run_id != run_id {
+            return Err(Error::CorruptedIndex("code-run compaction coverage key"));
+        }
+        let Some(execution) = written.writer else {
+            continue;
+        };
+        let summary = verified_text(dbs, txn, &row)?;
+        receipts.push(CompactionLandingReceipt {
+            run: run_id,
+            landing: CompactionLanding::Epoch {
+                summary: row.summary_id,
+                epoch: row.epoch,
+            },
+            first: row.first,
+            last: row.last,
+            words_live: summary.is_some(),
+            summary,
+            execution,
+        });
+    }
+    Ok(receipts)
 }
 
 impl Vault {
@@ -467,6 +515,42 @@ impl ExecutorStorage<'_> {
             .into_iter()
             .map(|(row, _)| row)
             .collect())
+    }
+
+    /// Every self-written summary `run_id` landed, with its durable receipt
+    /// (FIX 4465 B): each epoch's coverage-row tail, then each fold's
+    /// record, read where the run's rows are, on its route. The words of
+    /// one a withdrawn record reached are gone; its receipt stays.
+    pub(crate) fn code_run_self_receipts(
+        &self,
+        run_id: EntityId,
+    ) -> Result<Vec<CompactionLandingReceipt>> {
+        let mut receipts = match self {
+            Self::Canonical(vault) => {
+                let txn = vault.store.env.read_txn()?;
+                code_run_epoch_receipts_in(&vault.store, &txn, run_id)?
+            }
+            Self::Session(binding) => binding.answered(|| {
+                let view = binding.session.read_view()?;
+                let txn = view.read().base().env.read_txn()?;
+                code_run_epoch_receipts_in(&view, &txn, run_id)
+            })?,
+        };
+        for fold in self.code_run_folds(run_id)?.folds {
+            let Some(execution) = fold.execution else {
+                continue;
+            };
+            receipts.push(CompactionLandingReceipt {
+                run: run_id,
+                landing: CompactionLanding::Fold { fold: fold.fold },
+                first: fold.from,
+                last: fold.through,
+                words_live: fold.summary.is_some(),
+                summary: fold.summary,
+                execution,
+            });
+        }
+        Ok(receipts)
     }
 }
 
