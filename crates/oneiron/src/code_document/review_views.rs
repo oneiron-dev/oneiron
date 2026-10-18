@@ -293,7 +293,8 @@ impl Memory<'_> {
         self.lifted_view(view, || Ok(keys)).map(Some)
     }
 
-    /// A tree's files; `None` when its revision is not there.
+    /// A tree's files; `None` when its revision or snapshot is not there or
+    /// withheld.
     fn code_tree(
         &self,
         request: &CodeTreeRequest,
@@ -302,10 +303,16 @@ impl Memory<'_> {
         let vault = self.vault();
         let files = match (&request.revision_ref, &request.repo, &request.snapshot_ref) {
             (Some(revision_ref), None, None) => {
-                let Some(revision) = vault.get_code_revision(&EntityId::from_hex(revision_ref)?)?
-                else {
+                let id = EntityId::from_hex(revision_ref)?;
+                let Some(revision) = vault.get_code_revision(&id)? else {
                     return Ok(None);
                 };
+                // The revision is read through the caller's credential, so a
+                // withheld revision answers as an absent one (FIX 4344).
+                if self.get_entity(&id.to_hex())?.value.is_none() {
+                    return Ok(None);
+                }
+                self.produced_from([id]);
                 revision
                     .file_frontiers
                     .into_values()
@@ -319,10 +326,16 @@ impl Memory<'_> {
                     .collect::<MemoryResult<Vec<_>>>()?
             }
             (None, Some(repo), Some(snapshot)) => {
-                let mount = vault.mount_repo_ref(
-                    &RepoRef::parse(repo)?,
-                    RepoMountRef::Snapshot(EntityId::from_hex(snapshot)?),
-                )?;
+                let repo = RepoRef::parse(repo)?;
+                let id = EntityId::from_hex(snapshot)?;
+                // A snapshot is its CODE_ARTIFACT's, read through the
+                // caller's credential before it is mounted, so a withheld
+                // artifact answers as an absent one (FIX 4344).
+                if self.get_entity(&id.to_hex())?.value.is_none() {
+                    return Ok(None);
+                }
+                self.produced_from([id]);
+                let mount = vault.mount_repo_ref(&repo, RepoMountRef::Snapshot(id))?;
                 let mut files = Vec::new();
                 for path in mount.list_files() {
                     let bytes = mount.read_file(path)?.unwrap_or_default();

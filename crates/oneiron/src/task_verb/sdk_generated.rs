@@ -1537,6 +1537,35 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.workflows.save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowSaveRequest,
+                >(),
+            ),
+            (
+                "vault.workflows.get",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRequest>(
+                ),
+            ),
+            (
+                "vault.workflows.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowUpdateRequest,
+                >(),
+            ),
+            (
+                "vault.workflows.dispatch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowDispatchRequest,
+                >(),
+            ),
+            (
+                "vault.workflows.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowRunRequest,
+                >(),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -1886,6 +1915,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "ai.speech",
                 crate::code_run::vault_read::request_schema::<AiCallRequest>(),
+            ),
+            (
+                "vault.voices.packs.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceBankPackPutRequest,
+                >(),
+            ),
+            (
+                "vault.voices.render_consent",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceRenderConsentRequest,
+                >(),
+            ),
+            (
+                "vault.voices.targets.provision",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceTargetProvisionRequest,
+                >(),
+            ),
+            (
+                "vault.voices.targets.evict",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceTargetEvictRequest,
+                >(),
+            ),
+            (
+                "vault.voices.inspect",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::VoiceBankInspectRequest,
+                >(),
             ),
             (
                 "ai.transcribe",
@@ -2503,6 +2562,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.consolidation.promote",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation::ConsolidationPromoteRequest,
+                >(),
+            ),
+            (
+                "vault.consolidation.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::consolidation::ConsolidationEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.claims.vet",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
+            ),
+            (
+                "vault.claims.vetting",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimProposalReviewRequest,
+                >(),
+            ),
+            (
                 "vault.memory.signal_extraction",
                 crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionRequest>(
                 ),
@@ -2631,6 +2712,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.notes.history",
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
+            ),
+            (
+                "vault.notes.history_purge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeRequest,
+                >(),
+            ),
+            (
+                "vault.notes.history_purge_execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+                >(),
+            ),
+            (
+                "vault.notes.history_purge_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeRequest,
+                >(),
             ),
             (
                 "vault.notes.editor.bind",
@@ -2897,6 +2996,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.create",
     "vault.agents.get",
     "vault.agents.update",
+    "vault.workflows.save",
+    "vault.workflows.get",
+    "vault.workflows.update",
+    "vault.workflows.dispatch",
+    "vault.workflows.status",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -2904,6 +3008,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
+    "vault.voices.packs.put",
+    "vault.voices.render_consent",
+    "vault.voices.targets.provision",
+    "vault.voices.targets.evict",
+    "vault.voices.inspect",
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
@@ -2916,6 +3025,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.search",
     "vault.calendar.freebusy",
     "vault.search.hybrid",
+    "vault.consolidation.promote",
+    "vault.claims.vet",
+    "vault.claims.vetting",
     "vault.memory.signal_extraction",
     "vault.memory.signal_extraction.result",
     "vault.channel_identities.provision",
@@ -2936,6 +3048,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.delivery_window.evaluate",
     "vault.notes.read",
     "vault.notes.history",
+    "vault.notes.history_purge",
+    "vault.notes.history_purge_execute",
+    "vault.notes.history_purge_receipts",
     "vault.notes.editor.bind",
     "vault.notes.editor.close",
     "vault.tasks.linear.mapping",
@@ -3223,6 +3338,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.agents.update" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDefinitionView,
         >(),
+        "vault.workflows.save" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
+        }
+        "vault.workflows.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
+        }
+        "vault.workflows.update" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
+        }
+        "vault.workflows.dispatch" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
+        }
+        "vault.workflows.status" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
+        }
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
         >(),
@@ -3243,6 +3373,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
+        >(),
+        "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceBankPackReceipt,
+        >(),
+        "vault.voices.render_consent" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceRenderConsentReceipt,
+        >(),
+        "vault.voices.targets.provision" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceTargetReceipt,
+        >(),
+        "vault.voices.targets.evict" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceTargetEvictReceipt,
+        >(),
+        "vault.voices.inspect" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::VoiceBankInspection,
         >(),
         "vault.decisions.bands.read" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
@@ -3280,6 +3425,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
         >(),
+        "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
+            crate::memory::consolidation::ConsolidationPromotion,
+        >(),
+        "vault.claims.vet" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.claims.vetting" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
+        }
         "vault.memory.signal_extraction" => {
             crate::code_run::vault_read::request_schema::<crate::memory::SignalExtractionTicket>()
         }
@@ -3343,6 +3497,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>,
+        >(),
+        "vault.notes.history_purge" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::NoteHistoryPurgeOutcome,
+        >(),
+        "vault.notes.history_purge_execute" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::NoteHistoryPurgeReceipt,
+        >(),
+        "vault.notes.history_purge_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>,
         >(),
         "vault.notes.editor.bind" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>,
@@ -5378,6 +5541,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.workflows.save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.dispatch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workspace.establish" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5894,6 +6092,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "ai.speech" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.packs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.render_consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.targets.provision" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.targets.evict" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.voices.inspect" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -6516,6 +6749,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.promote" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consolidation.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.vet" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.vetting" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.memory.signal_extraction" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6678,6 +6939,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.notes.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge_execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge_receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7768,6 +8050,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::AgentDefinitionUpdateRequest =
                 decode(value.clone())?;
         }
+        "vault.workflows.save" => {
+            let _input: crate::task_verb::sdk::WorkflowSaveRequest = decode(value.clone())?;
+        }
+        "vault.workflows.get" => {
+            let _input: crate::task_verb::sdk::WorkflowRequest = decode(value.clone())?;
+        }
+        "vault.workflows.update" => {
+            let _input: crate::task_verb::sdk::WorkflowUpdateRequest = decode(value.clone())?;
+        }
+        "vault.workflows.dispatch" => {
+            let _input: crate::task_verb::sdk::WorkflowDispatchRequest = decode(value.clone())?;
+        }
+        "vault.workflows.status" => {
+            let _input: crate::task_verb::sdk::WorkflowRunRequest = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -7978,6 +8275,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "ai.speech" => {
             let _input: AiCallRequest = decode(value.clone())?;
+        }
+        "vault.voices.packs.put" => {
+            let _input: crate::task_verb::sdk::VoiceBankPackPutRequest = decode(value.clone())?;
+        }
+        "vault.voices.render_consent" => {
+            let _input: crate::task_verb::sdk::VoiceRenderConsentRequest = decode(value.clone())?;
+        }
+        "vault.voices.targets.provision" => {
+            let _input: crate::task_verb::sdk::VoiceTargetProvisionRequest = decode(value.clone())?;
+        }
+        "vault.voices.targets.evict" => {
+            let _input: crate::task_verb::sdk::VoiceTargetEvictRequest = decode(value.clone())?;
+        }
+        "vault.voices.inspect" => {
+            let _input: crate::task_verb::sdk::VoiceBankInspectRequest = decode(value.clone())?;
         }
         "ai.transcribe" => {
             let _input: AiCallRequest = decode(value.clone())?;
@@ -8389,6 +8701,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.consolidation.promote" => {
+            let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
+                decode(value.clone())?;
+        }
+        "vault.consolidation.evidence" => {
+            let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.claims.vet" => {
+            let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
+        }
+        "vault.claims.vetting" => {
+            let _input: crate::memory::ClaimProposalReviewRequest = decode(value.clone())?;
+        }
         "vault.memory.signal_extraction" => {
             let _input: crate::memory::SignalExtractionRequest = decode(value.clone())?;
         }
@@ -8476,6 +8802,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.notes.history" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
+        }
+        "vault.notes.history_purge" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
+        }
+        "vault.notes.history_purge_execute" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest =
+                decode(value.clone())?;
+        }
+        "vault.notes.history_purge_receipts" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
         }
         "vault.notes.editor.bind" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
@@ -9060,6 +9396,11 @@ pub fn invoke(
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
         "vault.agents.update" => encode(vault_agents_update(memory, decode(value)?)?),
+        "vault.workflows.save" => encode(vault_workflows_save(memory, decode(value)?)?),
+        "vault.workflows.get" => encode(vault_workflows_get(memory, decode(value)?)?),
+        "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
+        "vault.workflows.dispatch" => encode(vault_workflows_dispatch(memory, decode(value)?)?),
+        "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -9162,6 +9503,15 @@ pub fn invoke(
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
+        "vault.voices.packs.put" => encode(vault_voices_packs_put(memory, decode(value)?)?),
+        "vault.voices.render_consent" => {
+            encode(vault_voices_render_consent(memory, decode(value)?)?)
+        }
+        "vault.voices.targets.provision" => {
+            encode(vault_voices_targets_provision(memory, decode(value)?)?)
+        }
+        "vault.voices.targets.evict" => encode(vault_voices_targets_evict(memory, decode(value)?)?),
+        "vault.voices.inspect" => encode(vault_voices_inspect(memory, decode(value)?)?),
         "ai.transcribe" => encode(ai_transcribe(memory, decode(value)?)?),
         "ai.embed" => encode(ai_embed(memory, decode(value)?)?),
         "ai.video" => encode(ai_video(memory, decode(value)?)?),
@@ -9303,6 +9653,14 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.consolidation.promote" => {
+            encode(vault_consolidation_promote(memory, decode(value)?)?)
+        }
+        "vault.consolidation.evidence" => {
+            encode(vault_consolidation_evidence(memory, decode(value)?)?)
+        }
+        "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
+        "vault.claims.vetting" => encode(vault_claims_vetting(memory, decode(value)?)?),
         "vault.memory.signal_extraction" => {
             encode(vault_memory_signal_extraction(memory, decode(value)?)?)
         }
@@ -9369,6 +9727,13 @@ pub fn invoke(
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
+        "vault.notes.history_purge" => encode(vault_notes_history_purge(memory, decode(value)?)?),
+        "vault.notes.history_purge_execute" => {
+            encode(vault_notes_history_purge_execute(memory, decode(value)?)?)
+        }
+        "vault.notes.history_purge_receipts" => {
+            encode(vault_notes_history_purge_receipts(memory, decode(value)?)?)
+        }
         "vault.notes.editor.bind" => encode(vault_notes_editor_bind(memory, decode(value)?)?),
         "vault.notes.editor.close" => encode(vault_notes_editor_close(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
@@ -11901,6 +12266,56 @@ pub fn vault_agents_update(
         input,
     )
 }
+pub fn vault_workflows_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowSaveRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowView> {
+    crate::task_verb::sdk::save_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.save")?,
+        input,
+    )
+}
+pub fn vault_workflows_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowView> {
+    crate::task_verb::sdk::read_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.get")?,
+        input,
+    )
+}
+pub fn vault_workflows_update(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowUpdateRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowView> {
+    crate::task_verb::sdk::update_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.update")?,
+        input,
+    )
+}
+pub fn vault_workflows_dispatch(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowDispatchRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowRunView> {
+    crate::task_verb::sdk::dispatch_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.dispatch")?,
+        input,
+    )
+}
+pub fn vault_workflows_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowRunRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowRunView> {
+    crate::task_verb::sdk::read_workflow_run_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.status")?,
+        input,
+    )
+}
 pub fn vault_workspace_establish(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkspacePresetRequest,
@@ -12460,6 +12875,40 @@ pub fn ai_speech(
     input: AiCallRequest,
 ) -> MemoryResult<crate::task_verb::sdk::AiAnswer> {
     crate::task_verb::sdk::host_only(memory, "ai.speech", &input)
+}
+pub fn vault_voices_packs_put(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceBankPackPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceBankPackReceipt> {
+    crate::task_verb::sdk::put_voice_bank_pack_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.voices.packs.put")?,
+        input,
+    )
+}
+pub fn vault_voices_render_consent(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceRenderConsentRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceRenderConsentReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.render_consent", &input)
+}
+pub fn vault_voices_targets_provision(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceTargetProvisionRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceTargetReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.targets.provision", &input)
+}
+pub fn vault_voices_targets_evict(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceTargetEvictRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceTargetEvictReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.targets.evict", &input)
+}
+pub fn vault_voices_inspect(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::VoiceBankInspectRequest,
+) -> MemoryResult<crate::task_verb::sdk::VoiceBankInspection> {
+    crate::task_verb::sdk::host_only(memory, "vault.voices.inspect", &input)
 }
 pub fn ai_transcribe(
     memory: &Memory<'_>,
@@ -13472,6 +13921,32 @@ pub fn vault_consolidation_status(
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
 }
+pub fn vault_consolidation_promote(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation::ConsolidationPromoteRequest,
+) -> MemoryResult<crate::memory::consolidation::ConsolidationPromotion> {
+    crate::task_verb::sdk::host_only(memory, "vault.consolidation.promote", &input)
+}
+pub fn vault_consolidation_evidence(
+    memory: &Memory<'_>,
+    input: crate::memory::consolidation::ConsolidationEvidenceRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>,
+> {
+    crate::task_verb::sdk::host_only(memory, "vault.consolidation.evidence", &input)
+}
+pub fn vault_claims_vet(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimSettleRequest,
+) -> MemoryResult<crate::memory::ClaimSettlement> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.vet", &input)
+}
+pub fn vault_claims_vetting(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimProposalReviewRequest,
+) -> MemoryResult<crate::memory::ClaimProposalReview> {
+    crate::task_verb::sdk::host_only(memory, "vault.claims.vetting", &input)
+}
 pub fn vault_memory_signal_extraction(
     memory: &Memory<'_>,
     input: crate::memory::SignalExtractionRequest,
@@ -13672,6 +14147,36 @@ pub fn vault_notes_history(
     input: crate::note::NoteAccessRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>> {
     memory.note_history(&input)
+}
+pub fn vault_notes_history_purge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> MemoryResult<crate::task_verb::sdk::NoteHistoryPurgeOutcome> {
+    crate::task_verb::sdk::purge_note_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge")?,
+        input,
+    )
+}
+pub fn vault_notes_history_purge_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+) -> MemoryResult<crate::task_verb::sdk::NoteHistoryPurgeReceipt> {
+    crate::task_verb::sdk::execute_note_history_purge_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge_execute")?,
+        input,
+    )
+}
+pub fn vault_notes_history_purge_receipts(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>> {
+    crate::task_verb::sdk::note_history_purge_receipts_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge_receipts")?,
+        input,
+    )
 }
 pub fn vault_notes_editor_bind(
     memory: &Memory<'_>,

@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 542 code-mode rows (521 host rows, 21 run rows), 1919 declarations.
-// Replies: 477 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 559 code-mode rows (538 host rows, 21 run rows), 1967 declarations.
+// Replies: 492 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1157,6 +1157,18 @@ declare namespace Sdk {
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
   type AgentDefinitionRequest = { agent_def_ref: EntityId };
   type AgentDefinitionUpdateRequest = { agent_def_ref: EntityId; expected_version: string; definition: AgentDefinitionSpec };
+  type WorkflowSaveRequest = { workflow_ref: EntityId; name: string; steps: EntityId[] };
+  type WorkflowView = { workflow_ref: EntityId; name: string; steps: EntityId[]; revision: number; forked_from?: EntityId | null };
+  type WorkflowRequest = { workflow_ref: EntityId };
+  type WorkflowUpdateRequest = { workflow_ref: EntityId; expected_revision: number; name: string; steps: EntityId[] };
+  type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number };
+  type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number };
+  type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null };
+  type WorkflowDispatchRequest = { workflow_ref: EntityId; intent_key: string; briefing: string; context_spec?: ContextSpec | null };
+  type WorkflowStepCapture = { requested_agent_ref: EntityId; agent_def_ref: EntityId; definition: AgentDefinitionSpec };
+  type WorkflowStepRun = { ordinal: number; requested_agent_ref: EntityId; dispatched_agent_ref: EntityId; attempt_ref: EntityId; result_ref: string };
+  type WorkflowRunView = { workflow_ref: EntityId; workflow_revision: number; root_attempt_ref: EntityId; active_attempt_ref: EntityId; steps: WorkflowStepCapture[]; results: WorkflowStepRun[] };
+  type WorkflowRunRequest = { root_attempt_ref: EntityId };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -1417,6 +1429,28 @@ declare namespace Sdk {
   type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
+  type VoiceRefOrigin = { kind: "captured"; consent_event_ref: string } | { kind: "designed"; vendor: string } | { kind: "generated" };
+  type VoiceBankClipInput = { register: string; media_type: string; audio: string; transcript: string };
+  type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: VoiceRefOrigin; clips: VoiceBankClipInput[] };
+  type VoiceBankPackReceipt = { voice_id: string; pack_id: string };
+  type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
+  type VoiceConsentState = "granted" | "withdrawn";
+  type VoiceRenderConsentRequest = { voice_id: string; event_id: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState };
+  type VoiceVendorDeleteStatus = "deleted" | "no_clone_wire" | "delete_failed" | "absent";
+  type VoiceVendorEviction = { target: string; vendor_voice_id: string; vendor: VoiceVendorDeleteStatus };
+  type VoiceRenderConsentReceipt = { voice_id: string; state: VoiceConsentState; reach: ModelLocality; revision: string; evicted: VoiceVendorEviction[] };
+  type VoiceTargetProvisionRequest = { voice_id: string; target: string; include_generated?: boolean; language?: string | null };
+  type VoiceTargetReceipt = { voice_id: string; target: string; vendor_voice_id: string; cloned_at: number; revision: string };
+  type VoiceTargetEvictRequest = { voice_id: string; target: string };
+  type VoiceTargetEvictReceipt = { voice_id: string; target: string; evicted: boolean; vendor: VoiceVendorDeleteStatus };
+  type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
+  type VoiceIdentityView = { version: number; id: string; owner: string; pack_ids: string[] };
+  type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
+  type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] };
+  type VoiceRenderConsentView = { event_id: string; subject: string; recorded_by: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState; revision: string };
+  type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
+  type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
+  type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
   type AiVideoTicket = { job: string; model: string; operation: AiOperation };
   type AiVideoJobRequest = { job: string };
@@ -1768,6 +1802,19 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
+  type CursorSpan = { start: number[]; end: number[] };
+  type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
+  type GeneratedClaimInput = { claim_ref: string; predicate: string; subject_ref: string; value: unknown; confidence: number; scope: ClaimScope; sensitivity?: number | null; evidence_refs: EvidenceRef[]; claim_evidence_refs?: string[]; supersedes?: string | null; valid_from?: number | null; valid_to?: number | null };
+  type ConsolidationPromoteRequest = { job_ref: string; candidates: GeneratedClaimInput[] };
+  type ConsolidationRejection = { claim_ref: string; reason: string };
+  type PromotionEvidenceReason = "missing" | "not_evidence" | "not_surfaceable" | "unvetted_generated" | "unvetted_taint" | "generated_origin" | "pending_critical_confirmation" | "unsupported_turn_role";
+  type ConsolidationEvidenceHop = { kind: string; entity_ref: string; actor_ref?: string | null };
+  type ConsolidationMessageEvidence = { message_ref: string; start: number; end: number; revision: number[]; frontier?: number[] | null };
+  type ConsolidationEvidenceLocator = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: number[]; messages: ConsolidationMessageEvidence[] };
+  type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
+  type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
+  type ConsolidationEvidenceRequest = { source_refs: string[] };
   type SignalExtractionRequest = { turn_refs: string[] };
   type SignalExtractionTicket = { job_refs: string[] };
   type SignalExtractionResultRequest = { job_ref: string };
@@ -1832,6 +1879,10 @@ declare namespace Sdk {
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
   type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteHistoryPurgeRequest = { note_ref: string };
+  type NoteHistoryPurgeReceipt = { receipt: string; entity: string; document: string; actor?: string | null; requested: number[]; applied: number[]; at: number; live_text_hash: number[] };
+  type NoteHistoryPurgeOutcome = { state: "erased"; receipt: NoteHistoryPurgeReceipt } | { state: "waiting"; note_ref: string; act_id: string };
+  type NoteHistoryPurgeExecuteRequest = { act_id: string };
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
@@ -1901,9 +1952,6 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
-  type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number };
-  type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number };
-  type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null };
   type CommReach = "parent" | "subtree" | "project" | "vault";
   type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
   type AgentSpawnKind = "agent_spawn";
@@ -2452,6 +2500,10 @@ declare const vault: Sdk.VaultHost & {
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
     upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration. */
+    vet(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
+    /** Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle. */
+    vetting(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
   };
   code: {
     /** Every unit of one tested state of a code file, with the runs of text each operation wrote, and who made each operation and why. */
@@ -2540,6 +2592,10 @@ declare const vault: Sdk.VaultHost & {
   consolidation: {
     /** Enqueues one consolidation attempt and returns its durable job reference. */
     enqueue(input: Sdk.ConsolidationEnqueueRequest): Promise<Sdk.DreamerAttemptRef | StoredResult>;
+    /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
+    evidence(input: Sdk.ConsolidationEvidenceRequest): Promise<Sdk.ScopedReadResult<Sdk.ConsolidationEvidenceSource[]> | StoredResult>;
+    /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
+    promote(input: Sdk.ConsolidationPromoteRequest): Promise<Sdk.ConsolidationPromotion | StoredResult>;
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };
@@ -2854,6 +2910,12 @@ declare const vault: Sdk.VaultHost & {
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
     history(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteHistoryView | null> | StoredResult>;
+    /** The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action. */
+    history_purge(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeOutcome | StoredResult>;
+    /** Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt. */
+    history_purge_execute(input: Sdk.NoteHistoryPurgeExecuteRequest): Promise<Sdk.NoteHistoryPurgeReceipt | StoredResult>;
+    /** The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier. */
+    history_purge_receipts(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeReceipt[] | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
     /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
@@ -3245,6 +3307,22 @@ declare const vault: Sdk.VaultHost & {
       set(input: Sdk.TrustedContactTierRequest): Promise<Sdk.TrustedContactTierSet | StoredResult>;
     };
   };
+  voices: {
+    /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+    inspect(input: Sdk.VoiceBankInspectRequest): Promise<Sdk.VoiceBankInspection | StoredResult>;
+    packs: {
+      /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+      put(input: Sdk.VoiceBankPackPutRequest): Promise<Sdk.VoiceBankPackReceipt | StoredResult>;
+    };
+    /** The owner records their render decision on their own voice: a grant names the farthest locality its refs may reach; a withdrawal drops each target clone, deleted at its vendor best effort, and keeps the packs. */
+    render_consent(input: Sdk.VoiceRenderConsentRequest): Promise<Sdk.VoiceRenderConsentReceipt | StoredResult>;
+    targets: {
+      /** The owner drops a target's clone of their own voice, deleted at its vendor best effort. The identity and its packs stay. */
+      evict(input: Sdk.VoiceTargetEvictRequest): Promise<Sdk.VoiceTargetEvictReceipt | StoredResult>;
+      /** The owner's own voice cloned at a configured hosted target from its banked refs, or that target's current clone. The render consent must reach the target's locality before any provider call. */
+      provision(input: Sdk.VoiceTargetProvisionRequest): Promise<Sdk.VoiceTargetReceipt | StoredResult>;
+    };
+  };
   weave: {
     /** One of the bound actor's saved weave digests, or the newest, under the current read policy. Its lens is a card; a server holds its frame for the card's events, an embedded handle holds none. */
     digest(input: Sdk.WeaveDigestRequest): Promise<Sdk.WeaveDigestView | null | StoredResult>;
@@ -3280,6 +3358,18 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
+  workflows: {
+    /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
+    dispatch(input: Sdk.WorkflowDispatchRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
+    /** The owner reads one saved workflow, its steps, revision and fork lineage. */
+    get(input: Sdk.WorkflowRequest): Promise<Sdk.WorkflowView | StoredResult>;
+    /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
+    save(input: Sdk.WorkflowSaveRequest): Promise<Sdk.WorkflowView | StoredResult>;
+    /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
+    status(input: Sdk.WorkflowRunRequest): Promise<Sdk.WorkflowRunView | StoredResult>;
+    /** The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps. */
+    update(input: Sdk.WorkflowUpdateRequest): Promise<Sdk.WorkflowView | StoredResult>;
+  };
   workspace: {
     /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
     establish(input: Sdk.WorkspacePresetRequest): Promise<Sdk.WorkspacePresetReceipt | StoredResult>;

@@ -313,6 +313,11 @@ vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
 vaultAgentsUpdate(input: unknown): unknown
+vaultWorkflowsSave(input: unknown): unknown
+vaultWorkflowsGet(input: unknown): unknown
+vaultWorkflowsUpdate(input: unknown): unknown
+vaultWorkflowsDispatch(input: unknown): unknown
+vaultWorkflowsStatus(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown
@@ -383,6 +388,11 @@ vaultReceiptsContext(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
+vaultVoicesPacksPut(input: unknown): unknown
+vaultVoicesRenderConsent(input: unknown): unknown
+vaultVoicesTargetsProvision(input: unknown): unknown
+vaultVoicesTargetsEvict(input: unknown): unknown
+vaultVoicesInspect(input: unknown): unknown
 aiTranscribe(input: unknown): unknown
 aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
@@ -471,6 +481,10 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultConsolidationPromote(input: unknown): unknown
+vaultConsolidationEvidence(input: unknown): unknown
+vaultClaimsVet(input: unknown): unknown
+vaultClaimsVetting(input: unknown): unknown
 vaultMemorySignalExtraction(input: unknown): unknown
 vaultMemorySignalExtractionResult(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown
@@ -495,6 +509,9 @@ vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown
+vaultNotesHistoryPurge(input: unknown): unknown
+vaultNotesHistoryPurgeExecute(input: unknown): unknown
+vaultNotesHistoryPurgeReceipts(input: unknown): unknown
 vaultNotesEditorBind(input: unknown): unknown
 vaultNotesEditorClose(input: unknown): unknown
 vaultNotesEdit(input: unknown): unknown

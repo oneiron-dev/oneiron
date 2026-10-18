@@ -99,6 +99,19 @@ impl KitBundleFetch {
     }
 }
 
+/// The home's address a kit fetch to `url` signs: its host, and its port when
+/// `url` names one other than its scheme's, in lower case. The kit and the
+/// door both take it from here.
+#[must_use]
+pub fn kit_bundle_fetch_origin(url: &reqwest::Url) -> Option<String> {
+    let host = url.host_str()?;
+    let origin = match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host.to_owned(),
+    };
+    Some(origin.to_ascii_lowercase())
+}
+
 /// The kept generation `fetch` asks for, when its publisher named the root
 /// `fetch` signs for.
 fn named_entry_in(

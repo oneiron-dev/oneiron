@@ -250,6 +250,12 @@ impl ReviewedProposal {
             && self.body.lifecycle == ClaimLifecycleStatus::Active
     }
 
+    fn is_vettable(&self) -> bool {
+        crate::claim::claim_generated_origin(&self.body)
+            && matches!(self.body.approval, ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed)
+            && self.body.lifecycle == ClaimLifecycleStatus::Active
+    }
+
     /// Whether `person` may settle this proposal by `action` on the review
     /// `review_id` names: it is still open and still what that review read,
     /// `person` did not open it, and a decline has its consent row to close.
@@ -258,8 +264,9 @@ impl ReviewedProposal {
         review_id: &str,
         person: EntityId,
         action: GateConsentBundleAction,
+        vetting: bool,
     ) -> MemoryResult<()> {
-        if !self.is_open() {
+        if !(if vetting { self.is_vettable() } else { self.is_open() }) {
             return Err(not_open());
         }
         if !self.review_id().eq_ignore_ascii_case(review_id) {
@@ -319,13 +326,32 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &ClaimProposalReviewRequest,
     ) -> MemoryResult<ClaimProposalReview> {
+        self.claim_review_for_owner(owner, input, false)
+    }
+
+    /// A content-bound review for the owner's vetting of a generated-origin
+    /// Auto claim or proposal. The handle grants no authority itself.
+    pub fn claim_vetting_review_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &ClaimProposalReviewRequest,
+    ) -> MemoryResult<ClaimProposalReview> {
+        self.claim_review_for_owner(owner, input, true)
+    }
+
+    fn claim_review_for_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &ClaimProposalReviewRequest,
+        vetting: bool,
+    ) -> MemoryResult<ClaimProposalReview> {
         self.require_settling_owner(owner.revalidate(self.vault)?)?;
         let id = self.admitted_claim(&input.claim_ref)?;
         let reviewed = {
             let rtxn = self.vault.store.env.read_txn().map_err(Error::from)?;
             ReviewedProposal::read_in_txn(self.vault, &rtxn, &id)?
         };
-        if !reviewed.is_open() {
+        if !(if vetting { reviewed.is_vettable() } else { reviewed.is_open() }) {
             return Err(not_open());
         }
         self.produced_from([id]);
@@ -359,6 +385,26 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &ClaimSettleRequest,
     ) -> MemoryResult<ClaimSettlement> {
+        self.claim_settle_for_owner(owner, input, false)
+    }
+
+    /// Vet a reviewed generated-origin claim through the same owner Gate,
+    /// signed approval and Settlement as a proposed claim. Vetting never
+    /// changes its source or makes it admissible corroboration.
+    pub fn claim_vet_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &ClaimSettleRequest,
+    ) -> MemoryResult<ClaimSettlement> {
+        self.claim_settle_for_owner(owner, input, true)
+    }
+
+    fn claim_settle_for_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: &ClaimSettleRequest,
+        vetting: bool,
+    ) -> MemoryResult<ClaimSettlement> {
         let review_id = input.review_id.trim();
         if review_id.len() != 64 || !review_id.as_bytes().iter().all(u8::is_ascii_hexdigit) {
             return Err(MemoryError::bad_request_with(
@@ -390,16 +436,17 @@ impl Memory<'_> {
                 self.require_settling_owner(person)?;
                 let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;
                 let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
-                reviewed.settleable(review_id, person, action)?;
+                reviewed.settleable(review_id, person, action, vetting)?;
                 let actor = WriteActor::new(person, EdgeActorClass::Human);
-                let settled = self.vault.settle_proposed_claim_in_txn(
-                    wtxn,
-                    id,
-                    action,
-                    actor,
-                    owner_answer.as_ref(),
-                    now,
-                )?;
+                let settled = if vetting {
+                    self.vault.vet_generated_claim_in_txn(
+                        wtxn, id, action, actor, owner_answer.as_ref(), now,
+                    )?
+                } else {
+                    self.vault.settle_proposed_claim_in_txn(
+                        wtxn, id, action, actor, owner_answer.as_ref(), now,
+                    )?
+                };
                 let mut record = crate::memory::authorship::decision(
                     actor,
                     CLAIM_SETTLEMENT_CONTENT_KIND,
@@ -424,7 +471,7 @@ impl Memory<'_> {
         }
         // Consent is committed before the consolidator opens its own writer;
         // a VAD failure is returned with the settlement durable.
-        if action == GateConsentBundleAction::Approve && settled.dreamer_run {
+        if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
             self.vault.consolidate_claim_vad_now(&id, now)?;
         }
         self.produced_from([id]);

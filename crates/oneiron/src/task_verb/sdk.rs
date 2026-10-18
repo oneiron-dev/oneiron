@@ -522,6 +522,7 @@ pub use super::sdk_hub::*;
 pub use super::sdk_legal_hold::*;
 pub use super::sdk_live_run::*;
 pub use super::sdk_mesh::*;
+pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
@@ -536,6 +537,8 @@ pub use super::sdk_shared::*;
 pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_trusted_contact::*;
+pub use super::sdk_voice_bank::*;
+pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 
 /// `vault.writes.pending`'s one input.
