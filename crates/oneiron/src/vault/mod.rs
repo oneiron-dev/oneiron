@@ -74,6 +74,9 @@ pub struct Vault {
     /// The rows over live work this vault holds open, and the host's door
     /// for their crossings ([`Vault::set_live_rows`]).
     pub(crate) live_rows: crate::live_rows::LiveRowsCell,
+    /// Task work's one fair line on this vault, whichever door the work came
+    /// in by ([`Vault::admit_task_work`]).
+    pub(crate) task_work: crate::work_line::WorkLine<crate::EntityId>,
     /// World privacy P6b: this install's this-device-only keystore, the world
     /// keys this machine opened, and their OF-520 questions. In memory only,
     /// never persisted, and never shared across vaults.
@@ -161,6 +164,9 @@ pub struct Vault {
     /// Verb hooks' in-memory state: the process switch, the cached binding
     /// list, the sandbox and the invocations in flight (ARCH-0080 §3).
     pub(crate) verb_hook_state: crate::runtime_hooks::verb::VerbHookState,
+    /// The callable skill invocations running on this handle, each with the
+    /// token an owner's suspension cancels it by (FIX 600). In memory only.
+    pub(crate) skill_invocations: crate::skill::SkillInvocations,
     /// The deadline tests' slow retrieval stage, armed per vault.
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) slow_retrieval_stage:

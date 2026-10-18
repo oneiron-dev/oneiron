@@ -35,6 +35,8 @@ use crate::error::{bad_request, forbidden, transport_error};
 mod checkpoint;
 mod origin;
 mod pairing;
+// FIX 3377: a paired owner device renews its own credential.
+mod renewal;
 mod response;
 // OF-237: the network or an in-process server under one signing path.
 mod wire;
@@ -166,6 +168,7 @@ impl RemoteClient {
             },
             export_limit: MAX_REMOTE_EXPORT_BYTES,
             room_turn: None,
+            off_record_session: None,
             last_receipt_ref: std::sync::Mutex::new(None),
         })
     }

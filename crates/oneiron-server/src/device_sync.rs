@@ -240,6 +240,10 @@ async fn open(
         vault: Arc::clone(&server.vault),
         transport: mesh.transport(),
         backend: None,
+        routes: server
+            .ai
+            .models()
+            .mesh_routes(&server.vault, mesh.transport()),
     });
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
@@ -289,6 +293,9 @@ struct MeshCatalog {
     /// Built at the first refresh; a failed build is tried again at the next.
     backend:
         Option<oneiron_llm_own_server::OwnServerBackend<oneiron_llm_own_server::MeshLlmTransport>>,
+    /// The router's routes to those models (FIX 3229), published after each
+    /// refresh.
+    routes: crate::models::MeshRoutes,
 }
 
 #[cfg(feature = "mesh")]
@@ -343,6 +350,7 @@ impl MeshCatalog {
         };
         match backend.refresh_from_mesh(&self.vault).await {
             Ok(refresh) => {
+                self.routes.publish(&self.vault);
                 if !refresh.conflicts.is_empty() {
                     tracing::warn!(
                         %home,

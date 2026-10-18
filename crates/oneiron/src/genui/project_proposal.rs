@@ -267,7 +267,13 @@ impl ProjectProposalCard {
     /// clients; the host-held card supplies the message identity, not the tap,
     /// and the owner-project signer signs the new project for the owner. The
     /// tap writes the same Grant and tap receipt as a standalone mint, and an
-    /// exact retry returns the project it recorded.
+    /// exact retry returns the project it recorded. `tap_session` is the
+    /// sitting the tap came from, whose present leaders the room host is
+    /// chosen among; `None` falls back to the source message's sitting.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one tap's card, vault, request, owner, signer, birth id, sitting and time"
+    )]
     pub fn convert_thread(
         &self,
         vault: &Vault,
@@ -275,10 +281,20 @@ impl ProjectProposalCard {
         owner: &AuthenticatedOwner,
         signer: &crate::workspace_roster::OwnerProjectSigner<'_>,
         project: EntityId,
+        tap_session: Option<EntityId>,
         now: u64,
     ) -> Result<crate::workspace_roster::ProjectRecord> {
         vault
-            .convert_thread_with_card(self, request, owner, signer, project, now, |_, _| Ok(()))
+            .convert_thread_with_card(
+                self,
+                request,
+                owner,
+                signer,
+                project,
+                tap_session,
+                now,
+                |_, _| Ok(()),
+            )
             .map(|(record, _)| record)
     }
 
