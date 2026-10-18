@@ -10267,6 +10267,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/claim/history_pin_exchange.rs",
+     "purpose": "Own-vault machine-history pin exchange (FIX 3821): a device adopts its vault's machine-claim histories as…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -10275,7 +10285,7 @@
      "path": "src/claim/history_projection.rs",
      "purpose": "Verified MACHINE history residence: exact birth + transition closure at a trusted pin",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 19,
       "fn": 4,
       "struct": 1
      }
@@ -10287,7 +10297,7 @@
      "path": "src/claim/history_store.rs",
      "purpose": "Scoped, engine-owned CLAIM carriers for immutable MACHINE birth and transition evidence",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -54947,7 +54957,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 67,
+     "files": 68,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56272,7 +56282,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3428,
+   "source_files": 3429,
    "test_files": 902
   },
   "oneiron-android": {
