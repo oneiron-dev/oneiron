@@ -175,6 +175,8 @@ pub(crate) use super::code_doors::*;
 pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
 pub(crate) use super::code_wait_doors::*;
+// The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
+pub(crate) use super::hook_regen_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1144,6 +1146,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
+        | "vault.hooks.regen.due"
+        | "vault.hooks.regen.get"
+        | "vault.hooks.regen.adopt"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
         | "vault.packs.setup.prepare"

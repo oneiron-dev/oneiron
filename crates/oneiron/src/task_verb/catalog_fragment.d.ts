@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 749 code-mode rows (728 host rows, 21 run rows), 2598 declarations.
-// Replies: 665 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 752 code-mode rows (731 host rows, 21 run rows), 2608 declarations.
+// Replies: 668 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -223,7 +223,8 @@ declare namespace Sdk {
   type TaskAskStatus = { Pending: { hold?: TaskAskHoldReason | null } } | { Changed: { voided: EntityId[]; generation: number } } | { Settled: TaskAskResult };
   type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; observed: string };
   type TaskOutcome = { kind: "proposed"; decision_ref?: string | null; reason_codes: string[] } | { kind: "created"; route?: TaskRouteOutcome | null } | { kind: "accepted"; attempt?: AttemptHandle | null } | { kind: "held_by_other"; since: number } | { kind: "asked_up"; ask: TaskAskHandle } | { kind: "reported"; phase: TaskPhase } | (TaskStatusView & { kind: "snapshot" }) | { kind: "unchanged" } | { kind: "stale_fence" } | { kind: "wrong_node" } | { kind: "rejected"; decision_ref?: string | null };
-  type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: EntityId; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
+  type TaskActor = string;
+  type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: TaskActor; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
   type TaskCallReceipt = { handle: TaskHandle; related: TaskHandle[]; outcome: TaskOutcome; receipt_ref?: string | null; lifecycle?: TaskLifecycleRecord | null; idempotent_replay: boolean };
   type TaskDescription = (TasksSection & { kind: "tasks_section" }) | { kind: "task_card"; lines: string[] } | { kind: "self_card"; tail: string } | { kind: "vault_card"; card: ShapeCard } | { kind: "task_status"; receipt: TaskCallReceipt };
   type FoldReply<T> = T | { error: string };
@@ -1375,6 +1376,15 @@ declare namespace Sdk {
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
+  type HookRegenBindingRequest = { binding: EntityId };
+  type HookContractStamp = { verb_table: string; sandbox: string };
+  type HookGoldenDiff = { cases: number; changed: string[] };
+  type HookRegenFailurePhase = "intent" | "generate" | "validate" | "golden_replay";
+  type HookRegenFailure = { phase: HookRegenFailurePhase; message: string };
+  type HookRegenOutcome = { outcome: "auto_adopt"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "needs_human_stamp"; candidate: string; target: HookContractStamp; diff: HookGoldenDiff } | { outcome: "rolled_back"; failure: HookRegenFailure };
+  type HookRegenRecord = { body_hash: string; stamp: HookContractStamp; intent?: string | null; pending?: HookRegenOutcome | null };
+  type HookRegenView = { record: HookRegenRecord; candidate_hash?: string | null };
+  type HookRegenAdoptRequest = { binding: EntityId; candidate_hash: string };
   type ArtifactPointerChannel = "published" | "preview";
   type CodebaseForkHash = number[];
   type ArtifactExportRef = { ForkHash: CodebaseForkHash } | { BlobVersion: { artifact_id: EntityId; version: number } };
@@ -3655,6 +3665,14 @@ declare const vault: Sdk.VaultHost & {
     checkin(input: Sdk.HabitCheckinInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
   hooks: {
+    regen: {
+      /** Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record. */
+      adopt(input: Sdk.HookRegenAdoptRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
+      /** List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen. */
+      due(input: Sdk.EmptyRequest): Promise<Sdk.EntityId[] | StoredResult>;
+      /** Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing. */
+      get(input: Sdk.HookRegenBindingRequest): Promise<Sdk.HookRegenView | null | StoredResult>;
+    };
     /** The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands. */
     replay(input: Sdk.HooksReplayRequest): Promise<Sdk.HookReplayRow[] | StoredResult>;
   };

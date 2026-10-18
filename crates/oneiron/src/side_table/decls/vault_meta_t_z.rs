@@ -58,7 +58,8 @@ side_tables! {
     /// One mutating task-highway call's `TaskLifecycle` receipt (OF-220), projected as the receipt
     /// family reads it, written in the call's own transaction. Key: string (the receipt id,
     /// `task_lifecycle:` + 32 hex).
-    TASK_LIFECYCLE_RECEIPT: VaultMeta b"tasks.lifecycle_receipt.v1/" Named;
+    TASK_LIFECYCLE_RECEIPT: VaultMeta b"tasks.lifecycle_receipt.v1/" Named
+        => crate::task_verb::erase_lifecycle_actor_in_txn;
     /// Owner-authority fact to forward index key. Key: id16.
     TASK_OWNER_FACT_REVERSE: VaultMeta b"tasks.owner_fact.v1/" Raw;
     /// Display handle for a peer actor. Key: id16.
@@ -71,7 +72,8 @@ side_tables! {
     TASK_PROJECT_TRADEOFF_TURN: VaultMeta b"tasks.project_tradeoff.turn.v1/" Named;
     /// One try's journaled report: the request and the receipt it was first answered with.
     /// Key: id16 (attempt) + u64 (attempt count) + bytes32 (reporter, TASK and report key).
-    TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named;
+    TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named
+        => crate::task_verb::erase_report_actor_in_txn;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
     /// One pending training offer asked of one owner (OF-577): the question TURN and MESSAGE ids
@@ -87,10 +89,12 @@ side_tables! {
     /// The training swap ask one ask group carries, by its reservation key. Key: id16 (ask group).
     TASK_TRAINING_SWAP_ASK_GROUP: VaultMeta b"tasks.training_swap_ask_group.v1/" Named;
     /// Registered external ask wait. Key: id16 + bytes32.
-    TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
+    TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named
+        => crate::task_verb::erase_wait_actor_in_txn;
     /// Fan-out launch held for, or launched past, the approval mode: its frozen payload, plan,
     /// statement, pause or width-check row and ruling (OF-393). Key: hex32 (launch ref).
-    TASK_FANOUT_LAUNCH: VaultMeta b"tasks/fanout/launch.v1/" Named;
+    TASK_FANOUT_LAUNCH: VaultMeta b"tasks/fanout/launch.v1/" Named
+        => crate::task_verb::erase_launch_actor_in_txn;
     /// Consult fan-out plan. Key: hex32.
     TASK_FANOUT_RUN: VaultMeta b"tasks/fanout/v1/" Named;
     /// Retired consult fan-out policy carrier; the policy manifest now governs.
