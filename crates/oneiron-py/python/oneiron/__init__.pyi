@@ -97,6 +97,8 @@ class MemoryProvenance(TypedDict):
     source_revision_ids: list[str]
     evidence_turn_ids: list[str]
 
+MemoryStaleStamp = Facade.MemoryStaleStamp
+
 class MemoryItem(TypedDict):
     short_id: str
     source_revision_ref: NotRequired[str]
@@ -106,6 +108,7 @@ class MemoryItem(TypedDict):
     confidence: float
     hedge_bucket: str
     provenance: MemoryProvenance
+    stale: NotRequired[MemoryStaleStamp]
     world: str | None
     facet: str | None
     salience: float | None
