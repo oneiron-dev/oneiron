@@ -9,7 +9,7 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 371 code-mode rows (351 host rows, 20 run rows), 1321 declarations.
+// Census: 371 code-mode rows (351 host rows, 20 run rows), 1322 declarations.
 // Replies: 318 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
@@ -532,9 +532,10 @@ declare namespace Sdk {
   type CandidateRef = { config_ref: string; config_sha256: string };
   type PriorRung = "user" | "persona" | "global";
   type PriorSeed = { rung: PriorRung; alpha: number; beta: number; source_ref: string };
-  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[] };
+  type ResearchExecution = { experimenter: EntityId; scorer: EntityId; referee?: EntityId | null; experiment_units: number; measure_units: number; confirm_units: number };
+  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
   type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
-  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; bound_at: number };
+  type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; execution?: ResearchExecution | null; bound_at: number };
   type ForkKind = "variation" | "debug";
   type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
   type ExperimentKind = "root" | "variation" | "debug" | "weave";

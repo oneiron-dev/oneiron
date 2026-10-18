@@ -70,18 +70,6 @@ impl Workspace {
         read_regular(open_regular(&parent, &name, false, false)?)
     }
 
-    pub(crate) fn apply(&self, proposals: &Snapshot) -> Result<()> {
-        validate_files(proposals)?;
-        // Refuse a merged tree that cannot later be enumerated within bounds.
-        let mut merged = self.snapshot()?;
-        merged.extend(proposals.clone());
-        validate_files(&merged)?;
-        for (path, bytes) in proposals {
-            self.write(path, bytes, false)?;
-        }
-        Ok(())
-    }
-
     fn write(&self, path: &str, bytes: &[u8], exclusive: bool) -> Result<()> {
         if bytes.len() > MAX_FILE {
             return Err(Error::Filesystem("write byte budget"));
