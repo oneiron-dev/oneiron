@@ -8,7 +8,7 @@
 //! masked by the group bits, so mode 0600 already closes it.
 
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// Why a credential file is not admitted.
@@ -45,6 +45,45 @@ pub(crate) fn create(path: &Path) -> anyhow::Result<File> {
         return Err(refused.into());
     }
     Ok(file)
+}
+
+/// Replaces `path` with a new owner-only file holding `bytes` and a newline:
+/// written under a fresh name beside it, synced, then renamed over it, so a
+/// reader finds the old file or the new one, never a part. On failure `path`
+/// stays as it was.
+#[cfg_attr(not(feature = "mesh"), allow(dead_code))]
+pub(crate) fn replace(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("{} names no file", path.display()))?;
+    let dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let temp = dir.join(format!(
+        ".{}.{}-{nanos}.new",
+        name.to_string_lossy(),
+        std::process::id()
+    ));
+    let mut file = create(&temp)?;
+    let written = file
+        .write_all(bytes)
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = written.and_then(|()| std::fs::rename(&temp, path)) {
+        let _ = std::fs::remove_file(&temp);
+        anyhow::bail!("replace {}: {error}", path.display());
+    }
+    // The rename lasts once the directory's entry is on disk too.
+    #[cfg(unix)]
+    if let Ok(dir) = File::open(dir) {
+        let _ = dir.sync_all();
+    }
+    Ok(())
 }
 
 /// Admits an open credential file only when no one but its owner can read it.
@@ -117,6 +156,13 @@ impl PairedCredentialFile {
                     path.display()
                 )
             })
+    }
+
+    /// The one-string form the file holds.
+    #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
+    pub(crate) fn credential(&self) -> String {
+        let slip = self.token.strip_prefix("v2.slip.").unwrap_or(&self.token);
+        format!("{PAIRED_PREFIX}{slip}.{}", self.seed)
     }
 
     /// The Ed25519 key the slip is bound to.

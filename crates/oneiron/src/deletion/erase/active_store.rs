@@ -109,6 +109,7 @@ impl Vault {
         // An erased actor's call receipts keep their rows and times, not who
         // called (FIX 812).
         self.erase_call_receipt_actor_in_txn(wtxn, id)?;
+        crate::browser_library::erase_actor_in_txn(self, wtxn, id)?;
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
         let had_merge_receipt =

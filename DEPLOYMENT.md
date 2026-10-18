@@ -167,6 +167,7 @@ import_decoded_messages = 1000000 # messages one history import holds decoded; p
 import_decoded_bytes = 1073741824 # bytes those decoded messages hold; past it the import lands whole and the row asks
 signature_decode_bytes = 1073741824 # bytes one signature image decode (POST /sign/image) allocates; a raster past it asks and is decoded whole
 pptx_comment_patches = 10000      # comment edits one PowerPoint comment proposal carries; past it the proposal is written whole and the row asks
+import_xlsx_live_cells = 200000   # cells one workbook import writes into a live office body; past it the workbook is imported whole and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is

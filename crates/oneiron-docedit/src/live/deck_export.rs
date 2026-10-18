@@ -30,7 +30,8 @@
 //! new media, a table's changed cells or grid, a chart's changed series
 //! sequences or its rewritten plots and workbook.
 //! Until [`Gate::is_open`], blob versions remain authoritative and exports
-//! are proposal artifacts.
+//! are proposal artifacts. An export that changes anything recounts the app
+//! properties' words and paragraphs over the text it wrote last.
 
 use super::LiveError;
 use super::held;
@@ -57,7 +58,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/4";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/5";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -127,6 +128,25 @@ pub struct ExportOutcome {
     /// replaced a shape's custom geometry, or gave a shape that inherited
     /// its geometry its own, as PowerPoint's Change Shape does.
     pub effects: Vec<Effect>,
+}
+
+/// The memo key [`project`] gives `deck` over `package`, read without
+/// projecting: a caller holding an earlier projection's key keeps its result.
+pub fn export_key(
+    deck: &LiveDeck,
+    package: &Package,
+    document: &str,
+    profile: &ExportProfile,
+) -> Result<ExportKey, LiveError> {
+    Ok(ExportKey {
+        document: document.to_owned(),
+        state_hash: deck.state_hash(),
+        package_hash: package_hash(package)?,
+        allocation_hash: *blake3::hash(&serde_json::to_vec(&deck.id_marks).unwrap_or_default())
+            .as_bytes(),
+        profile: profile.name.clone(),
+        projector: PROJECTOR_VERSION.to_owned(),
+    })
 }
 
 fn package_hash(package: &Package) -> Result<[u8; 32], LiveError> {
@@ -280,15 +300,7 @@ pub fn project(
     profile: &ExportProfile,
     assets: &dyn Assets,
 ) -> Result<ExportOutcome, LiveError> {
-    let key = ExportKey {
-        document: document.to_owned(),
-        state_hash: deck.state_hash(),
-        package_hash: package_hash(package)?,
-        allocation_hash: *blake3::hash(&serde_json::to_vec(&deck.id_marks).unwrap_or_default())
-            .as_bytes(),
-        profile: profile.name.clone(),
-        projector: PROJECTOR_VERSION.to_owned(),
-    };
+    let key = export_key(deck, package, document, profile)?;
     // Opaque replacements carry only their hash in the live model; the
     // replacement bytes must already be the retained part's bytes.
     for (part, expected) in &deck.opaque_parts {
@@ -659,8 +671,16 @@ pub fn project(
         }
     }
 
-    // The bindings, opaque hashes and allocation history of the output.
+    // The app properties' words and paragraphs, recounted over the text
+    // this export wrote.
     let output = work.view()?;
+    if !work.changed.is_empty()
+        && let Some(props) = crate::edit::recount_slide_text(&mut work.next, &output)?
+    {
+        work.changed.insert(props);
+    }
+
+    // The bindings, opaque hashes and allocation history of the output.
     let mut bindings = BTreeMap::new();
     for (id, (part, native)) in &work.at {
         let binding = if deck.nodes[id].kind == NodeKind::Slide {
