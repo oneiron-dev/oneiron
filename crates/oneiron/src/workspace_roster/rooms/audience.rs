@@ -155,9 +155,11 @@ pub(crate) fn validate_private_audience_in(
 }
 
 /// What the root `root` of a thread in `room` names, read strictly: a live
-/// TURN of `room` whose own binding names it. Anything else does not
-/// resolve and reads as missing, so a turn that declares it is withheld,
-/// never read as public.
+/// TURN with one live carrier whose own binding names it, carried by
+/// `room` or stamped with `room` as its canonical room. A saved off-record
+/// stretch's root keeps its stretch shell as carrier and the room in its
+/// binding (FIX 3560). Anything else does not resolve and reads as missing,
+/// so a turn that declares it is withheld, never read as public.
 fn root_audience_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -172,11 +174,13 @@ fn root_audience_in(
         return Err(Error::EntityNotFound);
     };
     match thread_binding(&body)? {
-        Some(binding)
-            if binding.root == root
-                && crate::conversation_dag::conversation_of(&vault.store, txn, &root)? == room =>
-        {
-            Ok(binding.audience)
+        Some(binding) if binding.root == root => {
+            let carrier = crate::conversation_dag::conversation_of(&vault.store, txn, &root)?;
+            if carrier == room || binding.room == room {
+                Ok(binding.audience)
+            } else {
+                Err(Error::EntityNotFound)
+            }
         }
         _ => Err(Error::EntityNotFound),
     }
