@@ -77,6 +77,11 @@ pub enum RecordError {
     /// carries a key and a list.
     #[error("{0}")]
     RoomJoinHeld(Box<RoomJoinHold>),
+    /// A person's first write in a room met a refused room join: a party
+    /// answered no, or the join cannot stand. Nothing was written. The
+    /// refusal's typed parts, as JSON.
+    #[error("the write's room join is refused: {refusal}")]
+    RoomJoinRefused { refusal: String },
 
     #[error("DAG parent is outside the conversation")]
     DagParentOutsideConversation,
@@ -297,7 +302,8 @@ impl RecordError {
             Self::ConversationState(_) | Self::RoomJoinHeld(_) => ErrorKind::ConversationState,
             Self::ConversationDenied
             | Self::LeaderChatRule { .. }
-            | Self::RoomSpeakerIneligible { .. } => ErrorKind::ConversationDenied,
+            | Self::RoomSpeakerIneligible { .. }
+            | Self::RoomJoinRefused { .. } => ErrorKind::ConversationDenied,
             Self::MessageStreamRecoveryFailed(_) => ErrorKind::MessageStreamRecoveryFailed,
             Self::DagParentOutsideConversation => ErrorKind::DagParentOutsideConversation,
             Self::HeadAdvanceOffTrunk => ErrorKind::HeadAdvanceOffTrunk,

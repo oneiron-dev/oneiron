@@ -508,9 +508,13 @@ pub(super) fn window_message(
 /// (its speech, the epoch its requests rendered). A superset of what any
 /// step could have printed, because the guest keeps state across steps and
 /// no step boundary is stored with its calls. An id that never existed is no
-/// source. A deleted record's shell stays a source, so a summary written
-/// after the deletion is born withdrawn; a purged one leaves nothing to
-/// derive from, so the window is refused.
+/// source. A deleted record stays a source, its shell or, once purged, its
+/// tombstone, so a summary written after the deletion is born withdrawn and
+/// the run's later seals still advance: a purged newest epoch, which stands
+/// for every call before it, withdraws each epoch after it rather than
+/// parking the run. A run read through a room's view still refuses a purged
+/// source: its overlay mint stages a dependency row per source and has none
+/// to stage for a row that is gone.
 pub(super) fn served_sources(
     dbs: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
@@ -526,9 +530,12 @@ pub(super) fn served_sources(
         if crate::ports::EntityStoreRead::port_entity_record(dbs, rtxn, &id)?.is_some() {
             sources.push(id);
         } else if crate::ports::TombstoneStoreRead::port_deletion_state(dbs, rtxn, &id)?.deleted {
-            return Err(crate::Error::InvariantViolation(
-                "a record the run was served has been purged",
-            ));
+            if dbs.is_union() {
+                return Err(crate::Error::InvariantViolation(
+                    "a record the run was served has been purged",
+                ));
+            }
+            sources.push(id);
         }
     }
     Ok(sources)
