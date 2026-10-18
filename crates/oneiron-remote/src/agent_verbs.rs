@@ -316,6 +316,12 @@ impl OneironClient {
                 "vault.receipts.get" => remote_agent_verb_output::<
                     Option<oneiron::receipt::CallReceipt>,
                 >(client, verb, &input),
+                "self.admission.status" => remote_agent_verb_output::<
+                    Option<oneiron::receipt::admission::AdmissionReceipt>,
+                >(client, verb, &input),
+                "self.admission.receipts" => remote_agent_verb_output::<
+                    Vec<oneiron::receipt::admission::AdmissionReceipt>,
+                >(client, verb, &input),
                 "vault.explain.memory" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::ExplainMemoryReply>,
                 >(client, verb, &input),
@@ -3593,6 +3599,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts.get", value)
+    }
+    pub fn self_admission_status(
+        &self,
+        input: &oneiron::receipt::admission::AdmissionStatusRequest,
+    ) -> Result<Option<oneiron::receipt::admission::AdmissionReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.admission.status", value)
+    }
+    pub fn self_admission_receipts(
+        &self,
+        input: &oneiron::receipt::admission::AdmissionReceiptsRequest,
+    ) -> Result<Vec<oneiron::receipt::admission::AdmissionReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.admission.receipts", value)
     }
     pub fn vault_explain_memory(
         &self,

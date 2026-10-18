@@ -943,6 +943,8 @@ fn mcp_agent_verb_input(
         "vault.receipts" => a.spec.clone().ok_or_else(invalid),
         "vault.images.view" => a.spec.clone().ok_or_else(invalid),
         "vault.receipts.get" => a.spec.clone().ok_or_else(invalid),
+        "self.admission.status" => a.spec.clone().ok_or_else(invalid),
+        "self.admission.receipts" => a.spec.clone().ok_or_else(invalid),
         "vault.explain.memory" => a.spec.clone().ok_or_else(invalid),
         "vault.explain.gate" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.get" => a.spec.clone().ok_or_else(invalid),
@@ -2081,6 +2083,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.receipts.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.admission.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.admission.receipts" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.explain.memory" => {
@@ -5638,6 +5646,22 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_receipts_get(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.admission.status" => {
+            let input: oneiron::receipt::admission::AdmissionStatusRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_admission_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.admission.receipts" => {
+            let input: oneiron::receipt::admission::AdmissionReceiptsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_admission_receipts(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "vault.explain.memory" => {

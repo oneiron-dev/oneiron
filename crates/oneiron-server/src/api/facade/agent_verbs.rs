@@ -94,6 +94,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.receipts", post(facade_route))
         .route("/vault.images.view", post(facade_route))
         .route("/vault.receipts.get", post(facade_route))
+        .route("/self.admission.status", post(facade_route))
+        .route("/self.admission.receipts", post(facade_route))
         .route("/vault.explain.memory", post(facade_route))
         .route("/vault.explain.gate", post(facade_route))
         .route("/vault.kv.get", post(facade_route))
