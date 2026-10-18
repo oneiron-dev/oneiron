@@ -99,6 +99,7 @@ pub(super) fn carries_body(op: &AuthorityOp) -> bool {
                 | AuthorityOp::RevokeActor { .. }
                 | AuthorityOp::WorldPrivacy(_)
                 | AuthorityOp::GrantTravelSet(_)
+                | AuthorityOp::CheckpointPolicySet(_)
         )
 }
 
