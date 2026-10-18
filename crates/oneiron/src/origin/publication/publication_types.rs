@@ -4,6 +4,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitRefName, GitWireCommitOutcome, GitWireRejection, GitWireRepo};
 use crate::origin::lfs::LfsOid;
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::temporal::TimeRange;
 // ---------------------------------------------------------------------------
 // Pinned protocol constants
@@ -208,6 +209,50 @@ pub struct OriginPublicationRequest {
     pub learned_at: u64,
 }
 
+/// Who made a publication's advance: the authenticated principal, or no one
+/// once that actor was erased (FIX 3520).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OriginActor {
+    Actor(EntityId),
+    Erased,
+}
+
+impl OriginActor {
+    /// The actor, unless it was erased.
+    #[must_use]
+    pub fn id(self) -> Option<EntityId> {
+        match self {
+            Self::Actor(id) => Some(id),
+            Self::Erased => None,
+        }
+    }
+
+    /// How a claim value spells it: the actor's hex id, or
+    /// [`ERASED_CALL_IDENTITY`].
+    #[must_use]
+    pub fn to_hex(self) -> String {
+        match self {
+            Self::Actor(id) => id.to_hex(),
+            Self::Erased => ERASED_CALL_IDENTITY.to_owned(),
+        }
+    }
+
+    /// Reads [`Self::to_hex`]'s spelling back.
+    pub(in crate::origin) fn from_hex(text: &str) -> Result<Self> {
+        if text == ERASED_CALL_IDENTITY {
+            return Ok(Self::Erased);
+        }
+        EntityId::from_hex(text).map(Self::Actor)
+    }
+}
+
+/// An erased actor equals no id.
+impl PartialEq<EntityId> for OriginActor {
+    fn eq(&self, other: &EntityId) -> bool {
+        *self == Self::Actor(*other)
+    }
+}
+
 /// The durable journal row for one publication.
 ///
 /// It carries `repo_id` rather than a [`GitWireRepo`]: that handle exists only
@@ -234,8 +279,8 @@ pub struct OriginPublicationRecord {
     pub provenance_claim_id: EntityId,
     /// The `repo.publication` claim, once it exists.
     pub publication_claim_id: Option<EntityId>,
-    /// The authenticated principal behind the advance.
-    pub actor_id: EntityId,
+    /// The authenticated principal behind the advance, until it is erased.
+    pub actor_id: OriginActor,
     /// Where the publication stands.
     pub status: OriginPublicationStatus,
     /// Bounded failure text, when the publication did not land.

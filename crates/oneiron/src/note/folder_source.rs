@@ -27,6 +27,7 @@ use super::import::{
     ImportedNote, ImportedNoteBatch, ImportedNoteLink, NOTES_IMPORT_SOURCE, revision, scan_titles,
     validate_batch,
 };
+use super::proposals::{NoteActor, names_no_actor};
 use crate::claim::ClaimSource;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -38,6 +39,35 @@ use crate::{EntityId, Vault};
 const SOURCES: SideTable<String, FolderSource, Named> = SideTable::new(&side_table::FOLDER_SOURCE);
 const FILES: SideTable<String, FolderSourceFile, Named> =
     SideTable::new(&side_table::FOLDER_SOURCE_FILE);
+
+/// Erasing `actor` from the folders it attached (FIX 3520): each attached
+/// folder keeps its row, its ledger and its times, and names no one. One-way,
+/// in the erase's own transaction. An id whose entity is no actor scans
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a source row that cannot be read.
+pub(crate) fn erase_folder_source_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut sources = Vec::new();
+    for (key, mut source) in SOURCES.scan(&vault.store, wtxn)? {
+        if source.attached_by.is(*actor) {
+            source.attached_by = NoteActor::Erased;
+            sources.push((key, source));
+        }
+    }
+    for (key, source) in sources {
+        SOURCES.put(&vault.store, wtxn, &key, &source)?;
+    }
+    Ok(())
+}
 
 /// The longest path a ledger key holds as is; a longer one keys by its hash.
 const MAX_KEYED_PATH: usize = 256;
@@ -66,7 +96,7 @@ pub struct FolderSource {
     pub source: String,
     /// That source's trust tier: what the vault takes the files to be.
     pub trust: ClaimSource,
-    pub attached_by: EntityId,
+    pub attached_by: NoteActor,
     pub attached_at: u64,
     pub last_rescan_at: Option<u64>,
 }
@@ -200,7 +230,7 @@ impl Vault {
                 kind: kind.to_owned(),
                 source: NOTES_IMPORT_SOURCE.to_owned(),
                 trust,
-                attached_by,
+                attached_by: NoteActor::Actor(attached_by),
                 attached_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
                 last_rescan_at: None,
             };

@@ -5,6 +5,7 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
+use crate::receipt::ERASED_CALL_IDENTITY;
 
 use super::selection_resolution::{
     ChannelIdentitySelectionError, ChannelIdentitySelectionResult, SelectionRuleScope,
@@ -66,10 +67,7 @@ fn rule_value(rule: &ChannelIdentitySelectionRule) -> Value {
         (Value::from(RULE_KEYS[6]), Value::from(rule.enabled)),
         (Value::from(RULE_KEYS[7]), Value::from(rule.agent_amendable)),
         (Value::from(RULE_KEYS[8]), Value::from(rule.updated_at)),
-        (
-            Value::from(RULE_KEYS[9]),
-            optional_entity_value(rule.updated_by),
-        ),
+        (Value::from(RULE_KEYS[9]), updated_by_value(rule)),
         (
             Value::from(RULE_KEYS[10]),
             Value::from(rule.writer_kind.as_str()),
@@ -106,6 +104,17 @@ fn entity_value(id: EntityId) -> Value {
 
 fn optional_entity_value(id: Option<EntityId>) -> Value {
     id.map_or(Value::Nil, entity_value)
+}
+
+/// Who last wrote a row: its id, nil for compiled law, or
+/// [`ERASED_CALL_IDENTITY`] on a written row whose writer was erased
+/// (FIX 3520).
+fn updated_by_value(rule: &ChannelIdentitySelectionRule) -> Value {
+    match rule.updated_by {
+        Some(id) => entity_value(id),
+        None if rule.writer_kind == SelectionRuleWriterKind::SystemDefault => Value::Nil,
+        None => Value::from(ERASED_CALL_IDENTITY),
+    }
 }
 
 /// Decodes a stored overlay, rejecting every shape two decoders could read
@@ -155,7 +164,7 @@ pub(super) fn decode_rule_set(
 
 fn rule_from_value(value: &Value) -> ChannelIdentitySelectionResult<ChannelIdentitySelectionRule> {
     let fields = strict_fields(value, &RULE_KEYS, "rule map")?;
-    let rule =
+    let mut rule =
         ChannelIdentitySelectionRule {
             rule_id: token(fields[0], "rule_id must be a string")?.to_owned(),
             relationship: RelationshipContext::parse(token(
@@ -181,7 +190,7 @@ fn rule_from_value(value: &Value) -> ChannelIdentitySelectionResult<ChannelIdent
             updated_at: fields[8].as_u64().ok_or(
                 ChannelIdentitySelectionError::MalformedRuleSet("updated_at must be a u64"),
             )?,
-            updated_by: optional_entity_from_value(fields[9])?,
+            updated_by: None,
             writer_kind: SelectionRuleWriterKind::parse(token(
                 fields[10],
                 "writer_kind must be a string",
@@ -190,6 +199,7 @@ fn rule_from_value(value: &Value) -> ChannelIdentitySelectionResult<ChannelIdent
                 "unknown writer kind token",
             ))?,
         };
+    rule.updated_by = updated_by_from_value(fields[9], rule.writer_kind)?;
     rule.validate()?;
     Ok(rule)
 }
@@ -257,6 +267,26 @@ fn entity_from_value(value: &Value) -> ChannelIdentitySelectionResult<EntityId> 
 fn optional_entity_from_value(value: &Value) -> ChannelIdentitySelectionResult<Option<EntityId>> {
     match value {
         Value::Nil => Ok(None),
+        other => entity_from_value(other).map(Some),
+    }
+}
+
+/// The inverse of [`updated_by_value`]. Only a written row reads the erased
+/// token, and only compiled law reads nil, so a row that lost its stamp
+/// still fails.
+fn updated_by_from_value(
+    value: &Value,
+    writer_kind: SelectionRuleWriterKind,
+) -> ChannelIdentitySelectionResult<Option<EntityId>> {
+    let system_default = writer_kind == SelectionRuleWriterKind::SystemDefault;
+    match value {
+        Value::Nil if system_default => Ok(None),
+        Value::Nil => Err(ChannelIdentitySelectionError::InvalidRule(
+            "only a system-default row may omit updated_by",
+        )),
+        Value::String(token) if !system_default && token.as_str() == Some(ERASED_CALL_IDENTITY) => {
+            Ok(None)
+        }
         other => entity_from_value(other).map(Some),
     }
 }

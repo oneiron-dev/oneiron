@@ -1,5 +1,5 @@
 //! Commit-hash keyed LEDGER change identities. Trailers are hints, never keys.
-use super::publication::{OriginPublicationRecord, origin_published_commit_id};
+use super::publication::{OriginActor, OriginPublicationRecord, origin_published_commit_id};
 use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, encode_claim_body,
@@ -34,7 +34,7 @@ pub struct OriginChange {
     pub claim_id: EntityId,
     pub commit: GitOid,
     pub repo_id: EntityId,
-    pub actor_id: EntityId,
+    pub actor_id: OriginActor,
     pub provenance_claim_id: EntityId,
     pub source: String,
     pub ref_name: String,
@@ -100,7 +100,7 @@ impl Vault {
             claim_id: id,
             commit: GitOid::parse_hex(string("commit_hash")?)?,
             repo_id: repo,
-            actor_id: EntityId::from_hex(string("actor_id")?)?,
+            actor_id: OriginActor::from_hex(string("actor_id")?)?,
             provenance_claim_id: EntityId::from_hex(string("provenance_claim_id")?)?,
             source: string("source")?.to_owned(),
             ref_name: string("ref_name")?.to_owned(),

@@ -5,6 +5,7 @@
 //! every NOTE answers "sealed?" from one row.
 
 use super::documents::{invalid, live_doc};
+use super::proposals::{NoteActor, names_no_actor};
 use super::sync_rows::SYNC_DS_E;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
@@ -31,9 +32,37 @@ pub struct NoteSeal {
     pub document: EntityId,
     /// The head document's encoded oplog frontier at the seal.
     pub frontier: Vec<u8>,
-    #[serde(with = "crate::entity_id::serde_hex")]
-    pub sealed_by: EntityId,
+    pub sealed_by: NoteActor,
     pub sealed_at: u64,
+}
+
+/// Erasing `actor` from the seals it made (FIX 3520): each seal keeps its
+/// row, its head, its frontier and its time, so the NOTE stays sealed, and
+/// names no one. One-way, in the erase's own transaction. An id whose entity
+/// is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a seal row that cannot be read.
+pub(crate) fn erase_seal_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut seals = Vec::new();
+    for (key, mut seal) in NOTE_SEAL.scan(&vault.store, wtxn)? {
+        if seal.sealed_by.is(*actor) {
+            seal.sealed_by = NoteActor::Erased;
+            seals.push((key, seal));
+        }
+    }
+    for (key, seal) in seals {
+        NOTE_SEAL.put(&vault.store, wtxn, &key, &seal)?;
+    }
+    Ok(())
 }
 
 /// Whether a NOTE is reachable, orthogonal to its mutability (ARCH-0032).
@@ -117,7 +146,7 @@ pub(crate) fn seal_note_in_txn(
         note,
         document: doc.head,
         frontier: doc.doc.oplog_frontiers().encode(),
-        sealed_by: by,
+        sealed_by: NoteActor::Actor(by),
         sealed_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
     };
     NOTE_SEAL.put(&vault.store, txn, &note, &seal)?;

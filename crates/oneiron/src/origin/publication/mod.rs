@@ -91,6 +91,7 @@ mod publication_tests_b;
 mod publication_tests_c;
 mod publication_types;
 
+pub(crate) use self::publication_codec::erase_publication_actor_in_txn;
 pub use self::publication_codec::{
     origin_keep_ref_name, origin_publication_claim_id, origin_publication_id,
     origin_publication_intent_claim, origin_published_commit_id,
@@ -101,7 +102,7 @@ pub use self::publication_types::{
     ORIGIN_PUBLICATION_ID_DOMAIN, ORIGIN_PUBLICATION_INTENT_PREDICATE,
     ORIGIN_PUBLICATION_MAX_FAILURE_BYTES, ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS,
     ORIGIN_PUBLICATION_PREDICATE, ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS,
-    OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind, OriginPublicationAnswer,
-    OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
-    OriginPublicationStatus,
+    OriginActor, OriginCensusDisposition, OriginCensusReport, OriginKeepRefKind,
+    OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRecord,
+    OriginPublicationRequest, OriginPublicationStatus,
 };
