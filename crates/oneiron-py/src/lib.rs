@@ -1797,6 +1797,55 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_agents_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_agents_update(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.agents.update")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.agents.update", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_workspace_establish(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.workspace.establish")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.workspace.establish", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_workspace_members_onboard(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.workspace.members.onboard")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.workspace.members.onboard", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_workspace_roster(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.workspace.roster")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.workspace.roster", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_agents_export_pack(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.agents.export_pack")?;
         let output = py

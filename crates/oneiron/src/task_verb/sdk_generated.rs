@@ -968,6 +968,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDefinitionCreateRequest,
+                >(),
+            ),
+            (
+                "vault.agents.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDefinitionRequest,
+                >(),
+            ),
+            (
+                "vault.agents.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDefinitionUpdateRequest,
+                >(),
+            ),
+            (
+                "vault.workspace.establish",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkspacePresetRequest,
+                >(),
+            ),
+            (
+                "vault.workspace.members.onboard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkspaceMemberOnboardRequest,
+                >(),
+            ),
+            (
+                "vault.workspace.roster",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkspaceRosterRequest,
+                >(),
+            ),
+            (
                 "vault.agents.export_pack",
                 crate::code_run::vault_read::request_schema::<
                     crate::share_travel::AgentPackExportRequest,
@@ -3339,6 +3375,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.establish" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.members.onboard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.roster" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.agents.export_pack" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5148,6 +5226,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
         }
+        "vault.agents.create" => {
+            let _input: crate::task_verb::sdk::AgentDefinitionCreateRequest =
+                decode(value.clone())?;
+        }
+        "vault.agents.get" => {
+            let _input: crate::task_verb::sdk::AgentDefinitionRequest = decode(value.clone())?;
+        }
+        "vault.agents.update" => {
+            let _input: crate::task_verb::sdk::AgentDefinitionUpdateRequest =
+                decode(value.clone())?;
+        }
+        "vault.workspace.establish" => {
+            let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
+        }
+        "vault.workspace.members.onboard" => {
+            let _input: crate::task_verb::sdk::WorkspaceMemberOnboardRequest =
+                decode(value.clone())?;
+        }
+        "vault.workspace.roster" => {
+            let _input: crate::task_verb::sdk::WorkspaceRosterRequest = decode(value.clone())?;
+        }
         "vault.agents.export_pack" => {
             let _input: crate::share_travel::AgentPackExportRequest = decode(value.clone())?;
         }
@@ -6128,6 +6227,14 @@ pub fn invoke(
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
+        "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
+        "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
+        "vault.agents.update" => encode(vault_agents_update(memory, decode(value)?)?),
+        "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
+        "vault.workspace.members.onboard" => {
+            encode(vault_workspace_members_onboard(memory, decode(value)?)?)
+        }
+        "vault.workspace.roster" => encode(vault_workspace_roster(memory, decode(value)?)?),
         "vault.agents.export_pack" => encode(vault_agents_export_pack(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
@@ -8021,6 +8128,66 @@ pub fn vault_artifacts_export(
     input: crate::blob_artifact::ArtifactExportRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExportFile>> {
     memory.artifacts_export(&input)
+}
+pub fn vault_agents_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDefinitionCreateRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDefinitionView> {
+    crate::task_verb::sdk::create_agent_definition_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.create")?,
+        input,
+    )
+}
+pub fn vault_agents_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDefinitionRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDefinitionView> {
+    crate::task_verb::sdk::read_agent_definition_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.get")?,
+        input,
+    )
+}
+pub fn vault_agents_update(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDefinitionUpdateRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDefinitionView> {
+    crate::task_verb::sdk::update_agent_definition_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.update")?,
+        input,
+    )
+}
+pub fn vault_workspace_establish(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkspacePresetRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkspacePresetReceipt> {
+    crate::task_verb::sdk::establish_workspace_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workspace.establish")?,
+        input,
+    )
+}
+pub fn vault_workspace_members_onboard(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkspaceMemberOnboardRequest,
+) -> MemoryResult<crate::workspace_roster::MemberOnboardingOutcome> {
+    crate::task_verb::sdk::onboard_workspace_member_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workspace.members.onboard")?,
+        input,
+    )
+}
+pub fn vault_workspace_roster(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkspaceRosterRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::WorkspaceRosterEntry>> {
+    crate::task_verb::sdk::read_workspace_roster_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workspace.roster")?,
+        input,
+    )
 }
 pub fn vault_agents_export_pack(
     memory: &Memory<'_>,

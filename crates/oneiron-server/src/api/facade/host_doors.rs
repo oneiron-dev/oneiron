@@ -50,6 +50,7 @@ use crate::server::SyncServer;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::shared_act_doors::*;
+pub(crate) use super::agent_definition_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
@@ -1410,7 +1411,7 @@ fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
 
 /// The vault owner's proof for an owner's host door, from the request, as
 /// `/v1/owner` takes it.
-fn owner_proof(
+pub(super) fn owner_proof(
     auth: &CoreAuth,
     server: &SyncServer,
     verb: &str,
