@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "area": "voice",
+  "assets": [
+    {
+      "id": "voice-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5425da7689cbcf1e60a8391bd53ff7d38231025686bb1cf4961baf1d82b71c54",
+      "expectedFacts": {
+        "plannedIds": [
+          "VOICE-01",
+          "VOICE-02",
+          "VOICE-03",
+          "VOICE-04",
+          "VOICE-05",
+          "VOICE-06",
+          "VOICE-07",
+          "VOICE-08"
+        ],
+        "rows": [
+          "OF-010",
+          "OF-032",
+          "OF-078",
+          "OF-108",
+          "OF-139",
+          "OF-328",
+          "OF-329",
+          "OF-335",
+          "OF-408",
+          "OF-409",
+          "OF-410"
+        ],
+        "allBlockedByTypedSurface": true,
+        "oracle": "Independently authored transcript/provider/usage/scope/affect facts; canon and registry pins inside.",
+        "limitations": "Synthetic PCM is transport-only. Licensed two-speaker and solo speech references remain explicit fixture needs."
+      },
+      "scenarios": [
+        "VOICE-01",
+        "VOICE-02",
+        "VOICE-03",
+        "VOICE-04",
+        "VOICE-05",
+        "VOICE-06",
+        "VOICE-07",
+        "VOICE-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-old-pcm",
+      "path": "old.pcm",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-transport-pulses",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a3bd6dcfcbe9c0531f9fd01de8634bd2fac473f2a30007d75f778c1bd19846f7",
+      "expectedFacts": {
+        "format": "PCM16LE",
+        "sampleRateHz": 16000,
+        "channels": 1,
+        "durationMs": 80,
+        "byteLength": 2560,
+        "amplitude": 1000,
+        "activeWindowMs": [
+          0,
+          80
+        ],
+        "speech": false,
+        "purpose": "Distinct transport markers; scripted ASR/VAD supplies transcript/activity independently."
+      },
+      "scenarios": [
+        "VOICE-03",
+        "VOICE-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-new-pcm",
+      "path": "new.pcm",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-transport-pulses",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "1b08a942d5658f07a6c8a26ce048932c4ea4ec8c8831f76ba72cc00c092f2e63",
+      "expectedFacts": {
+        "format": "PCM16LE",
+        "sampleRateHz": 16000,
+        "channels": 1,
+        "durationMs": 80,
+        "byteLength": 2560,
+        "amplitude": 2000,
+        "activeWindowMs": [
+          0,
+          80
+        ],
+        "speech": false,
+        "purpose": "Distinct transport markers; scripted ASR/VAD supplies transcript/activity independently."
+      },
+      "scenarios": [
+        "VOICE-03",
+        "VOICE-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-user-pcm",
+      "path": "user.pcm",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-transport-pulses",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5375c7ce0c7a6a417fc839583e4e12345141cadf6e4b1d7d0865615f32b0778d",
+      "expectedFacts": {
+        "format": "PCM16LE",
+        "sampleRateHz": 16000,
+        "channels": 1,
+        "durationMs": 160,
+        "byteLength": 5120,
+        "amplitude": 500,
+        "activeWindowMs": [
+          0,
+          160
+        ],
+        "speech": false,
+        "purpose": "Distinct transport markers; scripted ASR/VAD supplies transcript/activity independently."
+      },
+      "scenarios": [
+        "VOICE-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-capture-mic",
+      "path": "capture-mic.pcm",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-transport-pulses",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4ee690a5f196b96d518938468fed0c40fc6c93be3db3165470dd4196129f0b5f",
+      "expectedFacts": {
+        "format": "PCM16LE",
+        "sampleRateHz": 16000,
+        "channels": 1,
+        "durationMs": 800,
+        "byteLength": 25600,
+        "amplitude": 700,
+        "activeWindowMs": [
+          0,
+          400
+        ],
+        "speech": false,
+        "purpose": "Distinct transport markers; scripted ASR/VAD supplies transcript/activity independently."
+      },
+      "scenarios": [
+        "VOICE-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-capture-process",
+      "path": "capture-process.pcm",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-transport-pulses",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a803190eed472e7284f61a1cfadc7ee51f7ab2e31bbd6fbe5747c9d4988bbb78",
+      "expectedFacts": {
+        "format": "PCM16LE",
+        "sampleRateHz": 16000,
+        "channels": 1,
+        "durationMs": 800,
+        "byteLength": 25600,
+        "amplitude": 1300,
+        "activeWindowMs": [
+          400,
+          800
+        ],
+        "speech": false,
+        "purpose": "Distinct transport markers; scripted ASR/VAD supplies transcript/activity independently."
+      },
+      "scenarios": [
+        "VOICE-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-image-base",
+      "path": "image-base.png",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-solid-colour-png",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "7f2538a6e81af23e034f8ca2efc2cb5f1d7d709f502fa30bdccfebe774e4ecab",
+      "expectedFacts": {
+        "format": "PNG",
+        "width": 2,
+        "height": 2,
+        "depth": 8,
+        "rgbaRowMajor": [
+          [
+            255,
+            0,
+            0,
+            255
+          ],
+          [
+            0,
+            255,
+            0,
+            255
+          ],
+          [
+            0,
+            0,
+            255,
+            255
+          ],
+          [
+            255,
+            255,
+            255,
+            255
+          ]
+        ],
+        "oracle": "Hand-authored RGBA pixels, no engine or model output; fake image-provider response."
+      },
+      "scenarios": [
+        "VOICE-06"
+      ],
+      "requires": []
+    },
+    {
+      "id": "voice-image-edited",
+      "path": "image-edited.png",
+      "source": {
+        "uri": "author-created:oneiron-e2e-voice-solid-colour-png",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "b98c0d6807ae1d7ad75a9fc17ef1e6e9abb227220dbc9f5a50a8fa7ffbf20d9b",
+      "expectedFacts": {
+        "format": "PNG",
+        "width": 2,
+        "height": 2,
+        "depth": 8,
+        "rgbaRowMajor": [
+          [
+            255,
+            0,
+            0,
+            255
+          ],
+          [
+            0,
+            255,
+            0,
+            255
+          ],
+          [
+            255,
+            255,
+            0,
+            255
+          ],
+          [
+            255,
+            255,
+            255,
+            255
+          ]
+        ],
+        "oracle": "Hand-authored RGBA pixels, no engine or model output; fake image-provider response."
+      },
+      "scenarios": [
+        "VOICE-06"
+      ],
+      "requires": []
+    }
+  ]
+}
