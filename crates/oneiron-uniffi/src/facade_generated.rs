@@ -476,6 +476,16 @@ export_facade! {
     let output = client.vault_authority_audit(&input)?;
     crate::codec::lift_record("vault.authority.audit", &output)
 };
+"vault.authority.history.export" => fn vault_authority_history_export(&self) -> SignedAuthorityHistory = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.authority.history.export")?;
+    let output = client.vault_authority_history_export(&input)?;
+    crate::codec::lift_record("vault.authority.history.export", &output)
+};
+"vault.authority.history.import" => fn vault_authority_history_import(&self, input: SignedAuthorityHistory) -> AuthorityHistoryImported = |client| {
+    let input: oneiron::task_verb::sdk::SignedAuthorityHistory = crate::codec::lower_record("vault.authority.history.import", input)?;
+    let output = client.vault_authority_history_import(&input)?;
+    crate::codec::lift_record("vault.authority.history.import", &output)
+};
 "vault.mesh.path_receipts" => fn vault_mesh_path_receipts(&self, input: MeshPathReceiptsRequest) -> Vec<MeshPathReceipt> = |client| {
     let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest = crate::codec::lower_record("vault.mesh.path_receipts", input)?;
     let output = client.vault_mesh_path_receipts(&input)?;
@@ -1540,6 +1550,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::BookingPageTokenRequest = crate::codec::lower_record("vault.booking.page_token", input)?;
     let output = client.vault_booking_page_token(&input)?;
     crate::codec::lift_record("vault.booking.page_token", &output)
+};
+"vault.calendar.create" => fn vault_calendar_create(&self, input: CalendarEventCreateRequest) -> CalendarEventCreated = |client| {
+    let input: oneiron::calendar::door::CalendarEventCreateRequest = crate::codec::lower_record("vault.calendar.create", input)?;
+    let output = client.vault_calendar_create(&input)?;
+    crate::codec::lift_record("vault.calendar.create", &output)
+};
+"vault.calendar.ics.import" => fn vault_calendar_ics_import(&self, input: CalendarIcsImportRequest) -> CalendarIcsImportReceipt = |client| {
+    let input: oneiron::calendar::ingest::door::CalendarIcsImportRequest = crate::codec::lower_record("vault.calendar.ics.import", input)?;
+    let output = client.vault_calendar_ics_import(&input)?;
+    crate::codec::lift_record("vault.calendar.ics.import", &output)
+};
+"vault.calendar.occurrences" => fn vault_calendar_occurrences(&self, input: CalendarOccurrencesRequest) -> ScopedReadResultCalendarOccurrenceViewList = |client| {
+    let input: oneiron::calendar::query::CalendarOccurrencesRequest = crate::codec::lower_record("vault.calendar.occurrences", input)?;
+    let output = client.vault_calendar_occurrences(&input)?;
+    crate::codec::lift_record("vault.calendar.occurrences", &output)
+};
+"vault.calendar.instances.move" => fn vault_calendar_instances_move(&self, input: CalendarInstanceMoveRequest) -> CalendarIcsImportReceipt = |client| {
+    let input: oneiron::calendar::ingest::door::CalendarInstanceMoveRequest = crate::codec::lower_record("vault.calendar.instances.move", input)?;
+    let output = client.vault_calendar_instances_move(&input)?;
+    crate::codec::lift_record("vault.calendar.instances.move", &output)
 };
 "vault.calendar.read" => fn vault_calendar_read(&self, input: CalendarReadRequest) -> ScopedReadResultOptionalCalendarEventView = |client| {
     let input: oneiron::calendar::CalendarReadRequest = crate::codec::lower_record("vault.calendar.read", input)?;

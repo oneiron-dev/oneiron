@@ -1270,7 +1270,14 @@ class Oneiron:
         def audit(self, spec: Facade.AuthorityAuditQuery) -> Facade.AuthorityAuditPage:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
         @property
+        def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs": ...
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs": ...
+    class _VaultAuthorityHistoryVerbs:
+        def export(self, spec: Facade.EmptyRequest | None = None) -> Facade.SignedAuthorityHistory:
+            """Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."""
+        def import_(self, spec: Facade.SignedAuthorityHistory) -> Facade.AuthorityHistoryImported:
+            """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __call__(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.AuthorityHandoffAlarm]:
             """Every saved authority handoff fork alarm, for the owner."""
@@ -1742,6 +1749,14 @@ class Oneiron:
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
     class _VaultCalendarVerbs:
+        def create(self, spec: Facade.CalendarEventCreateRequest) -> Facade.CalendarEventCreated:
+            """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
+        @property
+        def ics(self) -> "Oneiron._VaultCalendarIcsVerbs": ...
+        def occurrences(self, spec: Facade.CalendarOccurrencesRequest) -> Facade.ScopedReadResult[list[Facade.CalendarOccurrenceView]]:
+            """Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."""
+        @property
+        def instances(self) -> "Oneiron._VaultCalendarInstancesVerbs": ...
         def read(self, spec: Facade.CalendarReadRequest) -> Facade.ScopedReadResult[Facade.CalendarEventView | None]:
             """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
         def search(self, spec: Facade.CalendarSearchRequest) -> Facade.ScopedReadResult[list[Facade.CalendarEventView]]:
@@ -1750,6 +1765,12 @@ class Oneiron:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
+    class _VaultCalendarIcsVerbs:
+        def import_(self, spec: Facade.CalendarIcsImportRequest) -> Facade.CalendarIcsImportReceipt:
+            """The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."""
+    class _VaultCalendarInstancesVerbs:
+        def move(self, spec: Facade.CalendarInstanceMoveRequest) -> Facade.CalendarIcsImportReceipt:
+            """The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."""
     class _VaultCalendarTranscriptVerbs:
         def ingest(self, spec: Facade.TranscriptFileDropInput) -> Facade.TranscriptIngestOutcome:
             """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""

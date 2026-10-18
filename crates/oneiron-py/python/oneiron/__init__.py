@@ -1113,8 +1113,20 @@ class Oneiron:
             """One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."""
             return json.loads(_translate(lambda: self._client.vault_authority_audit(json.dumps(spec))))
         @property
+        def history(self) -> "Oneiron._VaultAuthorityHistoryVerbs":
+            return Oneiron._VaultAuthorityHistoryVerbs(self._client)
+        @property
         def handoff_alarms(self) -> "Oneiron._VaultAuthorityHandoffAlarmsVerbs":
             return Oneiron._VaultAuthorityHandoffAlarmsVerbs(self._client)
+    class _VaultAuthorityHistoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def export(self, spec=None):
+            """Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."""
+            return json.loads(_translate(lambda: self._client.vault_authority_history_export(json.dumps({} if spec is None else spec))))
+        def import_(self, spec):
+            """Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."""
+            return json.loads(_translate(lambda: self._client.vault_authority_history_import(json.dumps(spec))))
     class _VaultAuthorityHandoffAlarmsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1973,6 +1985,18 @@ class Oneiron:
     class _VaultCalendarVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def create(self, spec):
+            """Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_create(json.dumps(spec))))
+        @property
+        def ics(self) -> "Oneiron._VaultCalendarIcsVerbs":
+            return Oneiron._VaultCalendarIcsVerbs(self._client)
+        def occurrences(self, spec):
+            """Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_occurrences(json.dumps(spec))))
+        @property
+        def instances(self) -> "Oneiron._VaultCalendarInstancesVerbs":
+            return Oneiron._VaultCalendarInstancesVerbs(self._client)
         def read(self, spec):
             """Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_read(json.dumps(spec))))
@@ -1985,6 +2009,18 @@ class Oneiron:
         @property
         def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
             return Oneiron._VaultCalendarTranscriptVerbs(self._client)
+    class _VaultCalendarIcsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def import_(self, spec):
+            """The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_ics_import(json.dumps(spec))))
+    class _VaultCalendarInstancesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def move(self, spec):
+            """The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_instances_move(json.dumps(spec))))
     class _VaultCalendarTranscriptVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

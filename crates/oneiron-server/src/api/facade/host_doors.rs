@@ -48,7 +48,10 @@ use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
 
+// The signed authority history doors, under the audit door's owner proof.
+pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
+pub(crate) use super::calendar_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -1008,7 +1011,9 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.packs.put"
+        "vault.calendar.ics.import"
+        | "vault.calendar.instances.move"
+        | "vault.packs.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"
@@ -1030,6 +1035,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.connectors.subscriptions.list"
         | "vault.connectors.subscriptions.revoke"
         | "vault.authority.audit"
+        | "vault.authority.history.export"
+        | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
         | "vault.lenses.activate"

@@ -125,6 +125,8 @@ vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown
 vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
+vaultAuthorityHistoryExport(input: unknown): unknown
+vaultAuthorityHistoryImport(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
@@ -338,6 +340,10 @@ vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+vaultCalendarCreate(input: unknown): unknown
+vaultCalendarIcsImport(input: unknown): unknown
+vaultCalendarOccurrences(input: unknown): unknown
+vaultCalendarInstancesMove(input: unknown): unknown
 vaultCalendarRead(input: unknown): unknown
 vaultCalendarSearch(input: unknown): unknown
 vaultCalendarFreebusy(input: unknown): unknown

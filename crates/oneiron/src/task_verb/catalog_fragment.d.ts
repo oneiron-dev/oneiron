@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 457 code-mode rows (436 host rows, 21 run rows), 1651 declarations.
-// Replies: 401 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 463 code-mode rows (442 host rows, 21 run rows), 1662 declarations.
+// Replies: 407 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -561,6 +561,8 @@ declare namespace Sdk {
   type AuthorityAuditOrder = "entry_ref_ascending";
   type ColdAuthorityAuditRow = { entry_ref: EntityId; entry_hash: string; checkpoint: string; signer_key: string; seq: number; parents: string[]; fold_valid: boolean };
   type AuthorityAuditPage = { rows: AuthorityAuditRow[]; next_after?: EntityId | null; order: AuthorityAuditOrder; scanned: number; cold_attested?: ColdAuthorityAuditRow[] };
+  type SignedAuthorityHistory = { entries: string[] };
+  type AuthorityHistoryImported = { entry_refs: string[] };
   type MeshPathReceiptsRequest = { limit?: number | null };
   type MeshPathDirection = "inbound" | "outbound";
   type MeshPathOutcome = "admitted" | "refused" | "failed";
@@ -1315,10 +1317,19 @@ declare namespace Sdk {
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type BookingPageTokenRequest = { page_ref: string };
   type BookingPageTokenResponse = { page_token: string };
+  type CalendarRangeDto = { start: number; end: number };
+  type CalendarEventCreateRequest = { origin: "native"; summary: string; occurredAt: CalendarRangeDto } | { origin: "dreamer"; summary: string; occurredAt: CalendarRangeDto; evidenceTurnIds: string[]; sourceFrontiers: string[] };
+  type CalendarEventCreated = { event_ref: string; origin: string; recorded_at: number };
+  type CalendarIcsImportRequest = { system: string; source_blob_ref: string; source_version: number };
+  type CalendarImportClaimReceipt = { claim_ref: string; predicate: string; approval: string; lifecycle: string };
+  type CalendarImportedEvent = { event_ref: string; uid: string; original_start_utc?: number | null; claims: CalendarImportClaimReceipt[] };
+  type CalendarIcsImportReceipt = { source_blob_ref: string; source_version: number; events: CalendarImportedEvent[]; screen_verdict: string };
+  type CalendarOccurrencesRequest = { master_ref: string; range: CalendarRangeDto };
+  type CalendarOccurrenceView = { event_ref: string; master_ref: string; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
+  type CalendarInstanceMoveRequest = { system: string; source_blob_ref: string; source_version: number; uid: string; original_start_utc: number; start_utc: number; end_utc: number };
   type CalendarReadRequest = { event_ref: string };
   type CalendarEventView = { origin: string; event_ref: string; name?: string | null; start_utc?: number | null; end_utc?: number | null; calendar_systems: string[]; blocks_time: boolean };
   type CalendarSel = { system?: string | null };
-  type CalendarRangeDto = { start: number; end: number };
   type CalendarSearchRequest = { calendars: CalendarSel[]; range?: CalendarRangeDto | null; text?: string | null; limit: number };
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
@@ -2032,6 +2043,12 @@ declare const vault: Sdk.VaultHost & {
       /** The owner acknowledges one saved handoff fork alarm. */
       acknowledge(input: Sdk.HandoffAlarmRequest): Promise<Sdk.AuthorityHandoffAlarm | StoredResult>;
     };
+    history: {
+      /** Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves. */
+      export(input: Sdk.EmptyRequest): Promise<Sdk.SignedAuthorityHistory | StoredResult>;
+      /** Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing. */
+      import(input: Sdk.SignedAuthorityHistory): Promise<Sdk.AuthorityHistoryImported | StoredResult>;
+    };
   };
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
@@ -2058,8 +2075,20 @@ declare const vault: Sdk.VaultHost & {
     settlements(input: Sdk.RunSettlementsRequest): Promise<Sdk.RunSettlementsView | StoredResult>;
   };
   calendar: {
+    /** Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time. */
+    create(input: Sdk.CalendarEventCreateRequest): Promise<Sdk.CalendarEventCreated | StoredResult>;
     /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
     freebusy(input: Sdk.CalendarFreebusyRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarFreebusyDto> | StoredResult>;
+    ics: {
+      /** The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent. */
+      import(input: Sdk.CalendarIcsImportRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    instances: {
+      /** The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances. */
+      move(input: Sdk.CalendarInstanceMoveRequest): Promise<Sdk.CalendarIcsImportReceipt | StoredResult>;
+    };
+    /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
+    occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */

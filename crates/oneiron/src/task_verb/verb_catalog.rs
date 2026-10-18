@@ -99,6 +99,8 @@ pub enum AgentVerb {
     VaultPacksSetupAnswer,
     VaultPacksSetupVerify,
     VaultAuthorityAudit,
+    VaultAuthorityHistoryExport,
+    VaultAuthorityHistoryImport,
     VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -352,6 +354,10 @@ pub enum AgentVerb {
     VaultClaimsRetract,
     VaultForget,
     VaultBookingPageToken,
+    VaultCalendarCreate,
+    VaultCalendarIcsImport,
+    VaultCalendarOccurrences,
+    VaultCalendarInstancesMove,
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
@@ -544,6 +550,8 @@ impl AgentVerb {
         Self::VaultPacksSetupAnswer,
         Self::VaultPacksSetupVerify,
         Self::VaultAuthorityAudit,
+        Self::VaultAuthorityHistoryExport,
+        Self::VaultAuthorityHistoryImport,
         Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -797,6 +805,10 @@ impl AgentVerb {
         Self::VaultClaimsRetract,
         Self::VaultForget,
         Self::VaultBookingPageToken,
+        Self::VaultCalendarCreate,
+        Self::VaultCalendarIcsImport,
+        Self::VaultCalendarOccurrences,
+        Self::VaultCalendarInstancesMove,
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
@@ -992,6 +1004,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => "vault.packs.setup.answer",
             Self::VaultPacksSetupVerify => "vault.packs.setup.verify",
             Self::VaultAuthorityAudit => "vault.authority.audit",
+            Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
+            Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -1249,6 +1263,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
             Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::VaultCalendarCreate => "vault.calendar.create",
+            Self::VaultCalendarIcsImport => "vault.calendar.ics.import",
+            Self::VaultCalendarOccurrences => "vault.calendar.occurrences",
+            Self::VaultCalendarInstancesMove => "vault.calendar.instances.move",
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
@@ -1444,6 +1462,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -1657,6 +1677,10 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarOccurrences
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -1896,6 +1920,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2109,6 +2135,10 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarOccurrences
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2282,6 +2312,7 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
+                | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2386,6 +2417,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityAudit
+                | Self::VaultAuthorityHistoryExport
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2638,6 +2671,9 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -2775,6 +2811,7 @@ impl AgentVerb {
                 | Self::VaultPacksSetupPrepare
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
+                | Self::VaultAuthorityHistoryImport
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -2931,6 +2968,9 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
@@ -3113,6 +3153,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultAuthorityHistoryExport => &[],
+            Self::VaultAuthorityHistoryImport => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -3366,6 +3408,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarCreate => &["spec"],
+            Self::VaultCalendarIcsImport => &["spec"],
+            Self::VaultCalendarOccurrences => &["spec"],
+            Self::VaultCalendarInstancesMove => &["spec"],
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
@@ -3559,6 +3605,8 @@ impl AgentVerb {
             Self::VaultPacksSetupAnswer => &["spec"],
             Self::VaultPacksSetupVerify => &["spec"],
             Self::VaultAuthorityAudit => &["spec"],
+            Self::VaultAuthorityHistoryExport => &[],
+            Self::VaultAuthorityHistoryImport => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -3812,6 +3860,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarCreate => &["spec"],
+            Self::VaultCalendarIcsImport => &["spec"],
+            Self::VaultCalendarOccurrences => &["spec"],
+            Self::VaultCalendarInstancesMove => &["spec"],
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
@@ -4185,6 +4237,12 @@ impl AgentVerb {
             }
             Self::VaultAuthorityAudit => {
                 "One page of the dated authority log audit, for the owner: grants, revokes and confirms. On a vault that adopted a checkpoint image a page can also carry cold, checkpoint-attested rows it does not store, with no clock or kind."
+            }
+            Self::VaultAuthorityHistoryExport => {
+                "Exports the full original signed authority history, including quarantined forks, as base64 envelopes for the owner. No signing secret leaves."
+            }
+            Self::VaultAuthorityHistoryImport => {
+                "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -4864,6 +4922,18 @@ impl AgentVerb {
             }
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
+            }
+            Self::VaultCalendarCreate => {
+                "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."
+            }
+            Self::VaultCalendarIcsImport => {
+                "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."
+            }
+            Self::VaultCalendarOccurrences => {
+                "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."
+            }
+            Self::VaultCalendarInstancesMove => {
+                "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."
             }
             Self::VaultCalendarRead => {
                 "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
