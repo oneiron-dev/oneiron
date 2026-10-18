@@ -87,7 +87,7 @@ impl BatchBuilder<'_> {
                 )? {
                     return Err(crate::error::Error::Gate(
                         crate::error::GateError::ConsentOwnerNotAuthenticated(
-                            "only the vault owner turns an agent definition back on",
+                            "only the vault owner turns an agent definition back on or changes its models",
                         ),
                     ));
                 }

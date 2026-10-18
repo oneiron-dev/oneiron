@@ -477,7 +477,7 @@ fn admit(
         return Ok(refuse(
             Some(id),
             Error::Artifact(crate::error::ArtifactError::InvalidAgentDefBody(
-                "a federation peer cannot turn an agent definition back on",
+                "a federation peer cannot turn an agent definition back on or change its models",
             )),
         ));
     }
