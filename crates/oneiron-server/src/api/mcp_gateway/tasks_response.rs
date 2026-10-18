@@ -788,6 +788,9 @@ fn mcp_agent_verb_input(
         "self.memory.diary" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.reads" => a.spec.clone().ok_or_else(invalid),
         "self.memory.diary.review" => a.spec.clone().ok_or_else(invalid),
+        "self.standing.get" => a.spec.clone().ok_or_else(invalid),
+        "self.standing.list" => a.spec.clone().ok_or_else(invalid),
+        "self.standing.edit" => a.spec.clone().ok_or_else(invalid),
         "self.identity.answer" => a.spec.clone().ok_or_else(invalid),
         "self.identity.settle" => a.spec.clone().ok_or_else(invalid),
         "self.inbox.list" => a.spec.clone().ok_or_else(invalid),
@@ -1213,6 +1216,12 @@ fn mcp_agent_verb_input(
         "vault.agents.create" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.get" => a.spec.clone().ok_or_else(invalid),
         "vault.agents.update" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.dreaming.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.agents.dreaming.set" => a.spec.clone().ok_or_else(invalid),
+        "vault.standing_blocks.configure" => a.spec.clone().ok_or_else(invalid),
+        "vault.standing_blocks.reconfigure" => a.spec.clone().ok_or_else(invalid),
+        "vault.standing_blocks.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.standing_blocks.list" => a.spec.clone().ok_or_else(invalid),
         "vault.workflows.save" => a.spec.clone().ok_or_else(invalid),
         "vault.workflows.get" => a.spec.clone().ok_or_else(invalid),
         "vault.workflows.update" => a.spec.clone().ok_or_else(invalid),
@@ -1641,6 +1650,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.memory.diary.review" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.standing.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.standing.list" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "self.standing.edit" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "self.identity.answer" => {
@@ -2726,6 +2744,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.agents.update" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.dreaming.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.agents.dreaming.set" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.standing_blocks.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.standing_blocks.reconfigure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.standing_blocks.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.standing_blocks.list" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.workflows.save" => {
@@ -3855,6 +3891,30 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::DiaryReviewAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::self_memory_diary_review(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.standing.get" => {
+            let input: oneiron::task_verb::sdk::OwnStandingBlockRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_standing_get(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "self.standing.list" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_standing_list(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "self.standing.edit" => {
+            let input: oneiron::task_verb::sdk::StandingBlockEditRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::self_standing_edit(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
@@ -9831,6 +9891,123 @@ async fn execute_agent_verb_row(
             );
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.dreaming.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.dreaming.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentDreamingRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_agents_dreaming_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.agents.dreaming.set" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.agents.dreaming.set", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AgentDreamingSetRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_agents_dreaming_set(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.standing_blocks.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.standing_blocks.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_standing_blocks_configure(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.standing_blocks.reconfigure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.standing_blocks.reconfigure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_standing_blocks_reconfigure(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.standing_blocks.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.standing_blocks.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::StandingBlockRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_standing_blocks_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.standing_blocks.list" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.standing_blocks.list", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::StandingBlocksRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_standing_blocks_list(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(output.len());
             mcp_agent_verb_output(output, source)
         }
         "vault.workflows.save" => {

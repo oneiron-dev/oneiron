@@ -99,6 +99,7 @@ mod shared_policy_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
+mod standing_doors;
 mod summary_doors;
 mod support_grant_doors;
 #[cfg(test)]
