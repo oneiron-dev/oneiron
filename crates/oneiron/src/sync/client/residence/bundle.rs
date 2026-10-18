@@ -56,6 +56,12 @@ const SWEPT: SideTable<HexId, Vec<u8>, Raw> =
 /// How many times, in one slot, a publisher whose parent went stale takes the
 /// new newest generation in and uploads again.
 const STALE_PARENT_RETRIES: usize = 1;
+/// How many times, in one slot, a publisher whose upload the home refused on
+/// an unchanged parent (its disk floor, a slot ahead of its clock, a turn that
+/// lapsed) assembles and uploads again (CALLS:
+/// SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT). Past it the slot is
+/// finished, and the next slot uploads again (FIX 3353).
+const SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT: usize = 0;
 
 /// The publisher call (FIX 922): every eligible machine asks for the home's
 /// publisher turn each slot, the holder publishes, and the rest take its
@@ -149,6 +155,10 @@ struct Cursor {
 
 fn storage(error: crate::Error) -> TransportError {
     TransportError::Storage(error.to_string())
+}
+
+fn upload_refused() -> TransportError {
+    TransportError::Storage("home refused the sealed bundle upload".into())
 }
 
 fn load_cursor(vault: &Vault) -> crate::error::Result<Cursor> {
@@ -309,9 +319,11 @@ impl SlotRelay<'_> {
     /// the turn even once the slot is won, so it waits its turn for the next
     /// one. A take that fails here uploads nothing this slot: the upload would
     /// carry less than the home holds. The slot is finished once its upload is
-    /// in, another machine's is, or the take or the assembly failed here; a
-    /// machine waiting for the turn, or whose upload was refused, tries again
-    /// next tick.
+    /// in, another machine's is, the take or the assembly failed here, or the
+    /// home refused the upload on an unchanged parent past
+    /// [`SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT`]; a machine waiting
+    /// for the turn, or whose upload did not reach the home, tries again next
+    /// tick.
     async fn run(
         &self,
         rpc: &mut ResidenceRpc,
@@ -323,6 +335,7 @@ impl SlotRelay<'_> {
         // what this machine cannot read from them.
         let mut held: Option<(SealedVaultBundle, SealedKeyPads)> = None;
         let mut retries = 0;
+        let mut refusals = 0;
         loop {
             let latest = list_generations(rpc).await?.first().copied();
             if let Some(newest) =
@@ -430,12 +443,20 @@ impl SlotRelay<'_> {
             // A refused upload: when the newest generation moved meanwhile,
             // the parent went stale.
             let moved = list_generations(rpc).await?.first().copied() != latest;
-            if !moved || retries == STALE_PARENT_RETRIES {
-                return Err(TransportError::Storage(
-                    "home refused the sealed bundle upload".into(),
-                ));
+            if moved {
+                if retries == STALE_PARENT_RETRIES {
+                    return Err(upload_refused());
+                }
+                retries += 1;
+            } else {
+                if refusals == SEALED_BUNDLE_NONSTALE_REFUSAL_RETRIES_PER_SLOT {
+                    cursor.slot = self.slot;
+                    store_cursor(vault, cursor).map_err(storage)?;
+                    let _ = turn::ask_turn(rpc, true).await;
+                    return Err(upload_refused());
+                }
+                refusals += 1;
             }
-            retries += 1;
         }
         cursor.slot = self.slot;
         store_cursor(vault, cursor).map_err(storage)
@@ -632,7 +653,7 @@ pub(super) async fn fetch_generation(
 }
 
 /// Stages one object on the home in parts; `false` when the home refused a
-/// part.
+/// part (FIX 3353). A part that did not reach the home is an error.
 async fn put_object(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
@@ -643,8 +664,8 @@ async fn put_object(
     let digest = sealed_digest_hex(blake3::hash(bytes).as_bytes());
     let mut offset = 0;
     for part in bytes.chunks(SEALED_BUNDLE_PUT_PART_MAX) {
-        match rpc
-            .request(
+        let staged = rpc
+            .call(
                 "residence.bundle.put",
                 json!({
                     "generation": generation.as_str(),
@@ -655,11 +676,9 @@ async fn put_object(
                     "part": base64::engine::general_purpose::STANDARD.encode(part),
                 }),
             )
-            .await
-        {
-            Ok(_) => {}
-            Err(TransportError::InvalidPayload(_)) => return Ok(false),
-            Err(error) => return Err(error),
+            .await?;
+        if staged.is_err() {
+            return Ok(false);
         }
         offset += part.len();
     }
@@ -667,15 +686,16 @@ async fn put_object(
 }
 
 /// Commits the generation staged here on `parent`, naming `root`, the
-/// recovery root whose kit may read it; `false` when the home refused it.
+/// recovery root whose kit may read it; `false` when the home refused it. A
+/// commit that did not reach the home is an error.
 async fn commit_generation(
     rpc: &mut ResidenceRpc,
     generation: &SealedBundleGeneration,
     parent: Option<SealedBundleGeneration>,
     root: Option<RecoveryRootId>,
 ) -> Result<bool, TransportError> {
-    match rpc
-        .request(
+    Ok(rpc
+        .call(
             "residence.bundle.commit",
             json!({
                 "generation": sealed_generation_hex(generation),
@@ -683,12 +703,8 @@ async fn commit_generation(
                 "root": root.as_ref().map(|root| sealed_digest_hex(&root.0)),
             }),
         )
-        .await
-    {
-        Ok(_) => Ok(true),
-        Err(TransportError::InvalidPayload(_)) => Ok(false),
-        Err(error) => Err(error),
-    }
+        .await?
+        .is_ok())
 }
 
 /// Replaces one kept pad object with its rewrite, on the digest of the object
