@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 315 facade rows, 1140 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 283.
+// UniFFI census: 316 facade rows, 1173 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 284.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -7551,6 +7551,529 @@ pub struct ResearchHeldOutWire {
     pub receipt_refs: Vec<String>,
 }
 
+/// `oneiron::autoreason_campaign::config::CampaignExecutableArm`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CampaignExecutableArm {
+    #[serde(rename = "single_pass")]
+    SinglePass,
+    #[serde(rename = "tournament")]
+    Tournament,
+}
+
+/// `oneiron::autoreason_campaign::report::CampaignEvaluationSplit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CampaignEvaluationSplit {
+    #[serde(rename = "search")]
+    Search,
+    #[serde(rename = "held_out")]
+    HeldOut,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360DatasetCompleteness`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Of360DatasetCompleteness {
+    #[serde(rename = "seed_subset")]
+    SeedSubset,
+    #[serde(rename = "full_owner_corpus")]
+    FullOwnerCorpus,
+}
+
+/// `oneiron_model::extraction_eval::qa::Of360GoldQa`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct Of360GoldQa {
+    #[serde(rename = "question_id")]
+    pub question_id: String,
+    #[serde(rename = "question")]
+    pub question: String,
+    #[serde(rename = "accepted_answers")]
+    pub accepted_answers: Vec<String>,
+    #[serde(rename = "evidence_memory_ids")]
+    pub evidence_memory_ids: Vec<String>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360Speaker`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Of360Speaker {
+    #[serde(rename = "user")]
+    User,
+    #[serde(rename = "assistant")]
+    Assistant,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360ConversationTurn`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360ConversationTurn {
+    #[serde(rename = "turn_id")]
+    pub turn_id: String,
+    #[serde(rename = "speaker")]
+    pub speaker: Of360Speaker,
+    #[serde(rename = "timestamp")]
+    pub timestamp: String,
+    #[serde(rename = "text")]
+    pub text: String,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360MemoryKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Of360MemoryKind {
+    #[serde(rename = "persona")]
+    Persona,
+    #[serde(rename = "preference")]
+    Preference,
+    #[serde(rename = "event")]
+    Event,
+    #[serde(rename = "relationship")]
+    Relationship,
+    #[serde(rename = "plan")]
+    Plan,
+    #[serde(rename = "constraint")]
+    Constraint,
+    #[serde(rename = "correction")]
+    Correction,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360GoldMemoryPoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360GoldMemoryPoint {
+    #[serde(rename = "memory_id")]
+    pub memory_id: String,
+    #[serde(rename = "claim")]
+    pub claim: String,
+    #[serde(rename = "kind")]
+    pub kind: Of360MemoryKind,
+    #[serde(rename = "importance")]
+    pub importance: u8,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+    #[serde(rename = "is_update")]
+    pub is_update: bool,
+    #[serde(rename = "temporal_required")]
+    pub temporal_required: bool,
+    #[serde(
+        rename = "valid_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub valid_from: Option<String>,
+    #[serde(rename = "valid_to", default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<String>,
+    #[serde(rename = "evidence_turn_ids")]
+    pub evidence_turn_ids: Vec<String>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360GoldCase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360GoldCase {
+    #[serde(rename = "qa", default, skip_serializing_if = "Option::is_none")]
+    pub qa: Option<Vec<Of360GoldQa>>,
+    #[serde(rename = "case_id")]
+    pub case_id: String,
+    #[serde(rename = "title")]
+    pub title: String,
+    #[serde(rename = "turns")]
+    pub turns: Vec<Of360ConversationTurn>,
+    #[serde(rename = "gold_memory_points")]
+    pub gold_memory_points: Vec<Of360GoldMemoryPoint>,
+    #[serde(
+        rename = "distractor_memories",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub distractor_memories: Option<Vec<String>>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360GoldDataset`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360GoldDataset {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u32,
+    #[serde(rename = "dataset_id")]
+    pub dataset_id: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "description")]
+    pub description: String,
+    #[serde(rename = "completeness")]
+    pub completeness: Of360DatasetCompleteness,
+    #[serde(rename = "seed")]
+    pub seed: u64,
+    #[serde(rename = "target_full_memory_points")]
+    pub target_full_memory_points: u64,
+    #[serde(rename = "owner_corpus_missing")]
+    pub owner_corpus_missing: bool,
+    #[serde(rename = "source_refs")]
+    pub source_refs: Vec<String>,
+    #[serde(rename = "cases")]
+    pub cases: Vec<Of360GoldCase>,
+}
+
+/// `oneiron_model::extraction_eval::qa::Of360QaAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct Of360QaAnswer {
+    #[serde(rename = "question_id")]
+    pub question_id: String,
+    #[serde(rename = "answer")]
+    pub answer: String,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360ExtractionScore`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Of360ExtractionScore {
+    #[serde(rename = "omitted")]
+    Omitted,
+    #[serde(rename = "partial")]
+    Partial,
+    #[serde(rename = "full")]
+    Full,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360GoldMatch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360GoldMatch {
+    #[serde(rename = "memory_id")]
+    pub memory_id: String,
+    #[serde(rename = "score")]
+    pub score: Of360ExtractionScore,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360ExtractedClaim`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360ExtractedClaim {
+    #[serde(rename = "extraction_id")]
+    pub extraction_id: String,
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(
+        rename = "matched_gold",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub matched_gold: Option<Vec<Of360GoldMatch>>,
+    #[serde(
+        rename = "temporal_correct",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub temporal_correct: Option<bool>,
+    #[serde(rename = "overreach")]
+    pub overreach: bool,
+    #[serde(rename = "dedup_key", default, skip_serializing_if = "Option::is_none")]
+    pub dedup_key: Option<String>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360CaseExtractionOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360CaseExtractionOutput {
+    #[serde(
+        rename = "qa_answers",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub qa_answers: Option<Vec<Of360QaAnswer>>,
+    #[serde(rename = "case_id")]
+    pub case_id: String,
+    #[serde(rename = "extracted_claims")]
+    pub extracted_claims: Vec<Of360ExtractedClaim>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360ExtractionRun`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360ExtractionRun {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u32,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "system_id")]
+    pub system_id: String,
+    #[serde(rename = "dataset_id")]
+    pub dataset_id: String,
+    #[serde(rename = "dataset_revision")]
+    pub dataset_revision: String,
+    #[serde(rename = "cases")]
+    pub cases: Vec<Of360CaseExtractionOutput>,
+}
+
+/// `oneiron::autoreason_campaign::report::CampaignCost`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignCost {
+    #[serde(rename = "input_tokens")]
+    pub input_tokens: u64,
+    #[serde(rename = "output_tokens")]
+    pub output_tokens: u64,
+    #[serde(rename = "cache_read_tokens")]
+    pub cache_read_tokens: u64,
+    #[serde(rename = "cache_write_tokens")]
+    pub cache_write_tokens: u64,
+    #[serde(rename = "cost_usd")]
+    pub cost_usd: f64,
+    #[serde(rename = "elapsed_ms")]
+    pub elapsed_ms: u64,
+}
+
+/// `oneiron::autoreason_campaign::judge::CampaignGoldAnchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignGoldAnchor {
+    #[serde(rename = "dataset_id")]
+    pub dataset_id: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "gold_digest")]
+    pub gold_digest: String,
+}
+
+/// `oneiron::autoreason_campaign::judge::BlindCampaignJudgeInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BlindCampaignJudgeInput {
+    #[serde(rename = "claim")]
+    pub claim: String,
+    #[serde(rename = "evidence_refs")]
+    pub evidence_refs: Vec<String>,
+    #[serde(rename = "held_out_gold")]
+    pub held_out_gold: CampaignGoldAnchor,
+}
+
+/// `oneiron::autoreason_campaign::report::CampaignSmokeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CampaignSmokeOutcome {
+    #[serde(rename = "passed")]
+    Passed,
+    #[serde(rename = "killed")]
+    Killed {
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_campaign_split::CampaignSplitWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignSplitWire {
+    #[serde(rename = "root")]
+    pub root: String,
+    #[serde(rename = "arm")]
+    pub arm: CampaignExecutableArm,
+    #[serde(rename = "split")]
+    pub split: CampaignEvaluationSplit,
+    #[serde(rename = "dataset")]
+    pub dataset: Of360GoldDataset,
+    #[serde(rename = "run")]
+    pub run: Of360ExtractionRun,
+    #[serde(rename = "cost")]
+    pub cost: CampaignCost,
+    #[serde(rename = "blind")]
+    pub blind: BlindCampaignJudgeInput,
+    #[serde(rename = "smoke")]
+    pub smoke: CampaignSmokeOutcome,
+}
+
+/// `oneiron::autoreason_campaign::beam_promotion::AuthoringStrategyPin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthoringStrategyPin {
+    #[serde(rename = "strategy_id")]
+    pub strategy_id: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "config_sha256")]
+    pub config_sha256: String,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360DerivationEnvelope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360DerivationEnvelope {
+    #[serde(rename = "content_hash")]
+    pub content_hash: String,
+    #[serde(rename = "model_id")]
+    pub model_id: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "params_hash")]
+    pub params_hash: String,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360MetricDirection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum Of360MetricDirection {
+    #[serde(rename = "higher_is_better")]
+    HigherIsBetter,
+    #[serde(rename = "lower_is_better")]
+    LowerIsBetter,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360MetricDefinition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360MetricDefinition {
+    #[serde(rename = "metric_id")]
+    pub metric_id: String,
+    #[serde(rename = "label")]
+    pub label: String,
+    #[serde(rename = "definition")]
+    pub definition: String,
+    #[serde(rename = "formula")]
+    pub formula: String,
+    #[serde(rename = "direction")]
+    pub direction: Of360MetricDirection,
+    #[serde(rename = "primary")]
+    pub primary: bool,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360MetricDefinitionSet`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360MetricDefinitionSet {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u32,
+    #[serde(rename = "set_id")]
+    pub set_id: String,
+    #[serde(rename = "revision")]
+    pub revision: String,
+    #[serde(rename = "source_refs")]
+    pub source_refs: Vec<String>,
+    #[serde(rename = "derivation_envelope")]
+    pub derivation_envelope: Of360DerivationEnvelope,
+    #[serde(rename = "metrics")]
+    pub metrics: Vec<Of360MetricDefinition>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360RateMetric`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360RateMetric {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<f64>,
+    #[serde(rename = "numerator")]
+    pub numerator: f64,
+    #[serde(rename = "denominator")]
+    pub denominator: f64,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360ParsedMetrics`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360ParsedMetrics {
+    #[serde(rename = "updating_accuracy")]
+    pub updating_accuracy: Of360RateMetric,
+    #[serde(rename = "qa_accuracy")]
+    pub qa_accuracy: Of360RateMetric,
+    #[serde(rename = "omission_rate")]
+    pub omission_rate: Of360RateMetric,
+    #[serde(rename = "halumem_recall")]
+    pub halumem_recall: Of360RateMetric,
+    #[serde(rename = "halumem_weighted_recall")]
+    pub halumem_weighted_recall: Of360RateMetric,
+    #[serde(rename = "target_precision")]
+    pub target_precision: Of360RateMetric,
+    #[serde(rename = "halumem_f1")]
+    pub halumem_f1: Of360RateMetric,
+    #[serde(rename = "faithfulness_rate")]
+    pub faithfulness_rate: Of360RateMetric,
+    #[serde(rename = "hallucination_rate")]
+    pub hallucination_rate: Of360RateMetric,
+    #[serde(rename = "overreach_rate")]
+    pub overreach_rate: Of360RateMetric,
+    #[serde(rename = "temporal_correctness")]
+    pub temporal_correctness: Of360RateMetric,
+    #[serde(rename = "redundancy_rate")]
+    pub redundancy_rate: Of360RateMetric,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360CaseEvalReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360CaseEvalReport {
+    #[serde(rename = "case_id")]
+    pub case_id: String,
+    #[serde(rename = "metrics")]
+    pub metrics: Of360ParsedMetrics,
+    #[serde(rename = "omitted_gold_memory_ids")]
+    pub omitted_gold_memory_ids: Vec<String>,
+    #[serde(rename = "partial_gold_memory_ids")]
+    pub partial_gold_memory_ids: Vec<String>,
+    #[serde(rename = "hallucinated_extraction_ids")]
+    pub hallucinated_extraction_ids: Vec<String>,
+    #[serde(rename = "overreach_extraction_ids")]
+    pub overreach_extraction_ids: Vec<String>,
+    #[serde(rename = "redundant_extraction_ids")]
+    pub redundant_extraction_ids: Vec<String>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360EvalReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360EvalReport {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u32,
+    #[serde(rename = "metric_set_id")]
+    pub metric_set_id: String,
+    #[serde(rename = "metric_definition_envelope")]
+    pub metric_definition_envelope: Of360DerivationEnvelope,
+    #[serde(rename = "dataset_id")]
+    pub dataset_id: String,
+    #[serde(rename = "dataset_revision")]
+    pub dataset_revision: String,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "system_id")]
+    pub system_id: String,
+    #[serde(rename = "metrics")]
+    pub metrics: Of360ParsedMetrics,
+    #[serde(rename = "cases")]
+    pub cases: Vec<Of360CaseEvalReport>,
+    #[serde(rename = "warnings")]
+    pub warnings: Vec<String>,
+}
+
+/// `oneiron_model::extraction_eval::types::Of360Ar3MetricTier`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Of360Ar3MetricTier {
+    #[serde(rename = "interface_version")]
+    pub interface_version: u32,
+    #[serde(rename = "metric_definitions")]
+    pub metric_definitions: Of360MetricDefinitionSet,
+    #[serde(rename = "report")]
+    pub report: Of360EvalReport,
+}
+
+/// `oneiron::autoreason_campaign::judge::CampaignTaste`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignTaste {
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "useful", default, skip_serializing_if = "Option::is_none")]
+    pub useful: Option<bool>,
+    #[serde(rename = "external_anchor_digest")]
+    pub external_anchor_digest: String,
+}
+
+/// `oneiron::autoreason_campaign::report::CampaignSplitReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CampaignSplitReport {
+    #[serde(rename = "authoring_strategy")]
+    pub authoring_strategy: AuthoringStrategyPin,
+    #[serde(rename = "arm")]
+    pub arm: CampaignExecutableArm,
+    #[serde(rename = "split")]
+    pub split: CampaignEvaluationSplit,
+    #[serde(rename = "dataset")]
+    pub dataset: CampaignDatasetRef,
+    #[serde(rename = "metric_definition_digest")]
+    pub metric_definition_digest: String,
+    #[serde(rename = "of360")]
+    pub of360: Of360Ar3MetricTier,
+    #[serde(rename = "cost")]
+    pub cost: CampaignCost,
+    #[serde(rename = "taste")]
+    pub taste: CampaignTaste,
+    #[serde(rename = "smoke")]
+    pub smoke: CampaignSmokeOutcome,
+    #[serde(rename = "effective_taste_score")]
+    pub effective_taste_score: f64,
+}
+
 /// `oneiron::task_verb::sdk_research::ResearchInvalidWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -12626,8 +13149,8 @@ pub struct RoomTurn {
         skip_serializing_if = "Option::is_none"
     )]
     pub converted_project: Option<String>,
-    #[serde(rename = "quote", default, skip_serializing_if = "Option::is_none")]
-    pub quote: Option<RoomQuote>,
+    #[serde(rename = "quotes", default, skip_serializing_if = "Option::is_none")]
+    pub quotes: Option<std::collections::HashMap<String, RoomQuote>>,
 }
 
 /// `oneiron::workspace_roster::rooms::RoomPage`.
