@@ -10,7 +10,9 @@ use crate::agent_dispatch::{AgentDispatcher, SpendRead, SpendScope, SpendScopeId
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{CompactionBackend, CompactionGatePolicy, CompactionWindowMessage};
 use crate::consent::AuthenticatedOwner;
-use crate::dreamer_runner::{DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
+use crate::dreamer_runner::{
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{BudgetExhaustionPolicy, EntityId, Vault};
 
@@ -144,7 +146,12 @@ pub fn wake_as_owner(
     owner.revalidate_in_txn(vault, &txn)?;
     memory.verify_actor_write_in_txn(&txn)?;
     let payload = DreamerAttemptPayload {
-        attempt_type: input.wake_kind.trigger().default_scope().as_str().to_owned(),
+        attempt_type: input
+            .wake_kind
+            .trigger()
+            .default_scope()
+            .as_str()
+            .to_owned(),
         input: rmpv::Value::Nil,
         parent_attempt: None,
     };
@@ -192,7 +199,11 @@ pub fn budget_hit_as_owner(
         actor: memory.actor(),
         invocation,
     });
-    Ok(HostBudgetHitResult { seat: input.seat, policy: input.policy, accounting })
+    Ok(HostBudgetHitResult {
+        seat: input.seat,
+        policy: input.policy,
+        accounting,
+    })
 }
 
 fn budget_accounting_in(
@@ -201,20 +212,26 @@ fn budget_accounting_in(
     input: &HostBudgetHitRequest,
 ) -> MemoryResult<HostBudgetAccounting> {
     if input.policy != BudgetExhaustionPolicy::Suspend {
-        return Err(MemoryError::bad_request("a durable spend scope's policy is Suspend"));
+        return Err(MemoryError::bad_request(
+            "a durable spend scope's policy is Suspend",
+        ));
     }
-    let scope = if input.seat.len() == 32 && input.seat.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    let scope = if input.seat.len() == 32 && input.seat.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
         let id = EntityId::from_hex(&input.seat)?;
         SpendScopeId::for_attempt(&AttemptId::from_bytes(id.as_bytes())?)
     } else {
         SpendScopeId::launch(&input.seat)?
     };
     let dispatcher = AgentDispatcher::new(vault);
-    let (line, root) = dispatcher.scope_with_root_in_txn(txn, &scope)?
+    let (line, root) = dispatcher
+        .scope_with_root_in_txn(txn, &scope)?
         .ok_or_else(|| MemoryError::bad_request("budget seat has no spend scope"))?;
     let spend = dispatcher.spend_read_at_in_txn(txn, &scope)?;
     if spend.available_units != 0 {
-        return Err(MemoryError::bad_request("the budget seat has not hit its cap"));
+        return Err(MemoryError::bad_request(
+            "the budget seat has not hit its cap",
+        ));
     }
     Ok(HostBudgetAccounting { line, root, spend })
 }

@@ -92,12 +92,13 @@ fn record_in_txn(
     outcome: &WakePolicyOutcome,
 ) -> Result<()> {
     let mut state = state_in_txn(vault, txn)?;
-    let previous_due_at = state.cadence.as_ref().and_then(|receipt| {
-        match receipt.decision {
+    let previous_due_at = state
+        .cadence
+        .as_ref()
+        .and_then(|receipt| match receipt.decision {
             WakePolicyDecision::ArmIdle { due_at } => Some(due_at),
             _ => None,
-        }
-    });
+        });
     let wake = outcome
         .attempt
         .as_ref()
@@ -118,7 +119,10 @@ fn record_in_txn(
         last_boundary_at: if previous_due_at.is_some_and(|due| now >= due) {
             Some(now)
         } else {
-            state.cadence.as_ref().and_then(|receipt| receipt.last_boundary_at)
+            state
+                .cadence
+                .as_ref()
+                .and_then(|receipt| receipt.last_boundary_at)
         },
         idle,
         decision: outcome.decision,
@@ -198,10 +202,9 @@ impl Vault {
                     DreamerRunnerStore::new(self).enqueue_recipe_wake_in_txn(txn, &trigger, now)?;
                 let key = [recipe.key()];
                 let mut pending = trigger;
-                if let Some(prior) = OUTBOX
-                    .get(&self.store, txn, &key)
-                    .map_err(|e| row_error(e, Error::CorruptedIndex("dreamer wake recipe input row")))?
-                {
+                if let Some(prior) = OUTBOX.get(&self.store, txn, &key).map_err(|e| {
+                    row_error(e, Error::CorruptedIndex("dreamer wake recipe input row"))
+                })? {
                     if prior.recipe != recipe {
                         return Err(Error::CorruptedIndex("dreamer wake recipe input key"));
                     }
