@@ -32093,7 +32093,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 11,
-      "re-export": 44
+      "re-export": 45
      }
     },
     {
@@ -32573,6 +32573,22 @@
      "surface": {
       "fn": 2,
       "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TemporalSearchHit",
+      "TemporalSearchRange",
+      "TemporalSearchRequest",
+      "TemporalSearchResult"
+     ],
+     "path": "src/memory/search_temporal.rs",
+     "purpose": "Explicit bitemporal search over the caller's ordinary scoped retrieval lane",
+     "surface": {
+      "fn": 2,
+      "struct": 4
      }
     },
     {
@@ -36766,7 +36782,7 @@
      "surface": {
       "crate-vis": 6,
       "mod": 2,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -36867,6 +36883,18 @@
      "purpose": "The scoped temporal bound (ARCH-0004 #temporal-bound): how far a scoped call's temporal channel widens, the…",
      "surface": {
       "crate-vis": 18
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TemporalSearchReport"
+     ],
+     "path": "src/pipeline/temporal_report.rs",
+     "purpose": "Caller-visible accounting for the temporal request, not its scope overfetch",
+     "surface": {
+      "struct": 1
      }
     },
     {
@@ -50864,7 +50892,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 670
+      "fn": 671
      }
     },
     {
@@ -57416,7 +57444,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57528,7 +57556,7 @@
      "purpose": "OF-325 persona snapshot: compile + export the shareable person-card (PSNAP-1, mode A)"
     },
     "pipeline": {
-     "files": 62,
+     "files": 63,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58097,7 +58125,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3544,
+   "source_files": 3546,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66606,7 +66634,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 620
+      "fn": 621
      }
     },
     {
@@ -67655,7 +67683,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 621
+      "fn": 622
      }
     },
     {
@@ -80951,6 +80979,7 @@
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultOptionalSummaryReadView",
       "ScopedReadResultRecordRefPreview",
+      "ScopedReadResultTemporalSearchResult",
       "ScoredEntityResolutionCandidate",
       "ScratchpadAppendRequest",
       "ScratchpadRecallMark",
@@ -81321,6 +81350,12 @@
       "TeamPlan",
       "TeamReceiptView",
       "TeamShape",
+      "TemporalAnchorMode",
+      "TemporalSearchHit",
+      "TemporalSearchRange",
+      "TemporalSearchReport",
+      "TemporalSearchRequest",
+      "TemporalSearchResult",
       "TextAnchor",
       "TextBlockAtom",
       "TextBody",
@@ -81497,8 +81532,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 587,
-      "struct": 1664
+      "enum": 588,
+      "struct": 1670
      }
     },
     {
