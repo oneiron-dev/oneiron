@@ -242,19 +242,23 @@ export class Oneiron {
   }
 
   // BEGIN GENERATED FACADE VERBS
-  /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
-  fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }
-  /** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
-  crawl(input: Facade.WebCrawlRequest): Facade.CrawlResult { return this.#call(() => this.#client.crawl(input) as Facade.CrawlResult) }
-  /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
-  report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
-  readonly feedback = {
-    /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
-    preview: (input: Facade.FeedbackPreviewRequest): Facade.FeedbackSubjectPreview => this.#call(() => this.#client.feedbackPreview(input) as Facade.FeedbackSubjectPreview),
-    /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
-    send: (input: Facade.FeedbackSendSubjectRequest): Facade.FeedbackSubjectSent => this.#call(() => this.#client.feedbackSend(input) as Facade.FeedbackSubjectSent),
-  }
   readonly vault = {
+    commitments: {
+      /** Creates an authored commitment series and its due index atomically, without approving a reminder. */
+      create: (input: Facade.CommitmentCreateRequest): Facade.CommitmentCreateReceipt => this.#call(() => this.#client.vaultCommitmentsCreate(input) as Facade.CommitmentCreateReceipt),
+      /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
+      get: (input: Facade.CommitmentRefRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsGet(input) as Facade.CommitmentView),
+      /** Lists the materialized occurrences of a commitment series, including closed obligations. */
+      instances: (input: Facade.CommitmentRefRequest): Facade.CommitmentView[] => this.#call(() => this.#client.vaultCommitmentsInstances(input) as Facade.CommitmentView[]),
+      /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
+      proposals: (input: Facade.CommitmentRefRequest): Facade.CommitmentWakeProposal[] => this.#call(() => this.#client.vaultCommitmentsProposals(input) as Facade.CommitmentWakeProposal[]),
+      /** Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher. */
+      fulfill: (input: Facade.CommitmentFulfillRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsFulfill(input) as Facade.CommitmentView),
+      /** Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction. */
+      release: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsRelease(input) as Facade.CommitmentView),
+      /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
+      supersede: (input: Facade.CommitmentCloseRequest): Facade.CommitmentView => this.#call(() => this.#client.vaultCommitmentsSupersede(input) as Facade.CommitmentView),
+    },
     reports: {
       /** The owner decides whether one publisher-routed report's exact quoted text may cross to its publisher: approve once, stop asking, or deny. */
       disclosure: (input: Facade.ReportDisclosureRequest): Facade.ReportIssue => this.#call(() => this.#client.vaultReportsDisclosure(input) as Facade.ReportIssue),
@@ -1946,6 +1950,18 @@ export class Oneiron {
       evidence: (input: Facade.ConsolidationEvidenceRequest): Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]> => this.#call(() => this.#client.vaultConsolidationEvidence(input) as Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]>),
     },
     sieve: {
+      /** Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner. */
+      evidence: Object.assign((input: Facade.SieveEvidenceRequest): Facade.SieveEvidenceView => this.#call(() => this.#client.vaultSieveEvidence(input) as Facade.SieveEvidenceView), {
+        /** Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed. */
+        replay: (input: Facade.SieveEvidenceRequest): Facade.SieveEvidenceView => this.#call(() => this.#client.vaultSieveEvidenceReplay(input) as Facade.SieveEvidenceView),
+      }),
+      /** Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model. */
+      cadence: (input: Facade.WakeCadenceRequest): Facade.WakeCadenceView => this.#call(() => this.#client.vaultSieveCadence(input) as Facade.WakeCadenceView),
+      /** Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks. */
+      settlements: Object.assign((input: Facade.WakeSettlementsRequest): Facade.WakeSettlementsPage => this.#call(() => this.#client.vaultSieveSettlements(input) as Facade.WakeSettlementsPage), {
+        /** Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed. */
+        get: (input: Facade.WakeSettlementRequest): Facade.WakeSettlementView | null => this.#call(() => this.#client.vaultSieveSettlementsGet(input) as Facade.WakeSettlementView | null),
+      }),
       /** The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed. */
       queue: (input: Facade.SievePageRequest): Facade.SieveQueuePage => this.#call(() => this.#client.vaultSieveQueue(input) as Facade.SieveQueuePage),
       /** The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence. */
@@ -2105,6 +2121,44 @@ export class Oneiron {
     },
     /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
     revert_run: (input: Facade.RevertRunRequest): Facade.RevertRunOutcome => this.#call(() => this.#client.vaultRevertRun(input) as Facade.RevertRunOutcome),
+    identity: {
+      /** The owner merges source identities into a survivor, retaining claim subjects and append-only evidence. */
+      merge: (input: Facade.IdentityMergeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityMerge(input) as Facade.IdentityTopologyResult),
+      /** The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map. */
+      split: (input: Facade.IdentitySplitRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentitySplit(input) as Facade.IdentityTopologyResult),
+      /** The owner mints identity facets and forks assigned claims under their masks without restamping original claims. */
+      facet: (input: Facade.IdentityFacetRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityFacet(input) as Facade.IdentityTopologyResult),
+      /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
+      assert_distinct: (input: Facade.IdentityAssertDistinctRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityAssertDistinct(input) as Facade.IdentityTopologyResult),
+      /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+      propose: (input: Facade.IdentityProposeRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityPropose(input) as Facade.IdentityTopologyResult),
+      /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
+      undo: (input: Facade.IdentityUndoRequest): Facade.IdentityTopologyResult => this.#call(() => this.#client.vaultIdentityUndo(input) as Facade.IdentityTopologyResult),
+      /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
+      resolve: (input: Facade.IdentityEntityRequest): Facade.IdentityResolution => this.#call(() => this.#client.vaultIdentityResolve(input) as Facade.IdentityResolution),
+      events: {
+        /** The owner reads one topology decision with its actor, evidence, action and current decision revision. */
+        get: (input: Facade.IdentityEventRequest): Facade.IdentityTopologyReceipt => this.#call(() => this.#client.vaultIdentityEventsGet(input) as Facade.IdentityTopologyReceipt),
+      },
+      proposals: {
+        /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
+        resolve: (input: Facade.IdentityProposalResolveRequest): Facade.IdentityProposalResolutionResult => this.#call(() => this.#client.vaultIdentityProposalsResolve(input) as Facade.IdentityProposalResolutionResult),
+        /** The owner reads open merge proposals and effective distinctness claims for an unordered identity pair. */
+        for_pair: (input: Facade.IdentityPairRequest): Facade.IdentityPairProposals => this.#call(() => this.#client.vaultIdentityProposalsForPair(input) as Facade.IdentityPairProposals),
+      },
+    },
+  }
+  /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
+  fetch(input: Facade.WebFetchRequest): Facade.FetchResult { return this.#call(() => this.#client.fetch(input) as Facade.FetchResult) }
+  /** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
+  crawl(input: Facade.WebCrawlRequest): Facade.CrawlResult { return this.#call(() => this.#client.crawl(input) as Facade.CrawlResult) }
+  /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
+  report(input: Facade.ReportRequest): Facade.ReportReceipt { return this.#call(() => this.#client.report(input) as Facade.ReportReceipt) }
+  readonly feedback = {
+    /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
+    preview: (input: Facade.FeedbackPreviewRequest): Facade.FeedbackSubjectPreview => this.#call(() => this.#client.feedbackPreview(input) as Facade.FeedbackSubjectPreview),
+    /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
+    send: (input: Facade.FeedbackSendSubjectRequest): Facade.FeedbackSubjectSent => this.#call(() => this.#client.feedbackSend(input) as Facade.FeedbackSubjectSent),
   }
   readonly self = {
     focus: {

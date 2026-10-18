@@ -12,13 +12,16 @@ use crate::agent_dispatch::{
     decode_agent_dispatch_input,
 };
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
+use crate::claim::{ClaimReadStatus, PointRead, ScopedReadActorKey};
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDeniedResult,
+    AgentVerbAnswer, RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDeniedResult,
     SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfTaskRefusalResult, SelfTaskRefuseCall,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
+use crate::task_verb::run_doors::{ConsultLandReply, ConsultLandRequest};
 use crate::task_verb::{
     ConsultPayloadRef, SelfRefusalInput, TaskAskHandle, TaskAskSpec, TaskAskWait,
 };
@@ -413,6 +416,70 @@ impl<'a> HostSelfDispatcher<'a> {
             }),
             Err(error) => failed(SelfEffect::TasksRefuse, error),
         })
+    }
+
+    /// `tasks.consult.result` (DOOR-063): the addressed peer's run lands its
+    /// answer or abstention on the consult TASK, as the run's own actor. The
+    /// run must hold its live lease, and the read lane its door admitted the
+    /// call with must read the TASK, the result and every evidence or reason
+    /// ref, in one snapshot; the lease is read again after them. Whether this
+    /// actor is the peer the consult addressed, and every other landing rule,
+    /// is the engine's. A refusal answers as a typed failure the script can
+    /// read.
+    pub(super) fn dispatch_consult_result(
+        &self,
+        call: ConsultLandRequest,
+        read_as: Option<ScopedReadActorKey>,
+    ) -> Result<SelfDispatchOutcome> {
+        let refused = |message: &str, fix: &str| {
+            failed(
+                SelfEffect::ConsultResult,
+                MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[fix]),
+            )
+        };
+        let vault = self.coordination_vault()?;
+        if self.task_host_binding()?.is_none() {
+            return Ok(refused(
+                "a consult lands only from a leased agent run",
+                "Land it from the run your consult TASK leased to you.",
+            ));
+        }
+        let Some(reader) = read_as else {
+            return Ok(refused(
+                "a consult lands only under its run's read lane",
+                "Land it through a host door that binds your credential's read key.",
+            ));
+        };
+        let (task, input, reads) = call.into_engine()?;
+        let points: Vec<_> = reads.iter().copied().map(PointRead::id).collect();
+        let checked = vault
+            .scoped_read(reader)
+            .with_claim_status(ClaimReadStatus::Recorded)
+            .read(&points, None)?;
+        if checked
+            .value
+            .iter()
+            .any(|row| row.as_ref().is_none_or(|row| row.body.is_none()))
+        {
+            return Ok(refused(
+                "a TASK, result, evidence or reason ref is not readable on this run's read lane",
+                "Cite only refs your read lane reads, then land again.",
+            ));
+        }
+        // A lease lost while the refs were read lands nothing.
+        self.task_host_binding()?.ok_or_else(invalid)?;
+        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        let receipt = match memory.land_consult_result(task, &input) {
+            Ok(receipt) => receipt,
+            Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
+        };
+        let output = serde_json::to_value(ConsultLandReply::from(receipt))
+            .map_err(|_| Error::InvariantViolation("consult landing answer encode"))?;
+        // The answer serves the rows the landing read.
+        Ok(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer {
+            output,
+            rows: Some(reads),
+        }))
     }
 
     /// Admits one `self.skills.call` as every call the run serves itself is

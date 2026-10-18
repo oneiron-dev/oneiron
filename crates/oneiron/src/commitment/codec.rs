@@ -154,7 +154,11 @@ pub(super) fn commitment_claim_candidate_from_body(
     record: &CommitmentRecord,
 ) -> Result<ClaimCandidate> {
     let mut candidate = commitment_claim_candidate_with_confidence(record, body.confidence)?
-        .with_validity(body.valid_from, body.valid_to);
+        .with_validity(body.valid_from, body.valid_to)
+        .with_scope_stamps(body.scope_facet, body.scope_project);
+    if let Some(relationship) = body.rel {
+        candidate = candidate.with_relationship(relationship);
+    }
     if let Some(salience) = body.salience {
         candidate = candidate.with_salience(salience);
     }

@@ -311,6 +311,7 @@ mod sdk_guest_document;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_hub;
+mod sdk_identity_topology;
 mod sdk_legal_hold;
 mod sdk_live_run;
 mod sdk_live_voice;
