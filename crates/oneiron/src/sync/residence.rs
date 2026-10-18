@@ -133,8 +133,9 @@ pub fn with_forwarded_search<R>(
     })
 }
 
-/// The canonical window that holds one entity: a CLAIM or key pad that names a
-/// world lives in that world's month partition, every other row in the base month.
+/// The canonical window that holds one entity: a CLAIM, key pad or key wrap that
+/// names a world lives in that world's month partition, every other row in the
+/// base month.
 /// A malformed carrier stays in the base partition, as window admission keeps it.
 pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
     let header =
