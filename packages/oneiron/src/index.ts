@@ -1651,6 +1651,40 @@ export class Oneiron {
       /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
       react: (input: Facade.MessageReactionRequest): Facade.MessageReactionReceipt => this.#call(() => this.#client.vaultMessagesReact(input) as Facade.MessageReactionReceipt),
     },
+    models: {
+      catalog: {
+        /** Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding. */
+        refresh: (input: Facade.ModelCatalogRefresh): Facade.ModelCatalogRevision => this.#call(() => this.#client.vaultModelsCatalogRefresh(input) as Facade.ModelCatalogRevision),
+        /** Reads a pinned model catalog revision with its prices, backend offers and score evidence. */
+        get: (input: Facade.ModelCatalogGet): Facade.ModelCatalogRevision => this.#call(() => this.#client.vaultModelsCatalogGet(input) as Facade.ModelCatalogRevision),
+        /** Diffs two immutable model catalog revisions, including prices, scores and retired offers. */
+        diff: (input: Facade.ModelCatalogDiffRequest): Facade.ModelCatalogDiff => this.#call(() => this.#client.vaultModelsCatalogDiff(input) as Facade.ModelCatalogDiff),
+      },
+      trials: {
+        /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
+        nominate: (input: Facade.ModelTrialNominate): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsNominate(input) as Facade.ModelTrialView),
+        /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+        get: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsGet(input) as Facade.ModelTrialView),
+        /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
+        approve: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsApprove(input) as Facade.ModelTrialView),
+        /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+        run: (input: Facade.ModelTrialRef): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsRun(input) as Facade.ModelTrialView),
+        /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
+        complete: (input: Facade.ModelTrialComplete): Facade.ModelTrialView => this.#call(() => this.#client.vaultModelsTrialsComplete(input) as Facade.ModelTrialView),
+      },
+      bindings: {
+        /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+        propose: (input: Facade.ModelBindingPropose): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsPropose(input) as Facade.ModelBindingProposal),
+        /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
+        get: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsGet(input) as Facade.ModelBindingProposal),
+        /** Reads the currently active manifest binding for a model role. */
+        read: (input: Facade.ModelBindingRead): Facade.ModelBinding => this.#call(() => this.#client.vaultModelsBindingsRead(input) as Facade.ModelBinding),
+        /** Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks. */
+        accept: (input: Facade.ModelBindingAccept): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsAccept(input) as Facade.ModelBindingProposal),
+        /** Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding. */
+        deny: (input: Facade.ModelBindingProposalRef): Facade.ModelBindingProposal => this.#call(() => this.#client.vaultModelsBindingsDeny(input) as Facade.ModelBindingProposal),
+      },
+    },
     voices: {
       packs: {
         /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */

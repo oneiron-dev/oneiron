@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 780 facade rows, 2722 declarations.
-Inputs: 728 of 780 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 700 of 780 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 99; unread shapes: 0.
+Census: 793 facade rows, 2764 declarations.
+Inputs: 739 of 793 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 701 of 793 fully typed, 92 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -10483,6 +10483,209 @@ class AnonymousChatResponseBlocked(TypedDict):
     reason: AnonymousChatBlockReasonView
     model_notices: list[GateSystemNoticeRecord]
 AnonymousChatResponse = AnonymousChatResponseReply | AnonymousChatResponseBlocked
+ModelWireFormat = Literal["openai-compat", "anthropic-messages", "gemini", "own-server", "local"]
+class LlmCatalogCost(TypedDict):
+    input_per_million: str
+    output_per_million: str
+    cache_read_per_million: NotRequired[str | None]
+    cache_write_per_million: NotRequired[str | None]
+class LlmCatalogEntry(TypedDict):
+    model: ModelId
+    display_name: str
+    locality: ModelLocality
+    context_window_tokens: int
+    max_output_tokens: NotRequired[int | None]
+    cost: NotRequired[LlmCatalogCost | None]
+    capabilities: NotRequired[list[LlmCapability]]
+    metadata: NotRequired[dict[str, Any]]
+class ModelRegistryRow(TypedDict):
+    version: int
+    wire: ModelWireFormat
+    catalog: LlmCatalogEntry
+    scores: NotRequired[dict[str, dict[str, float]]]
+    fetched_at: NotRequired[dict[str, int]]
+    tokens_per_o200k: NotRequired[float | None]
+    stale_since: NotRequired[int | None]
+class CatalogSeed(TypedDict):
+    version: int
+    rows: list[ModelRegistryRow]
+class ScoreObservation(TypedDict):
+    model: ModelId
+    benchmark: str
+    score: float
+class ScoreSnapshot(TypedDict):
+    source: str
+    fetched_at: int
+    observations: list[ScoreObservation]
+class ModelCatalogRefresh(TypedDict):
+    revision: str
+    expected_revision: NotRequired[str | None]
+    catalog: CatalogSeed
+    scores: NotRequired[list[ScoreSnapshot]]
+class ModelScoreDiff(TypedDict):
+    model: ModelId
+    source: str
+    benchmark: str
+    previous: NotRequired[float | None]
+    score: float
+    fetched_at: int
+class ModelCatalogRevision(TypedDict):
+    revision: str
+    previous_revision: NotRequired[str | None]
+    catalog: CatalogSeed
+    rows: list[ModelRegistryRow]
+    score_diffs: list[ModelScoreDiff]
+    refreshed_at: int
+class ModelCatalogGet(TypedDict):
+    revision: NotRequired[str | None]
+ModelCatalogDiffRequest = TypedDict("ModelCatalogDiffRequest", {"from": str, "to": str})
+class ModelCatalogChange(TypedDict):
+    model: ModelId
+    previous: NotRequired[ModelRegistryRow | None]
+    current: NotRequired[ModelRegistryRow | None]
+ModelCatalogDiff = TypedDict("ModelCatalogDiff", {"from": str, "to": str, "changes": list[ModelCatalogChange]})
+class ModelBackendPin(TypedDict):
+    model: ModelId
+    backend: str
+    serving_revision: str
+    quantization: NotRequired[str | None]
+    context_window_tokens: int
+class TrialSetPin(TypedDict):
+    id: str
+    version: int
+    rubric_version: str
+class HeldOutSelection(TypedDict):
+    answer: EntityId
+    fact: EntityId
+    source_family: str
+class ModelTrialPolicy(TypedDict):
+    exploration_remaining: float
+    vault_cost_cap: NotRequired[float | None]
+    project_cost_cap: NotRequired[float | None]
+    auto_approve: NotRequired[bool]
+    candidate_needs_download: bool
+class ModelTrialRequest(TypedDict):
+    principal: EntityId
+    question: EntityId
+    question_version: int
+    goal: EntityId
+    incumbent: ModelBackendPin
+    candidate: ModelBackendPin
+    source: str
+    benchmark: str
+    set: TrialSetPin
+    held_out: list[HeldOutSelection]
+    incumbent_usage_bound: LlmUsage
+    candidate_usage_bound: LlmUsage
+    future_units: int
+    policy: ModelTrialPolicy
+class ModelTrialNominate(TypedDict):
+    catalog_revision: str
+    request: ModelTrialRequest
+class PricedModelBackend(TypedDict):
+    pin: ModelBackendPin
+    price: LlmCatalogCost
+class FrozenTrialCase(TypedDict):
+    selection: HeldOutSelection
+    unit: EntityId
+    source_frontier: list[int]
+    fact_value_hash: list[int]
+    label: bool
+    noise_weight: float
+    derived_from: list[EntityId]
+TrialAdmission = Literal["ready", "ask_exploration"]
+class ModelTrialEvidence(TypedDict):
+    measurements_hash: list[int]
+    incumbent_loss: NotRequired[float | None]
+    candidate_loss: NotRequired[float | None]
+    independent_families: int
+    incumbent_cost_per_thousand: float
+    candidate_cost_per_thousand: float
+    trial_cost: float
+class PairedQualityInterval(TypedDict):
+    low: float
+    high: float
+class TrialAssessment(TypedDict):
+    set: TrialSetPin
+    measurements_hash: list[int]
+    paired_gain: NotRequired[PairedQualityInterval | None]
+    retest_noise: float
+    stricter_margin: NotRequired[float | None]
+    required_families: int
+    rare_slices_sufficient: bool
+    versions_match: bool
+    canary_diverged: bool
+TrialQuality = Literal["better", "not_worse", "worse", "unknown"]
+ModelTrialAction = Literal["stay", "offer", "auto_approve", "ask_tradeoff", "unknown"]
+class ModelTrialReceipt(TypedDict):
+    assessment: TrialAssessment
+    quality: TrialQuality
+    action: ModelTrialAction
+    candidate_cost_per_unit: float
+    added_cost_per_thousand: float
+    added_future_cost: float
+    completed_at: int
+class ModelTrialView(TypedDict):
+    catalog_revision: str
+    id: EntityId
+    request: ModelTrialRequest
+    incumbent: PricedModelBackend
+    candidate: PricedModelBackend
+    nominated_score: float
+    score_fetched_at: int
+    cases: list[FrozenTrialCase]
+    estimated_cost: float
+    admission: TrialAdmission
+    prepared_at: int
+    execution_started: bool
+    evidence: NotRequired[ModelTrialEvidence | None]
+    receipt: NotRequired[ModelTrialReceipt | None]
+class ModelTrialRef(TypedDict):
+    question: EntityId
+    trial: EntityId
+class ModelTrialComplete(TypedDict):
+    question: EntityId
+    trial: EntityId
+    assessment: TrialAssessment
+ModelRole = Literal["retrieval_embedder", "reranker", "extraction_encoder", "extraction_teacher", "generative_reasoner", "local_reasoner", "checker", "dreamer_current", "dreamer_target", "dreamer_distilled", "asr", "captioner", "doc_parsing", "audio_vad", "tts_deferred", "local_vision", "coach"]
+ModelDisposition = Literal["offline", "served"]
+class ModelBinding(TypedDict):
+    model: ModelId
+    slot: ModelSlot
+    tier: ModelTierRef
+    route_models: NotRequired[dict[str, ModelId]]
+    disposition: NotRequired[ModelDisposition | None]
+    reads_audio: NotRequired[bool]
+class ModelBindingPropose(TypedDict):
+    question: EntityId
+    trial: EntityId
+    role: ModelRole
+    binding: ModelBinding
+ModelBindingStatus = Literal["proposed", "accepted", "denied"]
+class ModelBindingProposal(TypedDict):
+    id: EntityId
+    principal: EntityId
+    role: ModelRole
+    previous: ModelBinding
+    proposed: ModelBinding
+    trial: ModelTrialView
+    status: ModelBindingStatus
+    proposed_at: int
+    settled_at: NotRequired[int | None]
+class ModelBindingProposalRef(TypedDict):
+    proposal: EntityId
+class ModelBindingRead(TypedDict):
+    role: ModelRole
+class TeacherProbeApproval(TypedDict):
+    probe_id: str
+    model: ModelId
+    binding_hash: str
+    f1_millionths: int
+    policy_hash: str
+    holder_ref: NotRequired[str | None]
+class ModelBindingAccept(TypedDict):
+    proposal: EntityId
+    teacher_approval: NotRequired[TeacherProbeApproval | None]
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
