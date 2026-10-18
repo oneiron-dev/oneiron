@@ -324,6 +324,44 @@ pub(crate) async fn vault_packs_hooks_list(
     .await
 }
 
+/// `vault.packs.hooks.grant.set`: assign a live binding's read grant as
+/// the owner. The engine revalidates the proof and binding in its writer.
+pub(crate) async fn vault_packs_hooks_grant_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HookGrantSetRequest,
+) -> Listed<HookGrantView> {
+    owner_call(
+        server,
+        auth,
+        "vault.packs.hooks.grant.set",
+        move |server, owner| {
+            let answer = sdk::hook_grant_set_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.binding]))
+        },
+    )
+    .await
+}
+
+/// `vault.packs.hooks.grant.get`: read the grant a live binding uses,
+/// including its author's ceiling when no manual assignment stands.
+pub(crate) async fn vault_packs_hooks_grant_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: HookGrantRequest,
+) -> Listed<HookGrantView> {
+    owner_call(
+        server,
+        auth,
+        "vault.packs.hooks.grant.get",
+        move |server, owner| {
+            let answer = sdk::hook_grant_get_as_owner(server.vault(), owner, &input)?;
+            Ok((answer, vec![input.binding]))
+        },
+    )
+    .await
+}
+
 /// Qualification runs the server's real hook sandbox and preserves each
 /// replay (`host_door_lists`). It lists the pack's source row and what each
 /// hook's listing replay lists, as `vault.hooks.replay` does: the binding

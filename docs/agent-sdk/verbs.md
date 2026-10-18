@@ -183,6 +183,8 @@ both bindings and their export-census tests in one change.
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
+- `vault.packs.hooks.grant.set`
+- `vault.packs.hooks.grant.get`
 - `vault.packs.hooks.qualify`
 - `vault.packs.put`
 - `vault.packs.connector.prepare`

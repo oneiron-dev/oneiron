@@ -1778,6 +1778,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_packs_hooks_grant_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.hooks.grant.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.hooks.grant.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_packs_hooks_grant_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.packs.hooks.grant.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.packs.hooks.grant.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_packs_hooks_qualify(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.packs.hooks.qualify")?;
         let output = py

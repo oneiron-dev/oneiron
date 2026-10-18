@@ -1177,6 +1177,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.outcomes.get"
         | "vault.packs.hooks.bind"
         | "vault.packs.hooks.list"
+        | "vault.packs.hooks.grant.set"
+        | "vault.packs.hooks.grant.get"
         | "vault.packs.hooks.qualify"
         | "vault.connectors.subscriptions.put"
         | "vault.connectors.subscriptions.list"

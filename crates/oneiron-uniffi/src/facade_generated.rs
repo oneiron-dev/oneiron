@@ -886,6 +886,16 @@ export_facade! {
     let output = client.vault_packs_hooks_list(&input)?;
     crate::codec::lift_record("vault.packs.hooks.list", &output)
 };
+"vault.packs.hooks.grant.set" => fn vault_packs_hooks_grant_set(&self, input: HookGrantSetRequest) -> HookGrantView = |client| {
+    let input: oneiron::task_verb::sdk::HookGrantSetRequest = crate::codec::lower_record("vault.packs.hooks.grant.set", input)?;
+    let output = client.vault_packs_hooks_grant_set(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.grant.set", &output)
+};
+"vault.packs.hooks.grant.get" => fn vault_packs_hooks_grant_get(&self, input: HookGrantRequest) -> HookGrantView = |client| {
+    let input: oneiron::task_verb::sdk::HookGrantRequest = crate::codec::lower_record("vault.packs.hooks.grant.get", input)?;
+    let output = client.vault_packs_hooks_grant_get(&input)?;
+    crate::codec::lift_record("vault.packs.hooks.grant.get", &output)
+};
 "vault.packs.hooks.qualify" => fn vault_packs_hooks_qualify(&self, input: HubHookQualifyRequest) -> HubHookQualificationReceipt = |client| {
     let input: oneiron::task_verb::sdk::HubHookQualifyRequest = crate::codec::lower_record("vault.packs.hooks.qualify", input)?;
     let output = client.vault_packs_hooks_qualify(&input)?;
