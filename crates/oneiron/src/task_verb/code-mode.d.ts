@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 869 code-mode rows (846 host rows, 23 run rows), 2927 declarations.
-// Replies: 779 fully typed, 86 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 882 code-mode rows (859 host rows, 23 run rows), 2967 declarations.
+// Replies: 791 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -404,6 +404,23 @@ declare namespace Sdk {
   type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
+  type GroundingContext = { bindings: Record<string, string> };
+  type HydeOptions = { channel_limit: number; retry_once: boolean };
+  type HydeHostConfig = { expander: string; grounding: GroundingContext; options: HydeOptions };
+  type HydeHostConfigureRequest = { binding?: HydeHostConfig | null };
+  type HydeHostConfiguration = { binding?: HydeHostConfig | null };
+  type HydeHostPendingRequest = { limit?: number | null };
+  type HydeRequest = { query: string; max_subqueries: number };
+  type HydeHostCandidate = { id: string; score: number; claim?: ClaimView | null };
+  type HydeHostInput = { stage: "expansion"; request: HydeRequest } | { stage: "evidence"; query: string; candidates: HydeHostCandidate[] };
+  type HydeHostWork = { request_id: string; expander: string; requested_at_ms: number; deadline_at_ms?: number | null; input: HydeHostInput };
+  type HydeExpansion = { grounded_query: string; hypothetical_answer: string; embedding: number[]; subqueries: string[] };
+  type EvidenceVerdict = "Sufficient" | { Insufficient: { gaps: string[] } };
+  type HydeHostAnswer = { stage: "expansion"; expansion: HydeExpansion } | { stage: "evidence"; verdict: EvidenceVerdict } | { stage: "failed"; reason: string };
+  type HydeHostCompleteRequest = { request_id: string; answer: HydeHostAnswer };
+  type HydeHostStatus = "pending" | "expired" | "completed" | "failed" | "discarded_deadline" | "cancelled";
+  type HydeHostReceipt = { request_id: string; expander: string; requested_at_ms: number; deadline_at_ms?: number | null; completed_at_ms?: number | null; status: HydeHostStatus; received_bytes: number };
+  type HydeHostReceiptRequest = { request_id: string };
   type VadAnnotationSource = "model_inference" | "user_self_report";
   type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
   type TaggingTurnRequest = { turn_ref: string };
@@ -1631,6 +1648,16 @@ declare namespace Sdk {
   type SharedBriefCitation = { claim_ref: string; stale: boolean; drifted: boolean; redacted: boolean; confidence?: number | null; lifecycle?: string | null; quote?: string | null };
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
+  type CompactionWindowMessage = { message_id: EntityId; turn_id: EntityId; content: string; turn: number; tokens: number };
+  type HostCompactRequest = { session_ref: EntityId; window: CompactionWindowMessage[]; keep_list: string[]; token_ceiling: number };
+  type HostCompactResult = { epoch: number; summary: EntityId; text: string; keep_list: string[]; first_turn: number; last_turn: number };
+  type HostWakeKind = "compaction" | "session_end" | "event" | "timer";
+  type HostWakeRequest = { wake_kind: HostWakeKind; queue_head: EntityId[] };
+  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean };
+  type BudgetExhaustionPolicy = { kind: "suspend" } | { kind: "continue_on_local" } | { kind: "overdraft"; cap: number };
+  type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
+  type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
+  type HostBudgetHitResult = { seat: string; policy: BudgetExhaustionPolicy; accounting: HostBudgetAccounting };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
   type HookRegenBindingRequest = { binding: EntityId };
   type HookContractStamp = { verb_table: string; sandbox: string };
@@ -2406,6 +2433,19 @@ declare namespace Sdk {
   type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
   type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type IcsFeedPollConfig = { secret_ref: string; system: string; cadence_min_seconds: number; cadence_max_seconds: number };
+  type CalendarIcsFeedConfigureRequest = { config: IcsFeedPollConfig };
+  type CalendarIcsPollResult = { state: "reenqueued"; next_not_before: number } | { state: "paused_needs_input"; inbox_exception_ref: string };
+  type IcsFeedCursorSnapshot = { etag?: string | null; last_complete_at?: number | null; paused: boolean; last_screen_verdict?: string | null };
+  type CalendarIcsPollCompletion = { poll_ref: string; completed_at: number; result: CalendarIcsPollResult; cursor?: IcsFeedCursorSnapshot | null };
+  type CalendarIcsFeedRegistration = { config: IcsFeedPollConfig; last_poll?: CalendarIcsPollCompletion | null };
+  type CalendarIcsFeedRequest = { system: string };
+  type CalendarIcsFeedStatus = { config: IcsFeedPollConfig; cursor?: IcsFeedCursorSnapshot | null; last_poll?: CalendarIcsPollCompletion | null };
+  type CalendarPassportReadRequest = { event_ref: string; system: string; uid: string };
+  type CalendarPassportDirection = "inbound" | "outbound" | "two_way";
+  type CalendarPassportPresence = "live" | "absent";
+  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
+  type CalendarPassportRevision = { claim_ref: string; event_ref: string; recorded_at: number; approval: string; lifecycle: string; stale: boolean; passport: CalendarPassportValue };
   type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
   type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
   type CalendarConnectorKillSwitchState = { killed_at: number; verbs_revoked: boolean; polling_stopped: boolean; reason_ref: string };
@@ -3018,6 +3058,14 @@ declare const calendar: {
     /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
     write(input: Sdk.CalendarConnectorWriteRequest): Promise<Sdk.RemoteWriteReceipt | StoredResult>;
   };
+  ics: {
+    /** Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent. */
+    configure(input: Sdk.CalendarIcsFeedConfigureRequest): Promise<Sdk.CalendarIcsFeedRegistration | StoredResult>;
+    /** Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence. */
+    poll(input: Sdk.CalendarIcsFeedRequest): Promise<Sdk.CalendarIcsPollCompletion | StoredResult>;
+    /** Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL. */
+    status(input: Sdk.CalendarIcsFeedRequest): Promise<Sdk.CalendarIcsFeedStatus | null | StoredResult>;
+  };
   imip: {
     /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
     configure(input: Sdk.CalendarImipTransportConfig): Promise<Sdk.CalendarImipTransportConfig | StoredResult>;
@@ -3063,6 +3111,16 @@ declare const feedback: {
 };
 /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
 declare function fetch(input: Sdk.WebFetchRequest): Promise<Sdk.FetchResult | StoredResult>;
+declare const host: {
+  budget: {
+    /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
+    hit(input: Sdk.HostBudgetHitRequest): Promise<Sdk.HostBudgetHitResult | StoredResult>;
+  };
+  /** Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint. */
+  compact(input: Sdk.HostCompactRequest): Promise<Sdk.HostCompactResult | StoredResult>;
+  /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
+  wake(input: Sdk.HostWakeRequest): Promise<Sdk.HostWakeResult | StoredResult>;
+};
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */
@@ -3568,6 +3626,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
     occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
+    passports: {
+      /** Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate. */
+      history(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision[]> | StoredResult>;
+      /** Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence. */
+      read(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision | null> | StoredResult>;
+    };
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -4600,6 +4664,18 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
     export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
+    hyde: {
+      /** Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded. */
+      complete(input: Sdk.HydeHostCompleteRequest): Promise<Sdk.HydeHostReceipt | StoredResult>;
+      /** The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work. */
+      configure(input: Sdk.HydeHostConfigureRequest): Promise<Sdk.HydeHostConfiguration | StoredResult>;
+      /** The owner reads the serving host HyDE binding, grounding and bounded retry options. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.HydeHostConfiguration | StoredResult>;
+      /** Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing. */
+      pending(input: Sdk.HydeHostPendingRequest): Promise<Sdk.HydeHostWork[] | StoredResult>;
+      /** Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline. */
+      receipt(input: Sdk.HydeHostReceiptRequest): Promise<Sdk.HydeHostReceipt | null | StoredResult>;
+    };
     outcomes: {
       /** The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward. */
       end(input: Sdk.RetrievalEndOutcome): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;

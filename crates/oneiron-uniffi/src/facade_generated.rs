@@ -342,6 +342,31 @@ export_facade! {
     let output = client.vault_retrieval_weights_configure(&input)?;
     crate::codec::lift_record("vault.retrieval.weights.configure", &output)
 };
+"vault.retrieval.hyde.configure" => fn vault_retrieval_hyde_configure(&self, input: HydeHostConfigureRequest) -> HydeHostConfiguration = |client| {
+    let input: oneiron::query_expansion::host::HydeHostConfigureRequest = crate::codec::lower_record("vault.retrieval.hyde.configure", input)?;
+    let output = client.vault_retrieval_hyde_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.configure", &output)
+};
+"vault.retrieval.hyde.get" => fn vault_retrieval_hyde_get(&self) -> HydeHostConfiguration = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.hyde.get")?;
+    let output = client.vault_retrieval_hyde_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.get", &output)
+};
+"vault.retrieval.hyde.pending" => fn vault_retrieval_hyde_pending(&self, input: HydeHostPendingRequest) -> Vec<HydeHostWork> = |client| {
+    let input: oneiron::query_expansion::host::HydeHostPendingRequest = crate::codec::lower_record("vault.retrieval.hyde.pending", input)?;
+    let output = client.vault_retrieval_hyde_pending(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.pending", &output)
+};
+"vault.retrieval.hyde.complete" => fn vault_retrieval_hyde_complete(&self, input: HydeHostCompleteRequest) -> HydeHostReceipt = |client| {
+    let input: oneiron::query_expansion::host::HydeHostCompleteRequest = crate::codec::lower_record("vault.retrieval.hyde.complete", input)?;
+    let output = client.vault_retrieval_hyde_complete(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.complete", &output)
+};
+"vault.retrieval.hyde.receipt" => fn vault_retrieval_hyde_receipt(&self, input: HydeHostReceiptRequest) -> Option<HydeHostReceipt> = |client| {
+    let input: oneiron::query_expansion::host::HydeHostReceiptRequest = crate::codec::lower_record("vault.retrieval.hyde.receipt", input)?;
+    let output = client.vault_retrieval_hyde_receipt(&input)?;
+    crate::codec::lift_record("vault.retrieval.hyde.receipt", &output)
+};
 "vault.affect.annotations.put" => fn vault_affect_annotations_put(&self, input: AffectAnnotationPut) -> CommitReceipt = |client| {
     let input: oneiron::memory::affect::AffectAnnotationPut = crate::codec::lower_record("vault.affect.annotations.put", input)?;
     let output = client.vault_affect_annotations_put(&input)?;
@@ -2121,6 +2146,21 @@ export_facade! {
     let output = client.vault_shares_view(&input)?;
     crate::codec::lift_record("vault.shares.view", &output)
 };
+"host.compact" => fn host_compact(&self, input: HostCompactRequest) -> HostCompactResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostCompactRequest = crate::codec::lower_record("host.compact", input)?;
+    let output = client.host_compact(&input)?;
+    crate::codec::lift_record("host.compact", &output)
+};
+"host.wake" => fn host_wake(&self, input: HostWakeRequest) -> HostWakeResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostWakeRequest = crate::codec::lower_record("host.wake", input)?;
+    let output = client.host_wake(&input)?;
+    crate::codec::lift_record("host.wake", &output)
+};
+"host.budget.hit" => fn host_budget_hit(&self, input: HostBudgetHitRequest) -> HostBudgetHitResult = |client| {
+    let input: oneiron::runtime_hooks::host_doors::HostBudgetHitRequest = crate::codec::lower_record("host.budget.hit", input)?;
+    let output = client.host_budget_hit(&input)?;
+    crate::codec::lift_record("host.budget.hit", &output)
+};
 "vault.hooks.replay" => fn vault_hooks_replay(&self, input: HooksReplayRequest) -> Vec<HookReplayRow> = |client| {
     let input: oneiron::task_verb::sdk::HooksReplayRequest = crate::codec::lower_record("vault.hooks.replay", input)?;
     let output = client.vault_hooks_replay(&input)?;
@@ -3250,6 +3290,31 @@ export_facade! {
     let input: oneiron::memory::CalendarInviteSurfaceInput = crate::codec::lower_record("calendar.invite", input)?;
     let output = client.calendar_invite(&input)?;
     Lift::lift(output)
+};
+"calendar.ics.configure" => fn calendar_ics_configure(&self, input: CalendarIcsFeedConfigureRequest) -> CalendarIcsFeedRegistration = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest = crate::codec::lower_record("calendar.ics.configure", input)?;
+    let output = client.calendar_ics_configure(&input)?;
+    crate::codec::lift_record("calendar.ics.configure", &output)
+};
+"calendar.ics.poll" => fn calendar_ics_poll(&self, input: CalendarIcsFeedRequest) -> CalendarIcsPollCompletion = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest = crate::codec::lower_record("calendar.ics.poll", input)?;
+    let output = client.calendar_ics_poll(&input)?;
+    crate::codec::lift_record("calendar.ics.poll", &output)
+};
+"calendar.ics.status" => fn calendar_ics_status(&self, input: CalendarIcsFeedRequest) -> Option<CalendarIcsFeedStatus> = |client| {
+    let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest = crate::codec::lower_record("calendar.ics.status", input)?;
+    let output = client.calendar_ics_status(&input)?;
+    crate::codec::lift_record("calendar.ics.status", &output)
+};
+"vault.calendar.passports.read" => fn vault_calendar_passports_read(&self, input: CalendarPassportReadRequest) -> ScopedReadResultOptionalCalendarPassportRevision = |client| {
+    let input: oneiron::calendar::query::passport::CalendarPassportReadRequest = crate::codec::lower_record("vault.calendar.passports.read", input)?;
+    let output = client.vault_calendar_passports_read(&input)?;
+    crate::codec::lift_record("vault.calendar.passports.read", &output)
+};
+"vault.calendar.passports.history" => fn vault_calendar_passports_history(&self, input: CalendarPassportReadRequest) -> ScopedReadResultCalendarPassportRevisionList = |client| {
+    let input: oneiron::calendar::query::passport::CalendarPassportReadRequest = crate::codec::lower_record("vault.calendar.passports.history", input)?;
+    let output = client.vault_calendar_passports_history(&input)?;
+    crate::codec::lift_record("vault.calendar.passports.history", &output)
 };
 "calendar.connector.configure" => fn calendar_connector_configure(&self, input: CalendarConnectorConfigureRequest) -> CalendarConnectorRegistration = |client| {
     let input: oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest = crate::codec::lower_record("calendar.connector.configure", input)?;

@@ -94,7 +94,12 @@ pub(crate) fn score_gate_skill_edit_as_owner(
     owner.revalidate(vault)?;
     let cycle = SkillEditCycle::of_proposal(vault, proposal)?;
     rule_on_proposal(
-        vault, proposal, scorer, &cycle, vault.now_recorded_at(), Some(owner),
+        vault,
+        proposal,
+        scorer,
+        &cycle,
+        vault.now_recorded_at(),
+        Some(owner),
     )
 }
 

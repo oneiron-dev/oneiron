@@ -83,7 +83,8 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         &self,
         key: K,
     ) -> impl Future<Output = Result<Permit, WaitTimedOut>> + Send + 'static {
-        self.line.admit_in_line_observed(key, crate::api::admission_observer())
+        self.line
+            .admit_in_line_observed(key, crate::api::admission_observer())
     }
 
     /// A permit for the host's own work, given only when no caller waits.
