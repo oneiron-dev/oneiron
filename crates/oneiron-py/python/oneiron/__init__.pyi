@@ -548,6 +548,8 @@ class Oneiron:
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
         @property
+        def slim(self) -> "Oneiron._VaultSlimVerbs": ...
+        @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs": ...
@@ -969,6 +971,17 @@ class Oneiron:
             """Every saved authority handoff fork alarm, for the owner."""
         def acknowledge(self, spec: Facade.HandoffAlarmRequest) -> Facade.AuthorityHandoffAlarm:
             """The owner acknowledges one saved handoff fork alarm."""
+    class _VaultSlimVerbs:
+        def policy(self, spec: Facade.EmptyRequest) -> Facade.SlimIdlePolicy:
+            """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""
+        def state(self, spec: Facade.EmptyRequest) -> Facade.SlimStateSnapshot:
+            """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+        def resume_step(self, spec: Facade.SlimResumeStepRequest) -> Facade.SavedResumeStep:
+            """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
+        def drop_heavy(self, spec: Facade.SlimDropRequest) -> Facade.SlimDropReceipt:
+            """Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."""
+        def resume(self, spec: Facade.EmptyRequest) -> Facade.SlimResumeReceipt:
+            """Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."""
     class _VaultMeshVerbs:
         def path_receipts(self, spec: Facade.MeshPathReceiptsRequest) -> list[Facade.MeshPathReceipt]:
             """The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."""

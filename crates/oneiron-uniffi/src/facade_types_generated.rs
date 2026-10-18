@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 560 facade rows, 2083 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 522.
+// UniFFI census: 565 facade rows, 2100 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 527.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -9448,6 +9448,266 @@ pub struct SignedAuthorityHistory {
 pub struct AuthorityHistoryImported {
     #[serde(rename = "entry_refs")]
     pub entry_refs: Vec<String>,
+}
+
+/// `oneiron::slim::public::SlimIdlePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlimIdlePolicy {
+    #[serde(rename = "long_outbound_wait_secs")]
+    pub long_outbound_wait_secs: u64,
+    #[serde(rename = "exits_on_idle")]
+    pub exits_on_idle: bool,
+    #[serde(rename = "lazy_rebuild")]
+    pub lazy_rebuild: bool,
+}
+
+/// `oneiron::slim::public::SlimResumeStep`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum SlimResumeStep {
+    #[serde(rename = "outbound_intent")]
+    OutboundIntent {
+        #[serde(rename = "intent_id")]
+        intent_id: String,
+        #[serde(rename = "attempt_id")]
+        attempt_id: String,
+        #[serde(rename = "call_seq")]
+        call_seq: u64,
+        #[serde(rename = "updated_ms")]
+        updated_ms: u64,
+    },
+    #[serde(rename = "model")]
+    Model {
+        #[serde(rename = "attempt_id")]
+        attempt_id: String,
+        #[serde(rename = "step_hash")]
+        step_hash: String,
+        #[serde(rename = "updated_ms")]
+        updated_ms: u64,
+    },
+}
+
+/// `oneiron::slim::public::SlimResidueView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlimResidueView {
+    #[serde(rename = "step")]
+    pub step: SlimResumeStep,
+    #[serde(rename = "entered_at_ms")]
+    pub entered_at_ms: u64,
+}
+
+/// `oneiron::slim::public::SlimStateView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "residency")]
+pub enum SlimStateView {
+    #[serde(rename = "full")]
+    Full,
+    #[serde(rename = "slim")]
+    Slim {
+        #[serde(rename = "residue")]
+        residue: SlimResidueView,
+    },
+}
+
+/// `oneiron::slim::public::SlimStateSnapshot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlimStateSnapshot {
+    #[serde(rename = "process_id")]
+    pub process_id: u32,
+    #[serde(rename = "state")]
+    pub state: SlimStateView,
+}
+
+/// `oneiron::slim::public::SlimResumeStepRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum SlimResumeStepRequest {
+    #[serde(rename = "model")]
+    Model {
+        #[serde(rename = "attempt_id")]
+        attempt_id: String,
+        #[serde(rename = "step_hash")]
+        step_hash: String,
+    },
+    #[serde(rename = "outbound_intent")]
+    OutboundIntent {
+        #[serde(rename = "intent_id")]
+        intent_id: String,
+    },
+}
+
+/// `oneiron::llm::step::types::StepProgression`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum StepProgression {
+    #[serde(rename = "started")]
+    Started,
+    #[serde(rename = "response_received")]
+    ResponseReceived,
+    #[serde(rename = "logged")]
+    Logged,
+    #[serde(rename = "finished")]
+    Finished,
+}
+
+/// `oneiron::llm::step::public::ModelStepCheckpoint`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModelStepCheckpoint {
+    #[serde(rename = "progression")]
+    pub progression: StepProgression,
+    #[serde(
+        rename = "updated_ms",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub updated_ms: Option<u64>,
+    #[serde(rename = "claim_ref", default, skip_serializing_if = "Option::is_none")]
+    pub claim_ref: Option<String>,
+}
+
+/// `oneiron::slim::public::SavedIntentState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SavedIntentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "done")]
+    Done,
+    #[serde(rename = "abandoned")]
+    Abandoned,
+}
+
+/// `oneiron::slim::public::SavedResumeStep`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum SavedResumeStep {
+    #[serde(rename = "model")]
+    Model {
+        #[serde(rename = "attempt_id")]
+        attempt_id: String,
+        #[serde(rename = "step_hash")]
+        step_hash: String,
+        #[serde(rename = "checkpoint")]
+        checkpoint: ModelStepCheckpoint,
+    },
+    #[serde(rename = "outbound_intent")]
+    OutboundIntent {
+        #[serde(rename = "step")]
+        step: SlimResumeStep,
+        #[serde(rename = "state")]
+        state: SavedIntentState,
+    },
+}
+
+/// `oneiron::slim::ShedCause`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ShedCause {
+    #[serde(rename = "long_outbound_wait")]
+    LongOutboundWait,
+    #[serde(rename = "memory_pressure")]
+    MemoryPressure,
+}
+
+/// `oneiron::slim::public::SlimDropRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SlimDropRequest {
+    #[serde(rename = "cause")]
+    pub cause: ShedCause,
+    #[serde(rename = "waited_secs")]
+    pub waited_secs: u64,
+}
+
+/// `oneiron::slim::HeapDropReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HeapDropReport {
+    #[serde(rename = "sync_windows")]
+    pub sync_windows: u64,
+    #[serde(rename = "ppr_cache_rows")]
+    pub ppr_cache_rows: u64,
+    #[serde(rename = "ppr_dependency_rows")]
+    pub ppr_dependency_rows: u64,
+    #[serde(rename = "hnsw_nodes")]
+    pub hnsw_nodes: u64,
+    #[serde(rename = "estimated_reclaimed_bytes")]
+    pub estimated_reclaimed_bytes: u64,
+}
+
+/// `oneiron::slim::ShedBlocker`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ShedBlocker {
+    #[serde(rename = "no_pending_outbound_step")]
+    NoPendingOutboundStep,
+    #[serde(rename = "multiple_pending_outbound_steps")]
+    MultiplePendingOutboundSteps {
+        #[serde(rename = "count")]
+        count: u64,
+    },
+    #[serde(rename = "sync_window_busy")]
+    SyncWindowBusy {
+        #[serde(rename = "window_key")]
+        window_key: String,
+        #[serde(rename = "outstanding_handles")]
+        outstanding_handles: u64,
+    },
+    #[serde(rename = "already_slim_for_different_step")]
+    AlreadySlimForDifferentStep,
+}
+
+/// `oneiron::slim::public::SlimDropOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum SlimDropOutcome {
+    #[serde(rename = "entered")]
+    Entered {
+        #[serde(rename = "residue")]
+        residue: SlimResidueView,
+        #[serde(rename = "dropped")]
+        dropped: HeapDropReport,
+    },
+    #[serde(rename = "already_slim")]
+    AlreadySlim {
+        #[serde(rename = "residue")]
+        residue: SlimResidueView,
+        #[serde(rename = "dropped")]
+        dropped: HeapDropReport,
+    },
+    #[serde(rename = "refused")]
+    Refused {
+        #[serde(rename = "blocker")]
+        blocker: ShedBlocker,
+    },
+}
+
+/// `oneiron::slim::public::SlimDropReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlimDropReceipt {
+    #[serde(rename = "process_id")]
+    pub process_id: u32,
+    #[serde(rename = "outcome")]
+    pub outcome: SlimDropOutcome,
+}
+
+/// `oneiron::slim::public::SlimResumeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "status")]
+pub enum SlimResumeOutcome {
+    #[serde(rename = "already_full")]
+    AlreadyFull,
+    #[serde(rename = "resumed")]
+    Resumed {
+        #[serde(rename = "residue")]
+        residue: SlimResidueView,
+    },
+}
+
+/// `oneiron::slim::public::SlimResumeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SlimResumeReceipt {
+    #[serde(rename = "process_id")]
+    pub process_id: u32,
+    #[serde(rename = "outcome")]
+    pub outcome: SlimResumeOutcome,
 }
 
 /// `oneiron::task_verb::sdk_mesh::MeshPathReceiptsRequest`.
@@ -25260,19 +25520,6 @@ pub struct ModelStepSubmit {
     pub request: LlmRequest,
     #[serde(rename = "retry", default, skip_serializing_if = "Option::is_none")]
     pub retry: Option<ModelStepRetryPolicy>,
-}
-
-/// `oneiron::llm::step::types::StepProgression`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum StepProgression {
-    #[serde(rename = "started")]
-    Started,
-    #[serde(rename = "response_received")]
-    ResponseReceived,
-    #[serde(rename = "logged")]
-    Logged,
-    #[serde(rename = "finished")]
-    Finished,
 }
 
 /// `oneiron_model::llm::protocol::LlmInputUsage`.
