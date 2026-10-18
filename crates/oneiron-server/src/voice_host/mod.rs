@@ -201,7 +201,7 @@ impl VoiceHost {
     /// Opens an utterance for a trusted, process-local caller.
     pub fn open(&self, utterance_id: String) -> Result<String, HostError> {
         self.require_running()?;
-        if utterance_id.trim().is_empty() || utterance_id.len() > 128 {
+        if utterance_id.trim().is_empty() {
             return Err(HostError::InvalidRequest);
         }
         let mut state = self.lock()?;
@@ -239,7 +239,7 @@ impl VoiceHost {
         final_text: bool,
     ) -> Result<EnrichmentWork<'_>, HostError> {
         self.require_running()?;
-        if text.trim().is_empty() || text.len() > oneiron::voice_cascade::uds::MAX_TEXT_BYTES {
+        if text.trim().is_empty() {
             return Err(HostError::InvalidRequest);
         }
         let mut state = self.lock()?;

@@ -1654,6 +1654,17 @@
       "section": false
     },
     {
+      "name": "vault.research.evaluate_split",
+      "description": "The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored.",
+      "input": "crate::task_verb::sdk::CampaignSplitWire",
+      "output": "crate::autoreason_campaign::CampaignSplitReport",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.research.evaluate_split\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {"unrestricted_record_scope": true},
+      "section": false
+    },
+    {
       "name": "vault.research.mark_invalid",
       "description": "Marks a node buggy: it stays as evidence and takes debug children.",
       "input": "crate::task_verb::sdk::ResearchInvalidWire",
