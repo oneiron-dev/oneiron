@@ -30,9 +30,6 @@ use super::{
 mod process;
 
 const PROTOCOL: &str = "oneiron.meeting_audio.host.v1";
-const MAX_HEADER: usize = 1024 * 1024;
-const MAX_INPUT: usize = 256 * 1024 * 1024;
-const MAX_PCM: usize = 2 * 16000 * 7200;
 
 /// Native process configuration. Every path is absolute and host-owned.
 /// No launcher, shell, remote URL, package installer or model downloader runs.
@@ -183,10 +180,10 @@ impl CommandMeetingAudioHost {
         Ok(capabilities)
     }
 
+    /// One native call. No recording, request or reply is refused by its size
+    /// (Rule 5): the request goes through a private file and the reply is read
+    /// whole.
     fn call(&self, stage: &str, body: &[u8], options: Value) -> AudioResult<Reply> {
-        if body.len() > MAX_INPUT {
-            return Err(host_error(stage, "InputTooLarge"));
-        }
         let request_id = uuid::Uuid::new_v4().to_string();
         let header = json!({
             "protocol": PROTOCOL, "request_id": request_id, "operation": stage,
@@ -194,9 +191,6 @@ impl CommandMeetingAudioHost {
         });
         let mut encoded = serde_json::to_vec(&header).map_err(|_| AudioError::Serialization)?;
         encoded.push(b'\n');
-        if encoded.len() > MAX_HEADER {
-            return Err(host_error(stage, "RequestTooLarge"));
-        }
         // A private request file avoids blocking-pipe write/read deadlocks for
         // full recordings. Unique, create_new, 0600 on Unix; removed on every
         // normal return. This scratch area is not the vault or an import door.
@@ -228,12 +222,8 @@ impl CommandMeetingAudioHost {
                 .arg("--runtime-profile-sha256")
                 .arg(digest);
         }
-        let (success, output) = process::capture(
-            &mut command,
-            MAX_PCM + MAX_HEADER,
-            self.config.stage_timeout,
-        )
-        .map_err(|code| host_error(stage, code))?;
+        let (success, output) = process::capture(&mut command, self.config.stage_timeout)
+            .map_err(|code| host_error(stage, code))?;
         drop(scratch);
         parse_reply(stage, &request_id, success, output)
     }
@@ -245,7 +235,7 @@ impl CommandMeetingAudioHost {
         digest: &str,
         options: Value,
     ) -> AudioResult<Reply> {
-        if audio.samples.is_empty() || audio.samples.len() > MAX_PCM / 2 {
+        if audio.samples.is_empty() {
             return Err(AudioError::InvalidAudio);
         }
         let bytes: Vec<u8> = audio.samples.iter().flat_map(|s| s.to_le_bytes()).collect();
@@ -447,10 +437,6 @@ fn validate_runtime_profile(path: &Path, digest: &str) -> AudioResult<()> {
         || !digest
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        || std::fs::metadata(path)
-            .map_err(|_| host_error("runtime_profile", "ProfileReadFailed"))?
-            .len()
-            > MAX_HEADER as u64
     {
         return Err(host_error("runtime_profile", "InvalidProfile"));
     }
@@ -496,7 +482,6 @@ fn parse_reply(stage: &str, request_id: &str, success: bool, bytes: Vec<u8>) -> 
     let newline = bytes
         .iter()
         .position(|b| *b == b'\n')
-        .filter(|n| *n < MAX_HEADER)
         .ok_or_else(|| host_error(stage, "InvalidResponse"))?;
     let header: Value = serde_json::from_slice(&bytes[..newline])
         .map_err(|_| host_error(stage, "InvalidResponse"))?;
@@ -511,7 +496,7 @@ fn parse_reply(stage: &str, request_id: &str, success: bool, bytes: Vec<u8>) -> 
     if header["ok"] == false {
         let code = header["error"]["code"]
             .as_str()
-            .filter(|code| !code.is_empty() && code.len() <= 128)
+            .filter(|code| !code.is_empty())
             .ok_or_else(|| host_error(stage, "InvalidResponse"))?;
         return Err(host_error(stage, code));
     }

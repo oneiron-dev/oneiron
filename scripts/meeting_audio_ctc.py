@@ -9,7 +9,14 @@ import math
 import re
 import unicodedata
 
-MAX_CELLS = 32_000_000
+# Wav2Vec2's feature encoder reads 400-sample frames every 320 samples. Audio
+# longer than one window goes through the model a window at a time, each with
+# acoustic context either side, and keeps only the frames it owns: the joined
+# emissions are the recording's own frame grid, so no length is refused (Rule 5).
+FRAME_SAMPLES = 400
+STRIDE_SAMPLES = 320
+WINDOW_SAMPLES = 16000 * 120 // STRIDE_SAMPLES * STRIDE_SAMPLES
+CONTEXT_SAMPLES = 16000 * 2 // STRIDE_SAMPLES * STRIDE_SAMPLES
 UK_LETTERS = set("абвгґдеєжзиіїйклмнопрстуфхцчшщьюя")
 
 
@@ -58,8 +65,6 @@ def token_spans(emissions, tokens, blank, error):
     for token in tokens:
         states.extend([token, blank])
     size = len(states)
-    if frames * size > MAX_CELLS:
-        raise error("CtcAlignmentTooLarge")
     if frames < len(tokens) + sum(a == b for a, b in zip(tokens, tokens[1:])):
         raise error("CtcAlignmentUnavailable")
     trace = bytearray(frames * size)
@@ -107,8 +112,34 @@ def word_spans(emissions, tokens, owners, words, blank, samples, error):
     return result
 
 
+def emissions_of(audio, processor, model, torch):
+    """Log-softmax CTC emissions for `audio`, one row per encoder frame."""
+    def forward(samples):
+        inputs = processor(samples, sampling_rate=16000, return_tensors="pt")
+        with torch.inference_mode():
+            logits = model(**inputs).logits[0]
+            return torch.log_softmax(logits, dim=-1).cpu().tolist()
+    if len(audio) <= WINDOW_SAMPLES:
+        return forward(audio)
+    frames = (len(audio) - FRAME_SAMPLES) // STRIDE_SAMPLES + 1
+    emissions = []
+    for start in range(0, len(audio), WINDOW_SAMPLES):
+        first = start // STRIDE_SAMPLES
+        owned = min(first + WINDOW_SAMPLES // STRIDE_SAMPLES, frames) - first
+        if owned <= 0:
+            break
+        left = max(0, start - CONTEXT_SAMPLES)
+        right = min(len(audio), start + WINDOW_SAMPLES + CONTEXT_SAMPLES)
+        rows = forward(audio[left:right])
+        offset = (start - left) // STRIDE_SAMPLES
+        if len(rows) < offset + owned:
+            raise RuntimeError("ctc window emitted fewer frames than it owns")
+        emissions.extend(rows[offset:offset + owned])
+    return emissions
+
+
 def align(audio, text, snapshot, error):
-    if not 400 <= len(audio) <= 16000 * 120:
+    if len(audio) < FRAME_SAMPLES:
         raise error("InvalidCtcAudio")
     import torch
     from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
@@ -116,8 +147,5 @@ def align(audio, text, snapshot, error):
     model = Wav2Vec2ForCTC.from_pretrained(snapshot, local_files_only=True,
         use_safetensors=True, torch_dtype=torch.float32).to("cpu").eval()
     words, tokens, owners = transcript_tokens(text, processor.tokenizer.get_vocab(), model.config.pad_token_id, error)
-    inputs = processor(audio, sampling_rate=16000, return_tensors="pt")
-    with torch.inference_mode():
-        logits = model(**inputs).logits[0]
-        emissions = torch.log_softmax(logits, dim=-1).cpu().tolist()
+    emissions = emissions_of(audio, processor, model, torch)
     return word_spans(emissions, tokens, owners, words, model.config.pad_token_id, len(audio), error)

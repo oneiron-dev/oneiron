@@ -1,19 +1,41 @@
-//! Silence removal with source-clock maps and boundary-only 90–120 second packs.
+//! Silence removal with source-clock maps and 90–120 second packs, cut at
+//! speech boundaries, and inside an utterance only when it outlasts a pack.
 
 use super::{AudioError, AudioResult, Pcm16, SourceSpan, SpeechPack, SpeechSpan};
 
 const PAD_MS: u64 = 250;
 const MIN_PACK_MS: u64 = 90_000;
 const MAX_PACK_MS: u64 = 120_000;
+/// How far before a pack's bound an utterance that outlasts it is searched
+/// for its cut.
+const CUT_SEARCH_MS: u64 = 10_000;
+/// The frame the quietest point is measured over, and the samples per
+/// millisecond of the 16 kHz recording.
+const QUIET_FRAME_MS: u64 = 20;
+const SAMPLES_PER_MS: u64 = 16;
+
+/// [`pack_speech_cut`] with every cut at the pack's bound itself.
+pub fn pack_speech(spans: &[SpeechSpan], duration_ms: u64) -> AudioResult<Vec<SpeechPack>> {
+    pack_speech_cut(spans, duration_ms, |_, hi| hi)
+}
 
 /// Keep every speech sample once. Padding meets at silence midpoints, so it
 /// neither duplicates audio nor crosses another utterance. Overlapping/touching
-/// VAD spans are indivisible. A >120s uninterrupted utterance remains intact.
+/// VAD spans are indivisible up to a pack: an uninterrupted utterance longer
+/// than 120s is split into touching pieces of at most 120s (Rule 5), each cut
+/// at `cut(lo, hi)`, a millisecond in the last [`CUT_SEARCH_MS`] before the
+/// bound (the producer's is the quietest point there). The pieces partition
+/// the utterance, so no sample is lost or repeated and no padding crosses a
+/// cut; no pack is then longer than one ASR and alignment call takes.
 ///
 /// Prefer 90–120s of padded audio. Short tails and boundary-limited short packs
-/// are unavoidable for some span sequences; never cut speech to meet a target.
-/// Padding alone never causes an `oversize_no_boundary` exception.
-pub fn pack_speech(spans: &[SpeechSpan], duration_ms: u64) -> AudioResult<Vec<SpeechPack>> {
+/// are unavoidable for some span sequences; never cut speech only to meet the
+/// 90s target. Padding alone never causes an `oversize_no_boundary` exception.
+pub(super) fn pack_speech_cut(
+    spans: &[SpeechSpan],
+    duration_ms: u64,
+    cut: impl Fn(u64, u64) -> u64,
+) -> AudioResult<Vec<SpeechPack>> {
     if duration_ms == 0 {
         return Err(AudioError::InvalidAudio);
     }
@@ -38,6 +60,25 @@ pub fn pack_speech(spans: &[SpeechSpan], duration_ms: u64) -> AudioResult<Vec<Sp
     if speech.is_empty() {
         return Err(AudioError::NoSpeech);
     }
+    let mut pieces = Vec::with_capacity(speech.len());
+    for span in speech {
+        let mut start = span.start_ms;
+        while span.end_ms - start > MAX_PACK_MS {
+            let hi = start + MAX_PACK_MS;
+            let lo = hi - CUT_SEARCH_MS;
+            let at = cut(lo, hi).clamp(lo, hi);
+            pieces.push(SpeechSpan {
+                start_ms: start,
+                end_ms: at,
+            });
+            start = at;
+        }
+        pieces.push(SpeechSpan {
+            start_ms: start,
+            end_ms: span.end_ms,
+        });
+    }
+    let speech = pieces;
     let mut padded = Vec::with_capacity(speech.len());
     for (index, span) in speech.iter().enumerate() {
         let left = index.checked_sub(1).map_or(0, |previous| {
@@ -108,6 +149,32 @@ pub(super) fn packed_audio(audio: &Pcm16, pack: &SpeechPack) -> AudioResult<Pcm1
         );
     }
     Ok(Pcm16 { samples })
+}
+
+/// The start of the quietest [`QUIET_FRAME_MS`] frame of `audio` between
+/// `lo` and `hi` milliseconds, by summed absolute amplitude; the latest on a
+/// tie, and `hi` when no whole frame fits.
+pub(super) fn quietest_ms(audio: &Pcm16, lo: u64, hi: u64) -> u64 {
+    let mut quietest = (u64::MAX, hi);
+    let mut at = lo;
+    while at + QUIET_FRAME_MS <= hi {
+        let samples = usize::try_from(at * SAMPLES_PER_MS)
+            .ok()
+            .zip(usize::try_from((at + QUIET_FRAME_MS) * SAMPLES_PER_MS).ok())
+            .and_then(|(from, to)| audio.samples.get(from..to));
+        let Some(frame) = samples else {
+            break;
+        };
+        let energy: u64 = frame
+            .iter()
+            .map(|sample| u64::from(sample.unsigned_abs()))
+            .sum();
+        if energy <= quietest.0 {
+            quietest = (energy, at);
+        }
+        at += QUIET_FRAME_MS;
+    }
+    quietest.1
 }
 
 fn sample_index(ms: u64, max: usize) -> AudioResult<usize> {

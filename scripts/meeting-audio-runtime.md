@@ -48,8 +48,17 @@ exact bytes must hash to the supplied digest and contain exactly one
 `{{TRANSCRIPT_JSON}}` placeholder. Instruction/persona text does not live in the
 engine. The declared model must return strict JSON `{"texts":[...]}` with one
 nonblank string per supplied turn and no other keys. Contiguous whole-turn groups
-are bounded by the input token budget; a single oversized turn refuses. No
-truncation or identity cleanup is reported as successful inference. The engine's
+are bounded by the input token budget, with no limit on the number of turns; a
+group whose answer reaches `max_tokens` is cleaned again as two halves, each its
+own call. A single turn past either budget still refuses. No truncation or
+identity cleanup is reported as successful inference.
+
+No recording is refused by its length or size (Rule 5). An uninterrupted
+utterance longer than a 120 s pack is cut at its quietest 20 ms in the 10 s before
+the bound. A pack's ASR output budget is 8,192 tokens or 64 per second of its
+audio, whichever is more. CTC alignment past 120 s of audio runs the model in
+120 s windows with 2 s of context either side and joins the frames each window
+owns. The engine's
 fix-don't-invent validator still checks the returned text against aligned words.
 
 ## Native calls and boundaries
