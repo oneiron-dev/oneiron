@@ -6,8 +6,10 @@ use super::store::{
 };
 use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
 use crate::code_run::{
-    CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey, encode_code_run_replay_value,
+    CodeConsentResume, CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord,
+    ExecutorStorage, ParkedWait, SelfDurableWait, SelfDurableWaitReason, SelfEffect, WaitKey,
+    code_consent_resume_evidence, encode_code_run_replay_value, verify_code_consent_consumed,
+    verify_parked_code_consent,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::session_overlay::RouteTarget;
@@ -306,7 +308,10 @@ pub(super) fn record_terminal_output(
 
 /// The run's latest terminal status. A Waiting marker the run resumed from
 /// is behind it: the reply its step's call came back with is in the record,
-/// and the run goes on from the next step.
+/// and the run goes on from the next step. For a code consent wait the
+/// resumed reply alone is not enough: it must stand on the wait's committed
+/// consumption (DOOR-079 1b), or the record is corrupt, never a wait to ask
+/// again.
 pub(super) fn load_terminal_status(
     storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
@@ -324,6 +329,7 @@ pub(super) fn load_terminal_status(
         && let Some(seq) = terminal_output_seq(&output.path)
         && has_output(record, &resumed_output_path(seq, wait.wait_id))
     {
+        verify_code_consent_resume(storage, record, seq, wait)?;
         return Ok(None);
     }
     Ok(Some(status))
@@ -382,6 +388,90 @@ pub(super) fn wait_key(record: &CodeRunReplayRecord, wait: &SelfDurableWait) -> 
         wait_id: wait.wait_id,
         generation: wait_generation(record, wait.wait_id),
     }
+}
+
+/// The wait a step's commit parks its run on, for the step writer's seal:
+/// its key, and the step's first bridge position.
+pub(super) fn parked_wait(
+    record: &CodeRunReplayRecord,
+    status: Option<&EngineExecutorStatus>,
+    step_start: usize,
+) -> Option<ParkedWait> {
+    let Some(EngineExecutorStatus::Waiting(wait)) = status else {
+        return None;
+    };
+    Some(ParkedWait {
+        key: wait_key(record, wait),
+        step_start: step_start as u64,
+    })
+}
+
+/// Checks the code consent wait `key` names, if a control row binds it,
+/// before the run parks on it (DOOR-079 1b): this run's, sealed by the step
+/// that parked, at this generation. The wait is found by its row, never by
+/// its reason or prompt; a room's run binds none.
+pub(super) fn verify_code_consent_park(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    key: &WaitKey,
+) -> EngineExecutorResult<()> {
+    if let ExecutorStorage::Canonical(vault) = storage {
+        verify_parked_code_consent(vault, record, key)?;
+    }
+    Ok(())
+}
+
+/// The consent evidence the resumed result of step `seq` carries when its
+/// wait `key` is a bound code consent wait (DOOR-079 1b): the binding, the
+/// word, the answer and the settlement, once the seal and the settlement's
+/// own delivered reply verify. `None` for any other wait.
+pub(super) fn code_consent_evidence(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    key: &WaitKey,
+    seq: u64,
+    delivered: &str,
+) -> EngineExecutorResult<Option<serde_json::Value>> {
+    let ExecutorStorage::Canonical(vault) = storage else {
+        return Ok(None);
+    };
+    let path = resumed_output_path(seq, key.wait_id);
+    let resume = CodeConsentResume {
+        record,
+        key: *key,
+        step_seq: seq,
+        resumed_path: &path,
+    };
+    Ok(code_consent_resume_evidence(vault, &resume, delivered)?)
+}
+
+/// Verifies that the reply step `seq` resumed with stands on its code
+/// consent wait's committed consumption, when a control row binds `wait`
+/// (DOOR-079 1b): the matching settlement, sealed step, generation and
+/// result. The marker's resume is the wait's latest, so the run resumed at
+/// the generation before the record's count of it.
+pub(super) fn verify_code_consent_resume(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    seq: u64,
+    wait: &SelfDurableWait,
+) -> EngineExecutorResult<()> {
+    let ExecutorStorage::Canonical(vault) = storage else {
+        return Ok(());
+    };
+    let path = resumed_output_path(seq, wait.wait_id);
+    let key = WaitKey {
+        run: record.run_id,
+        wait_id: wait.wait_id,
+        generation: wait_generation(record, wait.wait_id).saturating_sub(1),
+    };
+    let resume = CodeConsentResume {
+        record,
+        key,
+        step_seq: seq,
+        resumed_path: &path,
+    };
+    Ok(verify_code_consent_consumed(vault, &resume)?)
 }
 
 pub(super) fn self_effect_from_str(value: &str) -> EngineExecutorResult<SelfEffect> {
