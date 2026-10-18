@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 848 code-mode rows (825 host rows, 23 run rows), 2866 declarations.
-// Replies: 760 fully typed, 84 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 863 code-mode rows (840 host rows, 23 run rows), 2914 declarations.
+// Replies: 773 fully typed, 86 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -760,6 +760,45 @@ declare namespace Sdk {
   type SkillOptimizeAxisView = { axis: string; before: number; after: number };
   type SkillOptimizeVerdictView = { id: EntityId; proposal: EntityId; skill: EntityId; disposition: string; accepted: boolean; before: number; after: number; goal_axes: SkillOptimizeAxisView[]; goal_revision: string; judge_revision?: string | null; cycle: string; held_out_receipts: string[]; held_out_count: number; held_out_digest: string; held_out_truncated: boolean; proposal_digest: string; target_digest: string; proposal_tier?: string | null; at: number };
   type SkillOptimizeResultView = { job_ref?: string | null; state?: string | null; kind?: string | null; last_error?: string | null; skill?: EntityId | null; proposal?: EntityId | null; proposal_lifecycle?: SkillLibraryLifecycle | null; incumbent_lifecycle?: SkillLibraryLifecycle | null; governance?: SkillGovernanceView | null; verdict?: SkillOptimizeVerdictView | null; verdicts: SkillOptimizeVerdictView[] };
+  type GoalInterviewTurns = { question: EntityId; answer: EntityId; draft: EntityId; confirmation: EntityId };
+  type GoalAxis = { name: string; measure: string; bound: string };
+  type GoalPreference = { prefer: string; over: string; reason: string };
+  type GoalExplorationBudget = { max_spend: number; exploration_slice: number; unit: LeaseUnit; human_minutes: number };
+  type GoalRecord = { goal: string; why: string; primary_axes: GoalAxis[]; floor_axes: GoalAxis[]; cost_axes: GoalAxis[]; preferences: GoalPreference[]; exploration_budget: GoalExplorationBudget };
+  type ProjectGoalIntakeCompleteRequest = { project_ref: EntityId; attempt_ref: EntityId; turns: GoalInterviewTurns; record: GoalRecord };
+  type ProjectGoalIntakeReceipt = { project_ref: EntityId; goal_claim: EntityId; record: GoalRecord };
+  type ProjectRefRequest = { project_ref: string };
+  type ProjectGoalView = { project_ref: EntityId; goal_claim?: EntityId | null; record?: GoalRecord | null };
+  type SkillOptimizeProposeRequest = { skill: EntityId; expected_version: string; attempt_ref: EntityId; desc: string; rationale: string };
+  type SkillOptimizeProposalReceipt = { skill: EntityId; proposal: EntityId };
+  type SkillOptimizeMeasureRequest = { proposal: EntityId; pulls_per_axis?: number | null };
+  type AxisScores = { before: number; after: number };
+  type SkillEditPreflight = { passed: boolean; goal_revision: string; offline: [string, AxisScores][]; honesty: AxisScores };
+  type ConfidenceInterval = { lower: number; upper: number };
+  type OnlineAxisOutcome = "candidate_better" | "incumbent_better" | "inconclusive";
+  type OnlineAxisMeasurement = { axis: string; before_pulls: number; after_pulls: number; before: ConfidenceInterval; after: ConfidenceInterval; human_minutes: AxisScores; before_timed: number; after_timed: number; outcome: OnlineAxisOutcome };
+  type GoalAxisReport = { held_out_receipts: string[]; offline: [string, AxisScores][]; online: OnlineAxisMeasurement[]; human_minutes?: AxisScores | null };
+  type SkillOptimizeMeasurement = { preflight: SkillEditPreflight; report?: GoalAxisReport | null };
+  type SkillOptimizeProposalRequest = { proposal: EntityId };
+  type SkillOptimizeGoalRequest = { skill: EntityId };
+  type GoalAxisKind = "primary" | "floor" | "cost";
+  type GoalAxisSpec = { name: string; kind: GoalAxisKind };
+  type SkillOptimizeGoalView = { goal_id: EntityId; goal_revision: string; axes: GoalAxisSpec[]; project?: EntityId | null; goal_claim?: EntityId | null };
+  type SkillOptimizeGoalBindRequest = { skill: EntityId; project?: EntityId | null };
+  type SkillOptimizeGoalRevision = { goal_revision: string };
+  type TradeoffChoice = "approve" | "reject";
+  type TradeoffRule = { gains: string[]; losses: string[]; choice: TradeoffChoice };
+  type DecisionBand = { low: number; high: number };
+  type SkillTradeoffPreferences = { revision: EntityId; responsible: EntityId; rules: TradeoffRule[]; learned: TradeoffRule[]; jev_band?: DecisionBand | null };
+  type SkillOptimizePreferencesSetRequest = { skill: EntityId; rules: TradeoffRule[]; jev_band?: DecisionBand | null };
+  type TradeoffRole = { author: EntityId } | { board: { project: EntityId; people: EntityId[] } } | { vault_owner: EntityId[] };
+  type GoalAxisScore = { kind: GoalAxisKind; before: number; after: number };
+  type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
+  type SkillTradeoffAsk = { pending: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
+  type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk };
+  type SkillOptimizeTradeoffPickRequest = { proposal: EntityId; question_digest: string; choice: TradeoffChoice };
   type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
@@ -1333,8 +1372,6 @@ declare namespace Sdk {
   type ImageBox = { top: number; bottom: number; left: number; right: number };
   type ImagePoint = { x: number; y: number };
   type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
-  type DecisionBand = { low: number; high: number };
   type EvidenceVersion = { id: string; body_hash: number[] };
   type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
   type StopCause = "done" | "deadline" | "provider_failure";
@@ -1531,6 +1568,19 @@ declare namespace Sdk {
   type LensProposalState = "proposed" | "active";
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
+  type LensSelectionRange = { start: number; end: number; version?: number[] | null };
+  type LensSelectRequest = { cardId: string; atomId: string; handle: string; span?: LensSelectionRange | null };
+  type LensReadReach = "claim_set" | "entity_set" | "timeline" | "query_result";
+  type LensSelectedSpan = { start: number; end: number; version: number[]; startCursor: number[]; endCursor: number[] };
+  type LensSelection = { selectionRef: string; cardId: string; atomId: string; reach: LensReadReach; targetKind: LensBackingTargetKind; shortRef: string; span?: LensSelectedSpan | null };
+  type LensSelectionResolveRequest = { cardId: string; selectionRef: string };
+  type LensSelectionResolved = { selection: LensSelection; source: InspectionResolved };
+  type GeneratedUiStatePatch = { op: "add"; path: string; value: SelfUiStateValue } | { op: "replace"; path: string; value: SelfUiStateValue } | { op: "remove"; path: string };
+  type GeneratedUiActionEvent = { cardId: string; elementId: string; actionId: string; patch?: GeneratedUiStatePatch[]; occurredAt: number };
+  type GeneratedUiResultSetSelection = { mode: "explicit"; row_ids: string[] } | { mode: "all_within_filter" };
+  type GeneratedUiResultSetActionEvent = { action: GeneratedUiActionEvent; selection: GeneratedUiResultSetSelection };
+  type LensResultSetActionRequest = { event: GeneratedUiResultSetActionEvent; selected: string[]; idempotencyKey: string };
+  type LensResultSetActionResult = { outcome: unknown; readReceipt: ScopedReadReceipt };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
@@ -2031,8 +2081,6 @@ declare namespace Sdk {
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
   type ProjectRosterWriteOutcome = { installed: boolean; invitations: JoinOutcome[] };
-  type ProjectRefRequest = { project_ref: string };
-  type GoalPreference = { prefer: string; over: string; reason: string };
   type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number };
   type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
   type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
@@ -2868,7 +2916,7 @@ declare namespace Sdk {
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
-  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; models: string[]; patternSkill?: string | null; replay: boolean };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
@@ -4152,6 +4200,14 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
+    /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
+    resolve(input: Sdk.LensSelectionResolveRequest): Promise<Sdk.LensSelectionResolved | StoredResult>;
+    result_set: {
+      /** Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate. */
+      action(input: Sdk.LensResultSetActionRequest): Promise<Sdk.LensResultSetActionResult | StoredResult>;
+    };
+    /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
+    select(input: Sdk.LensSelectRequest): Promise<Sdk.LensSelection | StoredResult>;
   };
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */
@@ -4366,8 +4422,13 @@ declare const vault: Sdk.VaultHost & {
     goal: {
       /** The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry. */
       dismiss(input: Sdk.ProjectGoalDismissRequest): Promise<Sdk.ProjectGoalDismissReceipt | StoredResult>;
+      /** Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it. */
+      get(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalView | StoredResult>;
       /** What a project's goal-intake interview starts from, for a member of its home room. */
-      intake(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalInterviewContext | StoredResult>;
+      intake: ((input: Sdk.ProjectRefRequest) => Promise<Sdk.ProjectGoalInterviewContext | StoredResult>) & {
+        /** Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal. */
+        complete(input: Sdk.ProjectGoalIntakeCompleteRequest): Promise<Sdk.ProjectGoalIntakeReceipt | StoredResult>;
+      };
       /** The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first. */
       revisions(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalRevisionProposal[] | StoredResult>;
     };
@@ -4772,10 +4833,35 @@ declare const vault: Sdk.VaultHost & {
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
     optimize: {
+      /** Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks. */
+      admit(input: Sdk.SkillOptimizeProposalRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      goal: {
+        /** Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision. */
+        bind(input: Sdk.SkillOptimizeGoalBindRequest): Promise<Sdk.SkillOptimizeGoalRevision | StoredResult>;
+        /** Reads the optimizer goal identity, effective axes, revision and joined project goal claim. */
+        get(input: Sdk.SkillOptimizeGoalRequest): Promise<Sdk.SkillOptimizeGoalView | StoredResult>;
+      };
+      /** Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms. */
+      measure(input: Sdk.SkillOptimizeMeasureRequest): Promise<Sdk.SkillOptimizeMeasurement | StoredResult>;
+      preferences: {
+        /** Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority. */
+        get(input: Sdk.SkillOptimizeGoalRequest): Promise<Sdk.SkillTradeoffPreferences | null | StoredResult>;
+        /** The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp. */
+        set(input: Sdk.SkillOptimizePreferencesSetRequest): Promise<Sdk.SkillOptimizeGoalRevision | StoredResult>;
+      };
+      /** Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules. */
+      propose(input: Sdk.SkillOptimizeProposeRequest): Promise<Sdk.SkillOptimizeProposalReceipt | StoredResult>;
       /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
       result(input: Sdk.SkillOptimizeResultRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      /** Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it. */
+      score(input: Sdk.SkillOptimizeProposalRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
       /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
       start(input: Sdk.SkillOptimizeStartRequest): Promise<Sdk.SkillOptimizeStartReceipt | StoredResult>;
+      /** Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence. */
+      tradeoff_asks: ((input: Sdk.EmptyRequest) => Promise<Sdk.SkillOptimizeTradeoffAskView[] | StoredResult>) & {
+        /** Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant. */
+        pick(input: Sdk.SkillOptimizeTradeoffPickRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      };
     };
     outcomes: {
       /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */

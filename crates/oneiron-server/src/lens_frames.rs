@@ -37,7 +37,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use oneiron::EntityId;
 use oneiron::claim::CallerLocality;
 use oneiron::lens::{
-    GeneratedUiRender, GeneratedUiStateSnapshot, LensHostBackingRef, LensRenderFrame, LensRenderId,
+    GeneratedUiRender, GeneratedUiStateSnapshot, LensHostBackingRef, LensReadHandle,
+    LensRenderFrame, LensRenderId,
 };
 use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
 
@@ -60,6 +61,7 @@ pub(crate) struct HeldCard {
     /// The current `$state`, apart from `render.state` (the declared schema
     /// and initial values). Its lock serializes the card's events.
     pub(crate) state: tokio::sync::Mutex<GeneratedUiStateSnapshot>,
+    selections: Mutex<BTreeMap<String, LensReadHandle>>,
 }
 
 /// Who owns a held card's supersession: the run that created it and the
@@ -243,6 +245,7 @@ impl LensFrameStore {
             frame,
             render,
             state: tokio::sync::Mutex::new(state),
+            selections: Mutex::new(BTreeMap::new()),
         });
         let mut frames = self.lock();
         // A card id names one render, so a held key is this card again.
@@ -278,6 +281,62 @@ impl LensFrameStore {
             .cards
             .get(&key)
             .map(|entry| Arc::clone(&entry.card))
+    }
+
+    /// Retains a proved handle beside its frame, charged to the same retained
+    /// line. Re-selecting the same reach reuses its locator and charge.
+    pub(crate) fn remember_selection(
+        &self,
+        auth: &CoreAuth,
+        held: &Arc<HeldCard>,
+        selected: LensReadHandle,
+    ) -> MemoryResult<Option<String>> {
+        let encoded = serde_json::to_vec(&selected).map_err(|_| {
+            MemoryError::new(MEMORY_CODE_INTERNAL, "selection encoding failed", &[])
+        })?;
+        let selection_ref = blake3::hash(&encoded).to_hex().to_string();
+        let key = FrameKey::new(auth, held.render.card_id.clone());
+        let mut frames = self.lock();
+        let Some((arrival, base, old)) = frames.cards.get(&key)
+            .filter(|entry| Arc::ptr_eq(&entry.card, held))
+            .map(|entry| (entry.arrival, entry.base, entry.bytes))
+        else {
+            return Ok(None);
+        };
+        let mut selections = held.selections.lock().unwrap_or_else(PoisonError::into_inner);
+        if selections.contains_key(&selection_ref) {
+            return Ok(Some(selection_ref));
+        }
+        let extra = encoded.len() + selection_ref.len() + std::mem::size_of::<LensReadHandle>();
+        frames.bytes -= old;
+        if !frames.fit(&self.line, &self.questions, old + extra, Some(arrival)) {
+            frames.bytes += old;
+            frames.evict(arrival);
+            frames.settle(&self.line, &self.questions);
+            return Ok(None);
+        }
+        frames.bytes += old + extra;
+        if let Some(entry) = frames.cards.get_mut(&key) {
+            entry.base = base + extra;
+            entry.bytes = old + extra;
+        }
+        selections.insert(selection_ref.clone(), selected);
+        Ok(Some(selection_ref))
+    }
+
+    /// Only a handle this caller selected on this still-held card. The caller
+    /// must re-prove the returned handle under its current credential before use.
+    pub(crate) fn selection(
+        &self,
+        auth: &CoreAuth,
+        held: &Arc<HeldCard>,
+        selection_ref: &str,
+    ) -> Option<LensReadHandle> {
+        let key = FrameKey::new(auth, held.render.card_id.clone());
+        let frames = self.lock();
+        frames.cards.get(&key).filter(|entry| Arc::ptr_eq(&entry.card, held))?;
+        held.selections.lock().unwrap_or_else(PoisonError::into_inner)
+            .get(selection_ref).cloned()
     }
 
     /// The run that created `held`, which `auth`'s caller holds, by the

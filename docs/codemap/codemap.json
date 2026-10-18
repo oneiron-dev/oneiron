@@ -23436,7 +23436,7 @@
      "path": "src/entity_doc/doc_actor.rs",
      "purpose": "Whose act an entity-document row records, and the erase that forgets it (FIX 3520)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2
      }
@@ -29181,7 +29181,7 @@
      "purpose": "Write phase of the render frame: action validation and result-set dispatch",
      "surface": {
       "enum": 3,
-      "fn": 12,
+      "fn": 14,
       "struct": 3
      }
     },
@@ -29254,7 +29254,7 @@
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
       "crate-vis": 1,
-      "re-export": 19
+      "re-export": 20
      }
     },
     {
@@ -29340,6 +29340,26 @@
       "const": 1,
       "fn": 1,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LensResultSetActionRequest",
+      "LensResultSetActionResult",
+      "LensSelectRequest",
+      "LensSelectedSpan",
+      "LensSelection",
+      "LensSelectionRange",
+      "LensSelectionResolveRequest",
+      "LensSelectionResolved"
+     ],
+     "path": "src/lens/selection.rs",
+     "purpose": "Frame-bound selection doors",
+     "surface": {
+      "fn": 4,
+      "struct": 8
      }
     },
     {
@@ -32592,6 +32612,7 @@
      "path": "src/memory/inspection.rs",
      "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -46244,7 +46265,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 5,
-      "crate-vis": 12,
+      "crate-vis": 15,
       "re-export": 11
      }
     },
@@ -46284,7 +46305,7 @@
      "path": "src/skill_optimize/gate/decision.rs",
      "purpose": "The gate itself: the entry points, and the transaction that rules",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3
      }
     },
@@ -46324,7 +46345,7 @@
      "path": "src/skill_optimize/gate/live.rs",
      "purpose": "Live goal-axis measurement of a proposal (ARCH-0053: \"Primary axes are measured online.\" \"Offline axes run…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -46358,7 +46379,7 @@
      "path": "src/skill_optimize/gate/preflight.rs",
      "purpose": "A proposal's offline floors, judged on the held-out set before any live run is routed to it (ARCH-0053…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -46452,7 +46473,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SkillOptimizeOutcome"
@@ -46461,7 +46482,7 @@
      "purpose": "One attempt end to end: rank, read, ask the author, re-check the target under the write txn, land one gated…",
      "surface": {
       "const": 8,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 3,
       "struct": 1
      }
@@ -46527,7 +46548,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "mod": 2,
       "re-export": 18
      }
@@ -51611,7 +51632,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 59,
+      "re-export": 60,
       "struct": 36
      }
     },
@@ -52048,7 +52069,34 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 843
+      "fn": 858
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ProjectGoalIntakeCompleteRequest",
+      "ProjectGoalIntakeReceipt",
+      "ProjectGoalView",
+      "SkillOptimizeGoalBindRequest",
+      "SkillOptimizeGoalRequest",
+      "SkillOptimizeGoalRevision",
+      "SkillOptimizeGoalView",
+      "SkillOptimizeMeasureRequest",
+      "SkillOptimizeMeasurement",
+      "SkillOptimizePreferencesSetRequest",
+      "SkillOptimizeProposalReceipt",
+      "SkillOptimizeProposalRequest",
+      "SkillOptimizeProposeRequest",
+      "SkillOptimizeTradeoffAskView",
+      "SkillOptimizeTradeoffPickRequest"
+     ],
+     "path": "src/task_verb/sdk_goal_optimize.rs",
+     "purpose": "Full witnessed goal intake and explicit optimizer proposal/admission doors",
+     "surface": {
+      "fn": 12,
+      "struct": 15
      }
     },
     {
@@ -53341,7 +53389,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -53361,7 +53409,7 @@
      "path": "src/team/run.rs",
      "purpose": "OF-540: a pattern-skill run's own team, from code mode",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 3,
       "struct": 5
      }
@@ -55820,7 +55868,7 @@
      "purpose": "Room-backed completion of a loaded goal-intake skill interview",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -58760,7 +58808,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 51,
+     "files": 52,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59341,7 +59389,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 175,
+     "files": 176,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59509,9 +59557,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 197,
+   "over_bar": 198,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3631,
+   "source_files": 3633,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68044,7 +68092,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 812
+      "fn": 827
      }
     },
     {
@@ -69093,7 +69141,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 813
+      "fn": 828
      }
     },
     {
@@ -71980,13 +72028,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/action_routes.rs",
      "purpose": "OF-181: the app's one action layer over HTTP, for both its callers",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -72493,6 +72541,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/goal_optimize_doors.rs",
+     "purpose": "Witnessed goal intake and goal-vector optimizer doors under the caller's owner proof",
+     "surface": {
+      "crate-vis": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/graduation_doors.rs",
      "purpose": "Consent-graduation host doors, under the consent lifecycle's owner proof",
      "surface": {
@@ -72536,7 +72594,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 137
+      "crate-vis": 139
      }
     },
     {
@@ -72567,6 +72625,16 @@
      "purpose": "The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`…",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/lens_selection_doors.rs",
+     "purpose": "Frame-bound selections and result-set actions on the caller's held card",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -72890,7 +72958,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/skill_execution_doors.rs",
@@ -77149,7 +77217,7 @@
      "path": "src/lens_frames.rs",
      "purpose": "OF-181: the lens frames this server holds for the cards it rendered",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -80386,7 +80454,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 401,
+     "files": 403,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80813,9 +80881,9 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 747,
+   "source_files": 749,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81208,6 +81276,7 @@
       "AuthorityHandoffAlarm",
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
+      "AxisScores",
       "B2bExemption",
       "BandMode",
       "BatchInput",
@@ -81559,6 +81628,7 @@
       "ConcernOutcomeRequest",
       "ConditionalExemptionEvidence",
       "ConfidenceBand",
+      "ConfidenceInterval",
       "ConfirmationReceipt",
       "Conflict",
       "ConflictKind",
@@ -82028,6 +82098,7 @@
       "GeneratedClaimInput",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
+      "GeneratedUiActionEvent",
       "GeneratedUiActionTier",
       "GeneratedUiArchiveReason",
       "GeneratedUiCard",
@@ -82036,11 +82107,22 @@
       "GeneratedUiCatalog",
       "GeneratedUiNode",
       "GeneratedUiRender",
+      "GeneratedUiResultSetActionEvent",
       "GeneratedUiResultSetAtom",
       "GeneratedUiResultSetRow",
       "GeneratedUiResultSetSelectAll",
+      "GeneratedUiResultSetSelection",
+      "GeneratedUiStatePatch",
       "GeometryProps",
+      "GoalAxis",
+      "GoalAxisKind",
+      "GoalAxisReport",
+      "GoalAxisScore",
+      "GoalAxisSpec",
+      "GoalExplorationBudget",
+      "GoalInterviewTurns",
       "GoalPreference",
+      "GoalRecord",
       "GraduationAnswer",
       "GraduationAnswerReceipt",
       "GraduationAnswerRequest",
@@ -82186,6 +82268,7 @@
       "InvitationSlip",
       "InvitationSlipRequest",
       "IssueCategory",
+      "JevTradeoffVerdict",
       "JoinCause",
       "JoinDecision",
       "JoinDecisionView",
@@ -82274,6 +82357,15 @@
       "LensProposalReceipt",
       "LensProposalState",
       "LensProposeRequest",
+      "LensReadReach",
+      "LensResultSetActionRequest",
+      "LensResultSetActionResult",
+      "LensSelectRequest",
+      "LensSelectedSpan",
+      "LensSelection",
+      "LensSelectionRange",
+      "LensSelectionResolveRequest",
+      "LensSelectionResolved",
       "LensSlot",
       "LensSlotDecision",
       "LensStatus",
@@ -82596,6 +82688,8 @@
       "OfficeBodyView",
       "OfficeFormat",
       "OmittedKnowledge",
+      "OnlineAxisMeasurement",
+      "OnlineAxisOutcome",
       "OpaqueChange",
       "OpenInput",
       "OpenSpendLeaseRequest",
@@ -82756,9 +82850,12 @@
       "ProjectGoalDismissReceipt",
       "ProjectGoalDismissRequest",
       "ProjectGoalDraft",
+      "ProjectGoalIntakeCompleteRequest",
+      "ProjectGoalIntakeReceipt",
       "ProjectGoalInterviewContext",
       "ProjectGoalRecord",
       "ProjectGoalRevisionProposal",
+      "ProjectGoalView",
       "ProjectMintReceipt",
       "ProjectParentWitness",
       "ProjectProposalCard",
@@ -83333,6 +83430,7 @@
       "SkillContribution",
       "SkillConvertReceipt",
       "SkillConvertRequest",
+      "SkillEditPreflight",
       "SkillForkLineage",
       "SkillForkRequest",
       "SkillGovernanceSetRequest",
@@ -83356,10 +83454,22 @@
       "SkillLibraryScan",
       "SkillLibraryView",
       "SkillOptimizeAxisView",
+      "SkillOptimizeGoalBindRequest",
+      "SkillOptimizeGoalRequest",
+      "SkillOptimizeGoalRevision",
+      "SkillOptimizeGoalView",
+      "SkillOptimizeMeasureRequest",
+      "SkillOptimizeMeasurement",
+      "SkillOptimizePreferencesSetRequest",
+      "SkillOptimizeProposalReceipt",
+      "SkillOptimizeProposalRequest",
+      "SkillOptimizeProposeRequest",
       "SkillOptimizeResultRequest",
       "SkillOptimizeResultView",
       "SkillOptimizeStartReceipt",
       "SkillOptimizeStartRequest",
+      "SkillOptimizeTradeoffAskView",
+      "SkillOptimizeTradeoffPickRequest",
       "SkillOptimizeVerdictView",
       "SkillPackCreditRequest",
       "SkillPackOutcomeProjection",
@@ -83374,6 +83484,9 @@
       "SkillSourceEvidence",
       "SkillSourceFile",
       "SkillStaleView",
+      "SkillTradeoffAsk",
+      "SkillTradeoffPreferences",
+      "SkillTradeoffQuestion",
       "SlateDataClass",
       "SlateDisposition",
       "SlateDraftRow",
@@ -83617,6 +83730,9 @@
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
+      "TradeoffChoice",
+      "TradeoffRole",
+      "TradeoffRule",
       "TrainingOffer",
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
@@ -83799,8 +83915,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 688,
-      "struct": 2098
+      "enum": 695,
+      "struct": 2139
      }
     },
     {
