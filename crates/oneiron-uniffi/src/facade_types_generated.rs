@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 442 facade rows, 1622 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 406.
+// UniFFI census: 443 facade rows, 1629 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 407.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -21384,6 +21384,109 @@ pub struct RecordLinks {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+}
+
+/// `oneiron::memory::search_hybrid::HybridPprQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridPprQuery {
+    #[serde(rename = "seeds")]
+    pub seeds: Vec<String>,
+    #[serde(rename = "depth")]
+    pub depth: u32,
+}
+
+/// `oneiron::memory::search_hybrid::HybridTemporalQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridTemporalQuery {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalBlendWeights {
+    #[serde(rename = "recency")]
+    pub recency: f64,
+    #[serde(rename = "salience")]
+    pub salience: f64,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "gravity")]
+    pub gravity: f64,
+}
+
+/// `oneiron::memory::search_hybrid::HybridRankReplay`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridRankReplay {
+    #[serde(rename = "now")]
+    pub now: u64,
+    #[serde(rename = "blend_weights")]
+    pub blend_weights: RetrievalBlendWeights,
+}
+
+/// `oneiron::memory::search_hybrid::HybridSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridSearchRequest {
+    #[serde(rename = "query", default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(
+        rename = "query_vector",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_vector: Option<Vec<f64>>,
+    #[serde(
+        rename = "phonetic_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub phonetic_codes: Option<Vec<String>>,
+    #[serde(rename = "ppr", default, skip_serializing_if = "Option::is_none")]
+    pub ppr: Option<HybridPprQuery>,
+    #[serde(rename = "temporal", default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<HybridTemporalQuery>,
+    #[serde(rename = "replay", default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<HybridRankReplay>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::memory::search_hybrid::HybridSearchHit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HybridSearchHit {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(
+        rename = "access_factor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub access_factor: Option<f64>,
+    #[serde(rename = "components")]
+    pub components: Vec<RetrievalScoreComponent>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `HybridSearchHitList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultHybridSearchHitList {
+    #[serde(rename = "value")]
+    pub value: Vec<HybridSearchHit>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::blob_artifact::create::ArtifactCreateRequest`.

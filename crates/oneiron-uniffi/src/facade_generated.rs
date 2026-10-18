@@ -1801,6 +1801,11 @@ export_facade! {
     let output = client.vault_refs_links(&input)?;
     crate::codec::lift_record("vault.refs.links", &output)
 };
+"vault.search.hybrid" => fn vault_search_hybrid(&self, input: HybridSearchRequest) -> ScopedReadResultHybridSearchHitList = |client| {
+    let input: oneiron::memory::HybridSearchRequest = crate::codec::lower_record("vault.search.hybrid", input)?;
+    let output = client.vault_search_hybrid(&input)?;
+    crate::codec::lift_record("vault.search.hybrid", &output)
+};
 "vault.search.bm25" => fn vault_search_bm25(&self, query: String, limit: u32) -> LexicalHits = |client| {
     let input: oneiron::task_verb::sdk::QueryBm25Request = (query, limit).lower()?;
     let output = client.vault_search_bm25(&input)?;
