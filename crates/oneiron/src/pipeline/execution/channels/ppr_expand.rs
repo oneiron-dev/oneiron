@@ -102,7 +102,7 @@ impl PipelineBuilder<'_> {
             // A room's run takes the plain walk over its union: communities
             // are computed over base and cached by base graph versions, so the
             // room's run keeps no community prior.
-            let ppr = if self.vault.config.ppr_community.beta == 0.0 || self.read.is_union() {
+            let ppr = if self.ppr_community.beta == 0.0 || self.read.is_union() {
                 // Exact legacy path: no evidence/cache reads or new key namespace.
                 crate::ppr::ppr_query_in_txn_with_diagnostics(
                     &self.read,
@@ -110,7 +110,7 @@ impl PipelineBuilder<'_> {
                     &seeds,
                     *depth,
                     PPR_DAMPING,
-                    self.vault.config.ppr_vad_alpha,
+                    self.ppr_vad_alpha,
                     crate::ppr::SeedWeighting::Uniform,
                 )?
             } else {
@@ -124,6 +124,9 @@ impl PipelineBuilder<'_> {
                     result_limit: self.result_limit,
                     session_usage: self.community_session_usage.unwrap_or(&empty_usage),
                 };
+                let mut config = self.vault.config.clone();
+                config.ppr_vad_alpha = self.ppr_vad_alpha;
+                config.ppr_community = self.ppr_community.clone();
                 let (result, diversity) = crate::ppr::ppr_expand_in_txn_with_community_diagnostics(
                     &self.vault.store,
                     rtxn,
@@ -132,7 +135,7 @@ impl PipelineBuilder<'_> {
                         depth: *depth,
                         teleport_alpha: PPR_DAMPING,
                         weighting: crate::ppr::SeedWeighting::Uniform,
-                        config: &self.vault.config,
+                        config: &config,
                         context: &context,
                     },
                 )?;
