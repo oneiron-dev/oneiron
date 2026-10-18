@@ -10,11 +10,13 @@
 //! same lease honours the handle again.
 //!
 //! A handle is valid while its runner holds the same lease: no wall-clock
-//! TTL. One credential attaches per lease generation and none rebinds it. A
-//! run leaves at settlement, unless it parks on a durable wait, which keeps
-//! its lease; a parked run whose lease then goes (a cancel) leaves at the
-//! next registration or housekeeping pass. A run that leaves closes the live
-//! lens cards it created ([`crate::lens_frames`]); a parked run keeps them.
+//! TTL. One credential is attached per lease generation. Another credential
+//! of the run's own agent takes it over only when its attach asks to rebind,
+//! and the old handle then stops resolving. A run leaves at settlement,
+//! unless it parks on a durable wait, which keeps its lease; a parked run
+//! whose lease then goes (a cancel) leaves at the next registration or
+//! housekeeping pass. A run that leaves closes the live lens cards it
+//! created ([`crate::lens_frames`]); a parked run keeps them.
 //! An unattached run has no handle, and a handle never falls back to an
 //! actor's latest run or to plain dispatch.
 //!
@@ -48,7 +50,8 @@ pub(crate) const LIVE_RUN_UNAVAILABLE: &str = "live_run_unavailable";
 pub(crate) const LIVE_RUN_STALE: &str = "live_run_stale";
 /// The run is mid-entry or mid-action.
 pub(crate) const CODE_RUN_BUSY: &str = "code_run_busy";
-/// Another credential is attached to this lease generation.
+/// Another credential is attached to this lease generation, and the attach
+/// did not ask to rebind.
 pub(crate) const LIVE_RUN_ATTACHED: &str = "live_run_attached";
 
 /// The version tag every handle opens with.
@@ -123,7 +126,9 @@ impl LiveRunRefusal {
             }
             Self::Stale => "Attach again once the run holds its next lease.",
             Self::Busy => "Retry once the current entry or action of the run ends.",
-            Self::Attached => "Act with the credential attached to this lease.",
+            Self::Attached => {
+                "Act with the credential attached to this lease, or attach with {\"rebind\": true} to take the run over."
+            }
         }
     }
 }
@@ -308,12 +313,15 @@ impl LiveRuns {
 
     /// Attaches the caller of `held` to its run and answers its handle.
     /// Under the run's guard its lease must still hold. The credential
-    /// attached already gets the same handle again; another is refused.
-    /// Blocking.
+    /// attached already gets the same handle again. Another is refused,
+    /// unless it asks to `rebind` and [`may_rebind`] lets it take the
+    /// attachment over: it gets a fresh handle, and the old one stops
+    /// resolving. Blocking.
     pub(crate) fn attach(
         &self,
         vault: &Vault,
         held: AttachingLiveRun,
+        rebind: bool,
     ) -> oneiron::Result<Result<String, LiveRunRefusal>> {
         let AttachingLiveRun {
             entry,
@@ -329,8 +337,10 @@ impl LiveRuns {
             Some(binding) if binding.is_for_credential(&caller.credential) => {
                 return Ok(Ok(handle_text(run, binding)));
             }
-            Some(_) => return Ok(Err(LiveRunRefusal::Attached)),
-            None => {}
+            Some(_) if !(rebind && may_rebind(&entry, caller)) => {
+                return Ok(Err(LiveRunRefusal::Attached));
+            }
+            _ => {}
         }
         // A run whose first entry has not saved its record yet is mid-start.
         let Some(binding) =
@@ -484,6 +494,14 @@ fn is_actor(actor: WriteActor, caller: WriteActor) -> bool {
 /// Whether `caller` is the agent `actor` a run runs as.
 fn is_agent(actor: WriteActor, caller: WriteActor) -> bool {
     caller.actor_class() == EdgeActorClass::Agent && is_actor(actor, caller)
+}
+
+/// Whether `caller`, asking to rebind, may take `entry`'s attachment over
+/// from the credential attached to it (FIX 2651): any credential paired to
+/// the run's own agent may, as any of them may attach first. The one policy
+/// point for who rebinds.
+fn may_rebind(entry: &LiveRunEntry, caller: LiveRunCaller) -> bool {
+    is_agent(entry.actor, caller.actor)
 }
 
 /// `lr1.<run hex>.<issued hex>`: the run is only a lookup hint, and the

@@ -83,6 +83,16 @@ pub(crate) struct ActionRequest {
     pub(crate) live_run: Option<String>,
 }
 
+/// An attach's optional body.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct AttachRequest {
+    /// Take the run's attachment over from another credential of its own
+    /// agent (FIX 2651).
+    #[serde(default)]
+    rebind: bool,
+}
+
 async fn list(auth: CoreAuth) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     let actions: Vec<_> = app()?.definitions().collect();
@@ -397,13 +407,21 @@ where
 /// to the live run `run` and answers `{"liveRun": <handle>}`, to this caller
 /// only. It needs the verified credential and write admission an action
 /// needs, from the run's own agent, while the run's runner holds its lease.
+/// An optional `{"rebind": true}` body takes the attachment over from
+/// another credential of that agent (FIX 2651).
 async fn attach_live_run(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     Path(run): Path<String>,
+    payload: Result<Option<Json<AttachRequest>>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, FacadeApiError> {
     auth.require(CoreScope::Write)?;
     facade_actor(&auth)?;
+    let rebind = payload
+        .transpose()
+        .map(facade_json)
+        .transpose()?
+        .is_some_and(|request| request.rebind);
     let bound = action_bound(&server, &auth)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "a live run attaches the credential's own read key",
@@ -421,7 +439,7 @@ async fn attach_live_run(
         .map_err(refused)?;
     let runs = Arc::clone(&server.live_runs);
     let vault = Arc::clone(&server.vault);
-    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, attaching))
+    let handle = tokio::task::spawn_blocking(move || runs.attach(&vault, attaching, rebind))
         .await
         .map_err(|_| internal())?
         .map_err(engine)?
