@@ -779,6 +779,12 @@ class Oneiron:
         def upsert(self, spec):
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
             return json.loads(_translate(lambda: self._client.vault_claims_upsert(json.dumps(spec))))
+        def review(self, spec):
+            """The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."""
+            return json.loads(_translate(lambda: self._client.vault_claims_review(json.dumps(spec))))
+        def settle(self, spec):
+            """The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."""
+            return json.loads(_translate(lambda: self._client.vault_claims_settle(json.dumps(spec))))
         def retract(self, input: dict[str, Any]) -> Any:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
             return json.loads(_translate(lambda: self._client.vault_claims_retract(json.dumps(input, allow_nan=False))))
@@ -1904,6 +1910,15 @@ class Oneiron:
         def freebusy(self, spec):
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
             return json.loads(_translate(lambda: self._client.vault_calendar_freebusy(json.dumps(spec))))
+        @property
+        def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs":
+            return Oneiron._VaultCalendarTranscriptVerbs(self._client)
+    class _VaultCalendarTranscriptVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ingest(self, spec):
+            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
+            return json.loads(_translate(lambda: self._client.vault_calendar_transcript_ingest(json.dumps(spec))))
     class _VaultWritesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

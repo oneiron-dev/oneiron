@@ -7,7 +7,9 @@ use crate::error::Result;
 use super::types::{KEY_END_MINUTE, KEY_START_MINUTE, MINUTES_PER_DAY};
 use super::validate::{invalid_claim, required_u16, value_map};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct DeliveryWindowTimeWindow {
     pub start_minute: u16,

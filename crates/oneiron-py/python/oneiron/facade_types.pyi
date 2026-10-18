@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 384 facade rows, 1497 declarations.
-Inputs: 341 of 384 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 341 of 384 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 387 facade rows, 1510 declarations.
+Inputs: 344 of 387 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 342 of 387 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -287,10 +287,18 @@ class AgentHealthRunTree(TypedDict):
     run_id: str
     tree: RunTree
     marked: str
+class AgentHealthPromptInject(TypedDict):
+    approval: str
+    successor: str
+    ask: str
+    by: EntityId
+    at: int
+    edited: bool
 class AgentHealthCardView(TypedDict):
     card: str
     body: AgentHealthCard
     run_tree: NotRequired[AgentHealthRunTree | None]
+    prompt_inject: NotRequired[AgentHealthPromptInject | None]
 ConcernOutcome = Literal["confirmed", "dismissed", "unresolved"]
 class ConcernOutcomeRequest(TypedDict):
     card: str
@@ -4006,6 +4014,43 @@ class WidenProposalsView(TypedDict):
     proposals: list[WidenProposalView]
 class WidenProposalAnswer(TypedDict):
     proposal_id: str
+class ClaimProposalReviewRequest(TypedDict):
+    claim_ref: str
+class ClaimProposalReview(TypedDict):
+    review_id: str
+    proposal_ref: str
+    claim: ClaimView
+    opener_ref: NotRequired[str | None]
+    pending_ref: NotRequired[str | None]
+ClaimSettleDecision = Literal["approve", "reject"]
+class ClaimSettleRequest(TypedDict):
+    claim_ref: str
+    review_id: str
+    decision: ClaimSettleDecision
+ClaimSettlementVerdict = Literal["landed", "rejected"]
+class ClaimChangeVerdict(TypedDict):
+    claim_ref: str
+    verdict: ClaimSettlementVerdict
+class ClaimSettlementAnswer(TypedDict):
+    kind: Literal["word"]
+    person_ref: str
+ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined"]
+class ClaimSettlementRevert(TypedDict):
+    verb: str
+    claim_ref: str
+class ClaimSettlement(TypedDict):
+    receipt_ref: str
+    proposal_ref: str
+    review_id: str
+    changes: list[ClaimChangeVerdict]
+    verdict: ClaimSettlementVerdict
+    answered_by: ClaimSettlementAnswer
+    reason: ClaimSettlementReason
+    summary: str
+    tray_receipt_ref: NotRequired[str | None]
+    revert: NotRequired[ClaimSettlementRevert | None]
+    claim: ClaimView
+    settled_at: int
 class CraftCandidatesRequest(TypedDict):
     resident: NotRequired[str | None]
 class CraftCandidateView(TypedDict):
@@ -6016,6 +6061,23 @@ class CalendarFreebusyIntervalDto(TypedDict):
     start_utc: int
     end_utc: int
 CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
+class TranscriptFileDropInput(TypedDict):
+    source_blob_ref: str
+    decoded_text: str
+    arrived_at_ms: int
+class TranscriptIngestOutcomeSession(TypedDict):
+    outcome: Literal["session"]
+    session_ref: EntityId
+    turn_refs: list[EntityId]
+    wake_turn_refs: list[EntityId]
+    extraction_enqueued: bool
+class TranscriptIngestOutcomeRetryOpenSession(TypedDict):
+    outcome: Literal["retry_open_session"]
+    open_session_ref: EntityId
+class TranscriptIngestOutcomeNoteFallback(TypedDict):
+    outcome: Literal["note_fallback"]
+    note_ref: EntityId
+TranscriptIngestOutcome = TranscriptIngestOutcomeSession | TranscriptIngestOutcomeRetryOpenSession | TranscriptIngestOutcomeNoteFallback
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]

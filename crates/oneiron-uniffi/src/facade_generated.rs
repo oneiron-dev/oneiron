@@ -866,6 +866,16 @@ export_facade! {
     let output = client.vault_widen_proposals_decline(&input)?;
     crate::codec::lift_record("vault.widen_proposals.decline", &output)
 };
+"vault.claims.review" => fn vault_claims_review(&self, input: ClaimProposalReviewRequest) -> ClaimProposalReview = |client| {
+    let input: oneiron::memory::ClaimProposalReviewRequest = crate::codec::lower_record("vault.claims.review", input)?;
+    let output = client.vault_claims_review(&input)?;
+    crate::codec::lift_record("vault.claims.review", &output)
+};
+"vault.claims.settle" => fn vault_claims_settle(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
+    let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.settle", input)?;
+    let output = client.vault_claims_settle(&input)?;
+    crate::codec::lift_record("vault.claims.settle", &output)
+};
 "vault.craft_candidates" => fn vault_craft_candidates(&self, input: CraftCandidatesRequest) -> CraftCandidatesView = |client| {
     let input: oneiron::actor_claims::CraftCandidatesRequest = crate::codec::lower_record("vault.craft_candidates", input)?;
     let output = client.vault_craft_candidates(&input)?;
@@ -1485,6 +1495,11 @@ export_facade! {
     let input: oneiron::task_verb::sdk::CalendarFreebusyRequest = crate::codec::lower_record("vault.calendar.freebusy", input)?;
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
+};
+"vault.calendar.transcript.ingest" => fn vault_calendar_transcript_ingest(&self, input: TranscriptFileDropInput) -> TranscriptIngestOutcome = |client| {
+    let input: oneiron::calendar::transcript::TranscriptFileDropInput = crate::codec::lower_record("vault.calendar.transcript.ingest", input)?;
+    let output = client.vault_calendar_transcript_ingest(&input)?;
+    crate::codec::lift_record("vault.calendar.transcript.ingest", &output)
 };
 "vault.claims.list" => fn vault_claims_list(&self, filter: ClaimListFilter) -> ClaimViews = |client| {
     let input: oneiron::memory::ClaimListFilter = filter.lower()?;

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 442 code-mode rows (421 host rows, 21 run rows), 1588 declarations.
-// Replies: 388 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 445 code-mode rows (424 host rows, 21 run rows), 1601 declarations.
+// Replies: 389 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -81,7 +81,8 @@ declare namespace Sdk {
   type RunTreeRepair = { kind: "missing_parent"; job_id: string; missing_parent_id: string } | { kind: "parent_cycle"; job_id: string; parent_id: string };
   type RunTree = { roots: RunTreeNode[]; repairs: RunTreeRepair[] };
   type AgentHealthRunTree = { run_id: string; tree: RunTree; marked: string };
-  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null };
+  type AgentHealthPromptInject = { approval: string; successor: string; ask: string; by: EntityId; at: number; edited: boolean };
+  type AgentHealthCardView = { card: string; body: AgentHealthCard; run_tree?: AgentHealthRunTree | null; prompt_inject?: AgentHealthPromptInject | null };
   type ConcernOutcome = "confirmed" | "dismissed" | "unresolved";
   type ConcernOutcomeRequest = { card: string; outcome: ConcernOutcome };
   type ConcernCardSummary = { card: string; agent: string; signal: string; tone: string; outcome: string; evidence: number };
@@ -817,6 +818,16 @@ declare namespace Sdk {
   type WidenProposalView = { proposal_id: string; state: WidenProposalState; parent_attempt: string; board_attempt?: string | null; target_kind: string; target: string; parent_context: unknown; requested_context: unknown; widened_parent_context: unknown; recorded_at: number; landed_attempt?: string | null; declined_by?: string | null; declined_at?: number | null };
   type WidenProposalsView = { proposals: WidenProposalView[] };
   type WidenProposalAnswer = { proposal_id: string };
+  type ClaimProposalReviewRequest = { claim_ref: string };
+  type ClaimProposalReview = { review_id: string; proposal_ref: string; claim: ClaimView; opener_ref?: string | null; pending_ref?: string | null };
+  type ClaimSettleDecision = "approve" | "reject";
+  type ClaimSettleRequest = { claim_ref: string; review_id: string; decision: ClaimSettleDecision };
+  type ClaimSettlementVerdict = "landed" | "rejected";
+  type ClaimChangeVerdict = { claim_ref: string; verdict: ClaimSettlementVerdict };
+  type ClaimSettlementAnswer = { kind: "word"; person_ref: string };
+  type ClaimSettlementReason = "gate.claim.settle.approved" | "gate.claim.settle.declined";
+  type ClaimSettlementRevert = { verb: string; claim_ref: string };
+  type ClaimSettlement = { receipt_ref: string; proposal_ref: string; review_id: string; changes: ClaimChangeVerdict[]; verdict: ClaimSettlementVerdict; answered_by: ClaimSettlementAnswer; reason: ClaimSettlementReason; summary: string; tray_receipt_ref?: string | null; revert?: ClaimSettlementRevert | null; claim: ClaimView; settled_at: number };
   type CraftCandidatesRequest = { resident?: string | null };
   type CraftCandidateView = { candidate_id: string; content_hash: string; resident: string; predicate: string; text: string; attempt: string; proposed_at: number };
   type CraftCandidatesView = { candidates: CraftCandidateView[] };
@@ -1262,6 +1273,8 @@ declare namespace Sdk {
   type CalendarFreebusyRequest = { calendars: CalendarSel[]; range: CalendarRangeDto };
   type CalendarFreebusyIntervalDto = { start_utc: number; end_utc: number };
   type CalendarFreebusyDto = CalendarFreebusyIntervalDto[];
+  type TranscriptFileDropInput = { source_blob_ref: string; decoded_text: string; arrived_at_ms: number };
+  type TranscriptIngestOutcome = { outcome: "session"; session_ref: EntityId; turn_refs: EntityId[]; wake_turn_refs: EntityId[]; extraction_enqueued: boolean } | { outcome: "retry_open_session"; open_session_ref: EntityId } | { outcome: "note_fallback"; note_ref: EntityId };
   type ClaimListFilter = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number };
   type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete";
   type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason };
@@ -1984,6 +1997,10 @@ declare const vault: Sdk.VaultHost & {
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
     search(input: Sdk.CalendarSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView[]> | StoredResult>;
+    transcript: {
+      /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+      ingest(input: Sdk.TranscriptFileDropInput): Promise<Sdk.TranscriptIngestOutcome | StoredResult>;
+    };
   };
   campaign: {
     program: {
@@ -2037,8 +2054,12 @@ declare const vault: Sdk.VaultHost & {
     put(input: Sdk.MemoryClaimInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
     retract(input: Sdk.ClaimRefRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+    /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+    review(input: Sdk.ClaimProposalReviewRequest): Promise<Sdk.ClaimProposalReview | StoredResult>;
     /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
     seed(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+    /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+    settle(input: Sdk.ClaimSettleRequest): Promise<Sdk.ClaimSettlement | StoredResult>;
     supersede(input: Sdk.MemorySupersedeInput): Promise<Sdk.MemoryWriteOutput | StoredResult>;
     /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
     upsert(input: Sdk.ScopedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;

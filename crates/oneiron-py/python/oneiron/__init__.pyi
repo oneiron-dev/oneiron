@@ -656,6 +656,10 @@ class Oneiron:
     class _VaultClaimsVerbs:
         def upsert(self, spec: Facade.ScopedClaimInput) -> Facade.CommitReceipt:
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
+        def review(self, spec: Facade.ClaimProposalReviewRequest) -> Facade.ClaimProposalReview:
+            """The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content."""
+        def settle(self, spec: Facade.ClaimSettleRequest) -> Facade.ClaimSettlement:
+            """The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused."""
         def retract(self, input: Facade.ClaimRefRequest) -> Facade.CommitReceipt:
             """Retracts one active claim: a deliberate withdrawal that preserves the record."""
         def list(self, input: Facade.ClaimListFilter) -> Facade.ScopedReadResult[list[Facade.ClaimView]]:
@@ -1274,6 +1278,11 @@ class Oneiron:
             """Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."""
         def freebusy(self, spec: Facade.CalendarFreebusyRequest) -> Facade.ScopedReadResult[Facade.CalendarFreebusyDto]:
             """Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."""
+        @property
+        def transcript(self) -> "Oneiron._VaultCalendarTranscriptVerbs": ...
+    class _VaultCalendarTranscriptVerbs:
+        def ingest(self, spec: Facade.TranscriptFileDropInput) -> Facade.TranscriptIngestOutcome:
+            """Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts."""
     class _VaultWritesVerbs:
         def pending(self, input: Facade.ReceiptsRequest) -> list[Facade.PendingWrite]:
             """Gated writes parked for consent, newest first."""

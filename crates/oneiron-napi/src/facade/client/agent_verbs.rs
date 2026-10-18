@@ -1555,6 +1555,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_claims_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_settle(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.settle", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_craft_candidates(
         &self,
         input: serde_json::Value,
@@ -2744,6 +2756,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.calendar.freebusy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_transcript_ingest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.transcript.ingest", input)
             .map_err(facade_error)
     }
     #[napi]

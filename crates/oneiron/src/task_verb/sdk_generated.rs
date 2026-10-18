@@ -915,6 +915,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.claims.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ClaimProposalReviewRequest,
+                >(),
+            ),
+            (
+                "vault.claims.settle",
+                crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
+            ),
+            (
                 "vault.craft_candidates",
                 crate::code_run::vault_read::request_schema::<
                     crate::actor_claims::CraftCandidatesRequest,
@@ -1706,6 +1716,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.calendar.transcript.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::transcript::TranscriptFileDropInput,
+                >(),
+            ),
+            (
                 "vault.claims.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimListFilter>(),
             ),
@@ -2231,6 +2247,21 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
         ])
     });
     SCHEMAS.get(verb)
+}
+/// The facade rows the server's OpenAPI document publishes, each beside its
+/// [`input_schema`] and [`output_schema`].
+pub const OPENAPI_ROWS: &[&str] = &["vault.claims.review", "vault.claims.settle"];
+/// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
+pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
+    Some(match verb {
+        "vault.claims.review" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
+        }
+        "vault.claims.settle" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        _ => return None,
+    })
 }
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
@@ -3469,6 +3500,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.claims.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.claims.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.craft_candidates" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4357,6 +4402,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.calendar.freebusy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.transcript.ingest" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5548,6 +5600,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::agent_dispatch::widen_doors::WidenProposalAnswer =
                 decode(value.clone())?;
         }
+        "vault.claims.review" => {
+            let _input: crate::memory::ClaimProposalReviewRequest = decode(value.clone())?;
+        }
+        "vault.claims.settle" => {
+            let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
+        }
         "vault.craft_candidates" => {
             let _input: crate::actor_claims::CraftCandidatesRequest = decode(value.clone())?;
         }
@@ -6049,6 +6107,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.calendar.freebusy" => {
             let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
+        }
+        "vault.calendar.transcript.ingest" => {
+            let _input: crate::calendar::transcript::TranscriptFileDropInput =
+                decode(value.clone())?;
         }
         "vault.claims.list" => {
             let input: crate::memory::ClaimListFilter = decode(value.clone())?;
@@ -6650,6 +6712,8 @@ pub fn invoke(
         "vault.widen_proposals.decline" => {
             encode(vault_widen_proposals_decline(memory, decode(value)?)?)
         }
+        "vault.claims.review" => encode(vault_claims_review(memory, decode(value)?)?),
+        "vault.claims.settle" => encode(vault_claims_settle(memory, decode(value)?)?),
         "vault.craft_candidates" => encode(vault_craft_candidates(memory, decode(value)?)?),
         "vault.craft_candidates.answer" => {
             encode(vault_craft_candidates_answer(memory, decode(value)?)?)
@@ -6816,6 +6880,9 @@ pub fn invoke(
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
+        "vault.calendar.transcript.ingest" => {
+            encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
+        }
         "vault.claims.list" => encode(vault_claims_list(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
@@ -8621,6 +8688,18 @@ pub fn vault_widen_proposals_decline(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_claims_review(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimProposalReviewRequest,
+) -> MemoryResult<crate::memory::ClaimProposalReview> {
+    memory.claim_review_as_owner(&memory.embedded_owner("vault.claims.review")?, &input)
+}
+pub fn vault_claims_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::ClaimSettleRequest,
+) -> MemoryResult<crate::memory::ClaimSettlement> {
+    memory.claim_settle_as_owner(&memory.embedded_owner("vault.claims.settle")?, &input)
+}
 pub fn vault_craft_candidates(
     memory: &Memory<'_>,
     input: crate::actor_claims::CraftCandidatesRequest,
@@ -9796,6 +9875,18 @@ pub fn vault_calendar_freebusy(
     input: crate::task_verb::sdk::CalendarFreebusyRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
     memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+}
+pub fn vault_calendar_transcript_ingest(
+    memory: &Memory<'_>,
+    input: crate::calendar::transcript::TranscriptFileDropInput,
+) -> MemoryResult<crate::calendar::transcript::TranscriptIngestOutcome> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.calendar.transcript.ingest",
+        &input,
+        &["/source_blob_ref"],
+    )?;
+    memory.calendar_transcript_ingest(&input)
 }
 pub fn vault_claims_list(
     memory: &Memory<'_>,

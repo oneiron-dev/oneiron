@@ -177,6 +177,8 @@ both bindings and their export-census tests in one change.
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
+- `vault.claims.review`
+- `vault.claims.settle`
 - `vault.craft_candidates`
 - `vault.craft_candidates.answer`
 - `vault.settings.wake_policy.set`
@@ -301,6 +303,7 @@ both bindings and their export-census tests in one change.
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`
+- `vault.calendar.transcript.ingest`
 - `vault.claims.list`
 - `vault.claims.history`
 - `vault.delete`
@@ -379,3 +382,6 @@ both bindings and their export-census tests in one change.
 - `vault.notes.lifecycle`
 - `vault.notes.set_overrides`
 - `vault.notes.defaults`
+- `self.run.attach`
+- `self.folds.describe`
+- `self.history`

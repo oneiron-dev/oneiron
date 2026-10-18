@@ -361,6 +361,10 @@ export class Oneiron {
     claims: {
       /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
       upsert: (input: Facade.ScopedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(input) as Facade.CommitReceipt),
+      /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+      review: (input: Facade.ClaimProposalReviewRequest): Facade.ClaimProposalReview => this.#call(() => this.#client.vaultClaimsReview(input) as Facade.ClaimProposalReview),
+      /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+      settle: (input: Facade.ClaimSettleRequest): Facade.ClaimSettlement => this.#call(() => this.#client.vaultClaimsSettle(input) as Facade.ClaimSettlement),
       /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
       /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
@@ -1050,6 +1054,10 @@ export class Oneiron {
       search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
       /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
       freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+      transcript: {
+        /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+        ingest: (input: Facade.TranscriptFileDropInput): Facade.TranscriptIngestOutcome => this.#call(() => this.#client.vaultCalendarTranscriptIngest(input) as Facade.TranscriptIngestOutcome),
+      },
     },
     /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
     delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),
