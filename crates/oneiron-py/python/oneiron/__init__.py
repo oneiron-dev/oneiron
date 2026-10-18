@@ -2386,9 +2386,24 @@ class Oneiron:
         def list(self, spec):
             """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
+        def select(self, spec):
+            """Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_select(json.dumps(spec))))
+        def resolve(self, spec):
+            """Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_resolve(json.dumps(spec))))
+        @property
+        def result_set(self) -> "Oneiron._VaultLensesResultSetVerbs":
+            return Oneiron._VaultLensesResultSetVerbs(self._client)
         def default(self, spec):
             """Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."""
             return json.loads(_translate(lambda: self._client.vault_lenses_default(json.dumps(spec))))
+    class _VaultLensesResultSetVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def action(self, spec):
+            """Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_result_set_action(json.dumps(spec))))
     class _VaultDisclosureVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

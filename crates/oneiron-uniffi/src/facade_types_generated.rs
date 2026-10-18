@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 812 facade rows, 2786 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 768.
+// UniFFI census: 815 facade rows, 2799 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 771.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -22879,6 +22879,189 @@ pub struct LensListPage {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+}
+
+/// `oneiron::lens::selection::LensSelectionRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensSelectionRange {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "version", default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<Vec<u8>>,
+}
+
+/// `oneiron::lens::selection::LensSelectRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensSelectRequest {
+    #[serde(rename = "cardId")]
+    pub card_id: String,
+    #[serde(rename = "atomId")]
+    pub atom_id: String,
+    #[serde(rename = "handle")]
+    pub handle: String,
+    #[serde(rename = "span", default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<LensSelectionRange>,
+}
+
+/// `oneiron::lens::mediation::mediation_backing::LensReadReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum LensReadReach {
+    #[serde(rename = "claim_set")]
+    ClaimSet,
+    #[serde(rename = "entity_set")]
+    EntitySet,
+    #[serde(rename = "timeline")]
+    Timeline,
+    #[serde(rename = "query_result")]
+    QueryResult,
+}
+
+/// `oneiron::lens::selection::LensSelectedSpan`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensSelectedSpan {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "version")]
+    pub version: Vec<u8>,
+    #[serde(rename = "startCursor")]
+    pub start_cursor: Vec<u8>,
+    #[serde(rename = "endCursor")]
+    pub end_cursor: Vec<u8>,
+}
+
+/// `oneiron::lens::selection::LensSelection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensSelection {
+    #[serde(rename = "selectionRef")]
+    pub selection_ref: String,
+    #[serde(rename = "cardId")]
+    pub card_id: String,
+    #[serde(rename = "atomId")]
+    pub atom_id: String,
+    #[serde(rename = "reach")]
+    pub reach: LensReadReach,
+    #[serde(rename = "targetKind")]
+    pub target_kind: LensBackingTargetKind,
+    #[serde(rename = "shortRef")]
+    pub short_ref: String,
+    #[serde(rename = "span", default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<LensSelectedSpan>,
+}
+
+/// `oneiron::lens::selection::LensSelectionResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensSelectionResolveRequest {
+    #[serde(rename = "cardId")]
+    pub card_id: String,
+    #[serde(rename = "selectionRef")]
+    pub selection_ref: String,
+}
+
+/// `oneiron::lens::selection::LensSelectionResolved`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensSelectionResolved {
+    #[serde(rename = "selection")]
+    pub selection: LensSelection,
+    #[serde(rename = "source")]
+    pub source: InspectionResolved,
+}
+
+/// `oneiron::lens::generated_ui::genui_state::GeneratedUiStatePatch`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum GeneratedUiStatePatch {
+    #[serde(rename = "add")]
+    Add {
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "value")]
+        value: SelfUiStateValue,
+    },
+    #[serde(rename = "replace")]
+    Replace {
+        #[serde(rename = "path")]
+        path: String,
+        #[serde(rename = "value")]
+        value: SelfUiStateValue,
+    },
+    #[serde(rename = "remove")]
+    Remove {
+        #[serde(rename = "path")]
+        path: String,
+    },
+}
+
+/// `oneiron::lens::generated_ui::genui_state::GeneratedUiActionEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiActionEvent {
+    #[serde(rename = "cardId")]
+    pub card_id: String,
+    #[serde(rename = "elementId")]
+    pub element_id: String,
+    #[serde(rename = "actionId")]
+    pub action_id: String,
+    #[serde(rename = "patch", default, skip_serializing_if = "Option::is_none")]
+    pub patch: Option<Vec<GeneratedUiStatePatch>>,
+    #[serde(rename = "occurredAt")]
+    pub occurred_at: u64,
+}
+
+/// `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetSelection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "mode")]
+#[serde(deny_unknown_fields)]
+pub enum GeneratedUiResultSetSelection {
+    #[serde(rename = "explicit")]
+    Explicit {
+        #[serde(rename = "row_ids")]
+        row_ids: Vec<String>,
+    },
+    #[serde(rename = "all_within_filter")]
+    AllWithinFilter {},
+}
+
+/// `oneiron::lens::atom::atom_leaves::GeneratedUiResultSetActionEvent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedUiResultSetActionEvent {
+    #[serde(rename = "action")]
+    pub action: GeneratedUiActionEvent,
+    #[serde(rename = "selection")]
+    pub selection: GeneratedUiResultSetSelection,
+}
+
+/// `oneiron::lens::selection::LensResultSetActionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensResultSetActionRequest {
+    #[serde(rename = "event")]
+    pub event: GeneratedUiResultSetActionEvent,
+    #[serde(rename = "selected")]
+    pub selected: Vec<String>,
+    #[serde(rename = "idempotencyKey")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::lens::selection::LensResultSetActionResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensResultSetActionResult {
+    #[serde(rename = "outcome")]
+    pub outcome: crate::WireJson,
+    #[serde(rename = "readReceipt")]
+    pub read_receipt: ScopedReadReceipt,
 }
 
 /// `oneiron::lens::sdk::LensDossierSource`.
