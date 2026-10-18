@@ -45731,7 +45731,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointPart",
@@ -45741,7 +45741,7 @@
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
