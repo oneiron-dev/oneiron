@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "area": "calendar",
+  "assets": [
+    {
+      "id": "calendar-caldav-echo",
+      "path": "caldav-echo.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "9872aa572b32d9325610b2c279b5fb35a571da109f656379051db3f2087d9662",
+      "expectedFacts": {
+        "uid": "invite@calendar.example.test",
+        "sequence": 1,
+        "method": null,
+        "startUtc": "2026-10-24T18:00:00Z",
+        "purpose": "Independent semantic oracle only; exact echo must replay actual captured PUT bytes."
+      },
+      "scenarios": [
+        "CALENDAR-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-dst-series-moved",
+      "path": "dst-series-moved.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "4f89847d386775d9908eb0e027d16b8f274ece95bce7e02ac3d51798e17e513b",
+      "expectedFacts": {
+        "uid": "dst-series@calendar.example.test",
+        "afterMoveOccurrencesUtc": [
+          "2026-10-19T08:00:00Z",
+          "2026-10-26T10:30:00Z",
+          "2026-11-02T11:00:00Z",
+          "2026-11-09T09:00:00Z"
+        ],
+        "movedOriginalStartUtc": "2026-10-26T09:00:00Z",
+        "newStartUtc": "2026-10-26T10:30:00Z",
+        "exceptionCount": 2
+      },
+      "scenarios": [
+        "CALENDAR-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-dst-series",
+      "path": "dst-series.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "9e30bca1236a0c94787d831ea715bec9ec20ec80a9bfb8709229b9f9415b199f",
+      "expectedFacts": {
+        "licenceBasis": "Original hand-authored fixture, not copied tzdata. Europe/London 2026 fall transition is UTC+01 to UTC+00 on 25 October; VTIMEZONE declares those rules.",
+        "uid": "dst-series@calendar.example.test",
+        "rrule": "FREQ=WEEKLY;BYDAY=MO;COUNT=4",
+        "initialOccurrencesUtc": [
+          "2026-10-19T08:00:00Z",
+          "2026-10-26T09:00:00Z",
+          "2026-11-02T11:00:00Z",
+          "2026-11-09T09:00:00Z"
+        ],
+        "exceptionOriginalStartUtc": "2026-11-02T09:00:00Z",
+        "opaqueProperty": "X-FIXTURE-OPAQUE:keep-this-verbatim"
+      },
+      "scenarios": [
+        "CALENDAR-03"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-invite-acceptance",
+      "path": "invite-acceptance.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "27d986285fe1ba26b972f98b2e9ae68dcc1e22f3142a30180d9caa89cff5c267",
+      "expectedFacts": {
+        "uid": "invite@calendar.example.test",
+        "method": "REPLY",
+        "sequence": 1,
+        "partstat": "ACCEPTED",
+        "attendanceProven": false
+      },
+      "scenarios": [
+        "CALENDAR-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-invite-cancel",
+      "path": "invite-cancel.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "a70ed9d03c1f97eb78aeea02229eaf6a9bec53fe9c991cb035500266fc42bb30",
+      "expectedFacts": {
+        "uid": "invite@calendar.example.test",
+        "method": "CANCEL",
+        "sequence": 2,
+        "status": "CANCELLED"
+      },
+      "scenarios": [
+        "CALENDAR-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-invite-request",
+      "path": "invite-request.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "9ffad8414fc537d0c3a874af7580456d28399f9875c492e5ae4fbebfb298a1fe",
+      "expectedFacts": {
+        "uid": "invite@calendar.example.test",
+        "method": "REQUEST",
+        "sequence": 0,
+        "startUtc": "2026-10-24T17:00:00Z",
+        "organizer": "calendar@house.example.test"
+      },
+      "scenarios": [
+        "CALENDAR-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-invite-update",
+      "path": "invite-update.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "4fbaf0c3e9fb7f05002e869ebf8de25fbd74a6c1c600f824bca12983006dd812",
+      "expectedFacts": {
+        "uid": "invite@calendar.example.test",
+        "method": "REQUEST",
+        "sequence": 1,
+        "startUtc": "2026-10-24T18:00:00Z"
+      },
+      "scenarios": [
+        "CALENDAR-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-meeting-transcript",
+      "path": "meeting-transcript.txt",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "7aef11ea910893aff90a4cb11f97ecbdeddace521fe1ceb95a23c1f94d80b85f",
+      "expectedFacts": {
+        "format": "Two speaker-prefixed plain-text lines",
+        "turnCount": 2,
+        "speakers": [
+          "Mira",
+          "Owner"
+        ],
+        "facts": [
+          "We met.",
+          "Send the cobalt audit scope tomorrow."
+        ],
+        "noVttHeaderOrCueLines": true
+      },
+      "scenarios": [
+        "CALENDAR-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-origins",
+      "path": "origins.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "8b75451c04b527c520e560a6b967f5cb14555acd0facdd46c2e940cf27865dcc",
+      "expectedFacts": {
+        "eventCount": 4,
+        "origin": "imported",
+        "timeKinds": [
+          "absolute",
+          "zoned",
+          "floating",
+          "all_day"
+        ],
+        "floatingHasNoZone": true,
+        "allDayEndExclusive": "2026-10-26",
+        "allDayStart": "2026-10-24"
+      },
+      "scenarios": [
+        "CALENDAR-01"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-passport-absent",
+      "path": "passport-absent.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "4a5b983e12eb7a731c6a4c6d3efc39f2710125ef6ed7b45e4fbcca8072fefe72",
+      "expectedFacts": {
+        "eventCount": 0,
+        "completeCalendar": true,
+        "status": "cancelled",
+        "basis": "imported_absence",
+        "historyRetained": true
+      },
+      "scenarios": [
+        "CALENDAR-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-passport-drift",
+      "path": "passport-drift.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "1194ebba9884c94351d95873402bda6e17fd6e5453a062ff2757551078b9100d",
+      "expectedFacts": {
+        "uid": "revision@calendar.example.test",
+        "sequence": 1,
+        "summary": "Agenda gamma",
+        "sameSequenceDifferentBody": true
+      },
+      "scenarios": [
+        "CALENDAR-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-passport-v0",
+      "path": "passport-v0.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "d0021ff240b1add9e71948ce1470aefc852eebc4f512226e6d8c708f8eb3398f",
+      "expectedFacts": {
+        "uid": "revision@calendar.example.test",
+        "sequence": 0,
+        "summary": "Agenda alpha"
+      },
+      "scenarios": [
+        "CALENDAR-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-passport-v1",
+      "path": "passport-v1.ics",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "6f2db4d2960b9962f571eb03f9973b6927a79109beb84f222c55412f25c8f8b9",
+      "expectedFacts": {
+        "uid": "revision@calendar.example.test",
+        "sequence": 1,
+        "summary": "Agenda beta"
+      },
+      "scenarios": [
+        "CALENDAR-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-protocol",
+      "path": "protocol.json",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "a09f5ee4504d2c8179b6881e3d966e15b4e01846f5fe5ec362b872091bdaa64b",
+      "expectedFacts": {
+        "feedCompleteResponses": 5,
+        "sameBody200Responses": 2,
+        "caldavMethods": [
+          "PROPFIND",
+          "REPORT",
+          "PUT",
+          "GET"
+        ],
+        "receiptSimulation": false,
+        "activation": "Public adapter/configure/sync doors required; no fake service is started by a TODO."
+      },
+      "scenarios": [
+        "CALENDAR-02",
+        "CALENDAR-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "calendar-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "original-fixture:oneiron-calendar-e2e-20261018",
+        "revision": "1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "7a29e04fbaa1493a52df9f649c130d143631d859a2930f86e079b804019f3cea",
+      "expectedFacts": {
+        "plannedIds": [
+          "CALENDAR-01",
+          "CALENDAR-02",
+          "CALENDAR-03",
+          "CALENDAR-04",
+          "CALENDAR-05",
+          "CALENDAR-06",
+          "CALENDAR-07",
+          "CALENDAR-08"
+        ],
+        "statuses": {
+          "CALENDAR-01": "BLOCKED",
+          "CALENDAR-02": "BLOCKED",
+          "CALENDAR-03": "BLOCKED",
+          "CALENDAR-04": "BLOCKED",
+          "CALENDAR-05": "BLOCKED",
+          "CALENDAR-06": "BLOCKED",
+          "CALENDAR-07": "BLOCKED",
+          "CALENDAR-08": "BLOCKED"
+        },
+        "registryRows": [
+          "OF-004",
+          "OF-405",
+          "OF-406",
+          "OF-407",
+          "OF-411",
+          "OF-412"
+        ],
+        "origin": "Independent authored semantic oracles; source/binding hashes are diagnostics, never expected answers.",
+        "bindingHead": "1aec7a3c94647f7f2cb012aaa9e4e3c2ff3d7cd3"
+      },
+      "scenarios": [
+        "CALENDAR-01",
+        "CALENDAR-02",
+        "CALENDAR-03",
+        "CALENDAR-04",
+        "CALENDAR-05",
+        "CALENDAR-06",
+        "CALENDAR-07",
+        "CALENDAR-08"
+      ],
+      "requires": []
+    }
+  ]
+}
