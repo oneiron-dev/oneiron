@@ -953,6 +953,16 @@ export class Oneiron {
         decide: (input: Facade.PolicyOutboundRequest): Facade.HostedRelayDecision => this.#call(() => this.#client.vaultPolicyRelayDecide(input) as Facade.HostedRelayDecision),
       },
     },
+    consent: {
+      /** The owner approves exactly one engine-emitted effect digest; no standing grant is created. */
+      approve_once: (input: Facade.ApproveOnceRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentApproveOnce(input) as Facade.ConsentActReceipt),
+      /** The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision. */
+      create_standing_grant: (input: Facade.CreateStandingGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentCreateStandingGrant(input) as Facade.ConsentActReceipt),
+      /** The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants. */
+      registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
+      /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
+      revoke: (input: Facade.RevokeGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentRevoke(input) as Facade.ConsentActReceipt),
+    },
     gate: {
       policy: {
         /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */

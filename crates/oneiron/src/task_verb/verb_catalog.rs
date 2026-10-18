@@ -248,6 +248,10 @@ pub enum AgentVerb {
     VaultPolicyOwnerRowChange,
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
+    VaultConsentApproveOnce,
+    VaultConsentCreateStandingGrant,
+    VaultConsentRegistry,
+    VaultConsentRevoke,
     VaultGatePolicyGet,
     VaultGatePolicyPut,
     VaultGatePolicyPropose,
@@ -870,6 +874,10 @@ impl AgentVerb {
         Self::VaultPolicyOwnerRowChange,
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
+        Self::VaultConsentApproveOnce,
+        Self::VaultConsentCreateStandingGrant,
+        Self::VaultConsentRegistry,
+        Self::VaultConsentRevoke,
         Self::VaultGatePolicyGet,
         Self::VaultGatePolicyPut,
         Self::VaultGatePolicyPropose,
@@ -1499,6 +1507,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => "vault.policy.owner.row.change",
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
+            Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
+            Self::VaultConsentRegistry => "vault.consent.registry",
+            Self::VaultConsentRevoke => "vault.consent.revoke",
             Self::VaultGatePolicyGet => "vault.gate.policy.get",
             Self::VaultGatePolicyPut => "vault.gate.policy.put",
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
@@ -2126,6 +2138,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -2755,6 +2771,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3439,6 +3459,10 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRegistry
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyGet
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
@@ -3951,6 +3975,9 @@ impl AgentVerb {
                 | Self::VaultPolicyOwnerRowChange
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
+                | Self::VaultConsentApproveOnce
+                | Self::VaultConsentCreateStandingGrant
+                | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
@@ -4449,6 +4476,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => &["spec"],
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
+            Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentRevoke => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -5072,6 +5103,10 @@ impl AgentVerb {
             Self::VaultPolicyOwnerRowChange => &["spec"],
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
+            Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentCreateStandingGrant => &["spec"],
+            Self::VaultConsentRegistry => &["spec"],
+            Self::VaultConsentRevoke => &["spec"],
             Self::VaultGatePolicyGet => &["spec"],
             Self::VaultGatePolicyPut => &["spec"],
             Self::VaultGatePolicyPropose => &["spec"],
@@ -6155,6 +6190,18 @@ impl AgentVerb {
             }
             Self::VaultPolicyRelayDecide => {
                 "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."
+            }
+            Self::VaultConsentApproveOnce => {
+                "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
+            }
+            Self::VaultConsentCreateStandingGrant => {
+                "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."
+            }
+            Self::VaultConsentRegistry => {
+                "The owner reads the unified action and disclosure grant registry, including revoke commands and optionally revoked grants."
+            }
+            Self::VaultConsentRevoke => {
+                "The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted."
             }
             Self::VaultGatePolicyGet => {
                 "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."

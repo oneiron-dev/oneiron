@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 576 facade rows, 2132 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 538.
+// UniFFI census: 580 facade rows, 2150 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 11; generated in and out: 542.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -16054,6 +16054,214 @@ pub struct HostedRelayDecision {
     pub system_notice: Option<String>,
     #[serde(rename = "system_notices")]
     pub system_notices: Vec<GateSystemNoticeRecord>,
+}
+
+/// `oneiron::consent::lifecycle::ApproveOnceRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ApproveOnceRequest {
+    #[serde(rename = "effect_digest")]
+    pub effect_digest: String,
+}
+
+/// `oneiron::consent::lifecycle::ConsentActReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentActReceipt {
+    #[serde(rename = "decision_ref")]
+    pub decision_ref: String,
+    #[serde(rename = "outcome")]
+    pub outcome: String,
+    #[serde(rename = "reason_code")]
+    pub reason_code: String,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+    #[serde(rename = "diff_handle")]
+    pub diff_handle: Vec<u8>,
+}
+
+/// `oneiron::consent::lifecycle::ActionEnvelopeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionEnvelopeRequest {
+    #[serde(rename = "project")]
+    pub project: String,
+    #[serde(rename = "audience")]
+    pub audience: Vec<String>,
+    #[serde(rename = "budget")]
+    pub budget: u64,
+}
+
+/// `oneiron::consent::lifecycle::ActionBoundRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionBoundRequest {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "envelope")]
+    pub envelope: ActionEnvelopeRequest,
+}
+
+/// `oneiron::consent::lifecycle::DisclosureEnvelopeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DisclosureEnvelopeRequest {
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+}
+
+/// `oneiron::consent::lifecycle::DisclosureBoundRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DisclosureBoundRequest {
+    #[serde(rename = "audience")]
+    pub audience: Vec<String>,
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "envelope")]
+    pub envelope: DisclosureEnvelopeRequest,
+}
+
+/// `oneiron::consent::lifecycle::StandingGrantBound`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum StandingGrantBound {
+    Action(ActionBoundRequest),
+    Disclosure(DisclosureBoundRequest),
+}
+
+/// `oneiron::consent::lifecycle::CreateStandingGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CreateStandingGrantRequest {
+    #[serde(rename = "bound")]
+    pub bound: StandingGrantBound,
+}
+
+/// `oneiron::consent::registry::ConsentRegistryQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsentRegistryQuery {
+    #[serde(rename = "limit")]
+    pub limit: u64,
+    #[serde(
+        rename = "include_revoked",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub include_revoked: Option<bool>,
+}
+
+/// `oneiron::consent::bound::ConsentDomain`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConsentDomain {
+    #[serde(rename = "disclosure")]
+    Disclosure,
+    #[serde(rename = "action")]
+    Action,
+}
+
+/// `oneiron::consent::grant::ConsentGrantStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConsentGrantStatus {
+    #[serde(rename = "active")]
+    Active,
+    #[serde(rename = "revoked")]
+    Revoked,
+}
+
+/// `oneiron::consent::registry::ConsentRevokeAction`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsentRevokeAction {
+    #[serde(rename = "command")]
+    pub command: String,
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+}
+
+/// `oneiron::consent::bypass::BypassScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BypassScope {
+    #[serde(rename = "project")]
+    Project(String),
+    #[serde(rename = "thread")]
+    Thread(String),
+}
+
+/// `oneiron::consent::bypass::BypassExtent`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BypassExtent {
+    #[serde(rename = "scope")]
+    pub scope: BypassScope,
+    #[serde(rename = "floor_version")]
+    pub floor_version: u16,
+}
+
+/// `oneiron::consent::registry::ConsentRegistryDelegation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsentRegistryDelegation {
+    #[serde(rename = "purpose")]
+    pub purpose: String,
+    #[serde(
+        rename = "ticket_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ticket_ref: Option<String>,
+    #[serde(rename = "approved_by")]
+    pub approved_by: String,
+    #[serde(rename = "wall_expires_at")]
+    pub wall_expires_at: u64,
+    #[serde(rename = "status")]
+    pub status: SupportGrantStatus,
+}
+
+/// `oneiron::consent::registry::ConsentRegistryRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsentRegistryRow {
+    #[serde(rename = "grant_ref")]
+    pub grant_ref: String,
+    #[serde(rename = "domain")]
+    pub domain: ConsentDomain,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "class")]
+    pub class: String,
+    #[serde(rename = "selectors")]
+    pub selectors: Vec<String>,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Scope>,
+    #[serde(rename = "status")]
+    pub status: ConsentGrantStatus,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+    #[serde(rename = "revoke_action")]
+    pub revoke_action: ConsentRevokeAction,
+    #[serde(rename = "bypass", default, skip_serializing_if = "Option::is_none")]
+    pub bypass: Option<BypassExtent>,
+    #[serde(
+        rename = "delegation",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub delegation: Option<ConsentRegistryDelegation>,
+}
+
+/// `oneiron::consent::registry::ConsentRegistry`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsentRegistry {
+    #[serde(rename = "rows")]
+    pub rows: Vec<ConsentRegistryRow>,
+}
+
+/// `oneiron::consent::lifecycle::RevokeGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RevokeGrantRequest {
+    #[serde(rename = "grant")]
+    pub grant: String,
 }
 
 /// `oneiron::gate::policy_manifest_doors::types::PolicyManifestRead`.

@@ -274,6 +274,10 @@ vaultPolicyOwnerConfigure(input: unknown): unknown
 vaultPolicyOwnerRowChange(input: unknown): unknown
 vaultPolicyOutboundDecide(input: unknown): unknown
 vaultPolicyRelayDecide(input: unknown): unknown
+vaultConsentApproveOnce(input: unknown): unknown
+vaultConsentCreateStandingGrant(input: unknown): unknown
+vaultConsentRegistry(input: unknown): unknown
+vaultConsentRevoke(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown

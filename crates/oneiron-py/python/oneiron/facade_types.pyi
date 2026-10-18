@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 576 facade rows, 2197 declarations.
-Inputs: 526 of 576 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 509 of 576 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 580 facade rows, 2215 declarations.
+Inputs: 530 of 580 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 513 of 580 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -5302,6 +5302,52 @@ class HostedRelayDecision(TypedDict):
     outbound_halted: bool
     system_notice: NotRequired[str | None]
     system_notices: list[GateSystemNoticeRecord]
+class ApproveOnceRequest(TypedDict):
+    effect_digest: str
+class ConsentActReceipt(TypedDict):
+    decision_ref: str
+    outcome: str
+    reason_code: str
+    grant_ref: NotRequired[str | None]
+    diff_handle: list[int]
+class ActionEnvelopeRequest(TypedDict):
+    project: str
+    audience: list[str]
+    budget: int
+ActionBoundRequest = TypedDict("ActionBoundRequest", {"actor": str, "class": str, "envelope": ActionEnvelopeRequest})
+class DisclosureEnvelopeRequest(TypedDict):
+    selectors: list[str]
+DisclosureBoundRequest = TypedDict("DisclosureBoundRequest", {"audience": list[str], "class": str, "envelope": DisclosureEnvelopeRequest})
+StandingGrantBound = ActionBoundRequest | DisclosureBoundRequest
+class CreateStandingGrantRequest(TypedDict):
+    bound: StandingGrantBound
+class ConsentRegistryQuery(TypedDict):
+    limit: int
+    include_revoked: NotRequired[bool]
+ConsentDomain = Literal["disclosure", "action"]
+ConsentGrantStatus = Literal["active", "revoked"]
+class ConsentRevokeAction(TypedDict):
+    command: str
+    grant_ref: str
+class BypassScopeProject(TypedDict):
+    project: EntityId
+class BypassScopeThread(TypedDict):
+    thread: EntityId
+BypassScope = BypassScopeProject | BypassScopeThread
+class BypassExtent(TypedDict):
+    scope: BypassScope
+    floor_version: int
+class ConsentRegistryDelegation(TypedDict):
+    purpose: str
+    ticket_ref: NotRequired[str | None]
+    approved_by: str
+    wall_expires_at: int
+    status: SupportGrantStatus
+ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None]})
+class ConsentRegistry(TypedDict):
+    rows: list[ConsentRegistryRow]
+class RevokeGrantRequest(TypedDict):
+    grant: str
 class PolicyManifestRead(TypedDict):
     manifest_ref: NotRequired[str | None]
 PolicyCriticality = Literal["normal", "critical"]

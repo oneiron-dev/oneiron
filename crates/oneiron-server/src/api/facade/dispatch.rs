@@ -5658,6 +5658,97 @@ async fn vault_policy_relay_decide(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_consent_approve_once(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.approve_once")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.approve_once", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.approve_once", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_approve_once(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_create_standing_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.create_standing_grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.create_standing_grant", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.consent.create_standing_grant", value).await?;
+    let (output, listed) = super::host_doors::vault_consent_create_standing_grant(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_registry(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.registry")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.registry", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.registry", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_consent_registry(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_consent_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consent.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consent.revoke", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.consent.revoke", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_consent_revoke(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_gate_policy_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -13777,6 +13868,12 @@ pub(crate) async fn call_verb(
         "vault.policy.owner.row.change" => vault_policy_owner_row_change(server, call, input).await,
         "vault.policy.outbound.decide" => vault_policy_outbound_decide(server, call, input).await,
         "vault.policy.relay.decide" => vault_policy_relay_decide(server, call, input).await,
+        "vault.consent.approve_once" => vault_consent_approve_once(server, call, input).await,
+        "vault.consent.create_standing_grant" => {
+            vault_consent_create_standing_grant(server, call, input).await
+        }
+        "vault.consent.registry" => vault_consent_registry(server, call, input).await,
+        "vault.consent.revoke" => vault_consent_revoke(server, call, input).await,
         "vault.gate.policy.get" => vault_gate_policy_get(server, call, input).await,
         "vault.gate.policy.put" => vault_gate_policy_put(server, call, input).await,
         "vault.gate.policy.propose" => vault_gate_policy_propose(server, call, input).await,

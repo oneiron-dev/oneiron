@@ -41,6 +41,7 @@ mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
 mod consolidation_doors;
+mod consent_doors;
 mod content_policy_doors;
 mod coordination_doors;
 mod core_write_doors;
