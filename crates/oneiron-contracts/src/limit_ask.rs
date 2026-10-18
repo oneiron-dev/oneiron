@@ -101,6 +101,10 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Comment edits one PowerPoint comment proposal carries: new threads,
+    /// replies and resolutions together. Past it the proposal is written
+    /// and served whole.
+    PptxCommentPatches,
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
@@ -134,6 +138,7 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::PptxCommentPatches,
         Self::ImportXlsxLiveCells,
         Self::JudgeRubricBytes,
     ];
@@ -163,6 +168,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::PptxCommentPatches => "limits.pptx_comment_patches",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
             Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
         }
@@ -194,6 +200,7 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::PptxCommentPatches => 10_000,
             Self::ImportXlsxLiveCells => 200_000,
             // The shipped rubric is about 1 KiB; the judgment's state holds
             // at most 64 KiB in all.

@@ -163,6 +163,7 @@ impl LimitRow {
         Self::Engine(EngineLimit::ImportDecodedMessages),
         Self::Engine(EngineLimit::ImportDecodedBytes),
         Self::Engine(EngineLimit::SignatureDecodeBytes),
+        Self::Engine(EngineLimit::PptxCommentPatches),
         Self::Engine(EngineLimit::ImportXlsxLiveCells),
         Self::Engine(EngineLimit::JudgeRubricBytes),
     ];
