@@ -1,12 +1,14 @@
 //! Owner-bound generated-claim promotion, vetting and evidence reads.
 use std::sync::Arc;
 
+use oneiron::claim::ScopedReadResult;
 use oneiron::memory::consolidation::{
     ConsolidationEvidenceRequest, ConsolidationEvidenceSource, ConsolidationPromoteRequest,
     ConsolidationPromotion,
 };
-use oneiron::claim::ScopedReadResult;
-use oneiron::memory::{ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleRequest, ClaimSettlement};
+use oneiron::memory::{
+    ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleRequest, ClaimSettlement,
+};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
@@ -28,7 +30,8 @@ pub(crate) async fn vault_consolidation_promote(
     };
     credential_listing(server, auth, caller, VERB, move |server, _, memory| {
         memory.consolidation_promote_as_owner(&owner, &input, server.decision_host().auto_checker())
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_consolidation_evidence(
@@ -45,7 +48,8 @@ pub(crate) async fn vault_consolidation_evidence(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.consolidation_evidence_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 pub(crate) async fn vault_claims_vet(
@@ -62,7 +66,8 @@ pub(crate) async fn vault_claims_vet(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.claim_vet_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }
 
 /// Review the exact generated claim before vetting it, including an Auto head.
@@ -80,5 +85,6 @@ pub(crate) async fn vault_claims_vetting(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         memory.claim_vetting_review_as_owner(&owner, &input)
-    }).await
+    })
+    .await
 }

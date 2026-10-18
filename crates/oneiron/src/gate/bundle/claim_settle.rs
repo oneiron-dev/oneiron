@@ -71,14 +71,21 @@ impl Vault {
         now: u64,
     ) -> Result<SettledProposal> {
         self.verify_owner_write_actor_in_txn(wtxn, &actor)?;
-        let body = self.get_claim_in_txn(wtxn, &id)?.ok_or(Error::EntityNotFound)?;
+        let body = self
+            .get_claim_in_txn(wtxn, &id)?
+            .ok_or(Error::EntityNotFound)?;
         if !crate::claim::claim_generated_origin(&body) {
-            return Err(Error::InvalidClaimBody("vetting requires a generated-origin claim"));
+            return Err(Error::InvalidClaimBody(
+                "vetting requires a generated-origin claim",
+            ));
         }
         self.settle_reviewed_claim_in_txn(wtxn, id, action, actor, owner_answer, now, true)
     }
 
-    #[expect(clippy::too_many_arguments, reason = "one reviewed settlement and its vetting mode")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one reviewed settlement and its vetting mode"
+    )]
     fn settle_reviewed_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,

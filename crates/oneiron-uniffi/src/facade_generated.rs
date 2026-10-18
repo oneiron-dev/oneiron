@@ -1311,6 +1311,11 @@ export_facade! {
     let output = client.vault_code_oplog(&input)?;
     crate::codec::lift_record("vault.code.oplog", &output)
 };
+"vault.code.model_heal_count" => fn vault_code_model_heal_count(&self, input: CodeRunModelHealCountRequest) -> CodeRunModelHealCountView = |client| {
+    let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest = crate::codec::lower_record("vault.code.model_heal_count", input)?;
+    let output = client.vault_code_model_heal_count(&input)?;
+    crate::codec::lift_record("vault.code.model_heal_count", &output)
+};
 "vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
     let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
     let output = client.vault_code_repo_diff(&input)?;

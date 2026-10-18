@@ -50,9 +50,9 @@ use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::authority_history_doors::*;
-pub(crate) use super::credential_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
+pub(crate) use super::credential_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -138,6 +138,8 @@ pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
+// The owner's per-model code-run heal count door (DOOR-093), likewise.
+pub(crate) use super::code_run_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1187,6 +1189,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
         | "vault.code.oplog"
+        | "vault.code.model_heal_count"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
