@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 
 use super::machine_identity::{Host, host};
-use super::support::{authority_key_from_ed, sign_ed, unsigned_entry};
+use super::support::{authority_key_from_ed, owner_act, sign_ed, unsigned_entry};
 use super::world_key_doors::{
     Fresh, Keyed, enrol_own, fresh_install, key_records, keyed_machine, kit_seed, own_request, set,
 };
@@ -40,7 +40,7 @@ fn flood_on(vault: &Vault, host: &Host, by: &Keyed, world: EntityId) {
                 parents.iter().copied().collect(),
                 AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
                     world,
-                    owner: host.owner.actor(),
+                    act: owner_act(host.owner.actor(), world),
                     machine: by.machine,
                     settings: settings(ReadLocation::MyMachines),
                 }),
@@ -187,9 +187,10 @@ fn a_restore_past_one_wide_world_pins_and_withholds_only_that_key() {
     fresh
         .set_world_privacy_as(
             &owner,
-            EditOrigin::ThisMachine,
+            ActSurface::ThisInstall,
             wide,
             settings(ReadLocation::MyMachines),
+            None,
         )
         .unwrap();
     assert_eq!(fresh.authority_fold().unwrap().worlds[&wide].live.len(), 1);
@@ -387,9 +388,10 @@ fn a_conflict_that_fills_one_entry_resolves_in_one_edit() {
     host.vault
         .set_world_privacy_as(
             &host.owner,
-            EditOrigin::ThisMachine,
+            ActSurface::ThisInstall,
             world,
             settings(ReadLocation::OneMachine(other)),
+            None,
         )
         .unwrap();
     assert_eq!(read_of(&host, world), EffectiveRead::OneMachine(other));

@@ -11,7 +11,8 @@
 //!
 //! The owner's say-so counts from wherever he is authenticated as the owner
 //! (OWNER RULING 10-19 00:5x), so any live physical machine of the vault may
-//! sign a choice, in any role ([`grant_travel_signer_admits`]). A choice whose
+//! sign a choice, in any role ([`super::owner_act_signer_admits`], the one
+//! carrier rule every owner act shares). A choice whose
 //! machine is no longer admitted counts at full strength only if the revision
 //! that took it away had seen it (its profile's `seen_world_edits`);
 //! otherwise, as a raced world edit does, it counts as its meet with every
@@ -28,7 +29,7 @@ use std::sync::Arc;
 use crate::entity_id::EntityId;
 use crate::share_travel::{BornWithField, GrantTravel, TravelChoice};
 
-use super::machine_standing::{InstallCounted, Standing, StandingView, TrustedAt};
+use super::machine_standing::{InstallCounted, Standing, StandingView};
 use super::world_strength::{FrontierEdit, WorldFrontier};
 use super::*;
 
@@ -76,45 +77,11 @@ impl AuthorityFold {
     }
 }
 
-/// Whether `key` may sign a grant travel choice for `machine`, judged on
-/// `machine`'s folded chains and the authority `roster` of the same fold.
-/// The one signer rule: the fold's transition, the writer and the race all
-/// ask it, so every replica admits the same signers, and the store doors'
-/// structure (`vouches_for`, `is_stranger`, the import order's `wanted`)
-/// takes the install key any profile names, in any role, as this does.
-///
-/// The owner's ruling (10-19 00:5x): "Linking together machines is like a
-/// computronium mesh. it doesn't matter where you said yes, if you said so.
-/// i can do action X from my phone that impacts an engine on my laptop." The
-/// gate is the owner's authenticated say-so at the writer; the signature
-/// only says which of the vault's machines carried it. So this admits a
-/// live physical machine profile of this vault whose install key is `key`,
-/// in any role (yours, work or school, rented, a hosted node, an execution
-/// node), as the sync wire accepts a proven peer machine
-/// ([`AuthorityFold::machine_proof_key`]) and not only a "yours" one. Live:
-/// not removed in any chain, not conflicted or poisoned, not stale, held or
-/// unsettled where the view says so. It never admits a key the authority
-/// roster names (the host root, an owner or roster device key), nor an
-/// engine MACHINE writer, which no profile names.
-pub(super) fn grant_travel_signer_admits(
-    machine: Option<&FoldedMachine>,
-    roster: &BTreeMap<AuthorityKey, FoldedDevice>,
-    key: &[u8; 32],
-) -> bool {
-    !roster.contains_key(&AuthorityKey::Ed25519(*key))
-        && machine.is_some_and(|folded| {
-            folded.chains().all(|(_, chain)| !chain.removed)
-                && folded
-                    .chains()
-                    .any(|(_, chain)| chain.is_live() && chain.profile.machine_key == *key)
-        })
-}
-
 /// The `GrantTravelSet` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
 /// its signer is a machine's install key, never a roster key. Some chain of
 /// the machine must name the key; a choice signed while the machine was not
-/// admitted ([`grant_travel_signer_admits`], pin-free) is valid and without
+/// admitted ([`super::owner_act_signer_admits`], pin-free) is valid and without
 /// effect, so it never stalls what descends from it. The grant row need not
 /// have arrived first: its liveness is the writer's and the read's, never
 /// the fold's. `pin` and `counted` only weaken a choice this install does
@@ -147,9 +114,9 @@ pub(super) fn apply_grant_travel(
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     let roster = StandingView::Under(MachineAdmitter::Roster);
-    let admitted = standing.admits_grant_signer(set.machine, &key, roster);
+    let admitted = standing.admits_owner_act_signer(set.machine, &key, roster);
     let marks = standing.live_signing_chains(set.machine, signer);
-    let narrow_only = !standing.admits_grant_signer(set.machine, &key, StandingView::Install);
+    let narrow_only = !standing.admits_owner_act_signer(set.machine, &key, StandingView::Install);
     drop(standing);
     if !admitted {
         state.refused_grant_travel.insert(hash);
@@ -175,7 +142,6 @@ pub(super) fn apply_grant_travel(
             replaced,
             narrow_only,
             marks,
-            trusted_at: TrustedAt::default(),
             restriction_only,
             disputed: false,
         }),
@@ -185,7 +151,7 @@ pub(super) fn apply_grant_travel(
 
 /// Full strength on this install: not disputed, counted here at its
 /// parents, landed in full, and its race passes now
-/// ([`Standing::grant_race`]).
+/// ([`Standing::owner_act_race`]).
 fn counts_here(
     standing: &Standing<'_>,
     hash: &AuthorityEntryHash,
@@ -194,7 +160,7 @@ fn counts_here(
     !choice.disputed
         && !choice.narrow_only
         && !choice.restriction_only
-        && standing.grant_race(
+        && standing.owner_act_race(
             choice.machine,
             hash,
             &choice.key,
