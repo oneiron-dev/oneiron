@@ -160,7 +160,11 @@ impl Memory<'_> {
                     source_revision_ids,
                     evidence_turn_ids: Vec::new(),
                 },
-                world: Some(body.world.unwrap_or_else(crate::claim::base_world_id).to_hex()),
+                world: Some(
+                    body.world
+                        .unwrap_or_else(crate::claim::base_world_id)
+                        .to_hex(),
+                ),
                 project_ref: Some(body.scope_project.to_hex()),
                 facet,
                 salience: body.salience,

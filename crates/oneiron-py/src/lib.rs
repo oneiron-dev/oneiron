@@ -2740,6 +2740,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_calendar_transcript_ingest(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.calendar.transcript.ingest")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.calendar.transcript.ingest", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.list")?;
         let output = py

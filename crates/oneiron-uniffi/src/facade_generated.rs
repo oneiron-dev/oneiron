@@ -1501,6 +1501,11 @@ export_facade! {
     let output = client.vault_calendar_freebusy(&input)?;
     crate::codec::lift_record("vault.calendar.freebusy", &output)
 };
+"vault.calendar.transcript.ingest" => fn vault_calendar_transcript_ingest(&self, input: TranscriptFileDropInput) -> TranscriptIngestOutcome = |client| {
+    let input: oneiron::calendar::transcript::TranscriptFileDropInput = crate::codec::lower_record("vault.calendar.transcript.ingest", input)?;
+    let output = client.vault_calendar_transcript_ingest(&input)?;
+    crate::codec::lift_record("vault.calendar.transcript.ingest", &output)
+};
 "vault.claims.list" => fn vault_claims_list(&self, filter: ClaimListFilter) -> ClaimViews = |client| {
     let input: oneiron::memory::ClaimListFilter = filter.lower()?;
     let output = client.vault_claims_list(&input)?;

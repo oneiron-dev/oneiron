@@ -1237,6 +1237,7 @@ fn mcp_agent_verb_input(
         "vault.calendar.read" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.search" => a.spec.clone().ok_or_else(invalid),
         "vault.calendar.freebusy" => a.spec.clone().ok_or_else(invalid),
+        "vault.calendar.transcript.ingest" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.list" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.history" => a.spec.clone().ok_or_else(invalid),
         "vault.delete" => a.spec.clone().ok_or_else(invalid),
@@ -2328,6 +2329,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.calendar.freebusy" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.calendar.transcript.ingest" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.claims.list" => {
@@ -7084,6 +7088,14 @@ async fn execute_agent_verb_row(
             let input: oneiron::task_verb::sdk::CalendarFreebusyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_calendar_freebusy(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.calendar.transcript.ingest" => {
+            let input: oneiron::calendar::transcript::TranscriptFileDropInput =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_calendar_transcript_ingest(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

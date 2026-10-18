@@ -10,7 +10,19 @@ pub const CHANNEL_IDENTITY_SELECTION_KEY: &[u8] = b"channel_identity_selection:v
 const SELECTION_REF_MAX_BYTES: usize = 128;
 
 /// The relationship context a message is being sent in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RelationshipContext {
     WorkDeal,
@@ -65,7 +77,19 @@ impl RelationshipContext {
 /// A face is a ROLE, not an addressing shape: several
 /// [`ChannelIdentityShape`](crate::channel_identity::ChannelIdentityShape)s can wear one face, and the host classifies its own
 /// identities into faces before asking for a decision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ChannelIdentityFace {
     DelegatedOwnerAccount,
@@ -106,7 +130,19 @@ impl ChannelIdentityFace {
 }
 
 /// Provenance class of whoever last wrote a row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum SelectionRuleWriterKind {
     /// Compiled vault law; never produced by a caller write.

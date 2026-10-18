@@ -14,7 +14,9 @@ pub enum MadeByClass {
 }
 
 /// Caller-selected provenance slice. Unknown provenance never matches a slice.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MadeByPredicate {
     Stated,
@@ -110,13 +112,29 @@ impl MadeByProcess {
 #[serde(rename_all = "snake_case")]
 pub enum MadeByTrigger {
     /// The initiating TASK row.
-    Task(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
+    Task(
+        #[serde(with = "super::entity_ref_wire")]
+        #[schemars(with = "String")]
+        EntityId,
+    ),
     /// The TURN row that carries the initiating ask.
-    Ask(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
+    Ask(
+        #[serde(with = "super::entity_ref_wire")]
+        #[schemars(with = "String")]
+        EntityId,
+    ),
     /// The code-mode run, by the id of its durable replay record.
-    Run(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
+    Run(
+        #[serde(with = "super::entity_ref_wire")]
+        #[schemars(with = "String")]
+        EntityId,
+    ),
     /// The SKILL row whose execution caused the birth.
-    Skill(#[serde(with = "super::entity_ref_wire")] #[schemars(with = "String")] EntityId),
+    Skill(
+        #[serde(with = "super::entity_ref_wire")]
+        #[schemars(with = "String")]
+        EntityId,
+    ),
 }
 
 impl MadeByTrigger {

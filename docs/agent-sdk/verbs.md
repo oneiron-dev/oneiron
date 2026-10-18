@@ -306,6 +306,7 @@ both bindings and their export-census tests in one change.
 - `vault.calendar.read`
 - `vault.calendar.search`
 - `vault.calendar.freebusy`
+- `vault.calendar.transcript.ingest`
 - `vault.claims.list`
 - `vault.claims.history`
 - `vault.delete`

@@ -308,6 +308,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.calendar.read", post(facade_route))
         .route("/vault.calendar.search", post(facade_route))
         .route("/vault.calendar.freebusy", post(facade_route))
+        .route("/vault.calendar.transcript.ingest", post(facade_route))
         .route("/vault.claims.list", post(facade_route))
         .route("/vault.claims.history", post(facade_route))
         .route("/vault.delete", post(facade_route))
