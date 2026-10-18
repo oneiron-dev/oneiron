@@ -300,6 +300,25 @@ impl Memory<'_> {
         })
     }
 
+    /// Reads the immutable birth in the same snapshot as the admitted row.
+    fn made_by_in_lane(
+        &self,
+        lane: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> MemoryResult<Option<crate::provenance::made_by::MadeBy>> {
+        let Some(birth) = crate::provenance::birth::row_birth_in_txn(&self.vault.store, txn, id)? else {
+            return Ok(None);
+        };
+        let refs: Vec<_> = birth.made_by.inputs.iter().map(|input| input.row)
+            .chain(birth.made_by.trigger.as_ref().map(crate::provenance::made_by::MadeByTrigger::row))
+            .collect();
+        let allowed = lane.entities_readable_in_txn(txn, &refs)?;
+        let visible: std::collections::BTreeSet<_> = refs.into_iter().zip(allowed)
+            .filter_map(|(id, admitted)| admitted.then_some(id)).collect();
+        Ok(Some(birth.masked(|id| visible.contains(id), &crate::provenance::birth::WithheldKey::fresh()).made_by))
+    }
+
     /// Projects one admitted row to the typed entity view. A deleted shell
     /// has no body and projects to nothing.
     /// Projects a row `lane` admitted; its short ref is read where the lane
@@ -343,6 +362,7 @@ impl Memory<'_> {
             occurred_start: row.occurred.start,
             occurred_end: row.occurred.end,
             learned_at: row.learned_at,
+            made_by: self.made_by_in_lane(lane, txn, &row.id)?,
             body,
         }))
     }

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 329 facade rows, 1324 declarations.
-Inputs: 286 of 329 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 286 of 329 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 74; unread shapes: 0.
+Census: 375 facade rows, 1475 declarations.
+Inputs: 332 of 375 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 332 of 375 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1230,16 +1230,23 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     occurred_at: int
     assertions: NotRequired[WitnessAssertions]
-class ClaimInput(TypedDict):
+AllRelationships = Literal["all"]
+ClaimRelationships = AllRelationships | list[str]
+class ClaimScope(TypedDict):
+    world_id: str
+    scope_facet_id: str
+    scope_relationship_id: ClaimRelationships
+    scope_project_id: str
+class ScopedClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
     subject_ref: str
     value: Any
     confidence: float
     source: str
-    world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
-    scope: NotRequired[Any | None]
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+    evidence_turn_refs: NotRequired[list[str]]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
     occurred_at: NotRequired[int | None]
@@ -1253,8 +1260,23 @@ class CommitReceipt(TypedDict):
     claim: NotRequired[RecordRef | None]
     superseded: NotRequired[RecordRef | None]
 RecallEffort = Literal["light", "medium", "high", "xhigh", "max", "call"]
+class RecallWorldsAll(TypedDict):
+    kind: Literal["all"]
+class RecallWorldsBase(TypedDict):
+    kind: Literal["base"]
+class RecallWorldsWorld(TypedDict):
+    kind: Literal["world"]
+    world_ref: str
+    include_base: bool
+class RecallWorldsWorlds(TypedDict):
+    kind: Literal["worlds"]
+    world_refs: list[str]
+    include_base: bool
+RecallWorlds = RecallWorldsAll | RecallWorldsBase | RecallWorldsWorld | RecallWorldsWorlds
 class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
+    worlds: NotRequired[RecallWorlds | None]
+    project_refs: NotRequired[list[str]]
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
 MediaQueryKind = Literal["text", "image", "audio"]
@@ -1296,6 +1318,7 @@ class MemoryItem(TypedDict):
     provenance: MemoryProvenance
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
+    project_ref: NotRequired[str | None]
     salience: NotRequired[float | None]
     reactions: NotRequired[list[str]]
     cited_messages: NotRequired[list[CitedMessage]]
@@ -1364,6 +1387,107 @@ class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
+class ScopeAxisBottom(TypedDict):
+    kind: Literal["bottom"]
+class ScopeAxisAll(TypedDict):
+    kind: Literal["all"]
+class ScopeAxisSome(TypedDict, Generic[T]):
+    kind: Literal["some"]
+    values: list[T]
+ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
+ScopeId = str
+Sensitivity = Literal["public", "private", "sensitive", "restricted"]
+class SensitivityCeilingBottom(TypedDict):
+    kind: Literal["bottom"]
+class SensitivityCeilingAtMost(TypedDict):
+    kind: Literal["at_most"]
+    value: Sensitivity
+SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAtMost
+class Scope(TypedDict):
+    worlds: NotRequired[ScopeAxis[ScopeId]]
+    facets: NotRequired[ScopeAxis[ScopeId]]
+    bands: NotRequired[ScopeAxis[int]]
+    audience: NotRequired[ScopeAxis[ScopeId]]
+    verbs: NotRequired[ScopeAxis[str]]
+    sensitivity: NotRequired[SensitivityCeiling]
+class CredentialCeiling(TypedDict):
+    kind: Literal["ceiling"]
+    scope: Scope
+class RecordSelector(TypedDict):
+    worlds: NotRequired[RecallWorlds | None]
+    facet_refs: NotRequired[list[str]]
+    kinds: NotRequired[list[str]]
+    project_refs: NotRequired[list[str]]
+class ScopeAxisInputBottom(TypedDict):
+    kind: Literal["bottom"]
+class ScopeAxisInputAll(TypedDict):
+    kind: Literal["all"]
+class ScopeAxisInputSome(TypedDict, Generic[T]):
+    kind: Literal["some"]
+    values: list[T]
+ScopeAxisInput = ScopeAxisInputBottom | ScopeAxisInputAll | ScopeAxisInputSome[T]
+ScopeSensitivityBand = Literal["public", "private", "sensitive", "restricted"]
+class ScopeSensitivityInputBottom(TypedDict):
+    kind: Literal["bottom"]
+class ScopeSensitivityInputAtMost(TypedDict):
+    kind: Literal["at_most"]
+    value: ScopeSensitivityBand
+ScopeSensitivityInput = ScopeSensitivityInputBottom | ScopeSensitivityInputAtMost
+class ChannelCeiling(TypedDict):
+    worlds: NotRequired[ScopeAxisInput[str]]
+    facets: NotRequired[ScopeAxisInput[str]]
+    bands: NotRequired[ScopeAxisInput[int]]
+    audience: NotRequired[ScopeAxisInput[str]]
+    verbs: NotRequired[ScopeAxisInput[str]]
+    sensitivity: NotRequired[ScopeSensitivityInput]
+class ExportChannel(TypedDict):
+    channel_ref: str
+    scope: ChannelCeiling
+class ScopedExportRequest(TypedDict):
+    selector: RecordSelector
+    channel: ExportChannel
+class RecordPosition(TypedDict):
+    kind: Literal["position"]
+    scope: Scope
+MadeByInputRole = Literal["input", "prompt"]
+class MadeByInput(TypedDict):
+    row: str
+    role: MadeByInputRole
+MadeByClass = Literal["stated", "concluded"]
+MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
+class MadeByTriggerTask(TypedDict):
+    task: str
+class MadeByTriggerAsk(TypedDict):
+    ask: str
+class MadeByTriggerRun(TypedDict):
+    run: str
+class MadeByTriggerSkill(TypedDict):
+    skill: str
+MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
+class MadeBy(TypedDict):
+    inputs: list[MadeByInput]
+    process: MadeByProcess
+    at: int
+    trigger: NotRequired[MadeByTrigger | None]
+WithheldRole = Literal["input", "prompt", "trigger"]
+class WithheldRef(TypedDict):
+    handle: str
+    role: WithheldRole
+class RowBirth(TypedDict):
+    made_by: MadeBy
+    content_hash: str
+    withheld: NotRequired[list[WithheldRef]]
+class ScopedExportRecord(TypedDict):
+    record: RecordRef
+    position: RecordPosition
+    bytes: list[int]
+    birth: NotRequired[RowBirth | None]
+class ScopedExport(TypedDict):
+    selector: RecordSelector
+    credential: CredentialCeiling
+    channel: ExportChannel
+    applied: Scope
+    records: list[ScopedExportRecord]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
     kinds: NotRequired[list[str]]
@@ -1562,6 +1686,8 @@ class ClaimView(TypedDict):
     source: NotRequired[str | None]
     world_ref: NotRequired[str | None]
     scope: NotRequired[Any | None]
+    claim_scope: ClaimScope
+    made_by: NotRequired[MadeBy | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
     salience: NotRequired[float | None]
@@ -1953,11 +2079,70 @@ class WeaveItemCorrectionView(TypedDict):
     project_ref: NotRequired[str | None]
     actor_ref: str
     recorded_at: int
-class PackFileInput(TypedDict):
-    path: str
-    text: str
-class PackPutRequest(TypedDict):
-    files: list[PackFileInput]
+SkillHubKind = Literal["git", "http-index", "local-dir"]
+SkillHubTrustTier = Literal["untrusted", "community", "verified"]
+HubSyncPolicy = Literal["pinned-ref", "pinned-commit", "content-hash-frozen", "mirror-of-hub"]
+class SkillHubPutRequest(TypedDict):
+    hub: EntityId
+    kind: SkillHubKind
+    endpoint: str
+    trust_tier: SkillHubTrustTier
+    sync_policy: HubSyncPolicy
+HubConsentOutcome = Literal["approved", "denied", "revoked"]
+class HubConsentReceipt(TypedDict):
+    outcome: HubConsentOutcome
+    decision: str
+    grant_ref: NotRequired[str | None]
+class SkillHubConfigured(TypedDict):
+    hub: EntityId
+    consent: HubConsentReceipt
+class SkillHubRequest(TypedDict):
+    hub: EntityId
+class SkillHubRecord(TypedDict):
+    kind: SkillHubKind
+    endpoint: str
+    trust_tier: SkillHubTrustTier
+    sync_policy: HubSyncPolicy
+class SkillPublisherRequest(TypedDict):
+    hub: EntityId
+    identity: str
+class SkillPublisherAdmission(TypedDict):
+    hub: EntityId
+    identity: str
+    grant_ref: str
+class HubRefRequest(TypedDict):
+    hub: EntityId
+    ref_string: str
+class HubPinSemver(TypedDict):
+    type: Literal["semver"]
+    value: str
+class HubPinTag(TypedDict):
+    type: Literal["tag"]
+    value: str
+class HubPinCommit(TypedDict):
+    type: Literal["commit"]
+    value: str
+class HubPinContentHash(TypedDict):
+    type: Literal["content_hash"]
+    value: str
+class HubPinNone(TypedDict):
+    type: Literal["none"]
+HubPin = HubPinSemver | HubPinTag | HubPinCommit | HubPinContentHash | HubPinNone
+class HubRef(TypedDict):
+    hub_id: EntityId
+    ref_string: str
+    pin: HubPin
+class TrackedHubRef(TypedDict):
+    hub_ref: HubRef
+    sync_policy: HubSyncPolicy
+    latest_seen: NotRequired[str | None]
+    latest_trusted: NotRequired[str | None]
+class HubRefSetRequest(TypedDict):
+    hub_ref: HubRef
+    sync_policy: HubSyncPolicy
+class HubImportRequest(TypedDict):
+    hub_ref: HubRef
+    publisher: str
 PackPutOutcome = Literal["installed", "candidate", "blocked"]
 PackKind = Literal["capability", "connector", "agent"]
 class PackAdapterBuiltin(TypedDict):
@@ -2041,6 +2226,151 @@ class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
     receipt: NotRequired[PackInstallReceipt | None]
+class HubPackRequest(TypedDict):
+    name: str
+class HubSkillImported(TypedDict):
+    entity: EntityId
+class HubSkillRequest(TypedDict):
+    entity: EntityId
+HubSkillSyncOutcome = Literal["applied", "proposed", "refused_by_policy"]
+class HubSkillSyncReceipt(TypedDict):
+    outcome: HubSkillSyncOutcome
+    proposal: NotRequired[EntityId | None]
+    approval: NotRequired[ClaimApprovalStatus | None]
+InstallLifecycle = Literal["candidate", "active", "stale", "quarantined", "superseded"]
+InstallHoldReason = Literal["source_only", "rules_hit", "code_auto_install_off", "qualification_required", "no_fit", "local_approval", "unloadable_approval", "stale", "quarantined", "superseded", "advisories"]
+class InstallDispositionNotInstalled(TypedDict):
+    not_installed: InstallHoldReason
+InstallDisposition = Literal["installed", "already_installed", "pending_permission"] | InstallDispositionNotInstalled
+class HubImportReceipt(TypedDict):
+    entity: str
+    content_hash: str
+    hub_id: str
+    ref_string: str
+    pin_type: str
+    pin_value: NotRequired[str | None]
+    publisher: NotRequired[str | None]
+    publisher_grant: NotRequired[str | None]
+    installed_as: InstallLifecycle
+    disposition: InstallDisposition
+    fit_analysis: NotRequired[str | None]
+    requested_permissions: NotRequired[list[str]]
+    at: int
+class HubAdmissionReceipt(TypedDict):
+    receipt_id: str
+    candidate: str
+    content_hash: str
+    binding: str
+    consent_digest: str
+    publisher: str
+    publisher_grant: str
+    hub_id: str
+    hub_ref: str
+    evidence_skill: str
+    held_out_digest: str
+    held_out_count: int
+    before: float
+    after: float
+    accepted: bool
+    judge_revision: str
+    displaced_by_revision: NotRequired[str | None]
+    at: int
+class HubSkillReceipts(TypedDict):
+    sources: list[HubRef]
+    imports: list[HubImportReceipt]
+    admission: NotRequired[HubAdmissionReceipt | None]
+class HubSkillPermissionRequest(TypedDict):
+    entity: EntityId
+    hub_ref: HubRef
+class HubHookBindRequest(TypedDict):
+    pack: str
+HookActorClass = Literal["human", "agent", "system"]
+HookPhase = Literal["pre", "post", "fact"]
+HookOutcomeKind = Literal["continue", "rewrite", "skip", "ask", "add_block", "annotate", "redact", "propose", "enqueue", "effect", "nothing"]
+HookRenderClass = Literal["deterministic_eager", "generative"]
+class HookSelector(TypedDict):
+    verbs: list[str]
+    actors: list[HookActorClass]
+    scope: NotRequired[str | None]
+    phase: HookPhase
+    priority: int
+    budget_ms: int
+    blocking: bool
+    outcomes: list[HookOutcomeKind]
+    served: NotRequired[list[str]]
+    render_class: NotRequired[HookRenderClass]
+class HookAuthorOwner(TypedDict):
+    kind: Literal["owner"]
+class HookAuthorForeignActor(TypedDict):
+    kind: Literal["foreign_actor"]
+    actor_kind: str
+    identity: str
+    hub: str
+    grant: str
+    actor: str
+HookAuthor = HookAuthorOwner | HookAuthorForeignActor
+class PackHookBinding(TypedDict):
+    version: int
+    code: str
+    owner: str
+    source: str
+    pack: str
+    hook: str
+    hook_version: str
+    body_hash: str
+    selector: HookSelector
+    enabled: bool
+    author: HookAuthor
+class HubHookBindingRow(TypedDict):
+    id: EntityId
+    binding: PackHookBinding
+class HubHookQualifyRequest(TypedDict):
+    source: EntityId
+FactSource = Literal["claim_changelog", "settlement"]
+FactPositionHex = str
+FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
+class HookReplayCaseFact(TypedDict):
+    on: Literal["fact"]
+    source: FactSource
+    position: FactPositionHex
+    kind: FactKind
+    entity: str
+class HookReplayCaseVerb(TypedDict):
+    on: Literal["verb"]
+    run_key: str
+    invocation: str
+    verb: str
+    phase: HookPhase
+HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
+HookReplayCompare = Literal["same", "differs", "incomplete"]
+class HookReplayOutcomeRan(TypedDict):
+    status: Literal["ran"]
+    outcome_json: NotRequired[str | None]
+    outcome: str
+    reason: NotRequired[str | None]
+    recorded: NotRequired[str | None]
+    recorded_outcome_json: NotRequired[str | None]
+    compare: HookReplayCompare
+    from_memo: bool
+    reads_live: bool
+class HookReplayOutcomeMissingHistory(TypedDict):
+    status: Literal["missing_history"]
+    reason: str
+HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
+class HookReplayRow(TypedDict):
+    case: HookReplayCase
+    result: HookReplayOutcome
+class HubHookReplay(TypedDict):
+    hook: str
+    entries: list[HookReplayRow]
+class HubHookQualificationReceipt(TypedDict):
+    put: PackPutReceipt
+    replays: list[HubHookReplay]
+class PackFileInput(TypedDict):
+    path: str
+    text: str
+class PackPutRequest(TypedDict):
+    files: list[PackFileInput]
 class PackRemoveRequest(TypedDict):
     pack: str
 class ChannelSubscriptionRequest(TypedDict):
@@ -2262,6 +2592,7 @@ class EntityView(TypedDict):
     occurred_end: int
     learned_at: int
     body: NotRequired[Any | None]
+    made_by: NotRequired[MadeBy | None]
 class InspectionResolved(TypedDict):
     state: InspectionState
     handle: InspectionHandle
@@ -3773,29 +4104,6 @@ class LensDefaultRequest(TypedDict):
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
-class ScopeAxisBottom(TypedDict):
-    kind: Literal["bottom"]
-class ScopeAxisAll(TypedDict):
-    kind: Literal["all"]
-class ScopeAxisSome(TypedDict, Generic[T]):
-    kind: Literal["some"]
-    values: list[T]
-ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
-ScopeId = str
-Sensitivity = Literal["public", "private", "sensitive", "restricted"]
-class SensitivityCeilingBottom(TypedDict):
-    kind: Literal["bottom"]
-class SensitivityCeilingAtMost(TypedDict):
-    kind: Literal["at_most"]
-    value: Sensitivity
-SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAtMost
-class Scope(TypedDict):
-    worlds: NotRequired[ScopeAxis[ScopeId]]
-    facets: NotRequired[ScopeAxis[ScopeId]]
-    bands: NotRequired[ScopeAxis[int]]
-    audience: NotRequired[ScopeAxis[ScopeId]]
-    verbs: NotRequired[ScopeAxis[str]]
-    sensitivity: NotRequired[SensitivityCeiling]
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
@@ -3900,64 +4208,9 @@ class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
     limit: NotRequired[int | None]
-FactSource = Literal["claim_changelog", "settlement"]
-FactPositionHex = str
-FactKind = Literal["claim.landed", "claim.superseded", "proposal.settled"]
-HookPhase = Literal["pre", "post", "fact"]
-class HookReplayCaseFact(TypedDict):
-    on: Literal["fact"]
-    source: FactSource
-    position: FactPositionHex
-    kind: FactKind
-    entity: str
-class HookReplayCaseVerb(TypedDict):
-    on: Literal["verb"]
-    run_key: str
-    invocation: str
-    verb: str
-    phase: HookPhase
-HookReplayCase = HookReplayCaseFact | HookReplayCaseVerb
-HookReplayCompare = Literal["same", "differs", "incomplete"]
-class HookReplayOutcomeRan(TypedDict):
-    status: Literal["ran"]
-    outcome_json: NotRequired[str | None]
-    outcome: str
-    reason: NotRequired[str | None]
-    recorded: NotRequired[str | None]
-    recorded_outcome_json: NotRequired[str | None]
-    compare: HookReplayCompare
-    from_memo: bool
-    reads_live: bool
-class HookReplayOutcomeMissingHistory(TypedDict):
-    status: Literal["missing_history"]
-    reason: str
-HookReplayOutcome = HookReplayOutcomeRan | HookReplayOutcomeMissingHistory
-class HookReplayRow(TypedDict):
-    case: HookReplayCase
-    result: HookReplayOutcome
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
 ArtifactKind = Literal["document", "sheet", "deck", "code", "canvas", "image", "file"]
-MadeByInputRole = Literal["input", "prompt"]
-class MadeByInput(TypedDict):
-    row: str
-    role: MadeByInputRole
-MadeByClass = Literal["stated", "concluded"]
-MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
-class MadeByTriggerTask(TypedDict):
-    task: str
-class MadeByTriggerAsk(TypedDict):
-    ask: str
-class MadeByTriggerRun(TypedDict):
-    run: str
-class MadeByTriggerSkill(TypedDict):
-    skill: str
-MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
-class MadeBy(TypedDict):
-    inputs: list[MadeByInput]
-    process: MadeByProcess
-    at: int
-    trigger: NotRequired[MadeByTrigger | None]
 class BornFromSourceTrigger(TypedDict):
     trigger: MadeByTrigger
 class BornFromSourceAgentRun(TypedDict):
@@ -4090,6 +4343,111 @@ class ArtifactExportFile(TypedDict):
     content_hash: str
     born_with: BornWith
     content_base64: str
+class AgentSkillInput(TypedDict):
+    skill_id: str
+    min_version: NotRequired[str | None]
+class AgentMcpInput(TypedDict):
+    key: str
+    min_version: NotRequired[str | None]
+class AgentScopeInputAll(TypedDict):
+    kind: Literal["all"]
+class AgentScopeInputBase(TypedDict):
+    kind: Literal["base"]
+class AgentScopeInputWorld(TypedDict):
+    kind: Literal["world"]
+    world: EntityId
+AgentScopeInput = AgentScopeInputAll | AgentScopeInputBase | AgentScopeInputWorld
+AgentCeilingInput = Literal["auto", "proposed"]
+class AgentDefinitionSpec(TypedDict):
+    agent_id: str
+    desc: str
+    version: str
+    instructions: NotRequired[str | None]
+    skills: NotRequired[list[AgentSkillInput]]
+    connectors: NotRequired[list[str]]
+    code_mode_mcps: NotRequired[list[AgentMcpInput]]
+    model_tier: NotRequired[str | None]
+    scope: NotRequired[AgentScopeInput]
+    ceiling: NotRequired[AgentCeilingInput]
+    forked_from: NotRequired[EntityId | None]
+    enabled: NotRequired[bool]
+    display_name: NotRequired[str | None]
+class AgentDefinitionCreateRequest(TypedDict):
+    agent_def_ref: EntityId
+    definition: AgentDefinitionSpec
+AgentDefinitionLifecycle = Literal["active", "superseded", "retracted"]
+class AgentDefinitionView(TypedDict):
+    agent_def_ref: EntityId
+    definition: AgentDefinitionSpec
+    approval_status: ClaimApprovalStatus
+    lifecycle_status: AgentDefinitionLifecycle
+class AgentDefinitionRequest(TypedDict):
+    agent_def_ref: EntityId
+class AgentDefinitionUpdateRequest(TypedDict):
+    agent_def_ref: EntityId
+    expected_version: str
+    definition: AgentDefinitionSpec
+class WorkspaceRosterPreset(TypedDict):
+    workspace_ref: str
+    workspace_vault_id: str
+    org_ref: EntityId
+    venture_name: str
+    house_display_name: NotRequired[str | None]
+    house_actor_ref: EntityId
+    house_identity_ref: NotRequired[EntityId | None]
+WorkCompanionPolicy = Literal["choose", "suggest", "require"]
+class WorkspacePresetRequest(TypedDict):
+    preset: WorkspaceRosterPreset
+    work_companion: NotRequired[WorkCompanionPolicy]
+class WorkspacePresetReceipt(TypedDict):
+    workspace_ref: str
+    work_companion: WorkCompanionPolicy
+class WorkspaceCompanionInputWork(TypedDict):
+    kind: Literal["work"]
+    person_ref: EntityId
+    actor_ref: EntityId
+    work_facet_ref: EntityId
+    profile_grant_ref: EntityId
+    actor_definition: AgentDefinitionSpec
+    display_name: str
+class WorkspaceCompanionInputBring(TypedDict):
+    kind: Literal["bring"]
+    person_ref: EntityId
+    actor_ref: EntityId
+    work_facet_ref: EntityId
+WorkspaceCompanionInput = WorkspaceCompanionInputWork | WorkspaceCompanionInputBring
+class WorkspaceMemberOnboardRequest(TypedDict):
+    onboarding_id: str
+    workspace: WorkspaceRosterPreset
+    person_ref: EntityId
+    actor_ref: EntityId
+    actor_definition: AgentDefinitionSpec
+    work_facet_ref: EntityId
+    federation_grant_ref: EntityId
+    companion: WorkspaceCompanionInput
+    occurred_at: int
+class MemberOnboardingOutcome(TypedDict):
+    onboarding_id: str
+    person_ref: EntityId
+    actor_ref: EntityId
+    federation_grant_ref: EntityId
+    companion_person_ref: NotRequired[EntityId | None]
+    companion_actor_ref: NotRequired[EntityId | None]
+    work_companion_suggested: bool
+    delegated_identity_ref: NotRequired[EntityId | None]
+    completed_at: int
+class WorkspaceRosterRequest(TypedDict):
+    workspace_ref: str
+WorkspaceRosterRole = Literal["house_mind", "principal_companion"]
+class WorkspaceRosterEntry(TypedDict):
+    workspace_ref: str
+    role: WorkspaceRosterRole
+    principal_ref: NotRequired[EntityId | None]
+    actor_ref: EntityId
+    subject_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+    identity_ref: NotRequired[EntityId | None]
+    display_name: str
 class AgentPackExportRequest(TypedDict):
     agent_ref: str
     travel: NotRequired[TravelChoice | None]
@@ -5121,7 +5479,6 @@ class CompanionSharingSetRequest(TypedDict):
     expected_delta: str
 class WorkspaceRefRequest(TypedDict):
     workspace_ref: str
-WorkCompanionPolicy = Literal["choose", "suggest", "require"]
 class WorkCompanionSetRequest(TypedDict):
     workspace_ref: str
     policy: WorkCompanionPolicy
@@ -5586,8 +5943,8 @@ class ConnectorCallStatusSettled(TypedDict):
     tool: str
     reply: ConnectorCallReply
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
-class CommitRequest(TypedDict):
-    claims: list[ClaimInput]
+class ScopedCommitRequest(TypedDict):
+    claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
 class RecordRefusal(TypedDict):
     reason: RefusalReason
@@ -5602,12 +5959,58 @@ class CommitOutcomeRefused(TypedDict):
     refusal: RecordRefusal
     receipt_ref: NotRequired[str | None]
 CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
+class ClaimInput(TypedDict):
+    id: NotRequired[str | None]
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    source: str
+    world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[str | None]
+    scope: NotRequired[Any | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    occurred_at: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    salience: NotRequired[float | None]
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):
     subject_ref: str
     predicate: str
 ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
+class BookingPageTokenRequest(TypedDict):
+    page_ref: str
+class BookingPageTokenResponse(TypedDict):
+    page_token: str
+class CalendarReadRequest(TypedDict):
+    event_ref: str
+class CalendarEventView(TypedDict):
+    origin: str
+    event_ref: str
+    name: NotRequired[str | None]
+    start_utc: NotRequired[int | None]
+    end_utc: NotRequired[int | None]
+    calendar_systems: list[str]
+    blocks_time: bool
+class CalendarSel(TypedDict):
+    system: NotRequired[str | None]
+class CalendarRangeDto(TypedDict):
+    start: int
+    end: int
+class CalendarSearchRequest(TypedDict):
+    calendars: list[CalendarSel]
+    range: NotRequired[CalendarRangeDto | None]
+    text: NotRequired[str | None]
+    limit: int
+class CalendarFreebusyRequest(TypedDict):
+    calendars: list[CalendarSel]
+    range: CalendarRangeDto
+class CalendarFreebusyIntervalDto(TypedDict):
+    start_utc: int
+    end_utc: int
+CalendarFreebusyDto = list[CalendarFreebusyIntervalDto]
 class ClaimListFilter(TypedDict):
     subject_ref: NotRequired[str | None]
     predicate: NotRequired[str | None]
@@ -6839,6 +7242,243 @@ class DreamerAttemptView(TypedDict):
     last_error: NotRequired[str | None]
     created_at: int
     updated_at: int
+SelfHeldShape = Literal["dedicated_address", "dedicated_handle", "shared_presence"]
+class ChannelIdentityBindingActor(TypedDict):
+    kind: Literal["actor"]
+    actor_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+class ChannelIdentityBindingVault(TypedDict):
+    kind: Literal["vault"]
+    vault_id: int
+ChannelIdentityBinding = ChannelIdentityBindingActor | ChannelIdentityBindingVault
+ChannelIdentityFulfillment = Literal["api", "manual", "review"]
+class ChannelIdentityProvisionRequest(TypedDict):
+    channel: str
+    address_or_handle: str
+    shape: SelfHeldShape
+    binding: ChannelIdentityBinding
+    fulfillment_mode: ChannelIdentityFulfillment
+ChannelIdentityShape = Literal["dedicated_address", "dedicated_handle", "shared_presence", "delegated_grant"]
+ChannelIdentityCustody = Literal["self_held", "delegated"]
+ChannelIdentityState = Literal["requested", "pending_fulfillment", "active", "rotating", "released", "quarantine", "tombstone"]
+class ChannelIdentityView(TypedDict):
+    identity_ref: EntityId
+    channel: str
+    address_or_handle: str
+    shape: ChannelIdentityShape
+    binding: ChannelIdentityBinding
+    custody: ChannelIdentityCustody
+    state: ChannelIdentityState
+    pending_fulfillment: NotRequired[str | None]
+    state_changed_at: int
+    quarantine_until: NotRequired[int | None]
+    outbound_eligible: bool
+    occupies_assignment_key: bool
+class ChannelIdentityLifecycleReceipt(TypedDict):
+    identity_ref: EntityId
+    receipt_ref: str
+    gate_receipt_ref: NotRequired[str | None]
+    outcome: str
+    reason_codes: list[str]
+    owner_visible_state: str
+    identity: NotRequired[ChannelIdentityView | None]
+    outbound_closed: bool
+    identity_retiring: bool
+DelegatedGrantScope = Literal["mail.read", "mail.metadata", "mail.send"]
+class DelegatedGrant(TypedDict):
+    custody_record_ref: str
+    scopes: list[DelegatedGrantScope]
+class ChannelIdentityBindRequestExisting(TypedDict):
+    kind: Literal["existing"]
+    identity_ref: EntityId
+    fulfillment_mode: ChannelIdentityFulfillment
+class ChannelIdentityBindRequestDelegated(TypedDict):
+    kind: Literal["delegated"]
+    channel: str
+    address_or_handle: str
+    binding: ChannelIdentityBinding
+    grant: DelegatedGrant
+    fulfillment_mode: ChannelIdentityFulfillment
+ChannelIdentityBindRequest = ChannelIdentityBindRequestExisting | ChannelIdentityBindRequestDelegated
+class ChannelIdentityRequest(TypedDict):
+    identity_ref: EntityId
+class ChannelIdentityReleaseRequest(TypedDict):
+    identity_ref: EntityId
+    quarantine_until: int
+RelationshipContext = Literal["work_deal", "scheduling_logistics", "campaign_outreach", "transactional_system", "personal_friends", "group_space"]
+class SelectionRuleScopeVaultDefault(TypedDict):
+    kind: Literal["vault_default"]
+class SelectionRuleScopeWorld(TypedDict):
+    kind: Literal["world"]
+    world_ref: EntityId
+class SelectionRuleScopeRelationship(TypedDict):
+    kind: Literal["relationship"]
+    relationship_ref: EntityId
+class SelectionRuleScopeBrief(TypedDict):
+    kind: Literal["brief"]
+    brief_ref: str
+class SelectionRuleScopeSpace(TypedDict):
+    kind: Literal["space"]
+    space_ref: str
+SelectionRuleScope = SelectionRuleScopeVaultDefault | SelectionRuleScopeWorld | SelectionRuleScopeRelationship | SelectionRuleScopeBrief | SelectionRuleScopeSpace
+ChannelIdentityFace = Literal["delegated_owner_account", "agent_named_address", "side_domain_address", "house_identity", "companion_identity", "named_group_participant"]
+SelectionRuleWriterKind = Literal["system_default", "owner", "agent"]
+class ChannelIdentitySelectionRule(TypedDict):
+    rule_id: str
+    relationship: RelationshipContext
+    scope: SelectionRuleScope
+    face: ChannelIdentityFace
+    pinned_identity_ref: NotRequired[EntityId | None]
+    priority: int
+    enabled: bool
+    agent_amendable: bool
+    updated_at: int
+    updated_by: NotRequired[EntityId | None]
+    writer_kind: SelectionRuleWriterKind
+class ChannelIdentitySelectionRuleSet(TypedDict):
+    schema_version: int
+    revision: int
+    rows: list[ChannelIdentitySelectionRule]
+class ChannelSelectionRuleInput(TypedDict):
+    rule_id: str
+    relationship: RelationshipContext
+    scope: SelectionRuleScope
+    face: ChannelIdentityFace
+    pinned_identity_ref: NotRequired[EntityId | None]
+    priority: int
+    enabled: bool
+    agent_amendable: bool
+class ChannelSelectionPatchInputUpsert(TypedDict):
+    kind: Literal["upsert"]
+    rule: ChannelSelectionRuleInput
+class ChannelSelectionPatchInputRemove(TypedDict):
+    kind: Literal["remove"]
+    rule_id: str
+ChannelSelectionPatchInput = ChannelSelectionPatchInputUpsert | ChannelSelectionPatchInputRemove
+class ChannelSelectionUpdateRequest(TypedDict):
+    expected_revision: int
+    patch: ChannelSelectionPatchInput
+class ChannelSelectionCandidateInput(TypedDict):
+    identity_ref: EntityId
+    face: ChannelIdentityFace
+class ChannelSelectionRequest(TypedDict):
+    relationship: RelationshipContext
+    applicable_scopes: NotRequired[list[SelectionRuleScope]]
+    candidates: list[ChannelSelectionCandidateInput]
+    thread_ref: NotRequired[str | None]
+class ChannelIdentitySelectionDecision(TypedDict):
+    identity_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+    face: ChannelIdentityFace
+    shape: ChannelIdentityShape
+    rule_id: NotRequired[str | None]
+    used_thread_pin: bool
+class ThreadMaskView(TypedDict):
+    identity_ref: EntityId
+    actor_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+class ChannelSelectionView(TypedDict):
+    revision: int
+    decision: ChannelIdentitySelectionDecision
+    mask: ThreadMaskView
+class ThreadPassportRequest(TypedDict):
+    identity_ref: EntityId
+    message_id: str
+class ThreadPassportView(TypedDict):
+    identity_ref: EntityId
+    message_id: str
+    thread_ref: str
+    mask: ThreadMaskView
+    observed_at: int
+class ThreadPassportLookup(TypedDict):
+    passport: NotRequired[ThreadPassportView | None]
+class ThreadPassportsRequest(TypedDict):
+    thread_ref: str
+class ThreadPassportsView(TypedDict):
+    canonical_thread_ref: str
+    passports: list[ThreadPassportView]
+    pinned_mask: NotRequired[ThreadMaskView | None]
+class DeliveryWindowTimeWindow(TypedDict):
+    start_minute: int
+    end_minute: int
+DeliveryWindowContextCondition = Literal["calendar_busy", "focus_on", "driving", "asleep"]
+class DeliveryWindowRuleQuiet(TypedDict):
+    kind: Literal["quiet"]
+    window: DeliveryWindowTimeWindow
+class DeliveryWindowRuleContext(TypedDict):
+    kind: Literal["context"]
+    when: DeliveryWindowContextCondition
+class DeliveryWindowRuleChannel(TypedDict):
+    kind: Literal["channel"]
+    channel: str
+    window: NotRequired[DeliveryWindowTimeWindow | None]
+DeliveryWindowRule = DeliveryWindowRuleQuiet | DeliveryWindowRuleContext | DeliveryWindowRuleChannel
+class DeliveryWindowPolicyPutRequest(TypedDict):
+    subject_ref: EntityId
+    policy_key: str
+    rule: DeliveryWindowRule
+    reason: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+class DeliveryWindowPolicyRequest(TypedDict):
+    subject_ref: EntityId
+class DeliveryWindowPolicyRow(TypedDict):
+    claim_ref: EntityId
+    subject_ref: EntityId
+    policy_key: NotRequired[str | None]
+    rule: DeliveryWindowRule
+    reason: str
+    approval: str
+    lifecycle: str
+    source: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    stale: bool
+class DeliveryWindowPolicies(TypedDict):
+    rows: list[DeliveryWindowPolicyRow]
+class DeliveryWindowPolicyRetractRequest(TypedDict):
+    claim_ref: EntityId
+DeliveryWindowVerbClass = Literal["ambient", "interrupt"]
+DeliveryWindowApnsInterruptionLevel = Literal["Passive", "Active", "TimeSensitive", "Critical"]
+class DeliveryWindowEvaluateRequest(TypedDict):
+    subject_refs: list[EntityId]
+    delivery_epoch_secs: int
+    local_minute_of_day: int
+    verb_class: DeliveryWindowVerbClass
+    channel: str
+    active_contexts: NotRequired[list[DeliveryWindowContextCondition]]
+    interrupt_surface: NotRequired[str | None]
+    degrade_to: NotRequired[str | None]
+    apns_interruption_level: NotRequired[DeliveryWindowApnsInterruptionLevel | None]
+DeliveryWindowDecisionDeliverNowWithApnsCapBody = TypedDict("DeliveryWindowDecisionDeliverNowWithApnsCapBody", {"reason": str, "from": str, "to": str})
+class DeliveryWindowDecisionDeliverNowWithApnsCap(TypedDict):
+    DeliverNowWithApnsCap: DeliveryWindowDecisionDeliverNowWithApnsCapBody
+class DeliveryWindowDecisionHoldBody(TypedDict):
+    reason: str
+    retry_at: NotRequired[int | None]
+class DeliveryWindowDecisionHold(TypedDict):
+    Hold: DeliveryWindowDecisionHoldBody
+DeliveryWindowDecisionDegradeBody = TypedDict("DeliveryWindowDecisionDegradeBody", {"reason": str, "from": str, "to": str})
+class DeliveryWindowDecisionDegrade(TypedDict):
+    Degrade: DeliveryWindowDecisionDegradeBody
+class DeliveryWindowDecisionLetGoBody(TypedDict):
+    reason: str
+class DeliveryWindowDecisionLetGo(TypedDict):
+    LetGo: DeliveryWindowDecisionLetGoBody
+DeliveryWindowDecision = Literal["DeliverNow"] | DeliveryWindowDecisionDeliverNowWithApnsCap | DeliveryWindowDecisionHold | DeliveryWindowDecisionDegrade | DeliveryWindowDecisionLetGo
+class DeliveryWindowMatch(TypedDict):
+    predicate: str
+    reason: str
+    retry_at: NotRequired[int | None]
+DeliveryWindowLadderRung = Literal["HumanExplicitInstant", "Ambient", "InterruptDegraded", "InterruptHeld", "MissingLocalMinute"]
+class DeliveryWindowResolution(TypedDict):
+    observed: DeliveryWindowDecision
+    effective: DeliveryWindowDecision
+    matched: list[DeliveryWindowMatch]
+    rung: DeliveryWindowLadderRung
+class DeliveryWindowPreview(TypedDict):
+    policy_refs: list[EntityId]
+    resolution: DeliveryWindowResolution
 class OutboundScheduleRequest(TypedDict):
     verb: str
     channel: str
@@ -6963,6 +7603,91 @@ class NoteKindDescriptor(TypedDict):
 class NoteDefaultsView(TypedDict):
     overrides: NoteOverrides
     defaults: NoteKindDescriptor
+class LiveRunRequest(TypedDict, Generic[T]):
+    live_run: str
+    spec: T
+SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
+class SpawnKnobSeed(TypedDict, Generic[T]):
+    mode: Literal["seed"]
+    value: T
+    weight_runs: float
+class SpawnKnobPin(TypedDict, Generic[T]):
+    mode: Literal["pin"]
+    value: T
+SpawnKnob = SpawnKnobSeed[T] | SpawnKnobPin[T]
+SpawnPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
+class MemoryProjectionDefault(TypedDict):
+    mode: Literal["default"]
+class MemoryProjectionExclude(TypedDict):
+    mode: Literal["exclude"]
+class MemoryProjectionScoped(TypedDict):
+    mode: Literal["scoped"]
+    domains: list[str]
+    limit: int
+MemoryProjection = MemoryProjectionDefault | MemoryProjectionExclude | MemoryProjectionScoped
+class ChatProjectionDefault(TypedDict):
+    mode: Literal["default"]
+class ChatProjectionExclude(TypedDict):
+    mode: Literal["exclude"]
+class ChatProjectionRecent(TypedDict):
+    mode: Literal["recent"]
+    last_n: int
+ChatProjection = ChatProjectionDefault | ChatProjectionExclude | ChatProjectionRecent
+class ContextSpec(TypedDict):
+    layers: NotRequired[list[str]]
+    memory: NotRequired[MemoryProjection]
+    chat: NotRequired[ChatProjection]
+    briefing: NotRequired[str | None]
+    _annotation: NotRequired[str | None]
+CommReach = Literal["parent", "subtree", "project", "vault"]
+class AgentSpawnInput(TypedDict):
+    need: str
+    prompt: str
+    intent_key: str
+    agent: NotRequired[str | None]
+    care: NotRequired[SpawnCare | None]
+    notes: NotRequired[str | None]
+    model: NotRequired[SpawnKnob[str] | None]
+    width: NotRequired[SpawnKnob[int] | None]
+    pattern: NotRequired[SpawnKnob[SpawnPattern] | None]
+    budget: NotRequired[SpawnKnob[int] | None]
+    context: NotRequired[ContextSpec | None]
+    context_from: NotRequired[list[str] | None]
+    depth: NotRequired[int | None]
+    project: NotRequired[str | None]
+    objectives: NotRequired[list[str] | None]
+    comm: NotRequired[CommReach | None]
+AgentSpawnKind = Literal["agent_spawn"]
+class LaunchStatement(TypedDict):
+    agent_count: int
+    expected: ExpectedSpend
+    unit: LeaseUnit
+    cap_units: NotRequired[int | None]
+    available_units: NotRequired[int | None]
+    hard: bool
+    reserved_units: int
+    scope: NotRequired[SpendScopeId | None]
+    parent_scope: NotRequired[SpendScopeId | None]
+    stated_at: int
+class AgentSpawnOutputQueued(TypedDict):
+    state: Literal["queued"]
+    kind: AgentSpawnKind
+    attempt: str
+    launch: NotRequired[LaunchStatement | None]
+class AgentSpawnOutputProposedWiden(TypedDict):
+    state: Literal["proposed_widen"]
+    kind: AgentSpawnKind
+    proposal: str
+AgentSpawnOutput = AgentSpawnOutputQueued | AgentSpawnOutputProposedWiden
+class LeaderSplitInput(TypedDict):
+    leader: NotRequired[str | None]
+    slice: NotRequired[ScopeScope | None]
+class LeaderSplitOutput(TypedDict):
+    project: EntityId
+    task: EntityId
+    parent: EntityId
+    leader: EntityId
+    depth_remaining: int
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

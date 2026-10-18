@@ -85,6 +85,12 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// A channel-aware door names its destination; the proof still decides whether it is allowed.
+    pub(crate) fn through_channel(mut self, channel: &str) -> Self {
+        self.actor_key.channel = Some(channel.to_owned());
+        self
+    }
+
     /// Whether this read is the vault owner's own key
     /// (`ScopedReadActorKey::reads_as_vault_owner`) with no world ceiling,
     /// audience or peer read narrowing what it serves. Such a read admits
@@ -442,7 +448,8 @@ impl<'a> ScopedRead<'a> {
             let claims = proof.claims();
             // Generic records have no proved channel context. Channel-bound
             // credentials must use their typed adapter instead of losing a caveat.
-            claims.channels.is_empty()
+            (claims.channels.is_empty()
+                || self.actor_key.channel.as_ref().is_some_and(|channel| claims.channels.contains(channel)))
                 && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
         })
     }

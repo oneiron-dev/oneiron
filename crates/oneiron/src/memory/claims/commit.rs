@@ -69,13 +69,25 @@ impl Memory<'_> {
     /// [`Self::commit_one_with_before_txn`], with `in_writer` run first in
     /// the content writer that commits the claim: a door whose authority must
     /// still hold when the claim lands rechecks it there (FIX 1400).
-    pub(super) fn commit_one_guarded(
+    pub(in crate::memory) fn commit_one_guarded(
         &self,
         input: &ClaimInput,
         auto_supersede: bool,
         forced_approval: Option<ClaimApprovalStatus>,
         before_txn: impl FnOnce(),
         in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+    ) -> MemoryResult<CommitReceipt> {
+        self.commit_one_guarded_with_birth(input, auto_supersede, forced_approval, before_txn, in_writer, None)
+    }
+
+    pub(in crate::memory) fn commit_one_guarded_with_birth(
+        &self,
+        input: &ClaimInput,
+        auto_supersede: bool,
+        forced_approval: Option<ClaimApprovalStatus>,
+        before_txn: impl FnOnce(),
+        in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
+        birth: Option<&crate::provenance::birth::RowBirth>,
     ) -> MemoryResult<CommitReceipt> {
         // This door does not own `companion.expression.*` any more than
         // `claim_retract` does, and for the mirror-image reason. Writing a new
@@ -301,6 +313,11 @@ impl Memory<'_> {
                         self.vault.text_index_trusted.load(Ordering::Acquire),
                         ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
                     )?;
+                    if let Some(birth) = birth {
+                        content.update_claim(id, |txn| {
+                            crate::provenance::birth::stamp_birth_if_absent_in_txn(&self.vault.store, txn, &id, birth)
+                        })?;
+                    }
                     if let Some(old_id) = prior {
                         content.update_claim(old_id, |txn| {
                             self.vault.stage_claim_supersession_in_txn(

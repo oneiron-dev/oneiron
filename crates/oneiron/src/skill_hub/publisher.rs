@@ -121,6 +121,18 @@ impl Vault {
             grant_ref,
         })
     }
+    /// Withdraws exactly the offer-only grant minted for this publisher and hub.
+    /// Bound hooks recheck the same grant before they run.
+    pub fn revoke_skill_publisher(
+        &self,
+        owner: &AuthenticatedOwner,
+        identity: &str,
+        hub: EntityId,
+    ) -> Result<crate::consent::ConsentReceipt> {
+        let grant_ref = skill_publisher_grant(identity, hub)?.digest().to_hex();
+        self.revoke_consent_grant(owner, &grant_ref)
+    }
+
     pub(super) fn check_publisher_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

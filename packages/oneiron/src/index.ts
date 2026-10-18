@@ -300,6 +300,14 @@ export class Oneiron {
     decisions: {
       asks: (input: Facade.EmptyRequest = {}): Facade.DecisionAsk[] => this.#call(() => this.#client.selfDecisionsAsks(input) as Facade.DecisionAsk[]),
     },
+    agents: {
+      /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
+      spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),
+    },
+    leader: {
+      /** Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope. */
+      split: (input: Facade.LiveRunRequest<Facade.LeaderSplitInput>): Facade.LeaderSplitOutput => this.#call(() => this.#client.selfLeaderSplit(input) as Facade.LeaderSplitOutput),
+    },
   }
   readonly vault = {
     people: {
@@ -334,8 +342,8 @@ export class Oneiron {
    */
     witness: (turn: WitnessTurn): WitnessReceipt => this.#call(() => this.#client.vaultWitness(turn)),
     claims: {
-      /** Upserts one claim. The consent gate, not this call, decides approval. */
-      upsert: (claim: ClaimInput): CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(claim)),
+      /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
+      upsert: (input: Facade.ScopedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(input) as Facade.CommitReceipt),
       /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
       /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
@@ -345,7 +353,7 @@ export class Oneiron {
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
       /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
-      seed: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
+      seed: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
     },
     /**
    * Recalls a memory pack.
@@ -364,7 +372,14 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
-    export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
+    export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
+      /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
+      scoped: (input: Facade.ScopedExportRequest): Facade.ScopedExport => this.#call(() => this.#client.vaultExportScoped(input) as Facade.ScopedExport),
+    }),
+    scope: {
+      /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
+      ceiling: (input: Facade.EmptyRequest = {}): Facade.CredentialCeiling => this.#call(() => this.#client.vaultScopeCeiling(input) as Facade.CredentialCeiling),
+    },
     /** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */
     receipts: Object.assign((limit: number = 100, kinds?: string[]): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit, kinds)), {
       /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
@@ -430,7 +445,39 @@ export class Oneiron {
         wrong: (input: Facade.WeaveWrongItemRequest): Facade.WeaveItemCorrectionView => this.#call(() => this.#client.vaultWeaveItemWrong(input) as Facade.WeaveItemCorrectionView),
       },
     },
+    skill_hubs: {
+      /** The owner registers or revises a hub source; hub trust never grants activation authority. */
+      put: (input: Facade.SkillHubPutRequest): Facade.SkillHubConfigured => this.#call(() => this.#client.vaultSkillHubsPut(input) as Facade.SkillHubConfigured),
+      /** Reads one configured hub as the owner. */
+      get: (input: Facade.SkillHubRequest): Facade.SkillHubRecord => this.#call(() => this.#client.vaultSkillHubsGet(input) as Facade.SkillHubRecord),
+      publishers: {
+        /** The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else. */
+        admit: (input: Facade.SkillPublisherRequest): Facade.SkillPublisherAdmission => this.#call(() => this.#client.vaultSkillHubsPublishersAdmit(input) as Facade.SkillPublisherAdmission),
+        /** The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running. */
+        revoke: (input: Facade.SkillPublisherRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillHubsPublishersRevoke(input) as Facade.HubConsentReceipt),
+      },
+      refs: {
+        /** Reads one hub ref policy, pin and separate seen and trusted revisions as the owner. */
+        get: (input: Facade.HubRefRequest): Facade.TrackedHubRef | null => this.#call(() => this.#client.vaultSkillHubsRefsGet(input) as Facade.TrackedHubRef | null),
+        /** The owner changes one hub ref policy and pin without fetching or trusting new bytes. */
+        set: (input: Facade.HubRefSetRequest): Facade.TrackedHubRef => this.#call(() => this.#client.vaultSkillHubsRefsSet(input) as Facade.TrackedHubRef),
+      },
+    },
     packs: {
+      /** The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent. */
+      install: (input: Facade.HubImportRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksInstall(input) as Facade.PackPutReceipt),
+      /** The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent. */
+      sync: (input: Facade.HubPackRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksSync(input) as Facade.PackPutReceipt),
+      /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
+      get: (input: Facade.HubPackRequest): Facade.PackInstallReceipt | null => this.#call(() => this.#client.vaultPacksGet(input) as Facade.PackInstallReceipt | null),
+      hooks: {
+        /** The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign. */
+        bind: (input: Facade.HubHookBindRequest): Facade.EntityId[] => this.#call(() => this.#client.vaultPacksHooksBind(input) as Facade.EntityId[]),
+        /** Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants. */
+        list: (input: Facade.EmptyRequest = {}): Facade.HubHookBindingRow[] => this.#call(() => this.#client.vaultPacksHooksList(input) as Facade.HubHookBindingRow[]),
+        /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
+        qualify: (input: Facade.HubHookQualifyRequest): Facade.HubHookQualificationReceipt => this.#call(() => this.#client.vaultPacksHooksQualify(input) as Facade.HubHookQualificationReceipt),
+      },
       /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
       /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
@@ -444,6 +491,18 @@ export class Oneiron {
         answer: (input: Facade.PackSetupAnswerRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupAnswer(input) as Facade.PackSetupReceipt),
         /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
         verify: (input: Facade.PackSetupVerifyRequest): Facade.PackSetupReceipt => this.#call(() => this.#client.vaultPacksSetupVerify(input) as Facade.PackSetupReceipt),
+      },
+    },
+    skills: {
+      /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
+      import: (input: Facade.HubImportRequest): Facade.HubSkillImported => this.#call(() => this.#client.vaultSkillsImport(input) as Facade.HubSkillImported),
+      /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
+      sync: (input: Facade.HubSkillRequest): Facade.HubSkillSyncReceipt => this.#call(() => this.#client.vaultSkillsSync(input) as Facade.HubSkillSyncReceipt),
+      /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
+      receipts: (input: Facade.HubSkillRequest): Facade.HubSkillReceipts => this.#call(() => this.#client.vaultSkillsReceipts(input) as Facade.HubSkillReceipts),
+      permissions: {
+        /** The owner answers one imported skill permission ask at its exact hub source. */
+        approve: (input: Facade.HubSkillPermissionRequest): Facade.HubConsentReceipt => this.#call(() => this.#client.vaultSkillsPermissionsApprove(input) as Facade.HubConsentReceipt),
       },
     },
     connectors: {
@@ -801,8 +860,30 @@ export class Oneiron {
       repo_diff: (request: Facade.CodeRepoDiffRequest): Facade.CodeRepoDiffView | null => this.#call(() => {  const result = JSON.parse(this.#client.vaultCodeRepoDiff(keyedJson(request))) as Facade.CodeRepoDiffView | null; return result === null ? null : result }),
     },
     agents: {
+      /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+      create: (input: Facade.AgentDefinitionCreateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsCreate(input) as Facade.AgentDefinitionView),
+      /** The owner reads one saved agent composition and its version and approval state. */
+      get: (input: Facade.AgentDefinitionRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsGet(input) as Facade.AgentDefinitionView),
+      /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+      update: (input: Facade.AgentDefinitionUpdateRequest): Facade.AgentDefinitionView => this.#call(() => this.#client.vaultAgentsUpdate(input) as Facade.AgentDefinitionView),
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
+    },
+    workspace: {
+      /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
+      establish: (input: Facade.WorkspacePresetRequest): Facade.WorkspacePresetReceipt => this.#call(() => this.#client.vaultWorkspaceEstablish(input) as Facade.WorkspacePresetReceipt),
+      members: {
+        /** A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate. */
+        onboard: (input: Facade.WorkspaceMemberOnboardRequest): Facade.MemberOnboardingOutcome => this.#call(() => this.#client.vaultWorkspaceMembersOnboard(input) as Facade.MemberOnboardingOutcome),
+      },
+      /** The owner reads the workspace house and companion roster with their actor, subject and facet refs. */
+      roster: (input: Facade.WorkspaceRosterRequest): Facade.WorkspaceRosterEntry[] => this.#call(() => this.#client.vaultWorkspaceRoster(input) as Facade.WorkspaceRosterEntry[]),
+      work_companion: {
+        /** A workspace's work_companion policy, readable by every member it governs. */
+        get: (input: Facade.WorkspaceRefRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as Facade.WorkCompanionPolicy),
+        /** The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person. */
+        set: (input: Facade.WorkCompanionSetRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as Facade.WorkCompanionPolicy),
+      },
     },
     critic: {
       /** Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target. */
@@ -910,14 +991,6 @@ export class Oneiron {
         set: (input: Facade.CompanionSharingSetRequest): Facade.CompanionSharingView => this.#call(() => this.#client.vaultCompanionsSharingSet(input) as Facade.CompanionSharingView),
       },
     },
-    workspace: {
-      work_companion: {
-        /** A workspace's work_companion policy, readable by every member it governs. */
-        get: (input: Facade.WorkspaceRefRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionGet(input) as Facade.WorkCompanionPolicy),
-        /** The owner, or an Admin holding the workspace-settings power, sets a workspace's work_companion policy in person. */
-        set: (input: Facade.WorkCompanionSetRequest): Facade.WorkCompanionPolicy => this.#call(() => this.#client.vaultWorkspaceWorkCompanionSet(input) as Facade.WorkCompanionPolicy),
-      },
-    },
     graph: {
       ask: (input: Facade.GraphAskRequest): Facade.GraphAskOutcome => this.#call(() => this.#client.vaultGraphAsk(input) as Facade.GraphAskOutcome),
     },
@@ -938,11 +1011,23 @@ export class Oneiron {
       },
     },
     /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
-    commit: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
+    commit: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
     forget: (input: Facade.ForgetRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultForget(input) as Facade.CommitReceipt[]),
+    booking: {
+      /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
+      page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
+    },
+    calendar: {
+      /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
+      read: (input: Facade.CalendarReadRequest): Facade.ScopedReadResult<Facade.CalendarEventView | null> => this.#call(() => this.#client.vaultCalendarRead(input) as Facade.ScopedReadResult<Facade.CalendarEventView | null>),
+      /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
+      search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
+      /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
+      freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+    },
     /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
     delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),
     writes: {
@@ -996,6 +1081,48 @@ export class Oneiron {
       enqueue: (input: Facade.ConsolidationEnqueueRequest): Facade.DreamerAttemptRef => this.#call(() => this.#client.vaultConsolidationEnqueue(input) as Facade.DreamerAttemptRef),
       /** Reads the status of one consolidation attempt by its durable job reference. */
       status: (input: Facade.ConsolidationStatusRequest): Facade.DreamerAttemptView | null => this.#call(() => this.#client.vaultConsolidationStatus(input) as Facade.DreamerAttemptView | null),
+    },
+    channel_identities: {
+      /** Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate. */
+      provision: (input: Facade.ChannelIdentityProvisionRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesProvision(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
+      bind: (input: Facade.ChannelIdentityBindRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesBind(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated. */
+      fulfill: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesFulfill(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate. */
+      rotate: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesRotate(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule. */
+      release: (input: Facade.ChannelIdentityReleaseRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesRelease(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds. */
+      route_inbound: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityLifecycleReceipt => this.#call(() => this.#client.vaultChannelIdentitiesRouteInbound(input) as Facade.ChannelIdentityLifecycleReceipt),
+      /** Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send. */
+      get: (input: Facade.ChannelIdentityRequest): Facade.ChannelIdentityView => this.#call(() => this.#client.vaultChannelIdentitiesGet(input) as Facade.ChannelIdentityView),
+      selection: {
+        /** Read the compiled relationship selection law and authenticated writer provenance. */
+        rules: (input: Facade.EmptyRequest): Facade.ChannelIdentitySelectionRuleSet => this.#call(() => this.#client.vaultChannelIdentitiesSelectionRules(input) as Facade.ChannelIdentitySelectionRuleSet),
+        /** Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer. */
+        update: (input: Facade.ChannelSelectionUpdateRequest): Facade.ChannelIdentitySelectionRuleSet => this.#call(() => this.#client.vaultChannelIdentitiesSelectionUpdate(input) as Facade.ChannelIdentitySelectionRuleSet),
+      },
+      /** Select a live channel identity under relationship rules, retaining an existing thread passport mask. */
+      select: (input: Facade.ChannelSelectionRequest): Facade.ChannelSelectionView => this.#call(() => this.#client.vaultChannelIdentitiesSelect(input) as Facade.ChannelSelectionView),
+      passports: {
+        /** Read one receiving identity and Message-ID passport through the caller credential. */
+        get: (input: Facade.ThreadPassportRequest): Facade.ThreadPassportLookup => this.#call(() => this.#client.vaultChannelIdentitiesPassportsGet(input) as Facade.ThreadPassportLookup),
+        /** Read canonical thread passports and the sticky identity, actor and facet mask. */
+        list: (input: Facade.ThreadPassportsRequest): Facade.ThreadPassportsView => this.#call(() => this.#client.vaultChannelIdentitiesPassportsList(input) as Facade.ThreadPassportsView),
+      },
+    },
+    delivery_window: {
+      policy: {
+        /** The owner writes one typed interrupt-only delivery-window policy through the gated claim writer. */
+        put: (input: Facade.DeliveryWindowPolicyPutRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultDeliveryWindowPolicyPut(input) as Facade.CommitReceipt),
+        /** Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance. */
+        list: (input: Facade.DeliveryWindowPolicyRequest): Facade.DeliveryWindowPolicies => this.#call(() => this.#client.vaultDeliveryWindowPolicyList(input) as Facade.DeliveryWindowPolicies),
+        /** The owner retracts a delivery-window policy through the existing claim lifecycle door. */
+        retract: (input: Facade.DeliveryWindowPolicyRetractRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultDeliveryWindowPolicyRetract(input) as Facade.CommitReceipt),
+      },
+      /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
+      evaluate: (input: Facade.DeliveryWindowEvaluateRequest): Facade.DeliveryWindowPreview => this.#call(() => this.#client.vaultDeliveryWindowEvaluate(input) as Facade.DeliveryWindowPreview),
     },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */

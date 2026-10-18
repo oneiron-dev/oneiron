@@ -48,16 +48,21 @@ use crate::builtin_host::HostConnectionChecks;
 use crate::models::RungVoices;
 use crate::server::SyncServer;
 
+pub(crate) use super::booking_doors::*;
+
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::shared_act_doors::*;
+pub(crate) use super::agent_definition_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
+pub(crate) use super::live_run_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
+pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::note_doors::*;
 pub(crate) use super::residence_doors::*;
@@ -88,6 +93,7 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
+pub(crate) use super::channel_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -998,6 +1004,22 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
     match verb {
         "vault.packs.put"
         | "vault.packs.remove"
+        | "vault.skill_hubs.put"
+        | "vault.skill_hubs.get"
+        | "vault.skill_hubs.publishers.admit"
+        | "vault.skill_hubs.publishers.revoke"
+        | "vault.skill_hubs.refs.get"
+        | "vault.skill_hubs.refs.set"
+        | "vault.packs.install"
+        | "vault.packs.sync"
+        | "vault.packs.get"
+        | "vault.skills.import"
+        | "vault.skills.sync"
+        | "vault.skills.receipts"
+        | "vault.skills.permissions.approve"
+        | "vault.packs.hooks.bind"
+        | "vault.packs.hooks.list"
+        | "vault.packs.hooks.qualify"
         | "vault.connectors.subscriptions.put"
         | "vault.connectors.subscriptions.list"
         | "vault.connectors.subscriptions.revoke"
@@ -1408,7 +1430,7 @@ fn failure(operation: AiOperation, error: &LlmError) -> MemoryError {
 
 /// The vault owner's proof for an owner's host door, from the request, as
 /// `/v1/owner` takes it.
-fn owner_proof(
+pub(super) fn owner_proof(
     auth: &CoreAuth,
     server: &SyncServer,
     verb: &str,
