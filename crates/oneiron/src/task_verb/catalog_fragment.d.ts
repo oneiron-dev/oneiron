@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 616 code-mode rows (595 host rows, 21 run rows), 2205 declarations.
-// Replies: 538 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 620 code-mode rows (599 host rows, 21 run rows), 2214 declarations.
+// Replies: 542 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 98; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -326,6 +326,15 @@ declare namespace Sdk {
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type RetrievalRunId = { bytes: number[] };
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type RetrievalWeights = { affect: number; arousal: number; community: number; vad: number };
+  type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
+  type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
+  type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
+  type VadAnnotationSource = "model_inference" | "user_self_report";
+  type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
+  type AffectClaimConsolidateRequest = { claim_ref: string };
+  type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
+  type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -2518,6 +2527,16 @@ declare const tasks: {
   wave(input: Sdk.TaskWaveRequest): Promise<Sdk.TaskWaveReceipt | StoredResult>;
 };
 declare const vault: Sdk.VaultHost & {
+  affect: {
+    annotations: {
+      /** Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval. */
+      put(input: Sdk.AffectAnnotationPut): Promise<Sdk.CommitReceipt | StoredResult>;
+    };
+    claims: {
+      /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
+      consolidate(input: Sdk.AffectClaimConsolidateRequest): Promise<Sdk.AffectClaimConsolidation | StoredResult>;
+    };
+  };
   agents: {
     /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
     create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
@@ -3449,6 +3468,12 @@ declare const vault: Sdk.VaultHost & {
     trace(input: Sdk.RetrievalTraceRequest): Promise<Sdk.RetrievalTrace | null | StoredResult>;
     /** The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order. */
     turn(input: Sdk.RetrievalTurnRequest): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;
+    weights: {
+      /** The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority. */
+      configure(input: Sdk.RetrievalWeightsConfigureRequest): Promise<Sdk.RetrievalWeightsReceipt | StoredResult>;
+      /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.RetrievalWeightsView | StoredResult>;
+    };
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */

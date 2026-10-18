@@ -250,6 +250,28 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "vault.retrieval.weights.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.weights.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::RetrievalWeightsConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.affect.annotations.put",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::affect::AffectAnnotationPut,
+                >(),
+            ),
+            (
+                "vault.affect.claims.consolidate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::affect::AffectClaimConsolidateRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -3210,6 +3232,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.retrieval.weights.get",
+    "vault.retrieval.weights.configure",
+    "vault.affect.annotations.put",
+    "vault.affect.claims.consolidate",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -3429,6 +3455,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
+        >(),
+        "vault.retrieval.weights.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::RetrievalWeightsView,
+        >(),
+        "vault.retrieval.weights.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::RetrievalWeightsReceipt,
+        >(),
+        "vault.affect.annotations.put" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
+            crate::memory::affect::AffectClaimConsolidation,
         >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
@@ -4447,6 +4485,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.weights.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.weights.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.annotations.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.affect.claims.consolidate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8194,6 +8260,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
+        "vault.retrieval.weights.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.weights.configure" => {
+            let _input: crate::policy_manifest_doors::RetrievalWeightsConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.affect.annotations.put" => {
+            let _input: crate::memory::affect::AffectAnnotationPut = decode(value.clone())?;
+        }
+        "vault.affect.claims.consolidate" => {
+            let _input: crate::memory::affect::AffectClaimConsolidateRequest =
+                decode(value.clone())?;
+        }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
         }
@@ -10032,6 +10112,18 @@ pub fn invoke(
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
+        "vault.retrieval.weights.get" => {
+            encode(vault_retrieval_weights_get(memory, decode(value)?)?)
+        }
+        "vault.retrieval.weights.configure" => {
+            encode(vault_retrieval_weights_configure(memory, decode(value)?)?)
+        }
+        "vault.affect.annotations.put" => {
+            encode(vault_affect_annotations_put(memory, decode(value)?)?)
+        }
+        "vault.affect.claims.consolidate" => {
+            encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
+        }
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -11522,6 +11614,48 @@ pub fn vault_recall(
     crate::memory::caps::check_as_of(input.as_of)?;
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::recall_unembedded(memory, input)
+}
+pub fn vault_retrieval_weights_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::RetrievalWeightsView> {
+    crate::policy_manifest_doors::retrieval_weights_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.weights.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_retrieval_weights_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::RetrievalWeightsConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::RetrievalWeightsReceipt> {
+    crate::policy_manifest_doors::configure_retrieval_weights_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.weights.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_affect_annotations_put(
+    memory: &Memory<'_>,
+    input: crate::memory::affect::AffectAnnotationPut,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.affect.annotations.put",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.affect_annotation_put(&input)
+}
+pub fn vault_affect_claims_consolidate(
+    memory: &Memory<'_>,
+    input: crate::memory::affect::AffectClaimConsolidateRequest,
+) -> MemoryResult<crate::memory::affect::AffectClaimConsolidation> {
+    memory.affect_claim_consolidate_as_owner(
+        &memory.embedded_owner("vault.affect.claims.consolidate")?,
+        &input,
+    )
 }
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,

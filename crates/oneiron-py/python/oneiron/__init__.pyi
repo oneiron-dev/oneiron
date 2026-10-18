@@ -522,6 +522,8 @@ class Oneiron:
         @property
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
         @property
+        def affect(self) -> "Oneiron._VaultAffectVerbs": ...
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
         def scope(self) -> "Oneiron._VaultScopeVerbs": ...
@@ -749,6 +751,8 @@ class Oneiron:
         def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultRetrievalVerbs:
+        @property
+        def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
         def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
@@ -765,11 +769,27 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalWeightsVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalWeightsView:
+            """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
+        def configure(self, spec: Facade.RetrievalWeightsConfigureRequest) -> Facade.RetrievalWeightsReceipt:
+            """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
     class _VaultRetrievalOutcomesVerbs:
         def put(self, spec: Facade.RetrievalOutcome) -> list[Facade.RetrievalOutcomeRecord]:
             """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
         def end(self, spec: Facade.RetrievalEndOutcome) -> list[Facade.RetrievalRunEvidence]:
             """The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward."""
+    class _VaultAffectVerbs:
+        @property
+        def annotations(self) -> "Oneiron._VaultAffectAnnotationsVerbs": ...
+        @property
+        def claims(self) -> "Oneiron._VaultAffectClaimsVerbs": ...
+    class _VaultAffectAnnotationsVerbs:
+        def put(self, spec: Facade.AffectAnnotationPut) -> Facade.CommitReceipt:
+            """Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."""
+    class _VaultAffectClaimsVerbs:
+        def consolidate(self, spec: Facade.AffectClaimConsolidateRequest) -> Facade.AffectClaimConsolidation:
+            """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:

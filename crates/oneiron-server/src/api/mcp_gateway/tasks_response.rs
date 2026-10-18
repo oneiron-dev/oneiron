@@ -897,6 +897,10 @@ fn mcp_agent_verb_input(
         "vault.witness" => a.spec.clone().ok_or_else(invalid),
         "vault.claims.upsert" => a.spec.clone().ok_or_else(invalid),
         "vault.recall" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.weights.get" => a.spec.clone().ok_or_else(invalid),
+        "vault.retrieval.weights.configure" => a.spec.clone().ok_or_else(invalid),
+        "vault.affect.annotations.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.affect.claims.consolidate" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.runs" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.run" => a.spec.clone().ok_or_else(invalid),
@@ -1737,6 +1741,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.recall" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.weights.get" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.retrieval.weights.configure" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.affect.annotations.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.affect.claims.consolidate" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.retrieval.recall" => {
@@ -4106,6 +4122,74 @@ async fn execute_agent_verb_row(
                 .await;
             // Derived from these rows too, though it names none of them.
             served.extend(listed);
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.weights.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.weights.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_weights_get(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.retrieval.weights.configure" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.retrieval.weights.configure", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::policy_manifest_doors::RetrievalWeightsConfigureRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_retrieval_weights_configure(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.affect.annotations.put" => {
+            let input: oneiron::memory::affect::AffectAnnotationPut =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_affect_annotations_put(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.affect.claims.consolidate" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.affect.claims.consolidate", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::affect::AffectClaimConsolidateRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_affect_claims_consolidate(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
             let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)

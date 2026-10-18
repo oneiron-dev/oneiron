@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 559 facade rows, 2116 declarations.
-Inputs: 508 of 559 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 492 of 559 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 563 facade rows, 2125 declarations.
+Inputs: 512 of 563 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 496 of 563 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 93; unread shapes: 0.
 """
 
@@ -1597,6 +1597,45 @@ class MemoryPack(TypedDict):
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
     retrieval_run_id: NotRequired[RetrievalRunId | None]
+class RetrievalWeights(TypedDict):
+    affect: float
+    arousal: float
+    community: float
+    vad: float
+class RetrievalWeightsView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    weights: RetrievalWeights
+class RetrievalWeightsConfigureRequest(TypedDict):
+    expected_body_hash: str
+    weights: RetrievalWeights
+class RetrievalWeightsReceipt(TypedDict):
+    configuration: RetrievalWeightsView
+    receipt_ref: str
+VadAnnotationSource = Literal["model_inference", "user_self_report"]
+class AffectAnnotationPut(TypedDict):
+    turn_ref: str
+    vad: QueryAffect
+    source: VadAnnotationSource
+    annotated_at: int
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+class AffectClaimConsolidateRequest(TypedDict):
+    claim_ref: str
+class AffectTurnEvidence(TypedDict):
+    turn_ref: str
+    vad: QueryAffect
+    source: VadAnnotationSource
+    annotated_at: int
+class AffectClaimConsolidation(TypedDict):
+    claim_ref: str
+    vad: NotRequired[QueryAffect | None]
+    evidence_turns: list[AffectTurnEvidence]
+    semantic_edges_updated: int
+    structural_edges_skipped: int
+    active_state_ref: NotRequired[str | None]
+    created_state_ref: NotRequired[str | None]
+    superseded_state_refs: list[str]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]

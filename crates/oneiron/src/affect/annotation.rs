@@ -92,7 +92,7 @@ fn vad_annotation_value(annotation: &VadAnnotation) -> Value {
         ),
     ])
 }
-pub(super) fn vad_annotation_claim_body(
+pub(crate) fn vad_annotation_claim_body(
     id: &EntityId,
     annotation: &VadAnnotation,
 ) -> Result<ClaimBody> {
