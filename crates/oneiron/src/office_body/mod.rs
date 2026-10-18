@@ -317,6 +317,12 @@ impl Vault {
             OfficeBodyKind::Xlsx => {
                 let book = read_xlsx_cells(&bytes, self.docedit_package_limits()?)
                     .map_err(|_| invalid("the XLSX package could not be read"))?;
+                // Past the row it asks; the workbook is imported whole.
+                let cells: usize = book.sheets.iter().map(|sheet| sheet.cells.len()).sum();
+                self.measure_limit(
+                    crate::limit_ask::EngineLimit::ImportXlsxLiveCells,
+                    u64::try_from(cells).unwrap_or(u64::MAX),
+                );
                 self.with_write_txn_grouped(|wtxn| {
                     claim_source(&self.store, wtxn, artifact, &source)?;
                     birth_typed_body_in_txn(self, wtxn, artifact, writer, |doc| {

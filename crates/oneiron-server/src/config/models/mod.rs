@@ -36,7 +36,7 @@ pub use decision_read::{
 };
 pub use decisions::{
     BigReply, BigSettings, BookingParseSettings, ConnectorSlateSettings, DecisionsSettings,
-    ImagePickSettings, SeatPickSettings, SystemOneSettings,
+    ImagePickSettings, ImportAudienceSettings, SeatPickSettings, SystemOneSettings,
 };
 pub use levels::{ModelRef, Rung, SHORTHAND_ROLES, role_key};
 pub use media::{LiveAsrOptions, MediaSeatConfig, MediaSettings};

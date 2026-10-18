@@ -72,6 +72,9 @@ oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh", "sync"] }
 # The model route on the mesh listener (OF-575), with it.
 oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
+# A device renews its paired owner credential at its home (FIX 3377), with
+# the device sync the mesh feature carries.
+oneiron-remote = { path = "../oneiron-remote", optional = true }
 loro = "1.10"
 axum = { version = "0.8", features = ["ws"] }
 # The accept loop (`http_listener`) drives hyper's HTTP/1 connection itself, so
@@ -213,4 +216,8 @@ default = ["code-sandbox-wasmtime"]
 code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime"]
 # The paired-machine mesh listener (OF-535); off by default, and on only when
 # the host also names a bind address.
-mesh = ["dep:oneiron-llm-own-server", "dep:oneiron-mesh-transport"]
+mesh = [
+  "dep:oneiron-llm-own-server",
+  "dep:oneiron-mesh-transport",
+  "dep:oneiron-remote",
+]

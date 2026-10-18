@@ -3168,6 +3168,20 @@
       "section": false
     },
     {
+      "name": "vault.rooms.invite",
+      "description": "The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent.",
+      "input": "crate::workspace_roster::JoinRequest",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_invite(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.consent",
       "description": "One party's answer to a join that waits on it, after which the join is decided again.",
       "input": "crate::workspace_roster::ConsentAnswer",
@@ -3778,10 +3792,10 @@
     },
     {
       "name": "self.browser.open",
-      "description": "Opens a URL in the run's own browser session and observes the page.",
+      "description": "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::OpenInput",
-      "output": "oneiron_browser::Observation",
-      "call": "driver.open(input)?",
+      "output": "oneiron_browser::ObservationPage",
+      "call": "oneiron_browser::paged(driver, |driver| driver.open(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
@@ -3789,10 +3803,10 @@
     },
     {
       "name": "self.browser.observe",
-      "description": "Observes the current page of the run's browser session.",
+      "description": "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page.",
       "input": "oneiron_browser::ObserveInput",
-      "output": "oneiron_browser::Observation",
-      "call": "driver.observe(input)?",
+      "output": "oneiron_browser::ObservationPage",
+      "call": "driver.observe_page(input)?",
       "scope": "Read",
       "context": "browser",
       "mcp": "none",
@@ -3811,10 +3825,10 @@
     },
     {
       "name": "self.browser.click",
-      "description": "Clicks one page target and observes the result.",
+      "description": "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::ClickInput",
-      "output": "oneiron_browser::Observation",
-      "call": "driver.click(input)?",
+      "output": "oneiron_browser::ObservationPage",
+      "call": "oneiron_browser::paged(driver, |driver| driver.click(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
@@ -3822,10 +3836,10 @@
     },
     {
       "name": "self.browser.click_at",
-      "description": "Clicks a point of a held screenshot, mapped onto the viewport.",
+      "description": "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::PointInput",
-      "output": "oneiron_browser::Observation",
-      "call": "driver.click_at(input)?",
+      "output": "oneiron_browser::ObservationPage",
+      "call": "oneiron_browser::paged(driver, |driver| driver.click_at(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
@@ -3833,10 +3847,10 @@
     },
     {
       "name": "self.browser.type",
-      "description": "Types text into one page target and observes the result.",
+      "description": "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::TypeInput",
-      "output": "oneiron_browser::Observation",
-      "call": "driver.type_text(input)?",
+      "output": "oneiron_browser::ObservationPage",
+      "call": "oneiron_browser::paged(driver, |driver| driver.type_text(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
@@ -3844,10 +3858,10 @@
     },
     {
       "name": "self.browser.select",
-      "description": "Picks the option of a select element by its label, text or value.",
+      "description": "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor.",
       "input": "oneiron_browser::SelectInput",
-      "output": "oneiron_browser::Observation",
-      "call": "driver.select(input)?",
+      "output": "oneiron_browser::ObservationPage",
+      "call": "oneiron_browser::paged(driver, |driver| driver.select(input))?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
@@ -3921,7 +3935,7 @@
     },
     {
       "name": "self.browser.batch",
-      "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails.",
+      "description": "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor.",
       "input": "oneiron_browser::BatchInput",
       "output": "oneiron_browser::BatchOutput",
       "call": "driver.batch(input)?",
@@ -3964,11 +3978,33 @@
       "section": false
     },
     {
+      "name": "self.browser.library.retired",
+      "description": "The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why.",
+      "input": "oneiron_browser::LibraryRetiredInput",
+      "output": "oneiron_browser::LibraryRetiredOutput",
+      "call": "driver.library_retired(input)?",
+      "scope": "Read",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
       "name": "self.browser.library.run",
       "description": "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner.",
       "input": "oneiron_browser::LibraryRunInput",
       "output": "oneiron_browser::LibraryRunOutput",
       "call": "driver.library_run(input)?",
+      "scope": "Write",
+      "context": "browser",
+      "mcp": "none",
+      "section": false
+    },
+    {
+      "name": "self.browser.handover",
+      "description": "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record.",
+      "input": "oneiron_browser::HandoverInput",
+      "output": "oneiron_browser::HandoverOutput",
+      "call": "driver.handover(input)?",
       "scope": "Write",
       "context": "browser",
       "mcp": "none",
@@ -5293,7 +5329,7 @@
     },
     {
       "name": "vault.artifacts.body.deck.preview",
-      "description": "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed.",
+      "description": "The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed.",
       "input": "crate::office_body::DeckPreviewRequest",
       "output": "crate::office_body::DeckPreview",
       "call": "memory.artifacts_body_deck_preview(&input, None)?",
@@ -5313,9 +5349,9 @@
           }
         ],
         "docs": {
-          "remote": "    /// The asked slides of a deck's head, drawn by the host's review renderer (provisional).\n",
-          "ts": "/** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */",
-          "py": "The asked slides of a deck's head, drawn by the host's review renderer (provisional)."
+          "remote": "    /// The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional).\n",
+          "ts": "/** The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional). */",
+          "py": "The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional)."
         }
       }
     },
