@@ -770,15 +770,13 @@
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CommReach"
-     ],
+     "notable": [],
      "path": "src/agent_dispatch/comm.rs",
      "purpose": "FIX 1380: the comm dial",
      "surface": {
-      "crate-vis": 16,
-      "enum": 1,
-      "fn": 2
+      "crate-vis": 15,
+      "fn": 1,
+      "re-export": 1
      }
     },
     {
@@ -3235,7 +3233,7 @@
      "purpose": "Host-signed capability slips with holder-signed offline narrowing and proof",
      "surface": {
       "crate-vis": 8,
-      "fn": 14,
+      "fn": 15,
       "struct": 4
      }
     },
@@ -38482,7 +38480,7 @@
      "path": "src/policy_model/owner_rows/world_privacy_will/unanimity.rs",
      "purpose": "\"Widen needs every owner\" (FIX 4480, the several-holders ruling): one per-vault policy row with a per-world…",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 5,
       "struct": 2
@@ -59994,6 +59992,19 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CommReach"
+     ],
+     "path": "src/authority/comm_reach.rs",
+     "purpose": "FIX 1380 / FIX 3899: the comm reach, whom an agent may address",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "AuthorityConfirmAction",
       "AuthorityConfirmKind",
       "CriticalWriteConfirmAction",
@@ -60017,7 +60028,7 @@
      "path": "src/authority/constants.rs",
      "purpose": "Pinned AUTHORITY_LOG constant table",
      "surface": {
-      "const": 87,
+      "const": 88,
       "re-export": 1,
       "type": 1
      }
@@ -60131,7 +60142,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 21
+      "re-export": 22
      }
     },
     {
@@ -60472,7 +60483,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -60502,7 +60513,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 31,
+   "source_files": 32,
    "test_files": 1
   },
   "oneiron-bench": {
