@@ -752,8 +752,9 @@ async fn tasks_accept(
         oneiron::memory::RoomTurnHandle::serves("tasks.accept"),
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_in_turn(
         server,
         call,
         actor,
@@ -761,6 +762,7 @@ async fn tasks_accept(
         "tasks.accept",
         value,
         &producers,
+        Some(turn),
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
@@ -2408,6 +2410,30 @@ async fn vault_research_measure_held_out(
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_research_evaluate_split(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.research.evaluate_split")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.research.evaluate_split", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.research.evaluate_split", value).await?;
+    let output = facade_output(
+        super::host_doors::vault_research_evaluate_split(
+            server,
+            auth,
+            facade_input(hooks.args.clone())?,
+        )
+        .await?,
+    )?;
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_research_mark_invalid(
     server: &Arc<SyncServer>,
@@ -4173,9 +4199,18 @@ async fn can(
     auth.require_unrestricted_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
-    let _turn = server.admit_task_work(actor).await;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "can", value, &producers)?;
+    let output = facade_invoke_in_turn(
+        server,
+        call,
+        actor,
+        class,
+        "can",
+        value,
+        &producers,
+        Some(turn),
+    )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn peek(
@@ -4202,9 +4237,18 @@ async fn ask(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
-    let _turn = server.admit_task_work(actor).await;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "ask", value, &producers)?;
+    let output = facade_invoke_in_turn(
+        server,
+        call,
+        actor,
+        class,
+        "ask",
+        value,
+        &producers,
+        Some(turn),
+    )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn wait(
@@ -4217,9 +4261,18 @@ async fn wait(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
-    let _turn = server.admit_task_work(actor).await;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(server, call, actor, class, "wait", value, &producers)?;
+    let output = facade_invoke_in_turn(
+        server,
+        call,
+        actor,
+        class,
+        "wait",
+        value,
+        &producers,
+        Some(turn),
+    )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn tasks_answer(
@@ -4232,9 +4285,9 @@ async fn tasks_answer(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
-    let _turn = server.admit_task_work(actor).await;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_in_turn(
         server,
         call,
         actor,
@@ -4242,6 +4295,7 @@ async fn tasks_answer(
         "tasks.answer",
         value,
         &producers,
+        Some(turn),
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
@@ -4854,8 +4908,9 @@ async fn vault_projects_route_tradeoff(
     auth.require_unnarrowed_facets()?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_in_turn(
         server,
         call,
         actor,
@@ -4863,6 +4918,7 @@ async fn vault_projects_route_tradeoff(
         "vault.projects.route_tradeoff",
         value,
         &producers,
+        Some(turn),
     )?;
     server.ai.turn_landed_by(server.vault(), actor, class);
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -6563,8 +6619,9 @@ async fn vault_artifacts_body_fork_merge(
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.fork.merge"),
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_in_turn(
         server,
         call,
         actor,
@@ -6572,6 +6629,7 @@ async fn vault_artifacts_body_fork_merge(
         "vault.artifacts.body.fork.merge",
         value,
         &producers,
+        Some(turn),
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
@@ -6647,8 +6705,9 @@ async fn vault_artifacts_body_proposal_settle(
         oneiron::memory::RoomTurnHandle::serves("vault.artifacts.body.proposal.settle"),
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "artifact_ref")?;
+    let turn = Arc::new(server.admit_task_work(actor).await);
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_in_turn(
         server,
         call,
         actor,
@@ -6656,6 +6715,7 @@ async fn vault_artifacts_body_proposal_settle(
         "vault.artifacts.body.proposal.settle",
         value,
         &producers,
+        Some(turn),
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
@@ -7279,6 +7339,7 @@ pub(crate) async fn call_verb(
         "vault.research.measure_held_out" => {
             vault_research_measure_held_out(server, call, input).await
         }
+        "vault.research.evaluate_split" => vault_research_evaluate_split(server, call, input).await,
         "vault.research.mark_invalid" => vault_research_mark_invalid(server, call, input).await,
         "vault.research.prune" => vault_research_prune(server, call, input).await,
         "vault.research.select" => vault_research_select(server, call, input).await,

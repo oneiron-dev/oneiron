@@ -504,14 +504,14 @@ impl<'a> HostSelfDispatcher<'a> {
                 ))
             }
             // A run's own ask and wait take their turn in the vault's task-work
-            // line (Rule 5), as the SDK rows do.
+            // line (Rule 5), as the SDK rows do, and run on it.
             SelfCall::TasksAsk(call) => {
-                let _turn = self.task_work_turn()?;
-                self.dispatch_tasks_ask(*call)
+                let turn = std::sync::Arc::new(self.task_work_turn()?);
+                self.dispatch_tasks_ask(*call, turn)
             }
             SelfCall::TasksWait(call) => {
-                let _turn = self.task_work_turn()?;
-                self.dispatch_tasks_wait(call, run_id)
+                let turn = std::sync::Arc::new(self.task_work_turn()?);
+                self.dispatch_tasks_wait(call, run_id, turn)
             }
             SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),

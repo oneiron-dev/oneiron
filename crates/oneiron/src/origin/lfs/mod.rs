@@ -19,6 +19,7 @@ mod read_room;
 mod scanner;
 mod store;
 mod upload;
+pub(crate) use self::chunks::archive_lfs_tables;
 
 pub use self::chunks::{
     LFS_CHUNK_AVG, LFS_CHUNK_MAX, LFS_CHUNK_MIN, LfsChunkParameters, LfsChunkRef, LfsManifest,

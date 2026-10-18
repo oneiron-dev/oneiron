@@ -372,7 +372,6 @@ fn issue_one(
         issuer.witness(&WitnessTurn {
             conversation_ref: route.conversation.to_hex(),
             turn_ref: Some(route.turn.to_hex()),
-            quote: None,
             thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
@@ -382,6 +381,7 @@ fn issue_one(
                 metadata: Some(offer_question_metadata(&key)),
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: route.at,
             assertions: Default::default(),

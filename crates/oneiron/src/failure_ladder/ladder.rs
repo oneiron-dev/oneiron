@@ -1,10 +1,13 @@
 //! FailureLadder entry point, surface context, healer routing, and correlation refs.
 
+use std::sync::Arc;
+
 use crate::Vault;
 use crate::agent_dispatch::{AgentDispatcher, DispatchHealer, HealerSlotOutcome};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::work_line::TaskWorkTurn;
 
 use super::blocked_reports::BlockedReportRef;
 use super::classify::{FailureClass, classify_failure};
@@ -151,12 +154,18 @@ impl<'a> FailureLadder<'a> {
 
         // 4. Exactly one bounded lineage walk, for every class.
         let walk = retry_lineage_walk(&queue, &current, policy.max_consecutive_transients)?;
+        // Rule 5: the one transition's TASK report runs on its runner's
+        // task-work turn, taken before any writer and held until the routing
+        // below returns, past its commit and any healer dispatch.
+        let held =
+            crate::task_verb::highway_runner::runner_report_turn(self.vault, input.attempt_id)?;
+        let turn = held.as_ref();
         if let RetryOrdinal::Pathology(pathology) = &walk {
             // A pathology outranks every evidence class: the chain this row
             // sits in is unreadable, so the ordinal that would drive a retry
             // cannot be trusted. It surfaces as Ambiguous and never mints a
             // HealerCase.
-            let failed_attempt = fail_once(self.vault, &input)?;
+            let failed_attempt = fail_once(self.vault, &input, turn)?;
             return Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                 failed_attempt,
                 FailureClass::Ambiguous,
@@ -167,7 +176,7 @@ impl<'a> FailureLadder<'a> {
         }
 
         match class {
-            FailureClass::Transient => self.route_transient(input, &policy, &context, walk),
+            FailureClass::Transient => self.route_transient(input, &policy, &context, walk, turn),
             FailureClass::Permanent => {
                 // The intact-lineage ordinal is discarded by policy: permanent
                 // failures are stamped 0 rather than counted.
@@ -180,10 +189,11 @@ impl<'a> FailureLadder<'a> {
                         consecutive_transients: 0,
                         evidence_ref: context.evidence_ref,
                     },
+                    turn,
                 )
             }
             FailureClass::Ambiguous => {
-                let failed_attempt = fail_once(self.vault, &input)?;
+                let failed_attempt = fail_once(self.vault, &input, turn)?;
                 Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                     failed_attempt,
                     FailureClass::Ambiguous,
@@ -201,9 +211,10 @@ impl<'a> FailureLadder<'a> {
         policy: &FailureScopePolicy,
         context: &FailureSurfaceContext,
         walk: RetryOrdinal,
+        turn: Option<&Arc<TaskWorkTurn>>,
     ) -> Result<FailureLadderOutcome> {
         match walk {
-            RetryOrdinal::BelowLimit(ordinal) => retry_once(self.vault, input, ordinal),
+            RetryOrdinal::BelowLimit(ordinal) => retry_once(self.vault, input, ordinal, turn),
             RetryOrdinal::AtLimit(ordinal) => match policy.escalation_mode {
                 FailureEscalationMode::Auto => self.route_healer(
                     &input,
@@ -214,9 +225,10 @@ impl<'a> FailureLadder<'a> {
                         consecutive_transients: ordinal.get(),
                         evidence_ref: context.evidence_ref,
                     },
+                    turn,
                 ),
                 FailureEscalationMode::Human => {
-                    let failed_attempt = fail_once(self.vault, &input)?;
+                    let failed_attempt = fail_once(self.vault, &input, turn)?;
                     Ok(FailureLadderOutcome::Human(Box::new(context.surface(
                         failed_attempt,
                         FailureClass::Transient,
@@ -238,9 +250,10 @@ impl<'a> FailureLadder<'a> {
         policy: &FailureScopePolicy,
         context: &FailureSurfaceContext,
         routing: HealerRouting,
+        turn: Option<&Arc<TaskWorkTurn>>,
     ) -> Result<FailureLadderOutcome> {
         let mut txn = self.vault.store.env.write_txn()?;
-        let failed_attempt = fail_once_in_txn(self.vault, &mut txn, input)?;
+        let failed_attempt = fail_once_in_txn(self.vault, &mut txn, input, turn)?;
         let case = HealerCase {
             case_ref: failure_case_ref(failed_attempt.id),
             scope: policy.scope.clone(),
