@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 309 facade rows, 1121 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 277.
+// UniFFI census: 310 facade rows, 1122 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 278.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -7225,6 +7225,24 @@ pub struct PriorSeed {
     pub source_ref: String,
 }
 
+/// `oneiron::autoreason_campaign::research::ResearchExecution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchExecution {
+    #[serde(rename = "experimenter")]
+    pub experimenter: String,
+    #[serde(rename = "scorer")]
+    pub scorer: String,
+    #[serde(rename = "referee", default, skip_serializing_if = "Option::is_none")]
+    pub referee: Option<String>,
+    #[serde(rename = "experiment_units")]
+    pub experiment_units: u64,
+    #[serde(rename = "measure_units")]
+    pub measure_units: u64,
+    #[serde(rename = "confirm_units")]
+    pub confirm_units: u64,
+}
+
 /// `oneiron::task_verb::sdk_research::ResearchBindWire`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -7253,6 +7271,8 @@ pub struct ResearchBindWire {
         skip_serializing_if = "Option::is_none"
     )]
     pub prior_ladder: Option<Vec<PriorSeed>>,
+    #[serde(rename = "execution", default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ResearchExecution>,
 }
 
 /// `oneiron::autoreason_campaign::research::ResearchGoalPin`.
@@ -7297,6 +7317,8 @@ pub struct ResearchBinding {
     pub share: Option<String>,
     #[serde(rename = "prior_ladder")]
     pub prior_ladder: Vec<PriorSeed>,
+    #[serde(rename = "execution", default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<ResearchExecution>,
     #[serde(rename = "bound_at")]
     pub bound_at: u64,
 }
@@ -18171,6 +18193,8 @@ pub struct DeckOracleRequest {
 pub struct DeckPreviewRequest {
     #[serde(rename = "artifact_ref")]
     pub artifact_ref: String,
+    #[serde(rename = "fork_ref", default, skip_serializing_if = "Option::is_none")]
+    pub fork_ref: Option<String>,
     #[serde(rename = "slides")]
     pub slides: Vec<u64>,
 }

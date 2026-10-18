@@ -12,7 +12,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
 | `src/budget.rs` | src | s | 1 struct · 4 fn | ProgramBudget | Host-authored prelude plus source under one guest program ceiling |
-| `src/lib.rs` | src | s | 1 struct · 1 fn · 1 type · 8 const · 1 mod · 3 re-export | ShapeError | Portable, pure shape rules shared by the host and the isolated guest |
+| `src/lib.rs` | src | s | 1 struct · 1 fn · 1 type · 9 const · 1 mod · 3 re-export | ShapeError | Portable, pure shape rules shared by the host and the isolated guest |
 | `src/network.rs` | src | s | 1 fn | — | Address checks shared by SSRF-guarded fetches and the sandbox proxy |
 | `src/path.rs` | src | s | 1 struct · 4 fn · 4 const | WorkspacePath | Canonical guest-workspace addressing, including byte-counted components |
 | `src/workspace.rs` | src | s | 2 struct · 13 fn | OutputReservation, WorkspaceShape | Checked file and directory shape; reservations compose before execution |
