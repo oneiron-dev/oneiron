@@ -1095,13 +1095,15 @@ impl DecisionReadGate for HouseGate {
             .turns
             .admit_background_blocking()
             .map_err(|_| refused("waited out its turn"))?;
-        // Inside a verdict, the caller's own line (FIX 1123).
+        // Inside a verdict, the caller's own line (FIX 1123), billing the
+        // payer its run binds (FIX 3574).
         let meter = crate::decision_verdict::rung_meter(&self.meter);
-        let run = crate::models::undeclared_run(
+        let run = crate::models::funded_run(
             HOUSE_READ_RUN,
             meter.clone(),
             Some(Arc::clone(&self.admission.host)),
             Arc::clone(&self.admission.receipts),
+            crate::decision_verdict::rung_payer(),
         );
         let permit = run
             .admit_paid(&self.connector, meter.reserve_units())

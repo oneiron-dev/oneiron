@@ -700,6 +700,8 @@ pub(crate) async fn ai_verdict(
                 lane.as_ref(),
                 held,
                 &input,
+                // A facade caller's verdict bills the vault owner.
+                None,
             )
         })
         .await;

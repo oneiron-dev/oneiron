@@ -307,8 +307,12 @@ pub(crate) enum VerdictAsker {
     Connector(McpCallContext),
     /// A pumped run's own agent, which holds no credential: each decision is
     /// the agent's `ai.verdict` through its run's host door, under a fresh
-    /// invocation.
-    Agent(oneiron::WriteActor),
+    /// invocation, on the run's own line when its entry bound one (so a
+    /// room-funded run's step verdicts bill its payer, FIX 3574).
+    Agent(
+        oneiron::WriteActor,
+        Option<oneiron::llm::run_admission::RunAdmission>,
+    ),
 }
 
 impl RoutineDecider for LadderDecider {
@@ -354,7 +358,7 @@ impl RoutineDecider for LadderDecider {
                     let _ = sender.send(execute_step_verdict(&server, &actor, input, run).await);
                 }));
             }
-            VerdictAsker::Agent(actor) => {
+            VerdictAsker::Agent(actor, line) => {
                 self.runtime.spawn_blocking(move || {
                     let answered = crate::server::answer_as_agent(
                         &server,
@@ -364,7 +368,7 @@ impl RoutineDecider for LadderDecider {
                         AgentVerb::AiVerdict,
                         input,
                         held,
-                        None,
+                        line.as_ref(),
                     );
                     let _ = sender.send(answered.map_err(super::mcp_facade_error));
                 });
