@@ -20,6 +20,7 @@ use oneiron::sync::residence::{
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
+use oneiron::world_keys::RecoveryRootId;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -158,13 +159,16 @@ struct BundlePutRequest {
 }
 
 /// The end of an upload: the home commits the generation whole while its
-/// newest is still `parent`.
+/// newest is still `parent`. `root` is the recovery root the machine pins, in
+/// hex, whose kit the home then serves the generation to.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct BundleCommitRequest {
     generation: String,
     #[serde(default)]
     parent: Option<String>,
+    #[serde(default)]
+    root: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -907,7 +911,8 @@ fn bundle_put(
 
 /// Commits the generation the machine staged whole as the vault's newest,
 /// while the newest is still the parent it names (FIX 922): one generation per
-/// slot. A refused machine, parent or upload looks missing.
+/// slot. The root it names is kept for the kit door. A refused machine,
+/// parent, root or upload looks missing.
 fn bundle_commit(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -919,7 +924,13 @@ fn bundle_commit(
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
     let generation = bundle_generation(&input.generation)?;
     let parent = input.parent.as_deref().map(bundle_generation).transpose()?;
-    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent)
+    let root = match input.root.as_deref() {
+        Some(root) => Some(RecoveryRootId(
+            sealed_digest_from_hex(root).ok_or_else(AppError::invalid_params)?,
+        )),
+        None => None,
+    };
+    let entry = commit_sealed_bundle(&server.vault, peer, generation, parent, root)
         .map_err(|_| AppError::not_found("sealed bundle", None))?;
     Ok((bundle_entry(&entry), Some(Vec::new())))
 }

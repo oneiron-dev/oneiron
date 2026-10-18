@@ -16,6 +16,7 @@ mod driver;
 mod host;
 mod record;
 mod repl;
+mod stack_floor;
 mod store;
 mod turn_hooks;
 mod types;
