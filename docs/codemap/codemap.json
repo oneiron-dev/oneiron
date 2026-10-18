@@ -50583,7 +50583,7 @@
      "path": "src/voice_cascade/uds.rs",
      "purpose": "Private, synchronous per-vault Unix socket adapter for the real retrieval bridge",
      "surface": {
-      "const": 3,
+      "const": 1,
       "re-export": 2,
       "struct": 1
      }
