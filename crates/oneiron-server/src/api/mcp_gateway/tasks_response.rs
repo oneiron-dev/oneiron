@@ -957,6 +957,7 @@ fn mcp_agent_verb_input(
         "vault.shared.erase_ask" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.erase_asks" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.close_erase_ask" => a.spec.clone().ok_or_else(invalid),
+        "vault.shared.policy.get" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
@@ -1822,6 +1823,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shared.close_erase_ask" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.shared.policy.get" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.revoke" => {
@@ -4947,6 +4951,24 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_close_erase_ask(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.shared.policy.get" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.shared.policy.get", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::SharedVaultRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_shared_policy_get(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

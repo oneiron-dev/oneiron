@@ -2131,6 +2131,21 @@
       "section": false
     },
     {
+      "name": "vault.shared.policy.get",
+      "description": "A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds.",
+      "input": "crate::task_verb::sdk::SharedVaultRequest",
+      "output": "crate::federation::SharedActPoliciesView",
+      "call": "crate::task_verb::sdk::read_shared_act_policies(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",

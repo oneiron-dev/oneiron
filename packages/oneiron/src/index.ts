@@ -629,6 +629,10 @@ export class Oneiron {
       erase_asks: (input: Facade.SharedVaultRequest): Facade.SharedEraseAsk[] => this.#call(() => this.#client.vaultSharedEraseAsks(input) as Facade.SharedEraseAsk[]),
       /** An Owner closes an open erase ask, as erased (naming its erase act) or declined. */
       close_erase_ask: (input: Facade.SharedEraseAskCloseRequest): Facade.SharedEraseAsk => this.#call(() => this.#client.vaultSharedCloseEraseAsk(input) as Facade.SharedEraseAsk),
+      policy: {
+        /** A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds. */
+        get: (input: Facade.SharedVaultRequest): Facade.SharedActPoliciesView => this.#call(() => this.#client.vaultSharedPolicyGet(input) as Facade.SharedActPoliciesView),
+      },
     },
     members: {
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */

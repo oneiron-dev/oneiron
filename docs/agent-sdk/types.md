@@ -1340,6 +1340,11 @@ class Oneiron:
             """The erase asks the caller may see: every ask for an Owner, their own for anyone else."""
         def close_erase_ask(self, spec: Facade.SharedEraseAskCloseRequest) -> Facade.SharedEraseAsk:
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
+        @property
+        def policy(self) -> "Oneiron._VaultSharedPolicyVerbs": ...
+    class _VaultSharedPolicyVerbs:
+        def get(self, spec: Facade.SharedVaultRequest) -> Facade.SharedActPoliciesView:
+            """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
     class _VaultMembersVerbs:
         def add(self, spec: Facade.SharedMemberAddRequest) -> Facade.SharedMemberInvited:
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""

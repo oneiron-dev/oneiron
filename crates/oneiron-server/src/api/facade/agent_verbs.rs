@@ -131,6 +131,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.erase_ask", post(facade_route))
         .route("/vault.shared.erase_asks", post(facade_route))
         .route("/vault.shared.close_erase_ask", post(facade_route))
+        .route("/vault.shared.policy.get", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))

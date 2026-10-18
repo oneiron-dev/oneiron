@@ -159,6 +159,7 @@ vaultSharedMatured(input: unknown): unknown
 vaultSharedEraseAsk(input: unknown): unknown
 vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
+vaultSharedPolicyGet(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown

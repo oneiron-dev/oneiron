@@ -646,6 +646,11 @@ export_facade! {
     let output = client.vault_shared_close_erase_ask(&input)?;
     crate::codec::lift_record("vault.shared.close_erase_ask", &output)
 };
+"vault.shared.policy.get" => fn vault_shared_policy_get(&self, input: SharedVaultRequest) -> SharedActPoliciesView = |client| {
+    let input: oneiron::task_verb::sdk::SharedVaultRequest = crate::codec::lower_record("vault.shared.policy.get", input)?;
+    let output = client.vault_shared_policy_get(&input)?;
+    crate::codec::lift_record("vault.shared.policy.get", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;

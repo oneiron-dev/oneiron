@@ -58,6 +58,8 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
+// The shared-act policy doors (DOOR-129) too.
+pub(crate) use super::shared_policy_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
@@ -1129,7 +1131,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
-        | "vault.code.checkout.bind" => owner_proof(auth, server, verb).map(drop),
+        | "vault.code.checkout.bind"
+        | "vault.shared.policy.get" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

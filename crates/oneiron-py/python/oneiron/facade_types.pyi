@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 423 facade rows, 1634 declarations.
-Inputs: 377 of 423 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 373 of 423 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 424 facade rows, 1637 declarations.
+Inputs: 378 of 424 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 374 of 424 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -3195,6 +3195,23 @@ class SharedEraseAskCloseRequest(TypedDict):
     ask_id: str
     erased: bool
     act_id: NotRequired[str | None]
+SharedActPrecedence = Literal["vault_only", "holder_may_narrow"]
+class SharedActPolicy(TypedDict):
+    wait_secs: int
+    objector_roles: list[FederationGrantRole]
+    initiator_roles: list[FederationGrantRole]
+    policy_editor_roles: list[FederationGrantRole]
+    required_verb: str
+    starter_may_object: bool
+    max_act_name_bytes: int
+    max_payload_bytes: int
+    precedence: SharedActPrecedence
+class SharedActPoliciesView(TypedDict):
+    vault_id: str
+    shipped: dict[str, SharedActPolicy]
+    overrides: dict[str, SharedActPolicy]
+    effective: dict[str, SharedActPolicy]
+    policy_hash: str
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]

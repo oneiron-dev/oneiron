@@ -1358,6 +1358,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_policy_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py

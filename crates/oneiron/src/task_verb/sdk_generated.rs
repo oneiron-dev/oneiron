@@ -654,6 +654,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shared.policy.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedVaultRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -2451,10 +2457,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 }
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
-pub const OPENAPI_ROWS: &[&str] = &["vault.claims.review", "vault.claims.settle"];
+pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.shared.policy.get",
+    "vault.claims.review",
+    "vault.claims.settle",
+];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPoliciesView,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
@@ -3429,6 +3442,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.close_erase_ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5916,6 +5936,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.close_erase_ask" => {
             let _input: crate::task_verb::sdk::SharedEraseAskCloseRequest = decode(value.clone())?;
         }
+        "vault.shared.policy.get" => {
+            let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -7194,6 +7217,7 @@ pub fn invoke(
         "vault.shared.close_erase_ask" => {
             encode(vault_shared_close_erase_ask(memory, decode(value)?)?)
         }
+        "vault.shared.policy.get" => encode(vault_shared_policy_get(memory, decode(value)?)?),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
@@ -8971,6 +8995,16 @@ pub fn vault_shared_close_erase_ask(
     crate::task_verb::sdk::close_shared_erase_ask_as(
         memory.vault(),
         &memory.embedded_owner("vault.shared.close_erase_ask")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedVaultRequest,
+) -> MemoryResult<crate::federation::SharedActPoliciesView> {
+    crate::task_verb::sdk::read_shared_act_policies(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.get")?,
         input,
     )
 }

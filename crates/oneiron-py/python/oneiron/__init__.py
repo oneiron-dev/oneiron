@@ -1229,6 +1229,15 @@ class Oneiron:
         def close_erase_ask(self, spec):
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
             return json.loads(_translate(lambda: self._client.vault_shared_close_erase_ask(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultSharedPolicyVerbs":
+            return Oneiron._VaultSharedPolicyVerbs(self._client)
+    class _VaultSharedPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_get(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

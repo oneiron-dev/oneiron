@@ -135,6 +135,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.erase_ask`
 - `vault.shared.erase_asks`
 - `vault.shared.close_erase_ask`
+- `vault.shared.policy.get`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.residence.mode`
