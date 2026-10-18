@@ -475,6 +475,7 @@ impl NoVouch {
         for world in worlds.difference(&fresh) {
             let folded = fold.worlds.entry(*world).or_insert_with(|| FoldedWorld {
                 live: BTreeMap::new(),
+                live_settings: BTreeMap::new(),
                 effective: EffectiveWorldPrivacy::default(),
                 roster_read: EffectiveWorldPrivacy::default().read,
                 local_read: EffectiveWorldPrivacy::default().read,

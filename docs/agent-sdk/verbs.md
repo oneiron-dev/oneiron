@@ -35,6 +35,10 @@ both bindings and their export-census tests in one change.
 - `vault.shape.apply`
 - `self.message`
 - `self.grants.ask`
+- `vault.companions.access_requests.answer`
+- `vault.personas.preview`
+- `vault.personas.export`
+- `vault.personas.edit`
 - `self.memory.diary.query`
 - `cancel`
 - `steer`
@@ -223,6 +227,7 @@ both bindings and their export-census tests in one change.
 - `vault.residence.open`
 - `vault.residence.index`
 - `vault.residence.prune`
+- `vault.residence.directives`
 - `vault.off_record.start`
 - `vault.off_record.status`
 - `vault.off_record.witness`
@@ -334,6 +339,9 @@ both bindings and their export-census tests in one change.
 - `vault.shares.revoke`
 - `vault.shares.view`
 - `vault.hooks.replay`
+- `vault.hooks.regen.due`
+- `vault.hooks.regen.get`
+- `vault.hooks.regen.adopt`
 - `vault.artifacts.publish_approval`
 - `vault.artifacts.publish`
 - `vault.artifacts.repoint`
@@ -363,6 +371,12 @@ both bindings and their export-census tests in one change.
 - `vault.code.symbols.renew`
 - `vault.code.symbols.release`
 - `vault.code.proposal_submit`
+- `vault.code.conflict_record`
+- `vault.code.conflict_view`
+- `vault.code.proposal_resolve`
+- `vault.code.proposal_review`
+- `vault.code.proposal_settle`
+- `vault.code.proposal_settlement`
 - `vault.code.oplog`
 - `vault.code.model_heal_count`
 - `vault.code.waits.resolve`

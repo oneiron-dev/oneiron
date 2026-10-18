@@ -33,6 +33,10 @@ pub enum AgentVerb {
     VaultShapeApply,
     SelfMessage,
     SelfGrantsAsk,
+    VaultCompanionsAccessRequestsAnswer,
+    VaultPersonasPreview,
+    VaultPersonasExport,
+    VaultPersonasEdit,
     SelfMemoryDiaryQuery,
     Cancel,
     Steer,
@@ -221,6 +225,7 @@ pub enum AgentVerb {
     VaultResidenceOpen,
     VaultResidenceIndex,
     VaultResidencePrune,
+    VaultResidenceDirectives,
     VaultOffRecordStart,
     VaultOffRecordStatus,
     VaultOffRecordWitness,
@@ -343,6 +348,9 @@ pub enum AgentVerb {
     VaultSharesRevoke,
     VaultSharesView,
     VaultHooksReplay,
+    VaultHooksRegenDue,
+    VaultHooksRegenGet,
+    VaultHooksRegenAdopt,
     VaultArtifactsPublishApproval,
     VaultArtifactsPublish,
     VaultArtifactsRepoint,
@@ -372,6 +380,12 @@ pub enum AgentVerb {
     VaultCodeSymbolsRenew,
     VaultCodeSymbolsRelease,
     VaultCodeProposalSubmit,
+    VaultCodeConflictRecord,
+    VaultCodeConflictView,
+    VaultCodeProposalResolve,
+    VaultCodeProposalReview,
+    VaultCodeProposalSettle,
+    VaultCodeProposalSettlement,
     VaultCodeOplog,
     VaultCodeModelHealCount,
     VaultCodeWaitsResolve,
@@ -778,6 +792,10 @@ impl AgentVerb {
         Self::VaultShapeApply,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
+        Self::VaultCompanionsAccessRequestsAnswer,
+        Self::VaultPersonasPreview,
+        Self::VaultPersonasExport,
+        Self::VaultPersonasEdit,
         Self::SelfMemoryDiaryQuery,
         Self::Cancel,
         Self::Steer,
@@ -966,6 +984,7 @@ impl AgentVerb {
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
         Self::VaultResidencePrune,
+        Self::VaultResidenceDirectives,
         Self::VaultOffRecordStart,
         Self::VaultOffRecordStatus,
         Self::VaultOffRecordWitness,
@@ -1088,6 +1107,9 @@ impl AgentVerb {
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
         Self::VaultHooksReplay,
+        Self::VaultHooksRegenDue,
+        Self::VaultHooksRegenGet,
+        Self::VaultHooksRegenAdopt,
         Self::VaultArtifactsPublishApproval,
         Self::VaultArtifactsPublish,
         Self::VaultArtifactsRepoint,
@@ -1117,6 +1139,12 @@ impl AgentVerb {
         Self::VaultCodeSymbolsRenew,
         Self::VaultCodeSymbolsRelease,
         Self::VaultCodeProposalSubmit,
+        Self::VaultCodeConflictRecord,
+        Self::VaultCodeConflictView,
+        Self::VaultCodeProposalResolve,
+        Self::VaultCodeProposalReview,
+        Self::VaultCodeProposalSettle,
+        Self::VaultCodeProposalSettlement,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
         Self::VaultCodeWaitsResolve,
@@ -1526,6 +1554,10 @@ impl AgentVerb {
             Self::VaultShapeApply => "vault.shape.apply",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
+            Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
+            Self::VaultPersonasPreview => "vault.personas.preview",
+            Self::VaultPersonasExport => "vault.personas.export",
+            Self::VaultPersonasEdit => "vault.personas.edit",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
@@ -1718,6 +1750,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
             Self::VaultResidencePrune => "vault.residence.prune",
+            Self::VaultResidenceDirectives => "vault.residence.directives",
             Self::VaultOffRecordStart => "vault.off_record.start",
             Self::VaultOffRecordStatus => "vault.off_record.status",
             Self::VaultOffRecordWitness => "vault.off_record.witness",
@@ -1844,6 +1877,9 @@ impl AgentVerb {
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
             Self::VaultHooksReplay => "vault.hooks.replay",
+            Self::VaultHooksRegenDue => "vault.hooks.regen.due",
+            Self::VaultHooksRegenGet => "vault.hooks.regen.get",
+            Self::VaultHooksRegenAdopt => "vault.hooks.regen.adopt",
             Self::VaultArtifactsPublishApproval => "vault.artifacts.publish_approval",
             Self::VaultArtifactsPublish => "vault.artifacts.publish",
             Self::VaultArtifactsRepoint => "vault.artifacts.repoint",
@@ -1877,6 +1913,12 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => "vault.code.symbols.renew",
             Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
+            Self::VaultCodeConflictRecord => "vault.code.conflict_record",
+            Self::VaultCodeConflictView => "vault.code.conflict_view",
+            Self::VaultCodeProposalResolve => "vault.code.proposal_resolve",
+            Self::VaultCodeProposalReview => "vault.code.proposal_review",
+            Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
+            Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
@@ -2286,6 +2328,10 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasPreview
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -2474,6 +2520,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -2596,6 +2643,9 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
+                | Self::VaultHooksRegenDue
+                | Self::VaultHooksRegenGet
+                | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublishApproval
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -2625,6 +2675,12 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeConflictView
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
+                | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
@@ -3053,6 +3109,10 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasPreview
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
                 | Self::Cancel
                 | Self::Steer
@@ -3241,6 +3301,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -3363,6 +3424,9 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
+                | Self::VaultHooksRegenDue
+                | Self::VaultHooksRegenGet
+                | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublishApproval
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -3392,6 +3456,12 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeConflictView
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
+                | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
@@ -3780,6 +3850,7 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultResidenceDirectives
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -3788,6 +3859,7 @@ impl AgentVerb {
                 | Self::VaultConsentGraduationOffers
                 | Self::VaultConsentGraduationTrustTable
                 | Self::VaultHooksReplay
+                | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
                 | Self::VaultStandingBlocksList
                 | Self::VaultWorkspaceRoster
@@ -3894,6 +3966,10 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasPreview
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
@@ -4070,6 +4146,7 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultResidenceDirectives
                 | Self::VaultOffRecordStart
                 | Self::VaultOffRecordStatus
                 | Self::VaultOffRecordWitness
@@ -4192,6 +4269,9 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
+                | Self::VaultHooksRegenDue
+                | Self::VaultHooksRegenGet
+                | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublishApproval
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -4221,6 +4301,12 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeConflictView
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
+                | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
@@ -4588,6 +4674,9 @@ impl AgentVerb {
                 | Self::VaultShapeApply
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::VaultCompanionsAccessRequestsAnswer
+                | Self::VaultPersonasExport
+                | Self::VaultPersonasEdit
                 | Self::Cancel
                 | Self::Steer
                 | Self::TasksCreate
@@ -4788,6 +4877,7 @@ impl AgentVerb {
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
                 | Self::VaultArtifactsUnpublish
@@ -4806,6 +4896,10 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeConflictRecord
+                | Self::VaultCodeProposalResolve
+                | Self::VaultCodeProposalReview
+                | Self::VaultCodeProposalSettle
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
@@ -5072,6 +5166,10 @@ impl AgentVerb {
             Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::VaultPersonasPreview => &["spec"],
+            Self::VaultPersonasExport => &["spec"],
+            Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -5277,6 +5375,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultResidenceDirectives => &["spec"],
             Self::VaultOffRecordStart => &["spec"],
             Self::VaultOffRecordStatus => &["spec"],
             Self::VaultOffRecordWitness => &["spec"],
@@ -5399,6 +5498,9 @@ impl AgentVerb {
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
+            Self::VaultHooksRegenDue => &["spec"],
+            Self::VaultHooksRegenGet => &["spec"],
+            Self::VaultHooksRegenAdopt => &["spec"],
             Self::VaultArtifactsPublishApproval => &["spec"],
             Self::VaultArtifactsPublish => &["spec"],
             Self::VaultArtifactsRepoint => &["spec"],
@@ -5428,6 +5530,12 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => &["spec"],
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeConflictRecord => &["spec"],
+            Self::VaultCodeConflictView => &["spec"],
+            Self::VaultCodeProposalResolve => &["spec"],
+            Self::VaultCodeProposalReview => &["spec"],
+            Self::VaultCodeProposalSettle => &["spec"],
+            Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
@@ -5835,6 +5943,10 @@ impl AgentVerb {
             Self::VaultShapeApply => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
+            Self::VaultPersonasPreview => &["spec"],
+            Self::VaultPersonasExport => &["spec"],
+            Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
@@ -6023,6 +6135,7 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultResidenceDirectives => &["spec"],
             Self::VaultOffRecordStart => &["spec"],
             Self::VaultOffRecordStatus => &["spec"],
             Self::VaultOffRecordWitness => &["spec"],
@@ -6145,6 +6258,9 @@ impl AgentVerb {
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
+            Self::VaultHooksRegenDue => &["spec"],
+            Self::VaultHooksRegenGet => &["spec"],
+            Self::VaultHooksRegenAdopt => &["spec"],
             Self::VaultArtifactsPublishApproval => &["spec"],
             Self::VaultArtifactsPublish => &["spec"],
             Self::VaultArtifactsRepoint => &["spec"],
@@ -6174,6 +6290,12 @@ impl AgentVerb {
             Self::VaultCodeSymbolsRenew => &["spec"],
             Self::VaultCodeSymbolsRelease => &["spec"],
             Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeConflictRecord => &["spec"],
+            Self::VaultCodeConflictView => &["spec"],
+            Self::VaultCodeProposalResolve => &["spec"],
+            Self::VaultCodeProposalReview => &["spec"],
+            Self::VaultCodeProposalSettle => &["spec"],
+            Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
@@ -6633,6 +6755,18 @@ impl AgentVerb {
             }
             Self::SelfGrantsAsk => {
                 "Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it."
+            }
+            Self::VaultCompanionsAccessRequestsAnswer => {
+                "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
+            }
+            Self::VaultPersonasPreview => {
+                "Previews the owner's strikeable persona snapshot, with sources and its content-bound consent stamp."
+            }
+            Self::VaultPersonasExport => {
+                "Issues the exact previewed mode-A persona copy after explicit row strikes; a changed preview refuses stale consent."
+            }
+            Self::VaultPersonasEdit => {
+                "Edits an accepted persona copy into a new receipted export, preserving citations, exclusions and the already handed version."
             }
             Self::SelfMemoryDiaryQuery => {
                 "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
@@ -7186,6 +7320,9 @@ impl AgentVerb {
             Self::VaultResidencePrune => {
                 "Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."
             }
+            Self::VaultResidenceDirectives => {
+                "The owner reads the residence directives this replica holds and each machine's result as received here; a null result means not received here, not that the machine is idle."
+            }
             Self::VaultOffRecordStart => {
                 "The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."
             }
@@ -7538,6 +7675,15 @@ impl AgentVerb {
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
             }
+            Self::VaultHooksRegenDue => {
+                "List, as the authenticated owner, the hook bindings of the vault's own packs whose verb table or sandbox contract changed since their last good body passed, with no regen waiting. Runs no regen."
+            }
+            Self::VaultHooksRegenGet => {
+                "Read one hook binding's regen record as the authenticated owner: its last good body hash, contract stamp, intent and pending decision, with the candidate_hash an adoption names. Null for a binding bound under no record. Changes nothing."
+            }
+            Self::VaultHooksRegenAdopt => {
+                "Adopt, as the authenticated owner and as their stamp, the regen candidate pending on one hook binding, named by the candidate_hash vault.hooks.regen.get shows. Answers the pack put receipt; only an installed put advances the record."
+            }
             Self::VaultArtifactsPublishApproval => {
                 "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."
             }
@@ -7624,6 +7770,24 @@ impl AgentVerb {
             }
             Self::VaultCodeProposalSubmit => {
                 "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."
+            }
+            Self::VaultCodeConflictRecord => {
+                "Record a real Git overlap between two stored one-file proposals at the same retained base, with both trees, paths and a linked reconciliation task. Owner only; neither branch moves."
+            }
+            Self::VaultCodeConflictView => {
+                "Read open repository conflicts and their durable resolution claims, including each reconciliation task. Owner only."
+            }
+            Self::VaultCodeProposalResolve => {
+                "Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands."
+            }
+            Self::VaultCodeProposalReview => {
+                "Record the authenticated owner's immutable critic opinion on one proposal lens. Independent reviewers only; this is no contract-check execution receipt."
+            }
+            Self::VaultCodeProposalSettle => {
+                "Approve or reject one reviewed code proposal as an independent owner, retaining a decision receipt. Approval still needs unanimous critics and never advances head; only the tested merge queue lands it."
+            }
+            Self::VaultCodeProposalSettlement => {
+                "Read a code proposal's review decision receipt and execution lineage, including its conflict, original proposals, reconciliation task and resolution claim. Owner only."
             }
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
