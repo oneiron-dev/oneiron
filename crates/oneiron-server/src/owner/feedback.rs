@@ -98,7 +98,17 @@ pub(crate) fn preview(
     owner: &AuthenticatedOwner,
     request: &FeedbackRequest,
 ) -> OwnerResult<Preview> {
-    let preview = bundle_preview(request)?;
+    preview_view(vault, host, owner, &bundle_preview(request)?)
+}
+
+/// The preview of one built bundle, for every door that builds its own:
+/// the digest, destination and approval of exactly these bytes.
+pub(crate) fn preview_view(
+    vault: &Vault,
+    host: &FeedbackHost,
+    owner: &AuthenticatedOwner,
+    preview: &FeedbackPreview,
+) -> OwnerResult<Preview> {
     Ok(Preview {
         digest: preview.digest().to_owned(),
         encoding: preview.encoding().as_str(),
@@ -119,13 +129,37 @@ pub(crate) fn send(
     owner: &AuthenticatedOwner,
     request: &SendRequest,
 ) -> OwnerResult<Sent> {
-    let principal_ref = owner.revalidate_principal_ref(vault)?;
     let preview = bundle_preview(&FeedbackRequest {
         category: request.category,
         note: request.note.clone(),
         proposal: request.proposal.clone(),
     })?;
-    if preview.digest() != request.digest {
+    send_previewed(
+        vault,
+        host,
+        owner,
+        &preview,
+        &request.digest,
+        &request.approval,
+        request.previewed_at,
+    )
+}
+
+/// Sends one built bundle its preview approved, for every door that
+/// builds its own: the digest, approval and preview age are rechecked
+/// here, and the send is admitted under the owner's proof in the
+/// transaction that admits it.
+pub(crate) fn send_previewed(
+    vault: &Vault,
+    host: &FeedbackHost,
+    owner: &AuthenticatedOwner,
+    preview: &FeedbackPreview,
+    digest: &str,
+    approval: &str,
+    previewed_at: u64,
+) -> OwnerResult<Sent> {
+    let principal_ref = owner.revalidate_principal_ref(vault)?;
+    if preview.digest() != digest {
         return Err(OwnerError::Changed(
             "this bundle is not the one previewed; preview it again".to_owned(),
         ));
@@ -133,26 +167,26 @@ pub(crate) fn send(
     let scope = FeedbackApprovalScope::Send(host.config.route());
     // The approval names the owner who previewed it, so two owners' sends of
     // one bundle are two sends, and neither can send on the other's preview.
-    if preview.approval_component_id(&scope, principal_ref) != request.approval {
+    if preview.approval_component_id(&scope, principal_ref) != approval {
         return Err(OwnerError::Changed(
             "this preview was for another destination or another owner; preview it again"
                 .to_owned(),
         ));
     }
     let now = vault.now_recorded_at();
-    if now.saturating_sub(request.previewed_at) > PREVIEW_LIFETIME_SECS
-        || request.previewed_at > now.saturating_add(PREVIEW_CLOCK_SKEW_SECS)
+    if now.saturating_sub(previewed_at) > PREVIEW_LIFETIME_SECS
+        || previewed_at > now.saturating_add(PREVIEW_CLOCK_SKEW_SECS)
     {
         return Err(OwnerError::Changed(
             "the preview has expired; preview it again".to_owned(),
         ));
     }
     // The owner's send is the answer; the card's prompt names where it goes.
-    let card = feedback_approval_card(&preview, principal_ref, &host.config.endpoint, &scope)
+    let card = feedback_approval_card(preview, principal_ref, &host.config.endpoint, &scope)
         .map_err(feedback_error)?;
     // The approval is timed at the preview, so a repeated request names the
     // same approval receipt and the outbound ledger answers it as the one send.
-    let approval = ConsentActionRequest::new(
+    let approval_request = ConsentActionRequest::new(
         card.card_id.clone(),
         FEEDBACK_APPROVE_ONCE_ACTION,
         ConsentActionKind::Approve,
@@ -160,16 +194,16 @@ pub(crate) fn send(
             actor_ref: principal_ref.to_owned(),
         },
         ConsentSurface::Dashboard,
-        request.previewed_at,
+        previewed_at,
     )?;
-    let evaluation = card.evaluate_action(vault, &approval, owner)?;
+    let evaluation = card.evaluate_action(vault, &approval_request, owner)?;
     // The send carries the owner's proof to the transaction that admits it,
     // so a slip revoked while this request waited admits nothing.
     let sent = send_approved_feedback(
         vault,
         host.config.clone(),
         host.bearer.clone(),
-        &preview,
+        preview,
         &evaluation,
         owner,
         now,

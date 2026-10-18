@@ -117,7 +117,10 @@ impl FeedbackVerb {
 }
 
 /// What kind of feedback this bundle carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "kebab-case")]
 pub enum FeedbackCategory {
     /// Something is broken.

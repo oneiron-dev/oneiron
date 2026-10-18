@@ -5,6 +5,31 @@ export_facade! {
     let output = client.report(&input)?;
     crate::codec::lift_record("report", &output)
 };
+"feedback.preview" => fn feedback_preview(&self, input: FeedbackPreviewRequest) -> FeedbackSubjectPreview = |client| {
+    let input: oneiron::task_verb::sdk::FeedbackPreviewRequest = crate::codec::lower_record("feedback.preview", input)?;
+    let output = client.feedback_preview(&input)?;
+    crate::codec::lift_record("feedback.preview", &output)
+};
+"feedback.send" => fn feedback_send(&self, input: FeedbackSendSubjectRequest) -> FeedbackSubjectSent = |client| {
+    let input: oneiron::task_verb::sdk::FeedbackSendSubjectRequest = crate::codec::lower_record("feedback.send", input)?;
+    let output = client.feedback_send(&input)?;
+    crate::codec::lift_record("feedback.send", &output)
+};
+"vault.reports.disclosure" => fn vault_reports_disclosure(&self, input: ReportDisclosureRequest) -> ReportIssue = |client| {
+    let input: oneiron::task_verb::sdk::ReportDisclosureRequest = crate::codec::lower_record("vault.reports.disclosure", input)?;
+    let output = client.vault_reports_disclosure(&input)?;
+    crate::codec::lift_record("vault.reports.disclosure", &output)
+};
+"vault.reports.route" => fn vault_reports_route(&self, input: ReportRouteRequest) -> ReportRouteReceipt = |client| {
+    let input: oneiron::task_verb::sdk::ReportRouteRequest = crate::codec::lower_record("vault.reports.route", input)?;
+    let output = client.vault_reports_route(&input)?;
+    crate::codec::lift_record("vault.reports.route", &output)
+};
+"vault.reports.outbound" => fn vault_reports_outbound(&self, input: ReportOutboundRequest) -> ReportOutboundView = |client| {
+    let input: oneiron::task_verb::sdk::ReportOutboundRequest = crate::codec::lower_record("vault.reports.outbound", input)?;
+    let output = client.vault_reports_outbound(&input)?;
+    crate::codec::lift_record("vault.reports.outbound", &output)
+};
 "self.focus.scratchpad.recall" => fn self_focus_scratchpad_recall(&self, input: ScratchpadRecallRequest) -> ScratchpadRecallReply = |client| {
     let input: oneiron::task_verb::sdk::ScratchpadRecallRequest = crate::codec::lower_record("self.focus.scratchpad.recall", input)?;
     let output = client.self_focus_scratchpad_recall(&input)?;

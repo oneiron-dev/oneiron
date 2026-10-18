@@ -86,7 +86,7 @@ impl ReportRequest {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportStatus {
     Accepted,
@@ -97,7 +97,7 @@ pub enum ReportStatus {
 }
 
 /// Review is on the ISSUE entity; no queue row owns a second review state.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReportReview {
     pub status: ReportStatus,
@@ -115,7 +115,7 @@ impl Default for ReportReview {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReportDisclosure {
     Local,
@@ -126,7 +126,7 @@ pub enum ReportDisclosure {
 }
 
 /// A provenance-carrying ISSUE record. Free text is untrusted data, not routing policy.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReportIssue {
     pub issue_ref: String,
