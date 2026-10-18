@@ -607,7 +607,7 @@ pub struct ResearchArchiveWire {
     pub root: EntityId,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchArchive {
     pub binding: ResearchBinding,

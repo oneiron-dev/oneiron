@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 720 code-mode rows (699 host rows, 21 run rows), 2518 declarations.
-// Replies: 638 fully typed, 78 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 740 code-mode rows (719 host rows, 21 run rows), 2579 declarations.
+// Replies: 656 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -356,6 +356,11 @@ declare namespace Sdk {
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type RetrievalRunId = { bytes: number[] };
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type AccessFactorPolicy = { half_life_secs: number; floor: number };
+  type ClaimAgingProfiles = { durable: AccessFactorPolicy; standard: AccessFactorPolicy; ephemeral: AccessFactorPolicy };
+  type ClaimAgingProfilesView = { manifest_ref: string; body_hash: string; profiles: ClaimAgingProfiles };
+  type ClaimAgingProfilesConfigureRequest = { expected_body_hash: string; profiles: ClaimAgingProfiles };
+  type ClaimAgingProfilesReceipt = { configuration: ClaimAgingProfilesView; receipt_ref: string };
   type RetrievalWeights = { affect: number; arousal: number; community: number; vad: number };
   type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
@@ -423,10 +428,17 @@ declare namespace Sdk {
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
   type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
-  type SlipCaveat = { scope?: Scope | null; expires_at?: number | null; ttl_secs?: number | null; single_use: boolean; records?: string[] | null; channels?: string[] | null; pact?: [ScopeId, number[]] | null };
-  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: SlipCaveat; next_binding_key?: number[] | null };
-  type CredentialAttenuated = { token: string; binding_key: number[] };
   type CredentialCeiling = { kind: "ceiling"; scope: Scope };
+  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
+  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
+  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
+  type CredentialPactCeiling = { grant_ref: ScopeId; ceiling: FederationDirectionScope };
+  type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null };
+  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
+  type CredentialAttenuated = { token: string; binding_key: number[] };
+  type RecordPositionRequest = { record_ref: string };
+  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
+  type RecordPosition = { kind: "position"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
   type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeSensitivityBand = "public" | "private" | "sensitive" | "restricted";
@@ -434,7 +446,6 @@ declare namespace Sdk {
   type ChannelCeiling = { worlds?: ScopeAxisInput<string>; facets?: ScopeAxisInput<string>; bands?: ScopeAxisInput<number>; audience?: ScopeAxisInput<string>; verbs?: ScopeAxisInput<string>; sensitivity?: ScopeSensitivityInput };
   type ExportChannel = { channel_ref: string; scope: ChannelCeiling };
   type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };
-  type RecordPosition = { kind: "position"; scope: Scope };
   type MadeByInputRole = "input" | "prompt";
   type MadeByInput = { row: string; role: MadeByInputRole };
   type MadeByClass = "stated" | "concluded";
@@ -468,6 +479,28 @@ declare namespace Sdk {
   type KeyValueDeleteReceipt = { existed: boolean; receipt_refs: string[] };
   type KeyValueSearch = { namespace_prefix?: string[]; filter?: Record<string, unknown> | null; limit?: number; offset?: number };
   type KeyValueNamespaces = { prefix?: string[]; suffix?: string[]; max_depth?: number | null; limit?: number; offset?: number };
+  type CampaignMemberChannelSpec = { channel: string; basis_evidence: string; sender_ref: string };
+  type CampaignEnrollRequest = { campaign_ref: string; person_ref: string; channels: CampaignMemberChannelSpec[]; evidence_refs: string[] };
+  type CampaignEnrollmentState = "enrolled";
+  type CampaignActionProvenance = { actor_ref: string; evidence_refs: string[]; recorded_at: number };
+  type CampaignEnrollmentReceipt = { membership_claim_ref: string; person_ref: string; campaign_ref: string; state: CampaignEnrollmentState; channels: CampaignMemberChannelSpec[]; approval: string; provenance: CampaignActionProvenance; receipt_ref: string };
+  type StageKey = string;
+  type StageDefinition = { key: StageKey; label: string };
+  type StageEvidenceClass = "meaningful_reply" | "calendar_event" | "calendar_event_outcome" | "document_artifact_and_send_receipt" | "counterparty_ledger" | "task_list_progress" | "recurring_commitment";
+  type StageTransitionRule = { from?: StageKey | null; to: StageKey; evidence_class: StageEvidenceClass; owner_attested_allowed: boolean };
+  type ReplyCode = "positive_now" | "positive_later" | "referral" | "objection" | "not_interested" | "complaint";
+  type ReplyDisposition = { kind: "promote"; stage: StageKey } | { kind: "snooze" } | { kind: "route_referral" } | { kind: "record_only" } | { kind: "exit" } | { kind: "suppress" };
+  type ReplyRouteRule = { code: ReplyCode; disposition: ReplyDisposition };
+  type NoShowRecoveryRule = { same_day_reschedule: boolean; bump_after_secs: number; snooze_after_failed_bump: boolean };
+  type StageLadderDefinition = { key: string; stages: StageDefinition[]; transitions: StageTransitionRule[]; reply_routes: ReplyRouteRule[]; no_show_recovery: NoShowRecoveryRule };
+  type EvidenceBasis = "machine" | "owner_attested";
+  type CampaignStageEvidence = { class: StageEvidenceClass; basis: EvidenceBasis; evidence_refs: string[]; recorded_at: number };
+  type PromotionMode = "auto" | "propose";
+  type CampaignStageEvidenceRequest = { campaign_ref: string; person_ref: string; ladder: StageLadderDefinition; target_stage: StageKey; evidence: CampaignStageEvidence; mode?: PromotionMode };
+  type CampaignStageEvidenceOutcome = "advanced" | "proposed" | "no_change";
+  type CampaignStageEvidenceReceipt = { person_ref: string; campaign_ref: string; outcome: CampaignStageEvidenceOutcome; stage_claim_ref?: string | null; stage?: StageKey | null; evidence?: CampaignStageEvidence | null; provenance?: CampaignActionProvenance | null; receipt_ref?: string | null };
+  type CampaignUnsubscribeRequest = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string };
+  type CampaignUnsubscribeReceipt = { campaign_ref: string; person_ref: string; channel: string; evidence_ref: string; suppression_claim_ref: string; member_claim_refs: string[]; receipt_ref: string };
   type CampaignProgramOutboundSpec = { call_seq: number; verb: string; payload: string; idempotency_supported: boolean };
   type CampaignProgramStepSpec = { step_ref: string; channel: string; sender_ref: string; basis_evidence: string; outbound?: CampaignProgramOutboundSpec | null };
   type CampaignProgramAudienceSpec = { query_ref: string; entry_step_ref: string };
@@ -622,6 +655,14 @@ declare namespace Sdk {
   type SkillHashRuleRequest = { content_hash: string; blocked: boolean };
   type SkillCodeAutoInstallRequest = { enabled: boolean };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
+  type SkillOptimizeStartRequest = { skill?: EntityId | null; resident?: EntityId | null; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
+  type SkillGovernanceView = { entity: EntityId; skill_id: string; version: string; lifecycle: SkillLibraryLifecycle; verdict: string; tier?: string | null; protected: boolean; optimizable: boolean };
+  type SkillOptimizeStartReceipt = { outcome: string; job_ref?: string | null; state?: string | null; skill?: EntityId | null; governance?: SkillGovernanceView | null };
+  type SkillOptimizeResultRequest = { job_ref?: string | null; proposal?: EntityId | null };
+  type SkillOptimizeAxisView = { axis: string; before: number; after: number };
+  type SkillOptimizeVerdictView = { id: EntityId; proposal: EntityId; skill: EntityId; disposition: string; accepted: boolean; before: number; after: number; goal_axes: SkillOptimizeAxisView[]; goal_revision: string; judge_revision?: string | null; cycle: string; held_out_receipts: string[]; held_out_count: number; held_out_digest: string; held_out_truncated: boolean; proposal_digest: string; target_digest: string; proposal_tier?: string | null; at: number };
+  type SkillOptimizeResultView = { job_ref?: string | null; state?: string | null; kind?: string | null; last_error?: string | null; skill?: EntityId | null; proposal?: EntityId | null; proposal_lifecycle?: SkillLibraryLifecycle | null; incumbent_lifecycle?: SkillLibraryLifecycle | null; governance?: SkillGovernanceView | null; verdict?: SkillOptimizeVerdictView | null; verdicts: SkillOptimizeVerdictView[] };
+  type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
   type HookPhase = "pre" | "post" | "fact";
@@ -791,9 +832,6 @@ declare namespace Sdk {
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
-  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
-  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
-  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
   type OfferConnect = { peer_vault: string; grant: string; outbound: FederationDirectionScope; inbound: FederationDirectionScope };
   type FederationPactScope = { lo_to_hi: FederationDirectionScope; hi_to_lo: FederationDirectionScope };
   type Offer = { pact: string; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string };
@@ -1301,7 +1339,6 @@ declare namespace Sdk {
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
-  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
   type RevealRequest = { handle: string; why: string };
@@ -1466,6 +1503,22 @@ declare namespace Sdk {
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
+  type CheckoutClass = "edit" | "build" | "verify" | "effect";
+  type CheckoutClaimInput = { checkout: string; repo: EntityId; task: EntityId; task_class: CheckoutClass; ttl_seconds: number; declared_idempotent: boolean };
+  type CheckoutState = "active" | "settling" | "settled" | "retained";
+  type CheckoutLeaseView = { checkout: string; task: EntityId; repo_ref: string; holder: EntityId; epoch: number; task_class: CheckoutClass; state: CheckoutState; claimed_at: number; expires_at?: number | null; expired: boolean; ticket: string; receipt?: string | null };
+  type CheckoutGetInput = { checkout: string };
+  type CheckoutRenewInput = { checkout: string; epoch: number; ttl_seconds: number };
+  type CheckoutReclaimInput = { checkout: string; expired_epoch: number };
+  type CheckoutTakeoverInput = { checkout: string; expected_epoch: number };
+  type CheckoutPublishInput = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId };
+  type CheckoutPublished = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; result_identity: string; receipt: string };
+  type CheckoutAction = "select" | "apply" | "release" | "discard";
+  type CheckoutSettleInput = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; action: CheckoutAction };
+  type CheckoutSettled = { checkout: string; epoch: number; observed_ref: string; candidate: EntityId; action: CheckoutAction; result_identity: string; receipt: string; settled_at: number };
+  type CheckoutTeardownInput = { checkout: string; epoch: number; pushed_head_receipt?: EntityId | null };
+  type CheckoutRetention = "missing_pushed_head_receipt" | "receipt_mismatch" | "live_occupant" | "dirty_or_uncertain";
+  type CheckoutTornDown = { status: "collected"; checkout: string; epoch: number } | { status: "retained"; checkout: string; epoch: number; reason: CheckoutRetention };
   type CodeRepoPointer = { local_folder: string; commit: string };
   type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
   type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
@@ -2308,7 +2361,15 @@ declare namespace Sdk {
   type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
-  type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "cancelled" | "signal" | "other";
+  type DreamerParkedAttemptView = { job_ref: string; cause: DreamerParkCauseView; parked_at: number };
+  type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number; parked?: DreamerParkedAttemptView | null };
+  type SettledStepRequest = { job_ref: string; step_hash: string };
+  type SettledStepView = { job_ref: string; run_id?: string | null; claim_ref: string; step_hash: string; model: ModelId; purpose: string; params_hash: string; response: LlmResponse };
+  type CheckpointReadRequest = { run_ref: string; from_step?: number; limit?: number | null };
+  type CheckpointStepView = { step: number; label: string; state_hash: string; created_at_ms: number };
+  type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
+  type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
   type EvidenceKind = "turn" | "message" | "note" | "asset_text" | "import_record";
   type CursorSpan = { start: number[]; end: number[] };
   type EvidenceRef = { kind: EvidenceKind; entity: string; doc: string; at: number[]; span?: CursorSpan | null; quote_sha256?: number[] | null };
@@ -3120,6 +3181,8 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   campaign: {
+    /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
+    enroll(input: Sdk.CampaignEnrollRequest): Promise<Sdk.CampaignEnrollmentReceipt | StoredResult>;
     program: {
       /** Archives a campaign program: it stays readable, enrolls no one, and its queued enrollment work stops. */
       archive(input: Sdk.ArchiveCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
@@ -3130,6 +3193,12 @@ declare const vault: Sdk.VaultHost & {
       /** Replaces a campaign program's name, steps and audience whole under a version check; work queued at a dropped step stops. */
       update(input: Sdk.UpdateCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
     };
+    stage: {
+      /** Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing. */
+      evidence(input: Sdk.CampaignStageEvidenceRequest): Promise<Sdk.CampaignStageEvidenceReceipt | StoredResult>;
+    };
+    /** Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction. */
+    unsubscribe(input: Sdk.CampaignUnsubscribeRequest): Promise<Sdk.CampaignUnsubscribeReceipt | StoredResult>;
   };
   channel_identities: {
     /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
@@ -3201,6 +3270,22 @@ declare const vault: Sdk.VaultHost & {
     checkout: {
       /** Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential. */
       bind(input: Sdk.CheckoutDoorBindRequest): Promise<Sdk.CheckoutDoorBinding | StoredResult>;
+      /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
+      claim(input: Sdk.CheckoutClaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
+      get(input: Sdk.CheckoutGetInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Publish a stored candidate result for checkout settlement under the caller's live epoch; this does not export a Git head. */
+      publish(input: Sdk.CheckoutPublishInput): Promise<Sdk.CheckoutPublished | StoredResult>;
+      /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
+      reclaim(input: Sdk.CheckoutReclaimInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
+      renew(input: Sdk.CheckoutRenewInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Consume one published checkout result at its epoch as select, apply, release or discard; an identical retry returns its receipt. */
+      settle(input: Sdk.CheckoutSettleInput): Promise<Sdk.CheckoutSettled | StoredResult>;
+      /** Explicitly take over a checkout as its task owner, including effect work, at the named epoch. */
+      takeover(input: Sdk.CheckoutTakeoverInput): Promise<Sdk.CheckoutLeaseView | StoredResult>;
+      /** Collect the caller's checkout only with a matching durable pushed-head receipt and clear custody; retain dirty or uncertain trees. */
+      teardown(input: Sdk.CheckoutTeardownInput): Promise<Sdk.CheckoutTornDown | StoredResult>;
     };
     /** The semantic changes between two tested states of one code file, each unit with the operations that made it: actor, session, turn, activity, intent, model and effort. */
     diff(input: Sdk.CodeDiffRequest): Promise<Sdk.CodeDiffView | null | StoredResult>;
@@ -3929,6 +4014,12 @@ declare const vault: Sdk.VaultHost & {
     status(input: Sdk.ResultRunRequest): Promise<Sdk.ResultRunStatus | StoredResult>;
   };
   retrieval: {
+    aging: {
+      /** The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies. */
+      configure(input: Sdk.ClaimAgingProfilesConfigureRequest): Promise<Sdk.ClaimAgingProfilesReceipt | StoredResult>;
+      /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.ClaimAgingProfilesView | StoredResult>;
+    };
     /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
     export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
     outcomes: {
@@ -4009,10 +4100,16 @@ declare const vault: Sdk.VaultHost & {
       /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
       get(input: Sdk.RunBranchesRequest): Promise<Sdk.RunBranchesView | StoredResult>;
     };
+    /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
+    checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
+    step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
   };
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
     ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
+    /** Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt. */
+    position(input: Sdk.RecordPositionRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordPosition | null> | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */
@@ -4129,10 +4226,22 @@ declare const vault: Sdk.VaultHost & {
     fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
     get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    governance: {
+      /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
+      get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillGovernanceView | StoredResult>;
+      /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
+      set(input: Sdk.SkillGovernanceSetRequest): Promise<Sdk.SkillGovernanceView | StoredResult>;
+    };
     /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
+    optimize: {
+      /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
+      result(input: Sdk.SkillOptimizeResultRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
+      start(input: Sdk.SkillOptimizeStartRequest): Promise<Sdk.SkillOptimizeStartReceipt | StoredResult>;
+    };
     outcomes: {
       /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
       get(input: Sdk.SkillPackCreditRequest): Promise<Sdk.LateCreditReceipt | null | StoredResult>;

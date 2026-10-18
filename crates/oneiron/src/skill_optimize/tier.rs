@@ -88,7 +88,7 @@ pub(super) fn tier_verdict(
 /// opening a second one: the tier is the last thing checked before a proposal
 /// lands, and reading it from a different snapshot than the one the write
 /// commits into is exactly the gap an owner's identity-mark could fall through.
-pub(super) fn tier_verdict_in_txn(
+pub(crate) fn tier_verdict_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     skill: &EntityId,

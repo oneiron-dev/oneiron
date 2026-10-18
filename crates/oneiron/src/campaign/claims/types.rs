@@ -168,12 +168,12 @@ pub struct CrmFitValue {
 }
 
 /// Opaque stage token. The ladder's shape is ONE-1775's; this layer stores it.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct StageKey(pub String);
 
 /// What established a stage: a machine derivation or an owner's attestation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvidenceBasis {
     /// Derived by the engine from evidence it can re-read.
@@ -204,7 +204,7 @@ impl EvidenceBasis {
 }
 
 /// The closed set of evidence classes a stage write may cite.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum StageEvidenceClass {
     /// A substantive counterparty reply.
