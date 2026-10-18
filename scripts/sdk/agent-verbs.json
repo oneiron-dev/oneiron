@@ -1077,6 +1077,7 @@
       "output": "crate::task_verb::sdk::PackPutReceipt",
       "call": "crate::task_verb::sdk::put_pack_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1090,6 +1091,7 @@
       "output": "crate::skill_hub::pack_catalog::PackInstallReceipt",
       "call": "crate::task_verb::sdk::remove_pack_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1103,6 +1105,7 @@
       "output": "crate::connector_key::ChannelMessageSubscription",
       "call": "crate::task_verb::sdk::subscribe_channel_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1116,6 +1119,7 @@
       "output": "crate::task_verb::sdk::ChannelSubscriptions",
       "call": "crate::task_verb::sdk::channel_subscriptions_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -1129,6 +1133,7 @@
       "output": "crate::task_verb::sdk::ChannelSubscriptionRevoked",
       "call": "crate::task_verb::sdk::revoke_channel_subscription_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1142,6 +1147,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1155,6 +1161,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {
         "unrestricted_record_scope": true
@@ -1168,6 +1175,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1181,6 +1189,7 @@
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -1194,6 +1203,7 @@
       "output": "crate::receipt::AuthorityAuditPage",
       "call": "crate::receipt::authority_audit_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1205,6 +1215,7 @@
       "output": "Vec<crate::sync::mesh_path::MeshPathReceipt>",
       "call": "crate::task_verb::sdk::mesh_path_receipts_as_owner(memory, &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1526,6 +1537,7 @@
       "output": "crate::task_verb::sdk::ResidenceModeChanged",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.mode\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1537,6 +1549,7 @@
       "output": "crate::task_verb::sdk::ResidenceOpened",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.open\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1548,6 +1561,7 @@
       "output": "crate::task_verb::sdk::ResidenceIndex",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.index\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Read",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -1559,6 +1573,7 @@
       "output": "crate::task_verb::sdk::ResidencePruned",
       "call": "crate::task_verb::sdk::residence_host_only(memory, \"vault.residence.prune\", &input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {"unrestricted_record_scope": true},
       "section": false
@@ -2169,6 +2184,7 @@
       "output": "crate::receipt::LensActivationReceipt",
       "call": "crate::lens::activate_lens_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
@@ -2182,6 +2198,7 @@
       "output": "crate::receipt::LensActivationReceipt",
       "call": "crate::lens::deactivate_lens_embedded(memory, input)?",
       "host_door": true,
+      "host_door_lists": true,
       "scope": "Write",
       "admission": {
         "unrestricted_record_scope": true
