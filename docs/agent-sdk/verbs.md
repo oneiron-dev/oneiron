@@ -544,6 +544,14 @@ both bindings and their export-census tests in one change.
 - `vault.forget`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
+- `calendar.invite`
+- `calendar.connector.configure`
+- `calendar.connector.get`
+- `calendar.connector.pull`
+- `calendar.connector.write`
+- `calendar.connector.kill`
+- `calendar.imip.configure`
+- `calendar.imip.get`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
 - `vault.calendar.occurrences`

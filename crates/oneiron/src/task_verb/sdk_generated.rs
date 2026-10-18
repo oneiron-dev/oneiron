@@ -3011,6 +3011,52 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "calendar.invite",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::CalendarInviteSurfaceInput,
+                >(),
+            ),
+            (
+                "calendar.connector.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::connectors::door::CalendarConnectorConfigureRequest,
+                >(),
+            ),
+            (
+                "calendar.connector.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::connectors::door::CalendarConnectorRequest,
+                >(),
+            ),
+            (
+                "calendar.connector.pull",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::connectors::door::CalendarConnectorRequest,
+                >(),
+            ),
+            (
+                "calendar.connector.write",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::connectors::door::CalendarConnectorWriteRequest,
+                >(),
+            ),
+            (
+                "calendar.connector.kill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::connectors::door::CalendarConnectorKillRequest,
+                >(),
+            ),
+            (
+                "calendar.imip.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::connectors::door::CalendarImipTransportConfig,
+                >(),
+            ),
+            (
+                "calendar.imip.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
                 "vault.calendar.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::calendar::door::CalendarEventCreateRequest,
@@ -4169,6 +4215,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.enforce",
     "vault.booking.constraint_turn",
     "vault.booking.page_token",
+    "calendar.invite",
+    "calendar.connector.configure",
+    "calendar.connector.get",
+    "calendar.connector.pull",
+    "calendar.connector.write",
+    "calendar.connector.kill",
+    "calendar.imip.configure",
+    "calendar.imip.get",
     "vault.calendar.create",
     "vault.calendar.ics.import",
     "vault.calendar.occurrences",
@@ -5037,6 +5091,30 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.booking.page_token" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BookingPageTokenResponse,
+        >(),
+        "calendar.invite" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::OutboundIntentReceipt>()
+        }
+        "calendar.connector.configure" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::connectors::door::CalendarConnectorRegistration,
+        >(),
+        "calendar.connector.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::calendar::connectors::door::CalendarConnectorRegistration>,
+        >(),
+        "calendar.connector.pull" => {
+            crate::code_run::vault_read::request_schema::<crate::calendar::CalendarSyncOutcome>()
+        }
+        "calendar.connector.write" => {
+            crate::code_run::vault_read::request_schema::<crate::calendar::RemoteWriteReceipt>()
+        }
+        "calendar.connector.kill" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::connectors::door::CalendarConnectorRegistration,
+        >(),
+        "calendar.imip.configure" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::connectors::door::CalendarImipTransportConfig,
+        >(),
+        "calendar.imip.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::calendar::connectors::door::CalendarImipTransportConfig>,
         >(),
         "vault.calendar.create" => crate::code_run::vault_read::request_schema::<
             crate::calendar::door::CalendarEventCreated,
@@ -9132,6 +9210,62 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "calendar.invite" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.connector.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.connector.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.connector.pull" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.connector.write" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.connector.kill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.imip.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.imip.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.calendar.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12053,6 +12187,36 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.booking.page_token" => {
             let _input: crate::task_verb::sdk::BookingPageTokenRequest = decode(value.clone())?;
         }
+        "calendar.invite" => {
+            let _input: crate::memory::CalendarInviteSurfaceInput = decode(value.clone())?;
+        }
+        "calendar.connector.configure" => {
+            let _input: crate::calendar::connectors::door::CalendarConnectorConfigureRequest =
+                decode(value.clone())?;
+        }
+        "calendar.connector.get" => {
+            let _input: crate::calendar::connectors::door::CalendarConnectorRequest =
+                decode(value.clone())?;
+        }
+        "calendar.connector.pull" => {
+            let _input: crate::calendar::connectors::door::CalendarConnectorRequest =
+                decode(value.clone())?;
+        }
+        "calendar.connector.write" => {
+            let _input: crate::calendar::connectors::door::CalendarConnectorWriteRequest =
+                decode(value.clone())?;
+        }
+        "calendar.connector.kill" => {
+            let _input: crate::calendar::connectors::door::CalendarConnectorKillRequest =
+                decode(value.clone())?;
+        }
+        "calendar.imip.configure" => {
+            let _input: crate::calendar::connectors::door::CalendarImipTransportConfig =
+                decode(value.clone())?;
+        }
+        "calendar.imip.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
         "vault.calendar.create" => {
             let _input: crate::calendar::door::CalendarEventCreateRequest = decode(value.clone())?;
         }
@@ -13639,6 +13803,16 @@ pub fn invoke(
             encode(vault_booking_constraint_turn(memory, decode(value)?)?)
         }
         "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
+        "calendar.invite" => encode(calendar_invite(memory, decode(value)?)?),
+        "calendar.connector.configure" => {
+            encode(calendar_connector_configure(memory, decode(value)?)?)
+        }
+        "calendar.connector.get" => encode(calendar_connector_get(memory, decode(value)?)?),
+        "calendar.connector.pull" => encode(calendar_connector_pull(memory, decode(value)?)?),
+        "calendar.connector.write" => encode(calendar_connector_write(memory, decode(value)?)?),
+        "calendar.connector.kill" => encode(calendar_connector_kill(memory, decode(value)?)?),
+        "calendar.imip.configure" => encode(calendar_imip_configure(memory, decode(value)?)?),
+        "calendar.imip.get" => encode(calendar_imip_get(memory, decode(value)?)?),
         "vault.calendar.create" => encode(vault_calendar_create(memory, decode(value)?)?),
         "vault.calendar.ics.import" => encode(vault_calendar_ics_import(memory, decode(value)?)?),
         "vault.calendar.occurrences" => encode(vault_calendar_occurrences(memory, decode(value)?)?),
@@ -18675,6 +18849,54 @@ pub fn vault_booking_page_token(
     input: crate::task_verb::sdk::BookingPageTokenRequest,
 ) -> MemoryResult<crate::task_verb::sdk::BookingPageTokenResponse> {
     crate::task_verb::sdk::host_only(memory, "vault.booking.page_token", &input)
+}
+pub fn calendar_invite(
+    memory: &Memory<'_>,
+    input: crate::memory::CalendarInviteSurfaceInput,
+) -> MemoryResult<crate::memory::OutboundIntentReceipt> {
+    memory.calendar_invite(&input)
+}
+pub fn calendar_connector_configure(
+    memory: &Memory<'_>,
+    input: crate::calendar::connectors::door::CalendarConnectorConfigureRequest,
+) -> MemoryResult<crate::calendar::connectors::door::CalendarConnectorRegistration> {
+    crate::task_verb::sdk::host_only(memory, "calendar.connector.configure", &input)
+}
+pub fn calendar_connector_get(
+    memory: &Memory<'_>,
+    input: crate::calendar::connectors::door::CalendarConnectorRequest,
+) -> MemoryResult<Option<crate::calendar::connectors::door::CalendarConnectorRegistration>> {
+    crate::task_verb::sdk::host_only(memory, "calendar.connector.get", &input)
+}
+pub fn calendar_connector_pull(
+    memory: &Memory<'_>,
+    input: crate::calendar::connectors::door::CalendarConnectorRequest,
+) -> MemoryResult<crate::calendar::CalendarSyncOutcome> {
+    crate::task_verb::sdk::host_only(memory, "calendar.connector.pull", &input)
+}
+pub fn calendar_connector_write(
+    memory: &Memory<'_>,
+    input: crate::calendar::connectors::door::CalendarConnectorWriteRequest,
+) -> MemoryResult<crate::calendar::RemoteWriteReceipt> {
+    crate::task_verb::sdk::host_only(memory, "calendar.connector.write", &input)
+}
+pub fn calendar_connector_kill(
+    memory: &Memory<'_>,
+    input: crate::calendar::connectors::door::CalendarConnectorKillRequest,
+) -> MemoryResult<crate::calendar::connectors::door::CalendarConnectorRegistration> {
+    crate::task_verb::sdk::host_only(memory, "calendar.connector.kill", &input)
+}
+pub fn calendar_imip_configure(
+    memory: &Memory<'_>,
+    input: crate::calendar::connectors::door::CalendarImipTransportConfig,
+) -> MemoryResult<crate::calendar::connectors::door::CalendarImipTransportConfig> {
+    crate::task_verb::sdk::host_only(memory, "calendar.imip.configure", &input)
+}
+pub fn calendar_imip_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::calendar::connectors::door::CalendarImipTransportConfig>> {
+    crate::task_verb::sdk::host_only(memory, "calendar.imip.get", &_input)
 }
 pub fn vault_calendar_create(
     memory: &Memory<'_>,

@@ -59,6 +59,7 @@ mod idempotency;
 mod import_audience;
 mod ladder_poll;
 mod lens_frames;
+mod calendar_host;
 mod linear_host;
 mod livequery;
 pub mod logging;

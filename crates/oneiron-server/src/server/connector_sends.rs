@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
-use oneiron::outbound::ServedChannelSink;
+use crate::calendar_host::CalendarChannelSink;
 
 use super::core::SyncServer;
 use super::housekeeping::HousekeepingAdmission;
@@ -88,7 +88,7 @@ impl SyncServer {
 /// One pass: every claimable send, then the instant the next one is ready.
 /// A LINE push is counted against the account plan's monthly allowance.
 fn send_pass(vault: &Vault, line_push_allowance: u32) -> oneiron::Result<Option<u64>> {
-    let mut sink = ServedChannelSink::new(vault)?.with_line_push_allowance(line_push_allowance);
+    let mut sink = CalendarChannelSink::new(vault, line_push_allowance)?;
     let delivered = vault
         .run_connector_task_executor(&mut sink, unix_now())
         .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;
