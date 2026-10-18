@@ -26,7 +26,7 @@
 use super::CanonicalRows;
 use super::restore_class::{Class, Classes, Projection, Scope};
 use crate::agent_def::{
-    AgentCeiling, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
+    AgentCeiling, AgentModel, AgentScope, AgentWakeCadence, DreamingMode, McpRef, MemoryProfile,
 };
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::campaign::compliance::{
@@ -37,7 +37,7 @@ use crate::conversation::{ConversationBody, RoomRole};
 use crate::counterparty_contact::{
     CounterpartyContactStatus, CounterpartyFirstTouch, CounterpartyOptOut,
 };
-use crate::llm::ModelTierRef;
+use crate::llm::{ModelId, ModelTierRef};
 use crate::note::NoteKind;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_PERSON};
@@ -681,6 +681,8 @@ struct AgentBounds {
     dreaming: Option<DreamingMode>,
     dreaming_model: Option<ModelTierRef>,
     wake: Option<AgentWakeCadence>,
+    models: Vec<AgentModel>,
+    compaction_model: Option<ModelId>,
 }
 
 /// The authority `projection` reads in one entity row, or `None` for a row
@@ -751,6 +753,8 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
                     dreaming: agent.dreaming,
                     dreaming_model: agent.dreaming_model,
                     wake: agent.wake_cadence,
+                    models: agent.models,
+                    compaction_model: agent.compaction_model,
                 }))
             },
         ),

@@ -19,7 +19,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/grant_travel.rs` | src | s | 1 struct · 1 fn · 1 const · 2 crate-vis | GrantTravelSet | The owner's choice of the born-with text one federation grant's windows carry to another vault (OF-491, FIX… |
 | `src/authority/log_entry_op.rs` | src | m | 1 struct · 1 enum · 12 fn | AuthorityLogEntry, AuthorityOp | The authority op vocabulary and the signed log-entry envelope |
 | `src/authority/machine_profile.rs` | src | m | 2 struct · 3 enum · 6 fn · 4 const · 5 crate-vis | MachineDeviceClass, MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole | The physical machine profile: the owner's signed answer when a machine joins the vault, and its wire codec |
-| `src/authority/mod.rs` | src | s | 19 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/mod.rs` | src | s | 20 re-export | — | The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary… |
+| `src/authority/owner_act.rs` | src | s | 1 struct · 3 enum · 4 fn · 1 const · 2 crate-vis | ActBy, ActSurface, OwnerAct, OwnerActKind | The owner's act as a signed op carries it (mesh contract §2): one provenance record, [`OwnerAct`], inside… |
 | `src/authority/owner_handover.rs` | src | s | 1 struct · 1 enum · 3 fn · 2 const · 2 crate-vis | OwnerHandover, OwnerHandoverCause | An Owner handover in a shared vault as a signed AUTHORITY_LOG Owner action (ARCH-0043, "Last-Owner successor… |
 | `src/authority/owner_root.rs` | src | s | 2 struct · 3 fn · 1 const · 3 crate-vis | OwnerRootRecord, RecoveryRootId | The owner's recovery root record and its wire codec (world privacy P6b) |
 | `src/authority/recovery_ceremony.rs` | src | s | 1 enum · 4 fn · 1 const | GenesisRecoveryStep | Explicit genesis recovery-secret acknowledgement and its visible fragile flag |
@@ -30,7 +31,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/authority/wire_decode.rs` | src | m | 13 fn | — | `rmpv::Value` decoding for every authority type |
 | `src/authority/wire_encode.rs` | src | m | 7 fn | — | `rmpv::Value` encoding for every authority type |
 | `src/authority/world_key_wraps.rs` | src | s | 3 struct · 1 enum · 4 fn · 7 const · 3 crate-vis | PolicyRevision, WorldKeyId, WorldKeyWrapsRecord, WrapRecipient | A private world's key records and their wire codec (world privacy P6b) |
-| `src/authority/world_privacy.rs` | src | s | 2 struct · 3 enum · 1 fn · 3 const · 2 crate-vis | ModelOrder, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
+| `src/authority/world_privacy.rs` | src | s | 2 struct · 3 enum · 2 fn · 3 const · 2 crate-vis | ModelOrder, ReadLocation, SealedCopies, WorldPrivacy, WorldPrivacyEdit | A world's privacy settings and their wire codec: where the world may be read, where its sealed copies may… |
 | `src/credential_door.rs` | src | s | 1 fn · 1 const | — | Credential-door bounds the authority log's slip checks share with the door itself |
 | `src/federation/codec.rs` | src | s | 6 fn | — | Shared MessagePack and entity-ref decoding helpers for the federation module |
 | `src/federation/mod.rs` | src | s | 5 mod · 2 re-export | — | Federation scope vocabulary and codecs: six-axis scopes and their MessagePack form, the pact direction… |

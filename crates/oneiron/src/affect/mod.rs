@@ -12,8 +12,9 @@ pub(crate) use self::annotation::{
     delete_vad_annotation_metadata_for_type_in_txn, delete_vad_annotation_metadata_in_txn,
     vad_annotation_claim_id, vad_annotation_delete_scope_exists_in_txn, vad_annotation_meta_key,
 };
+pub(crate) use self::annotation::vad_annotation_claim_body;
 use self::annotation::{
-    decode_vad_annotation_claim_body_if_present, vad_annotation_claim_body,
+    decode_vad_annotation_claim_body_if_present,
     vad_annotation_from_value,
 };
 pub use self::claim_vad::{

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 633 code-mode rows (612 host rows, 21 run rows), 2286 declarations.
-// Replies: 555 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 641 code-mode rows (620 host rows, 21 run rows), 2309 declarations.
+// Replies: 563 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -326,6 +326,15 @@ declare namespace Sdk {
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type RetrievalRunId = { bytes: number[] };
   type MemoryPack = { items: MemoryItem[]; scope_honesty: ScopeHonesty; retrieval_meta: RetrievalMeta; pack_version: number; rendered?: string | null; narrowing: ScopedReadReceipt; retrieval_run_id?: RetrievalRunId | null };
+  type RetrievalWeights = { affect: number; arousal: number; community: number; vad: number };
+  type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
+  type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
+  type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
+  type VadAnnotationSource = "model_inference" | "user_self_report";
+  type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
+  type AffectClaimConsolidateRequest = { claim_ref: string };
+  type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
+  type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -1346,7 +1355,10 @@ declare namespace Sdk {
   type AgentMcpInput = { key: string; min_version?: string | null };
   type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
   type AgentCeilingInput = "auto" | "proposed";
-  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null };
+  type RefusalLevel = "none" | "voice" | "veto" | "full";
+  type RefusalDial = { bond?: RefusalLevel | null; logistics?: RefusalLevel | null };
+  type AgentModel = { model_ref: ModelId; when: string };
+  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null; refusal?: RefusalDial | null; models?: AgentModel[]; compaction_model?: ModelId | null };
   type AgentDefinitionCreateRequest = { agent_def_ref: EntityId; definition: AgentDefinitionSpec };
   type AgentDefinitionLifecycle = "active" | "superseded" | "retracted";
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
@@ -1635,6 +1647,11 @@ declare namespace Sdk {
   type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string };
   type SkillForkRequest = { parent: string; id?: string | null; skill_id: string };
   type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown };
+  type SkillPackReceiptRequest = { attempt_receipt: string };
+  type SkillPackReceipt = { receipt: ReceiptRecord; loaded_skills: string[]; attribution: PackAttributionFields };
+  type SkillPackOutcomeRequest = { attempt_receipt: string; outcome_receipt: string; succeeded: boolean; axis: string; at: number; goal_revision?: string | null };
+  type SkillPackOutcomeProjection = { receipt: LateCreditReceipt; persisted: boolean };
+  type SkillPackCreditRequest = { receipt_id: string };
   type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
   type DeterministicFallback = { name: string; config?: unknown | null };
   type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
@@ -1700,6 +1717,11 @@ declare namespace Sdk {
   type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[] } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; expires_at_ms: number; reasons?: string[] };
   type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
+  type AnonymousChatRequestTarget = "house_mind" | "plain_model";
+  type AnonymousChatRequest = { text: string; target?: AnonymousChatRequestTarget; model?: ModelId | null };
+  type AnonymousChatSkippedCheckView = { input: boolean; reason: PolicySkipReason };
+  type AnonymousChatBlockReasonView = "policy" | "human_review_unavailable";
+  type AnonymousChatResponse = { type: "reply"; content: string; notices: GateSystemNoticeRecord[]; skipped_checks: AnonymousChatSkippedCheckView[]; model_notices: GateSystemNoticeRecord[] } | { type: "blocked"; input: boolean; notice: GateSystemNoticeRecord; preceding_notices: GateSystemNoticeRecord[]; reason: AnonymousChatBlockReasonView; model_notices: GateSystemNoticeRecord[] };
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
@@ -2268,7 +2290,8 @@ declare namespace Sdk {
   type FoldsInput = Record<string, never>;
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
-  type TaskRefuseOutput = { task: EntityId; level: string; outcome: string; replay: boolean };
+  type RefusalOutcome = "proceed" | "object" | "decline";
+  type TaskRefuseOutput = { task: EntityId; level: RefusalLevel; outcome: RefusalOutcome; replay: boolean };
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
@@ -2304,6 +2327,8 @@ declare namespace Sdk {
   type SummarizeInput = { ref: string; effort?: SummarizeInputEffort | null; group?: string[] | null; defer?: boolean | null };
 }
 declare const ai: {
+  /** One standalone memory-free turn on the house configuration or a plain model, with ephemeral policy notices; use the HTTP SDK, not a recorded MCP or code-mode call. */
+  anonymous_chat(input: Sdk.AnonymousChatRequest): Promise<Sdk.AnonymousChatResponse | StoredResult>;
   /** One embedding vector per input text, from the host's embedding model. */
   embed(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** One image out of the host's image model; reference images make it an edit. */
@@ -2599,18 +2624,28 @@ declare const tasks: {
   wave(input: Sdk.TaskWaveRequest): Promise<Sdk.TaskWaveReceipt | StoredResult>;
 };
 declare const vault: Sdk.VaultHost & {
+  affect: {
+    annotations: {
+      /** Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval. */
+      put(input: Sdk.AffectAnnotationPut): Promise<Sdk.CommitReceipt | StoredResult>;
+    };
+    claims: {
+      /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
+      consolidate(input: Sdk.AffectClaimConsolidateRequest): Promise<Sdk.AffectClaimConsolidation | StoredResult>;
+    };
+  };
   agents: {
-    /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+    /** The owner creates an inert custom agent composition with an optional per-domain refusal dial, caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
     create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
-    /** The owner reads one saved agent composition and its version and approval state. */
+    /** The owner reads one saved agent composition, including its declared refusal dial, version and approval state. */
     get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     spawn: {
       /** The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning. */
       get(input: Sdk.PlannedSpawnRead): Promise<Sdk.PlannedSpawnObservation | StoredResult>;
     };
-    /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+    /** The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial. */
     update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
@@ -3532,6 +3567,12 @@ declare const vault: Sdk.VaultHost & {
     trace(input: Sdk.RetrievalTraceRequest): Promise<Sdk.RetrievalTrace | null | StoredResult>;
     /** The owner reads the independent finalized retrieval runs linked to one exact turn, in recorded order. */
     turn(input: Sdk.RetrievalTurnRequest): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;
+    weights: {
+      /** The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority. */
+      configure(input: Sdk.RetrievalWeightsConfigureRequest): Promise<Sdk.RetrievalWeightsReceipt | StoredResult>;
+      /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.RetrievalWeightsView | StoredResult>;
+    };
   };
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
@@ -3708,6 +3749,14 @@ declare const vault: Sdk.VaultHost & {
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
+    outcomes: {
+      /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
+      get(input: Sdk.SkillPackCreditRequest): Promise<Sdk.LateCreditReceipt | null | StoredResult>;
+      /** Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win. */
+      project(input: Sdk.SkillPackOutcomeRequest): Promise<Sdk.SkillPackOutcomeProjection | StoredResult>;
+    };
+    /** Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner. */
+    pack_receipt(input: Sdk.SkillPackReceiptRequest): Promise<Sdk.SkillPackReceipt | StoredResult>;
     permissions: {
       /** The owner answers one imported skill permission ask at its exact hub source. */
       approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;

@@ -9,39 +9,34 @@
 //! one-machine picks naming different machines meet in a conflicted state that
 //! is readable nowhere until the owner re-picks.
 //!
-//! An edit by a machine that is no longer the owner's counts at full strength
-//! only if the revision that took "yours" away had seen it. One it never saw
-//! raced the demotion (a stolen laptop widening a world offline) and only
-//! narrows: it counts as its meet with every edit it replaced, each judged the
-//! same way in the current state, so a chain of raced widens never widens. So
-//! does an edit whose machine the roster rule admits but this install does
-//! not count: losing standing never widens a world.
+//! Each edit carries the owner's act ([`OwnerAct`]), and its carrier is any
+//! live machine of the vault, in any role, that served his authenticated
+//! say-so (mesh contract §3, [`super::owner_act_signer_admits`]). No "yours"
+//! mark and no world holding decides who edits: "it doesn't matter where you
+//! said yes, if you said so" (owner ruling 10-19). An edit whose carrier was
+//! removed counts at full strength only if the removal had seen it. One it
+//! never saw raced the removal (a stolen laptop widening a world offline)
+//! and only narrows: it counts as its meet with every edit it replaced, each
+//! judged the same way in the current state, so a chain of raced widens
+//! never widens. So does an edit whose carrier this install does not count:
+//! losing standing never widens a world.
 //!
-//! Which edits stand is judged on the meet the roster rule alone gives, the
-//! same on every install. This install's counting makes the settings it reads
-//! stricter and never decides who may edit: a stricter meet can name more
-//! contenders, and a contender may edit (Sol P2 round 4, F1).
-//!
-//! A world whose read names no machine still the owner's is orphaned: any
-//! machine of the owner's that stores it may re-pick it. A re-pick only makes
-//! the world editable again; bringing its rows back is a restore's job.
-//! Whether a world is orphaned is judged by the roster rule too, so a holder
-//! stale on one install keeps its world until the owner removes or re-marks
-//! it.
-//!
-//! An edit is valid when some chain of its machine's revisions admits the
-//! machine as the owner's under the key that signed it: each admitter vouches
-//! on its own.
+//! A world whose read names no machine still the owner's is orphaned. The
+//! owner re-picks it like any edit; the receipt names the machines it was
+//! orphaned from, and bringing its rows back is a restore's job. Which
+//! machines hold a world (its `read_X`, and [`WorldEditStanding`]) serves
+//! holder execution and diagnostics, never authoring.
 //!
 //! Under a conflicted vault root no world's settings can be known, so every
 //! world reads as readable nowhere and the withheld set cannot be named.
 //!
-//! Edits are per-world side entries. An entry for world W takes as parents
-//! the rows its standing rests on (from a machine holding W, its own and a
-//! one-machine target's head revisions; for a W readable nowhere, the
-//! main-log heads) and W's live edits. It is never a parent of a main-log
-//! entry or of another world's entry, so a replica that may not hold W folds
-//! the main log without W's entries.
+//! Edits are main-log metadata (the Engine call "OwnerAct world metadata to
+//! every linked machine", 10-19 01:4x): an edit names the main-log heads, its
+//! carrier's standing rows, a one-machine target's and the world's live
+//! edits, and every linked machine folds it. A world's key records stay
+//! per-world side entries, recipient-filtered: no main-log entry, settings
+//! edits included, ever names one, so a replica that may not hold W folds the
+//! main log without W's key records.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -120,9 +115,9 @@ pub struct FoldedWorld {
     /// The read the roster rule alone gives, the same on every install.
     pub roster_read: EffectiveRead,
     /// `read_X` for this install's own trust (its pinned anchor while the
-    /// fold holds the root, else the roster): who may edit the world here,
-    /// judged on it and never on `effective` (world privacy P6b). A read
-    /// under another admitter is a fold under that admitter's pin.
+    /// fold holds the root, else the roster): which machines hold the world
+    /// here, for holder execution and diagnostics, never who may edit it. A
+    /// read under another admitter is a fold under that admitter's pin.
     pub local_read: EffectiveRead,
 }
 
@@ -141,8 +136,23 @@ impl AuthorityFold {
             })
     }
 
+    /// The world's settings revision here: a digest of its live edits, the
+    /// same on every install that folded them (`OwnerAct::seen` for a world
+    /// privacy act).
+    #[must_use]
+    pub fn world_policy_revision(&self, world: EntityId) -> PolicyRevision {
+        PolicyRevision::of(
+            self.worlds
+                .get(&world)
+                .into_iter()
+                .flat_map(|folded| folded.live.keys().copied()),
+        )
+    }
+
     /// Whether `world` may be readable on `destination`. A machine without a
-    /// live profile is an unknown destination.
+    /// live profile is an unknown destination. MyMachines and OneMachine are
+    /// the owner's recipient choice: they name only machines he marked
+    /// "yours".
     #[must_use]
     pub fn world_readable_on(&self, world: EntityId, destination: Destination) -> bool {
         let is_mine = |machine: EntityId| self.trusted_machine(machine).is_some();
@@ -165,9 +175,11 @@ impl AuthorityFold {
     }
 }
 
-/// How a machine of the owner's comes to edit a world, judged on the world's
-/// effective read at the edit's parents. The door and the fold ask this one
-/// rule.
+/// How a machine stands toward a world, judged on the world's read: whether
+/// it holds the world, contends for it, or may re-pick an orphan. Holder
+/// execution and diagnostics only: who edits a world is the owner's
+/// authenticated say-so, carried by any live linked machine (mesh contract
+/// §3), never this standing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorldEditStanding {
     /// The world is readable on the machine.
@@ -179,7 +191,8 @@ pub enum WorldEditStanding {
 }
 
 impl AuthorityFold {
-    /// How `machine` may edit `world` now, or `None` when it may not.
+    /// How `machine` stands toward `world` now, or `None` when it neither
+    /// holds, contends for nor may re-pick it.
     #[must_use]
     pub fn world_edit_standing(
         &self,
@@ -190,13 +203,10 @@ impl AuthorityFold {
             .map(|(standing, _)| standing)
     }
 
-    /// How `machine` may edit `world` now, and under which admitter's read:
-    /// this install's own trust alone, as every door judges (contract §4).
-    /// Another chain that admits the machine can make its edit valid on
-    /// every install, but never gives a door standing here (Astra code-S2-R1
-    /// A1-F3). The read is `read_X`, judged by the roster rule, as the fold
-    /// judges an edit's validity; the machine itself is judged as this
-    /// install counts it, which only refuses more.
+    /// How `machine` stands toward `world` now, and under which admitter's
+    /// read: this install's own trust alone (contract §4). The read is
+    /// `read_X`, judged by the roster rule; the machine itself is judged as
+    /// this install counts it.
     pub(crate) fn world_edit_standing_by(
         &self,
         machine: EntityId,
@@ -225,9 +235,8 @@ impl AuthorityFold {
     }
 
     /// `read_X(world)` for this install's own trust (its pinned anchor while
-    /// the fold holds the pinned root, else the roster), which decides who
-    /// may edit it here. A conflicted vault root fails closed, as for the
-    /// settings.
+    /// the fold holds the pinned root, else the roster): which machines hold
+    /// it here. A conflicted vault root fails closed, as for the settings.
     #[must_use]
     pub fn world_local_read(&self, world: EntityId) -> EffectiveRead {
         if self.vault_root_is_conflicted() {
@@ -239,8 +248,8 @@ impl AuthorityFold {
         )
     }
 
-    /// The read the roster rule alone gives `world`, which decides who may
-    /// edit it. A conflicted vault root fails closed, as for the settings.
+    /// The read the roster rule alone gives `world`, the same on every
+    /// install. A conflicted vault root fails closed, as for the settings.
     #[must_use]
     pub fn world_roster_read(&self, world: EntityId) -> EffectiveRead {
         if self.vault_root_is_conflicted() {
@@ -253,12 +262,10 @@ impl AuthorityFold {
     }
 }
 
-/// Mine under `T(admitter)` by the roster rule alone, as the fold judges
-/// standing at an edit's parents. This install's own projections (a chain
-/// gone stale or held here, a roster with no settled root) weaken an edit;
-/// they never decide whether it stands, so every install keeps the same
-/// edits, and a machine losing its standing here never turns a refused edit
-/// into an accepted one (Sol P2 round 3, F1).
+/// Mine under `T(admitter)` by the roster rule alone: whether a machine a
+/// world's read names is still the owner's, for the orphan report. This
+/// install's own projections (a chain gone stale or held here, a roster
+/// with no settled root) never decide it (Sol P2 round 3, F1).
 pub(super) fn mine_by_roster(
     fold: &AuthorityFold,
     id: EntityId,
@@ -268,9 +275,8 @@ pub(super) fn mine_by_roster(
         .is_some_and(|folded| folded.roster_view().trusted_under(&admitter).is_some())
 }
 
-/// `read` is the roster rule's. `is_mine` judges the editor, `named_mine` the
-/// machines the read names, both by the roster rule in the fold. The door
-/// judges its own machine as this install counts it, which only refuses more.
+/// `read` is the roster rule's. `is_mine` judges the machine, `named_mine`
+/// the machines the read names.
 pub(super) fn edit_standing(
     read: &EffectiveRead,
     machine: EntityId,
@@ -483,18 +489,32 @@ pub(super) fn policy_revision(state: &FoldState, world: EntityId) -> PolicyRevis
 }
 
 /// The world a per-world side entry belongs to; `None` for a main-log entry.
+/// Only a world's key records ride a side branch, recipient-filtered. Its
+/// settings edits are main-log metadata every linked machine folds (the
+/// Engine call "OwnerAct world metadata to every linked machine"), so the
+/// main-log heads, sequence scopes, refold, retired-signer walk, import order
+/// and every transport filter that read this see them as main-log rows.
 pub(crate) fn side_world(op: &AuthorityOp) -> Option<EntityId> {
     match op {
-        AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
         AuthorityOp::WorldKeyWraps(record) => Some(record.key.world),
         _ => None,
     }
 }
 
+/// The world a world-control op names, a main-log settings edit or a side
+/// key record: what a reader capsule of the sealed bundle files it under.
+#[cfg(feature = "sync")]
+pub(crate) fn world_control_world(op: &AuthorityOp) -> Option<EntityId> {
+    match op {
+        AuthorityOp::WorldPrivacy(edit) => Some(edit.world),
+        op => side_world(op),
+    }
+}
+
 /// Entries that break the side branches: any entry naming a side entry of a
-/// world other than its own as a parent. A replica that may not hold a world
-/// never receives its entries, so nothing outside the world may depend on
-/// them.
+/// world other than its own as a parent, a main-log entry included. A replica
+/// that may not hold a world never receives its key records, so nothing
+/// outside the world may depend on them.
 pub(super) fn side_branch_violations(
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> BTreeSet<AuthorityEntryHash> {

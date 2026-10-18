@@ -98,7 +98,7 @@ pub struct MemoryEdgeInput {
 
 /// `tasks.refuse`: the agent's own refusal of the TASK her run realizes,
 /// applied through her refusal dial (OF-533).
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TaskRefuseInput {
     /// The bound TASK's id, hex; the run's own TASK when absent. Any other
@@ -113,8 +113,27 @@ pub struct TaskRefuseInput {
     pub at: Option<u64>,
 }
 
+impl TaskRefuseInput {
+    /// The same refusal call on code mode and the credential-bound run door.
+    pub(crate) fn into_call(self, now: u64) -> crate::Result<super::SelfTaskRefuseCall> {
+        let at = self.at.unwrap_or(now);
+        if at > JS_SAFE_INTEGER {
+            return Err(crate::Error::InvalidClaimBody("invalid unix time"));
+        }
+        Ok(super::SelfTaskRefuseCall {
+            task_ref: self.task_ref.as_deref().map(EntityId::from_hex).transpose()?,
+            domain: match self.domain {
+                TaskRefuseDomain::Bond => crate::agent_def::RefusalDomain::Bond,
+                TaskRefuseDomain::Logistics => crate::agent_def::RefusalDomain::Logistics,
+            },
+            reason_ref: self.reason_ref,
+            at,
+        })
+    }
+}
+
 /// The wire name of a refusal domain.
-#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskRefuseDomain {
     Bond,
@@ -123,7 +142,7 @@ pub enum TaskRefuseDomain {
 
 /// `self.skills.call`: one agent-callable skill, run under the run's own
 /// attempt lease (OF-353).
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillCallInput {
     /// The callable skill's entity id, hex, as `self.skills.callables` lists
@@ -443,13 +462,13 @@ pub struct MemoryEdgeOutput {
 }
 
 /// `tasks.refuse`'s output: what the agent's dial made of her refusal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TaskRefuseOutput {
     pub task: EntityId,
     /// Where her dial sat: `none`, `voice`, `veto` or `full`.
-    pub level: String,
+    pub level: crate::agent_def::RefusalLevel,
     /// The level's outcome: `proceed`, `object` or `decline`.
-    pub outcome: String,
+    pub outcome: crate::agent_def::RefusalOutcome,
     /// A byte-identical retry answered by the first decision.
     pub replay: bool,
 }

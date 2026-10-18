@@ -1,10 +1,10 @@
 //! Typed custom AGENT_DEF authoring. Authorship is the caller's, never input.
 use serde::{Deserialize, Serialize};
 
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentScope, McpRef};
+use crate::agent_def::{AgentCeiling, AgentDefinition, AgentModel, AgentScope, McpRef, RefusalDial};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
-use crate::llm::ModelTierRef;
+use crate::llm::{ModelId, ModelTierRef};
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::skill::SkillDependency;
 use crate::{EntityId, TimeRange, Vault};
@@ -47,7 +47,7 @@ pub enum AgentCeilingInput {
 
 /// The authored composition. Importing one is the same inert create as
 /// defining one locally; it cannot import approval, provenance or a system id.
-/// Memory-profile, dreaming and refusal dials are not changed by this door.
+/// Memory-profile and dreaming dials are not changed by this door.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentDefinitionSpec {
@@ -74,6 +74,19 @@ pub struct AgentDefinitionSpec {
     pub enabled: bool,
     #[serde(default)]
     pub display_name: Option<String>,
+    /// Per-domain refusal settings. Omit or clear for vault-kind defaults;
+    /// an explicit dial must set at least one domain. This grants no authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<RefusalDial>,
+    /// The models the agent may run on, in order, each with the owner's
+    /// words on when it takes that model (FIX 4472). Empty: its one
+    /// house-routed model. A wake runs only on a listed model.
+    #[serde(default)]
+    pub models: Vec<AgentModel>,
+    /// The model that compacts the agent's window; absent takes the house's.
+    /// It need not be listed.
+    #[serde(default)]
+    pub compaction_model: Option<ModelId>,
 }
 
 fn enabled_by_default() -> bool {
@@ -155,6 +168,9 @@ impl AgentDefinitionSpec {
         definition.forked_from = self.forked_from;
         definition.enabled = self.enabled;
         definition.display_name = self.display_name.clone();
+        definition.refusal = self.refusal;
+        definition.models = self.models.clone();
+        definition.compaction_model = self.compaction_model.clone();
     }
 }
 
@@ -195,6 +211,9 @@ impl From<&AgentDefinition> for AgentDefinitionSpec {
             forked_from: definition.forked_from,
             enabled: definition.enabled,
             display_name: definition.display_name.clone(),
+            refusal: definition.refusal,
+            models: definition.models.clone(),
+            compaction_model: definition.compaction_model.clone(),
         }
     }
 }

@@ -79,6 +79,11 @@ fn within_author_slice(request: &AgentDefinition, author: &AgentDefinition) -> b
             .iter()
             .all(|mcp| author.code_mode_mcps.contains(mcp))
         && (request.model_tier.is_none() || request.model_tier == author.model_tier)
+        // The owner's model list and compaction model hold as the tier does
+        // (FIX 4472): an authored put cannot change them.
+        && (request.models.is_empty() || request.models == author.models)
+        && (request.compaction_model.is_none()
+            || request.compaction_model == author.compaction_model)
 }
 
 impl Vault {
