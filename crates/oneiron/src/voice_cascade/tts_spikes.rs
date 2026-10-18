@@ -7,17 +7,21 @@
 //! Each adapter owns one generation. The cascade alone owns epoch policy: forward PCM
 //! through `filter_pcm` and recheck at playback. Hosts dispatch cancellation and discard
 //! queued audio on stop. Dropping an adapter cannot cancel remote work.
+//! Nothing is refused for its size or for room (Rule 5): text past [`MAX_TEXT_BYTES`]
+//! goes as several submissions, in order, and buffered responses past
+//! `MAX_PENDING_RESPONSES` wait in the adapter until earlier audio drains.
 
 use std::collections::VecDeque;
 
 use crate::error::{Error, Result};
 
-use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession};
+use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSession, speakable};
 
+/// The most text one submission carries; a longer text goes as several.
 pub const MAX_TEXT_BYTES: usize = 8 * 1024;
 pub const MAX_VOICE_BYTES: usize = 4096;
-pub const MAX_PCM_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PIN_BYTES: usize = 512;
+/// Buffered responses in flight at once; the rest wait for audio to drain.
 const MAX_PENDING_RESPONSES: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +218,10 @@ struct Adapter<Q> {
     buffer: String,
     dirty: bool,
     pending: VecDeque<u64>,
+    /// Buffered text split at a boundary and not sent yet, in order.
+    held: VecDeque<String>,
+    /// End was asked for and goes out with, or after, the last held piece.
+    end_owed: bool,
 }
 
 fn invalid(message: &str) -> Error {
@@ -300,6 +308,8 @@ impl<Q: TransportQueue> Adapter<Q> {
             buffer: String::new(),
             dirty: false,
             pending: VecDeque::new(),
+            held: VecDeque::new(),
+            end_owed: false,
         })
     }
 
@@ -364,6 +374,8 @@ impl<Q: TransportQueue> Adapter<Q> {
                 self.phase = Phase::CancelPending;
                 self.buffer.clear();
                 self.pending.clear();
+                self.held.clear();
+                self.end_owed = false;
                 self.dirty = false;
                 self.send(generation, ProviderOperation::Cancel)?;
                 self.phase = Phase::Cancelled;
@@ -381,16 +393,25 @@ impl<Q: TransportQueue> Adapter<Q> {
         }
         match command {
             TtsCommand::Text { text, .. } => {
-                if text.is_empty() || text.len() > MAX_TEXT_BYTES - self.text_bytes {
-                    return Err(invalid("empty text or generation text limit exceeded"));
+                if text.is_empty() {
+                    return Err(invalid("empty text"));
                 }
                 let bytes = text.len();
                 if self.buffered() {
                     self.buffer.push_str(&text);
-                } else {
+                } else if bytes <= MAX_TEXT_BYTES {
                     self.send(generation, ProviderOperation::Text(text))?;
+                } else {
+                    // Every byte goes, in order, as several submissions.
+                    let mut rest = text.as_str();
+                    while !rest.is_empty() {
+                        let (piece, tail) =
+                            rest.split_at(speakable::first_piece(rest, MAX_TEXT_BYTES));
+                        self.send(generation, ProviderOperation::Text(piece.to_owned()))?;
+                        rest = tail;
+                    }
                 }
-                self.text_bytes += bytes;
+                self.text_bytes = self.text_bytes.saturating_add(bytes);
                 self.dirty = true;
             }
             TtsCommand::Flush { .. } => self.boundary(generation, false)?,
@@ -404,27 +425,67 @@ impl<Q: TransportQueue> Adapter<Q> {
         if !end && !self.dirty {
             return Ok(());
         }
-        let has_response = self.buffered() && !self.buffer.is_empty();
-        if has_response && self.pending.len() == MAX_PENDING_RESPONSES {
-            return Err(invalid(
-                "buffered responses must drain before more submission",
-            ));
+        if !self.buffered() {
+            let operation = if end {
+                ProviderOperation::End {
+                    buffered_text: None,
+                }
+            } else {
+                ProviderOperation::Flush {
+                    buffered_text: None,
+                }
+            };
+            self.send(generation, operation)?;
+            self.dirty = false;
+            if end {
+                self.phase = Phase::Ended;
+            }
+            return Ok(());
         }
-        let buffered_text = has_response.then(|| self.buffer.clone());
-        let operation = if end {
-            ProviderOperation::End { buffered_text }
-        } else {
-            ProviderOperation::Flush { buffered_text }
-        };
-        let sequence = self.sequence;
-        self.send(generation, operation)?;
-        if has_response {
-            self.pending.push_back(sequence);
+        if !self.buffer.is_empty() {
+            let pieces = speakable::pieces(&self.buffer, MAX_TEXT_BYTES);
+            self.held.extend(pieces.into_iter().map(str::to_owned));
+            self.buffer.clear();
         }
-        self.buffer.clear();
         self.dirty = false;
         if end {
+            self.end_owed = true;
             self.phase = Phase::Ended;
+        }
+        self.release(generation)
+    }
+
+    /// Sends held pieces, each a buffered response, while fewer than
+    /// `MAX_PENDING_RESPONSES` await their audio; the rest wait for it to
+    /// drain. End goes with the last piece, or alone once none is held. A
+    /// refused send keeps its piece held for the next boundary or response.
+    fn release(&mut self, generation: GenerationEpoch) -> Result<()> {
+        while self.pending.len() < MAX_PENDING_RESPONSES
+            && let Some(text) = self.held.front()
+        {
+            let buffered_text = Some(text.clone());
+            let ends = self.end_owed && self.held.len() == 1;
+            let operation = if ends {
+                ProviderOperation::End { buffered_text }
+            } else {
+                ProviderOperation::Flush { buffered_text }
+            };
+            let sequence = self.sequence;
+            self.send(generation, operation)?;
+            self.held.pop_front();
+            self.pending.push_back(sequence);
+            if ends {
+                self.end_owed = false;
+            }
+        }
+        if self.end_owed && self.held.is_empty() {
+            self.send(
+                generation,
+                ProviderOperation::End {
+                    buffered_text: None,
+                },
+            )?;
+            self.end_owed = false;
         }
         Ok(())
     }
@@ -453,12 +514,9 @@ impl<Q: TransportQueue> Adapter<Q> {
             || audio.channels != 1
             || audio.encoding != AudioEncoding::Pcm16Le
             || audio.bytes.is_empty()
-            || audio.bytes.len() > MAX_PCM_BYTES
             || !audio.bytes.len().is_multiple_of(2)
         {
-            return Err(invalid(
-                "expected bounded mono PCM16LE at the configured rate",
-            ));
+            return Err(invalid("expected mono PCM16LE at the configured rate"));
         }
         let next = self
             .chunk_index
@@ -472,6 +530,9 @@ impl<Q: TransportQueue> Adapter<Q> {
         self.chunk_index = next;
         if self.buffered() {
             self.pending.pop_front();
+            // A held piece takes the room this one left. A refused send
+            // stays held; the queue reports its own failure on the next try.
+            let _ = self.release(audio.generation);
         }
         Ok(NormalizedPcm {
             frame: PcmFrame {
@@ -492,7 +553,11 @@ impl<Q: TransportQueue> Adapter<Q> {
         if self.phase == Phase::Done {
             return Ok(());
         }
-        if self.phase != Phase::Ended || !self.pending.is_empty() {
+        if self.phase != Phase::Ended
+            || !self.pending.is_empty()
+            || !self.held.is_empty()
+            || self.end_owed
+        {
             return Err(invalid(
                 "done before End/responses, or after cancellation/failure",
             ));
@@ -513,6 +578,8 @@ impl<Q: TransportQueue> Adapter<Q> {
         self.phase = Phase::Failed;
         self.buffer.clear();
         self.pending.clear();
+        self.held.clear();
+        self.end_owed = false;
         self.dirty = false;
         Ok(failure)
     }

@@ -371,17 +371,16 @@ impl<'v, T: HostedTransport> HostedTtsAdapter<'v, T> {
         {
             return Err(invalid("stale or cancelled response"));
         }
-        let limits = self.ensure_live(generation)?;
+        self.ensure_live(generation)?;
         let Some(front) = self.pending.front() else {
             return Err(invalid("unsolicited response"));
         };
         if front.submission != submission || front.next_chunk != chunk {
             return Err(invalid("stale or out-of-order response"));
         }
-        if bytes.is_empty()
-            || bytes.len() > limits.max_pcm_fragment_bytes
-            || !bytes.len().is_multiple_of(2)
-        {
+        // Rule 5: a fragment is taken whole, however long it plays; only its
+        // PCM16 framing is checked.
+        if bytes.is_empty() || !bytes.len().is_multiple_of(2) {
             return Err(invalid("invalid raw PCM16 fragment"));
         }
         let next = front

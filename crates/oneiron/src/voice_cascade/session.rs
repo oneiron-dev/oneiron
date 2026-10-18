@@ -23,8 +23,6 @@ use super::{
 mod preparation;
 pub use preparation::PreparedAsr;
 
-const MAX_TOOL_EVENTS: usize = 128;
-const MAX_PENDING_SENTENCES: usize = 64;
 /// How long a bound session's "who is this?" ask for a speaker it could
 /// not place stays open: the ask door's own default for an ask with no
 /// class (CALLS.md: FIX 1388 ask expiry).
@@ -456,9 +454,6 @@ impl VoiceCascadeSession {
         if active.llm_done || text.trim().is_empty() {
             return Err(invalid("sentence must be nonempty and precede brain done"));
         }
-        if active.pending_safeguards.len() >= MAX_PENDING_SENTENCES {
-            return Err(invalid("too many pending safeguard sentences"));
-        }
         active.sentence = active
             .sentence
             .checked_add(1)
@@ -803,8 +798,10 @@ impl VoiceCascadeSession {
 }
 
 fn validate_tool(request: &BrainRequest, event: &ToolEvent) -> Result<()> {
-    if !request.tools_enabled || request.tool_events.len() >= MAX_TOOL_EVENTS {
-        return Err(invalid("tools disabled or ephemeral tool context full"));
+    // Rule 5: a turn's tool context takes every call and result its brain
+    // makes; no count refuses one. Its spend meter bounds the turn.
+    if !request.tools_enabled {
+        return Err(invalid("tools disabled"));
     }
     match event {
         ToolEvent::Call {
@@ -812,14 +809,6 @@ fn validate_tool(request: &BrainRequest, event: &ToolEvent) -> Result<()> {
             name,
             input,
         } => {
-            let calls = request
-                .tool_events
-                .iter()
-                .filter(|event| matches!(event, ToolEvent::Call { .. }))
-                .count();
-            if calls >= MAX_TOOL_EVENTS / 2 {
-                return Err(invalid("tool context must reserve room for every result"));
-            }
             if call_id.trim().is_empty() || name.trim().is_empty() || !input.is_object()
                 || request.tool_events.iter().any(|event| {
                     matches!(event, ToolEvent::Call { call_id: prior, .. } if prior == call_id)
