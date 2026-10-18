@@ -5316,6 +5316,24 @@
       "section": false
     },
     {
+      "name": "vault.calendar.transcript.ingest",
+      "description": "Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts.",
+      "refs": [
+        "/source_blob_ref"
+      ],
+      "input": "crate::calendar::transcript::TranscriptFileDropInput",
+      "output": "crate::calendar::transcript::TranscriptIngestOutcome",
+      "call": "memory.calendar_transcript_ingest(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "source_blob_ref"
+        ]
+      },
+      "section": false
+    },
+    {
       "name": "vault.claims.list",
       "description": "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt.",
       "uniffi": {

@@ -944,6 +944,9 @@ impl OneironClient {
                 "vault.calendar.freebusy" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<oneiron::memory::CalendarFreebusyDto>,
                 >(client, verb, &input),
+                "vault.calendar.transcript.ingest" => remote_agent_verb_output::<
+                    oneiron::calendar::transcript::TranscriptIngestOutcome,
+                >(client, verb, &input),
                 "vault.claims.list" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::ClaimView>>,
                 >(client, verb, &input),
@@ -4901,6 +4904,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.calendar.freebusy", value)
+    }
+    pub fn vault_calendar_transcript_ingest(
+        &self,
+        input: &oneiron::calendar::transcript::TranscriptFileDropInput,
+    ) -> Result<oneiron::calendar::transcript::TranscriptIngestOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.calendar.transcript.ingest", value)
     }
     pub fn vault_claims_list(
         &self,
