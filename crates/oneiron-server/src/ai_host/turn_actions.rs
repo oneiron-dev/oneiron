@@ -10,7 +10,8 @@
 //! assistant message open gets the saved text as its prefill, any other gets
 //! it as history and then [`CONTINUE_INSTRUCTION`]; either way only the new
 //! suffix is appended. Retry answers the user turn again in a new assistant
-//! TURN. Replies are whole messages: no partial is published.
+//! TURN, which lands with its reply or not at all. Replies are whole
+//! messages: no partial is published.
 //!
 //! It wakes on the vault's post-commit attempt signal and once at start. An
 //! attempt claimed a second time was cut off when the process stopped under
@@ -188,23 +189,21 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
     .map_err(|stop| stop.to_string())?;
     let open = match action.action {
         TurnAction::Continue => AnswerOpen::Continue(action.message),
-        // On a DAG conversation the reply's TURN is appended first, a sibling
-        // of the old one that leaves HEAD where it is; elsewhere the reply's
-        // stream mints it.
-        TurnAction::Retry => {
-            let turn = blocking(|| vault.memory(actor, class).turn_action_retry_turn(&action))
-                .map_err(|error| error.to_string())?;
-            AnswerOpen::Retry {
-                turn: witness_turn(
-                    &action.conversation.to_hex(),
-                    turn,
-                    WitnessAuthor::Companion,
-                    String::new(),
-                    vault.now_recorded_at(),
-                ),
-                source: action.message,
-            }
-        }
+        // The reply's TURN lands with its MESSAGE, in the reply's terminal
+        // write (FIX 3152): on a DAG conversation a sibling of the old one
+        // that leaves HEAD where it is, in a project room an answer to the
+        // same claimed turn (FIX 3149), elsewhere the TURN the stream mints.
+        // A Retry never admitted leaves neither.
+        TurnAction::Retry => AnswerOpen::Retry {
+            turn: witness_turn(
+                &action.conversation.to_hex(),
+                None,
+                WitnessAuthor::Companion,
+                String::new(),
+                vault.now_recorded_at(),
+            ),
+            action: Box::new(action.clone()),
+        },
     };
     let answering = begin_answer(
         ai,

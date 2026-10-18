@@ -69,7 +69,7 @@ pub use types::{
     AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, QuoteSpan, ResolvedScope,
     ScopePath, ScopeSelector,
 };
-pub(crate) use writes::append_in_txn;
+pub(crate) use writes::{append_at_in_txn, append_in_txn};
 
 #[cfg(test)]
 pub(crate) mod fixtures;

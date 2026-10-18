@@ -4040,7 +4040,7 @@ impl AgentVerb {
                 "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
             }
             Self::VaultArtifactsBodyDeckPreview => {
-                "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed."
+                "The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

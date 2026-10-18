@@ -1262,8 +1262,13 @@ After that the stream carries:
   12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
   `drained{generation}` once a `generation_end`'s audio has all played;
 - **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
-  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice` and
-  `session_ended`.
+  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
+  `memories{generation, found, heard, withheld, part, parts, receipts}` and
+  `session_ended`. A turn whose retrieval found rows sends `memories` with
+  its first event: how many rows were found, how many the brain heard, how
+  many the audience's read withheld, and the read's narrowing receipts. The
+  receipts split across frames numbered `part` of `parts` and are never
+  dropped. The client shows them to the owner; they are never spoken.
 
 How a call runs:
 - Each heard final is answered by the chat role as `/ai/chat` answers it: the

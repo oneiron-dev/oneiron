@@ -368,6 +368,7 @@ impl RoutineDecider for LadderDecider {
                         AgentVerb::AiVerdict,
                         input,
                         held,
+                        None,
                     );
                     let _ = sender.send(answered.map_err(super::mcp_facade_error));
                 });
