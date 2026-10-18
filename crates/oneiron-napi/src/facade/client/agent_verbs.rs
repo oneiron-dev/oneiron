@@ -1189,6 +1189,96 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_connect_identity(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.identity", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_grants_mint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.grants.mint", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_offer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.offer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_narrow(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.narrow", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_rescope_offer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.rescope.offer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_rescope_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.rescope.accept", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_disconnect(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.disconnect", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_export(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.export", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_connect_rejoin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.connect.rejoin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_trusted_contacts_name(
         &self,
         input: serde_json::Value,

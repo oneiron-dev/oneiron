@@ -181,7 +181,7 @@ pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpt
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
+    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
     RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip,
     RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };

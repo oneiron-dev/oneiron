@@ -137,6 +137,16 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultFederationConnectIdentity,
+    VaultFederationConnectGrantsMint,
+    VaultFederationConnectOffer,
+    VaultFederationConnectAccept,
+    VaultFederationConnectNarrow,
+    VaultFederationConnectRescopeOffer,
+    VaultFederationConnectRescopeAccept,
+    VaultFederationConnectDisconnect,
+    VaultFederationConnectExport,
+    VaultFederationConnectRejoin,
     VaultTrustedContactsName,
     VaultTrustedContactsList,
     VaultTrustedContactsConsent,
@@ -650,6 +660,16 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultFederationConnectIdentity,
+        Self::VaultFederationConnectGrantsMint,
+        Self::VaultFederationConnectOffer,
+        Self::VaultFederationConnectAccept,
+        Self::VaultFederationConnectNarrow,
+        Self::VaultFederationConnectRescopeOffer,
+        Self::VaultFederationConnectRescopeAccept,
+        Self::VaultFederationConnectDisconnect,
+        Self::VaultFederationConnectExport,
+        Self::VaultFederationConnectRejoin,
         Self::VaultTrustedContactsName,
         Self::VaultTrustedContactsList,
         Self::VaultTrustedContactsConsent,
@@ -1166,6 +1186,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
+            Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
+            Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
+            Self::VaultFederationConnectAccept => "vault.federation.connect.accept",
+            Self::VaultFederationConnectNarrow => "vault.federation.connect.narrow",
+            Self::VaultFederationConnectRescopeOffer => "vault.federation.connect.rescope.offer",
+            Self::VaultFederationConnectRescopeAccept => "vault.federation.connect.rescope.accept",
+            Self::VaultFederationConnectDisconnect => "vault.federation.connect.disconnect",
+            Self::VaultFederationConnectExport => "vault.federation.connect.export",
+            Self::VaultFederationConnectRejoin => "vault.federation.connect.rejoin",
             Self::VaultTrustedContactsName => "vault.trusted_contacts.name",
             Self::VaultTrustedContactsList => "vault.trusted_contacts.list",
             Self::VaultTrustedContactsConsent => "vault.trusted_contacts.consent",
@@ -1688,6 +1718,16 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -2208,6 +2248,16 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -2772,6 +2822,16 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConsent
@@ -3213,6 +3273,14 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultTrustedContactsName
                 | Self::VaultTrustedContactsConsent
                 | Self::VaultTrustedContactsRevoke
@@ -3606,6 +3674,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -4120,6 +4198,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
             Self::VaultTrustedContactsName => &["spec"],
             Self::VaultTrustedContactsList => &["spec"],
             Self::VaultTrustedContactsConsent => &["spec"],
@@ -4884,6 +4972,36 @@ impl AgentVerb {
             }
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
+            }
+            Self::VaultFederationConnectIdentity => {
+                "The owner reads this vault identity and the host key used for reciprocal Connect consent."
+            }
+            Self::VaultFederationConnectGrantsMint => {
+                "The owner mints an inert Connect guest grant inside the named local-world ceiling."
+            }
+            Self::VaultFederationConnectOffer => {
+                "The owner asks the host to sign one disclosed Connect half without activating it."
+            }
+            Self::VaultFederationConnectAccept => {
+                "The owner accepts the peer host signed Connect half and receives the matching host counter-half."
+            }
+            Self::VaultFederationConnectNarrow => {
+                "The owner narrows the current outbound scope without breaking the reciprocal relationship."
+            }
+            Self::VaultFederationConnectRescopeOffer => {
+                "The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."
+            }
+            Self::VaultFederationConnectRescopeAccept => {
+                "The owner accepts the peer host signed re-scope and receives the matching signed counter-half."
+            }
+            Self::VaultFederationConnectDisconnect => {
+                "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy."
+            }
+            Self::VaultFederationConnectExport => {
+                "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."
+            }
+            Self::VaultFederationConnectRejoin => {
+                "The owner admits a peer host signed update through guest admission into the retained foreign-world vault."
             }
             Self::VaultTrustedContactsName => {
                 "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."

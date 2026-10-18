@@ -59,11 +59,23 @@ impl Memory<'_> {
             } else {
                 None
             };
+            let world = if entity_type == crate::registry::ENTITY_TYPE_WORLD {
+                Some(*id)
+            } else if let Some(body) = body.as_deref() {
+                crate::federation::record_scope::record_world_in(&content, txn, *id, entity_type, body)?.flatten()
+            } else {
+                None
+            };
+            let stale = match world {
+                Some(world) => crate::federation::stale_stamped_worlds(&self.vault.store, txn)?
+                    .get(&world).copied().map(|stamp| MemoryStaleStamp::from_stamp(stamp, self.vault.now_recorded_at())),
+                None => None,
+            };
             let view = self.entity_view_of_in_txn(lane, txn, row, mode)?;
-            Ok(Some((entity_type, body, view, turn)))
+            Ok(Some((entity_type, body, view, turn, stale)))
         })?;
         receipt.restrict_with(&read);
-        let Some((entity_type, Some(body), Some(view), turn)) = admitted else {
+        let Some((entity_type, Some(body), Some(view), turn, stale)) = admitted else {
             return Ok(None);
         };
         let (turn_messages, turn_revision, turn_members) = turn.unwrap_or_default();
@@ -153,6 +165,7 @@ impl Memory<'_> {
                 value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),
                 confidence: body.confidence,
                 hedge_bucket: hedge_bucket_for(body.confidence).to_owned(),
+                stale,
                 provenance: MemoryProvenance {
                     source: body
                         .source
@@ -277,6 +290,7 @@ impl Memory<'_> {
                 value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),
                 confidence: 1.0,
                 hedge_bucket: hedge_bucket_for(1.0).to_owned(),
+                stale,
                 provenance: MemoryProvenance {
                     source: "record".to_owned(),
                     source_revision_ids,

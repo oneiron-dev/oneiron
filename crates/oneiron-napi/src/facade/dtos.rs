@@ -488,6 +488,15 @@ pub struct NapiMemoryProvenance {
     pub evidence_turn_ids: Vec<String>,
 }
 
+/// A retained foreign world's immutable stale stamp.
+#[napi(object)]
+pub struct NapiMemoryStaleStamp {
+    pub stale_since: Option<f64>,
+    pub age_secs: Option<f64>,
+    pub reason: String,
+    pub pact_epoch: f64,
+}
+
 /// One memory pack item (S6).
 #[napi(object)]
 pub struct NapiMemoryItem {
@@ -507,6 +516,7 @@ pub struct NapiMemoryItem {
     pub hedge_bucket: String,
     /// Provenance.
     pub provenance: NapiMemoryProvenance,
+    pub stale: Option<NapiMemoryStaleStamp>,
     /// World hex, when world-scoped.
     pub world: Option<String>,
     /// Facet hex, when faceted.

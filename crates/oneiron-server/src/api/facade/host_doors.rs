@@ -72,6 +72,7 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::guest_doors::*;
+pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
@@ -1134,6 +1135,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.embedding_spaces.probes.delete"
         | "vault.fanout.resume"
         | "vault.fanout.ack"
+        | "vault.federation.connect.identity"
+        | "vault.federation.connect.grants.mint"
+        | "vault.federation.connect.offer"
+        | "vault.federation.connect.accept"
+        | "vault.federation.connect.narrow"
+        | "vault.federation.connect.rescope.offer"
+        | "vault.federation.connect.rescope.accept"
+        | "vault.federation.connect.disconnect"
+        | "vault.federation.connect.export"
+        | "vault.federation.connect.rejoin"
         | "vault.guests.revoke"
         | "vault.guests.mint_slip"
         | "vault.projects.confirm"
