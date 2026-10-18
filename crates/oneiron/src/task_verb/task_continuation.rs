@@ -142,6 +142,23 @@ pub(crate) fn continue_failed_task_in_txn(
     Ok(TaskContinuationOutcome::Reactivated)
 }
 
+/// When `task` settled as it stands now, or `None` while it is live or
+/// unknown. A continuation puts a failed TASK back on its lane, so the
+/// owner's acknowledgement of that failure answers it alone, never the
+/// successor's later settlement.
+///
+/// # Errors
+///
+/// A malformed TASK body; storage errors.
+pub(crate) fn task_settled_at_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> Result<Option<u64>> {
+    Ok(task_verb_body_in(vault, rtxn, task)?
+        .and_then(|body| body.terminal().map(|terminal| terminal.finished_at)))
+}
+
 /// A TASK writer's refusal, as the engine's error.
 fn refused(error: MemoryError) -> Error {
     Error::InvalidConfig(format!("task continuation refused: {}", error.message))

@@ -176,6 +176,9 @@ pub(crate) struct TaskAuthorityFacts {
     pub(crate) owner_ref: Option<EntityId>,
     pub(crate) cancelled: bool,
     pub(crate) acked: bool,
+    /// The newest Acked fact's time: an acknowledgement answers the
+    /// settlement that stood when it was made (FIX 3694).
+    pub(crate) acked_at: Option<u64>,
     pub(crate) human_assigner: Option<(EntityId, EntityId)>,
     pub(crate) consult_parties: ConsultParties,
     /// Set once any interruption of the consult asked for a human verdict.
@@ -282,7 +285,10 @@ impl TaskAuthorityFacts {
                 _ => self.owner_ref = Some(fact.actor_ref),
             },
             TaskAuthorityFactKind::Cancelled => self.cancelled = true,
-            TaskAuthorityFactKind::Acked => self.acked = true,
+            TaskAuthorityFactKind::Acked => {
+                self.acked = true;
+                self.acked_at = self.acked_at.max(Some(fact.occurred_at));
+            }
             TaskAuthorityFactKind::HumanAssigned => {
                 let assigned = fact.assigned_ref.ok_or(Error::InvariantViolation(
                     "task human assignment lacks agent",

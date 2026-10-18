@@ -602,8 +602,17 @@ impl TaskIntentPresence {
         task_ref: EntityId,
     ) -> Result<TaskRenderState> {
         let facts = vault.task_authority_facts_in(rtxn, task_ref)?;
+        // An acknowledgement answers the settlement that stood when it was
+        // made (FIX 3694): a TASK a continuation put back on its lane, live
+        // again or settled since, is not acknowledged by it. Both clocks are
+        // recorded seconds; an ack in its failure's own second still counts.
+        let acked = match facts.acked_at {
+            Some(acked_at) => crate::task_verb::task_settled_at_in(vault, rtxn, task_ref)?
+                .is_some_and(|settled| settled <= acked_at),
+            None => false,
+        };
         Ok(TaskRenderState {
-            acked: facts.acked,
+            acked,
             cancelled: facts.cancelled,
         })
     }
