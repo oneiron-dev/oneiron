@@ -38,6 +38,7 @@ base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
 # `[models.code_mode.check]`: the type checkers shadow mode runs.
 oneiron-code-check = { version = "0.1.0", path = "../oneiron-code-check" }
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 # Supervisor ⇄ vault child-process contract, consumed READ-ONLY: managed serve
 # mode speaks exactly the wire types, framing and limits this crate freezes, so
 # a framing bug cannot diverge between supervisor and engine. No wire reshape
