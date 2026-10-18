@@ -45,6 +45,9 @@ pub(in crate::sync) struct OwedHistory {
     pub(in crate::sync) cursor: Option<String>,
     /// What the last try found.
     pub(in crate::sync) status: OwedStatus,
+    /// Whether a row refused for this history waits in one of the windows:
+    /// the record then clears only once the upkeep has drained them.
+    pub(in crate::sync) held: bool,
 }
 
 /// What the last try at an owed history found.
@@ -104,23 +107,36 @@ pub(in crate::sync) fn is_history_of(blob: &[u8], target: EntityId) -> bool {
     control_target(blob) == Some(target)
 }
 
-/// Owes `target` a fetch for a row of `window_key` and wakes the upkeep.
+/// Owes `target` a fetch for a row of `window_key`, `held` there when a
+/// refusal holds it.
 fn owe_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     target: EntityId,
     window_key: &str,
     status: Option<OwedStatus>,
+    held: bool,
 ) -> Result<()> {
     let key = HexId(target);
     let mut record = OWED.get(&vault.store, wtxn, &key)?.unwrap_or_default();
     record.windows.insert(window_key.to_owned());
+    record.held |= held;
     if let Some(status) = status {
         record.status = status;
     }
-    OWED.put(&vault.store, wtxn, &key, &record)?;
-    mark_landed(vault);
-    Ok(())
+    OWED.put(&vault.store, wtxn, &key, &record)
+}
+
+/// Whether `target`'s history resolves under its pin and the exchange's
+/// `outcome` waits on nothing.
+fn resolves(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+    outcome: PinExchangeOutcome,
+) -> bool {
+    !matches!(outcome, PinExchangeOutcome::Pending(_))
+        && crate::claim::history_projection::machine_history_rows(&vault.store, txn, target).is_ok()
 }
 
 /// A row of `window_key` refused because its machine history is not here
@@ -144,14 +160,17 @@ pub(in crate::sync) fn owe_refused_in_txn(
         control_target(blob).unwrap_or(id),
         window_key,
         None,
+        true,
     )
 }
 
 /// What the history owed here makes of a row `window_key` landed, in the
 /// savepoint that landed it, given the exchange's `outcome` for it. An
-/// exchange still `Pending` owes its target a fetch (FIX 4293). Any row of an
-/// owed target, and any authority row while a target is owed, marks the
-/// target landed and wakes the upkeep, which runs the exchange again.
+/// exchange still `Pending` owes its target a fetch (FIX 4293). An owed
+/// target no held row waits on clears once its history resolves. Any other
+/// row of an owed target, and any authority row while a target is owed,
+/// marks it landed and wakes the upkeep, which runs the exchange again and
+/// drains what it holds.
 pub(in crate::sync) fn note_landed_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -167,14 +186,20 @@ pub(in crate::sync) fn note_landed_in_txn(
         }
         return Ok(());
     };
-    let status = if OWED.contains(&vault.store, wtxn, &HexId(target))? {
-        OwedStatus::Landed
-    } else if matches!(outcome, PinExchangeOutcome::Pending(_)) {
-        OwedStatus::Owed
-    } else {
-        return Ok(());
+    let key = HexId(target);
+    let status = match OWED.get(&vault.store, wtxn, &key)? {
+        Some(record) if !record.held && resolves(vault, wtxn, target, outcome) => {
+            OWED.delete(&vault.store, wtxn, &key)?;
+            return Ok(());
+        }
+        Some(_) => {
+            mark_landed(vault);
+            OwedStatus::Landed
+        }
+        None if matches!(outcome, PinExchangeOutcome::Pending(_)) => OwedStatus::Owed,
+        None => return Ok(()),
     };
-    owe_in_txn(vault, wtxn, target, window_key, Some(status))
+    owe_in_txn(vault, wtxn, target, window_key, Some(status), false)
 }
 
 /// Every owed target and its record.
@@ -221,9 +246,9 @@ pub(in crate::sync) fn note_home(
 }
 
 /// Runs the exchange again for each of `targets` and, where rows it waits on
-/// landed (`true` beside it when a round landed some, a landing an import
-/// marked, or a pin the exchange just adopted), drains the windows holding
-/// its rows, each window once. A record clears once its target's history
+/// landed (`true` beside it when a round landed some, or a landing an import
+/// marked) or its history resolves now, drains the windows its refused rows
+/// wait in, each window once. A record clears once its target's history
 /// resolves under its pin and the exchange waits on nothing; otherwise it
 /// stays, with its cursor. Returns the targets still owed.
 pub(in crate::sync) fn release(
@@ -244,7 +269,7 @@ pub(in crate::sync) fn release(
     }
     let mut owed = Vec::new();
     for &(target, _) in targets {
-        if !settle(vault, target)? {
+        if !settle(vault, target, &windows)? {
             owed.push(target);
         }
     }
@@ -252,8 +277,8 @@ pub(in crate::sync) fn release(
 }
 
 /// The exchange for an owed `target`, first: a pin it adopts is what a held
-/// row needs to land. Returns the record's windows and whether they are
-/// tried again, or `None` once the target is not owed.
+/// row needs to land. Returns the windows a refused row of it waits in and
+/// whether they are tried again, or `None` once the target is not owed.
 fn advance(vault: &Vault, target: EntityId) -> Result<Option<(BTreeSet<String>, bool)>> {
     vault.with_write_txn_grouped(|txn| {
         let key = HexId(target);
@@ -266,28 +291,39 @@ fn advance(vault: &Vault, target: EntityId) -> Result<Option<(BTreeSet<String>, 
             record.status = OwedStatus::Owed;
             OWED.put(&vault.store, txn, &key, &record)?;
         }
-        let adopted = matches!(outcome, PinExchangeOutcome::Adopted(_));
-        Ok(Some((record.windows, marked || adopted)))
+        // A held row is tried again before its record can clear.
+        let retry = marked || resolves(vault, txn, target, outcome);
+        let held = if record.held {
+            record.windows
+        } else {
+            BTreeSet::new()
+        };
+        Ok(Some((held, retry)))
     })
 }
 
 /// Judges an owed `target` after the drain, which may have landed history
 /// too: the exchange runs again, and the record clears once the history
-/// resolves and the exchange waits on nothing. `true` when it is cleared.
-fn settle(vault: &Vault, target: EntityId) -> Result<bool> {
+/// resolves and the exchange waits on nothing, but a held row's windows must
+/// have been `drained` first; a record that resolves before they were waits
+/// for the next round, marked. `true` when it is cleared.
+fn settle(vault: &Vault, target: EntityId, drained: &BTreeSet<String>) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
         let key = HexId(target);
-        if !OWED.contains(&vault.store, txn, &key)? {
+        let Some(mut record) = OWED.get(&vault.store, txn, &key)? else {
             return Ok(true);
-        }
+        };
         let outcome = vault.advance_own_machine_history_in_txn(txn, target)?;
-        let resolved = !matches!(outcome, PinExchangeOutcome::Pending(_))
-            && crate::claim::history_projection::machine_history_rows(&vault.store, txn, target)
-                .is_ok();
-        if resolved {
-            OWED.delete(&vault.store, txn, &key)?;
+        if !resolves(vault, txn, target, outcome) {
+            return Ok(false);
         }
-        Ok(resolved)
+        if record.held && !record.windows.is_subset(drained) {
+            record.status = OwedStatus::Landed;
+            OWED.put(&vault.store, txn, &key, &record)?;
+            return Ok(false);
+        }
+        OWED.delete(&vault.store, txn, &key)?;
+        Ok(true)
     })
 }
 
@@ -297,7 +333,7 @@ fn settle(vault: &Vault, target: EntityId) -> Result<bool> {
 fn drain_held(manager: &WindowManager, window: &WindowKey) -> Result<()> {
     let held = || {
         crate::sync::quarantine::pending_remat_entities(manager.vault(), window.as_str())
-            .map(Vec::len)
+            .map(|entities| entities.len())
     };
     let mut left = held()?;
     while left > 0 {
