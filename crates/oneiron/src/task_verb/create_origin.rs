@@ -163,6 +163,45 @@ pub(crate) fn task_create_origin_in_txn(
     Ok(Some(origin))
 }
 
+/// FIX 1380: the live dispatch a `self.message` speaks from, read in `txn`:
+/// the run a host bound, with the proofs a bound create takes (an agent
+/// dispatch, running, leased by the binding's owner at its generation, and
+/// run by this surface's actor). No binding is an unbound sender (`None`); a
+/// stale or foreign binding refuses, and never reads as unbound.
+pub(crate) fn message_dispatch_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+) -> MemoryResult<Option<(AttemptRecord, AgentDispatchInput)>> {
+    let Some(binding) = memory.task_host() else {
+        return Ok(None);
+    };
+    let record = AttemptQueue::new(memory.vault()).get_in_txn(txn, binding.parent())?;
+    let Some((record, input)) =
+        record.and_then(|record| record_dispatch_input(&record).map(|input| (record, input)))
+    else {
+        return Err(invalid_state(
+            "the sending run is no longer a live agent run",
+            "Send the message from the agent run the host bound.",
+        ));
+    };
+    if !record.state.is_running()
+        || record.lease_owner.as_deref() != Some(binding.lease_owner())
+        || record.attempt_count != binding.attempt_count()
+    {
+        return Err(invalid_state(
+            "the sending run's lease is no longer current",
+            "Send the message while the agent's try is leased.",
+        ));
+    }
+    if agent_dispatch_actor(&input)? != WriteActor::new(memory.actor(), memory.actor_class()) {
+        return Err(forbidden(
+            "a bound message is sent as its run's agent",
+            "Send the message from the agent run the host bound.",
+        ));
+    }
+    Ok(Some((record, input)))
+}
+
 /// Rechecks an origin where its agent launches, live or stored: the creator
 /// row is still an agent dispatch run by this surface's actor, in the
 /// project the origin recorded, and its spend scope, when it has one, is

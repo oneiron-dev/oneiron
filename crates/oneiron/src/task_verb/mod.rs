@@ -35,6 +35,7 @@ mod consult_payload;
 mod consult_result;
 mod create_facade;
 mod create_origin;
+pub(crate) use create_origin::message_dispatch_in_txn;
 mod create_spec;
 mod create_validation;
 mod decision_port;
