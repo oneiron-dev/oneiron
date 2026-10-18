@@ -6641,6 +6641,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_browser_library_find(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.find", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_library_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.propose", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_library_retire(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.retire", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_library_retired(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.retired", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_browser_library_run(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.browser.library.run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_browser_handover(
         &self,
         input: serde_json::Value,
