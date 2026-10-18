@@ -8294,7 +8294,21 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 6,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TranscriptFileDropInput"
+     ],
+     "path": "src/calendar/transcript/door.rs",
+     "purpose": "Caller-bound file-drop ingestion over the calendar transcript landing",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -48907,7 +48921,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 431
+      "fn": 432
      }
     },
     {
@@ -54289,7 +54303,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55677,7 +55691,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3390,
+   "source_files": 3391,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64072,7 +64086,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 382
+      "fn": 383
      }
     },
     {
@@ -65120,7 +65134,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 383
+      "fn": 384
      }
     },
     {
@@ -77386,6 +77400,8 @@
       "ThrobberAtom",
       "ToggleControl",
       "TrackedHubRef",
+      "TranscriptFileDropInput",
+      "TranscriptIngestOutcome",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
@@ -77474,8 +77490,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 402,
-      "struct": 1012
+      "enum": 403,
+      "struct": 1013
      }
     },
     {
