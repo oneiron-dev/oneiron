@@ -16,7 +16,9 @@ use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault, error::Result};
 
-use super::history_transfer::{DecodedRow, PageVerdict, decode_page, history_in_txn, page_root};
+use super::history_transfer::{
+    AdoptedPrefix, DecodedRow, PageVerdict, decode_page, history_in_txn, page_root,
+};
 
 /// Key: the row's entry hash. Value: its original signed bytes. Device-local
 /// repair progress: no image carries it.
@@ -95,11 +97,14 @@ impl Vault {
                     decoded.retain(|(hash, _, _)| !dropped.contains(hash));
                     refused.extend(dropped);
                 }
-                Err(error) if super::readonly_fold::is_history_incomplete(&error) => {
-                    let request = self.stage_repair_rows(&decoded)?;
+                Err(error) => {
+                    let Some(needed) = super::readonly_fold::history_required_request(&error)
+                    else {
+                        return Err(error);
+                    };
+                    let request = self.stage_repair_rows(&decoded, needed)?;
                     return Ok(AuthorityRepairOutcome::Staged { request, refused });
                 }
-                Err(error) => return Err(error),
             }
         }
     }
@@ -151,8 +156,21 @@ impl Vault {
     /// Stages `decoded`'s rows the log does not hold, after the byte checks
     /// a page passes before any fold: canonical bytes and signatures, one
     /// genesis and vault across the log, the stage and the page, and each
-    /// new row's parents held, staged or earlier beside it.
-    fn stage_repair_rows(&self, decoded: &[DecodedRow]) -> Result<AuthorityHistoryRequest> {
+    /// new row's parents held, staged or earlier beside it. On a vault that
+    /// adopted a checkpoint image, its pin's genesis is the genesis and its
+    /// covered rows are held for that check ([`AdoptedPrefix`]).
+    ///
+    /// The request is this vault's own, plus what the import that refused
+    /// named (`needed`): its fold or door judged the log with this page and
+    /// the stage in it. Past those checks every waiting row's parents are
+    /// held, waiting or covered, so on an adopted vault a covered parent is
+    /// asked for only when that fold or door needs its row, never because a
+    /// waiting row names it.
+    fn stage_repair_rows(
+        &self,
+        decoded: &[DecodedRow],
+        needed: AuthorityHistoryRequest,
+    ) -> Result<AuthorityHistoryRequest> {
         let mut txn = self.store.env.write_txn()?;
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
@@ -162,7 +180,10 @@ impl Vault {
                 .entry(*hash)
                 .or_insert_with(|| (bytes.clone(), entry.clone()));
         }
-        page_root(&merged, &resident)?.ok_or_else(invalid_authority)?;
+        let adopted =
+            super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
+        page_root(&merged, &resident, adopted.as_ref().map(AdoptedPrefix::of))?
+            .ok_or_else(invalid_authority)?;
         for (hash, bytes, entry) in decoded {
             if resident.contains(hash) {
                 continue;
@@ -181,11 +202,7 @@ impl Vault {
             self.privacy_posture(),
             &txn,
         )?;
-        for hash in &waiting {
-            if let Some((_, entry)) = merged.get(hash) {
-                request.missing.extend(entry.parent_hashes.iter().copied());
-            }
-        }
+        request.missing.extend(needed.missing);
         request
             .missing
             .retain(|hash| !resident.contains(hash) && !waiting.contains(hash));
