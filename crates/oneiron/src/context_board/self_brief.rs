@@ -177,6 +177,40 @@ impl SelfBrief {
             .map(|people| people.resident.clone())
             .unwrap_or_default()
     }
+
+    /// The rows this brief is derived from, as a host lists them beside its
+    /// rendered text (DEC-0005): the self, principal and cast it pins, each
+    /// recipient and working-set row it names, each indexed skill with the
+    /// rows its reliability stands on, and every person on `people`, the
+    /// roster it was described with, shown or counted, with each actor that
+    /// speaks as one and, under an `about` line, every CLAIM about them. The
+    /// run's host-held scope, classes, budget and clock are no rows.
+    ///
+    /// # Errors
+    ///
+    /// A read failure.
+    pub fn sources(&self, vault: &Vault, people: Option<&People>) -> Result<Vec<EntityId>> {
+        let mut rows = vec![self.self_ref, self.principal];
+        rows.extend(self.cast.iter().copied());
+        rows.extend(self.communication.recipients.iter().copied());
+        rows.extend(self.working_set.iter().copied());
+        for skill in &self.skills {
+            rows.push(skill.id);
+            rows.extend(crate::skill_reliability::skill_reliability_sources(
+                vault, &skill.id,
+            )?);
+        }
+        for person in people.map(People::rows).unwrap_or_default() {
+            rows.push(person.person);
+            rows.extend(person.actors.iter().copied());
+            if person.about.is_some() {
+                rows.extend(vault.claims_for_subject(&person.person)?);
+            }
+        }
+        rows.sort_unstable_by_key(|id| *id.as_bytes());
+        rows.dedup();
+        Ok(rows)
+    }
 }
 
 /// The cached prefix is replaced only at turn one or an epoch fold. A mid-run
@@ -326,6 +360,35 @@ impl SelfBriefSession {
             prefix: None,
             tail: Some(state.describe(vault, read_set, people)?.render()),
         })
+    }
+
+    /// [`Self::describe_self`], beside the rows its tail is derived from
+    /// ([`SelfBrief::sources`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::describe_self`].
+    pub fn describe_self_listing(
+        &self,
+        vault: &Vault,
+        state: &SelfBriefState,
+        read_set: &SessionReadSet,
+        people: Option<&People>,
+    ) -> Result<(PlacedSelfBrief, Vec<EntityId>)> {
+        if self.cached_prefix.is_none() {
+            return Err(crate::Error::InvariantViolation(
+                "self brief describe before turn one",
+            ));
+        }
+        let brief = state.describe(vault, read_set, people)?;
+        let sources = brief.sources(vault, people)?;
+        Ok((
+            PlacedSelfBrief {
+                prefix: None,
+                tail: Some(brief.render()),
+            },
+            sources,
+        ))
     }
 
     #[must_use]
