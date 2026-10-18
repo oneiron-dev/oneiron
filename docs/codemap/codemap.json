@@ -12260,7 +12260,7 @@
      "path": "src/code_run/dispatcher/coordination.rs",
      "purpose": "Code-mode composition: host-bound agents.spawn / ask / wait",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 6
      }
     },
@@ -51736,6 +51736,10 @@
       "CancelForceRequest",
       "ConsultDisposition",
       "ConsultInspection",
+      "ConsultLandKind",
+      "ConsultLandReply",
+      "ConsultLandRequest",
+      "ConsultLandSpend",
       "ConsultReadRequest",
       "ConsultSummaryView",
       "ConsultTerminalView",
@@ -51746,9 +51750,10 @@
      "path": "src/task_verb/run_doors.rs",
      "purpose": "The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)…",
      "surface": {
-      "enum": 2,
+      "crate-vis": 1,
+      "enum": 3,
       "fn": 3,
-      "struct": 8
+      "struct": 11
      }
     },
     {
