@@ -3,10 +3,13 @@ use std::io::Cursor;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::habit::{TaskRole, task_role_from_body_bytes};
 use crate::human_task::HumanTaskError;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
+use crate::registry::ENTITY_TYPE_TASK;
 
 use super::consult_payload::{ConsultPayload, ConsultPayloadRef};
 use super::consult_result::TaskVerbBody;
@@ -60,6 +63,13 @@ pub(super) fn task_create_proposal_value(spec: &TaskCreateSpec, now: u64) -> Val
             spec.type_ref
                 .as_ref()
                 .map_or(Value::Nil, |type_ref| Value::from(type_ref.wire_form())),
+        ),
+        // DOOR-113: the parent travels with the proposal too, so an approved
+        // create files under the TASK it asked for, never as a root.
+        (
+            Value::from("parent_ref"),
+            spec.parent_ref
+                .map_or(Value::Nil, |parent| Value::from(parent.to_hex())),
         ),
         (Value::from("created_at"), Value::from(now)),
     ])
@@ -202,6 +212,9 @@ pub(super) fn validate_task_create_in(
     if let Some(label) = spec.label.as_deref() {
         check_task_label(label)?;
     }
+    if let Some(parent_ref) = spec.parent_ref {
+        check_task_parent_in(vault, txn, parent_ref)?;
+    }
     // OF-543: placed once, here at the only door to a TASK write, against
     // the tree in force (OF-541: data inside the team-shape skill, the
     // brief's project fork when it has one); unsure lands on the root. This
@@ -284,6 +297,45 @@ pub(super) fn validate_task_create_in(
         }
         _ => Err(MemoryError::bad_request("invalid typed task shape")),
     }
+}
+
+/// DOOR-113: refuses a parent that cannot take a Task child at validation,
+/// which a direct create or post runs before any write opens, so a bad
+/// request is told why rather than parked as a proposal; an approval runs
+/// it again in its own transaction. The parent must be a stored TASK whose
+/// role parents a Task under the nesting matrix, which only a Milestone
+/// does. The batch `ChildOf` gate stays the authority when the landing
+/// writes the edge.
+fn check_task_parent_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    parent_ref: EntityId,
+) -> MemoryResult<()> {
+    const SUGGESTION: &str = "Name a Milestone TASK as parent_ref, or omit it for a root task.";
+    let Some(raw) = vault.get_raw_in(txn, &parent_ref)? else {
+        return Err(MemoryError::bad_request_with(
+            "parent_ref names no stored TASK",
+            &[SUGGESTION],
+        ));
+    };
+    let header = EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+    if header.entity_type != ENTITY_TYPE_TASK {
+        return Err(MemoryError::bad_request_with(
+            format!(
+                "parent_ref names entity type {}, not a TASK",
+                header.entity_type
+            ),
+            &[SUGGESTION],
+        ));
+    }
+    let role = task_role_from_body_bytes(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+    if !role.allows_child(TaskRole::Task) {
+        return Err(MemoryError::bad_request_with(
+            format!("a {role:?} TASK cannot parent a Task; only a Milestone does"),
+            &[SUGGESTION],
+        ));
+    }
+    Ok(())
 }
 
 /// A typed ref must still name a live entity of its declared kind at write

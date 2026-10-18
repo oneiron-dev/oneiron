@@ -153,6 +153,10 @@ pub struct TaskPost {
     pub ttl: Option<TaskTtl>,
     #[serde(default)]
     pub label: Option<String>,
+    /// DOOR-113: the TASK this one files under by a checked `ChildOf`
+    /// edge; the nesting matrix decides, so a Task nests under a Milestone.
+    #[serde(default)]
+    pub parent_ref: Option<EntityId>,
 }
 
 /// Accept one TASK addressed to the caller.

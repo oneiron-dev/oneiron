@@ -859,6 +859,9 @@ fn mcp_agent_verb_input(
             if let Some(value) = &a.ttl {
                 map.insert("ttl".to_owned(), json!(value));
             }
+            if let Some(value) = &a.parent_ref {
+                map.insert("parent_ref".to_owned(), json!(value));
+            }
             Ok(Value::Object(map))
         }
         "tasks.wave" => a.spec.clone().ok_or_else(invalid),
@@ -1601,6 +1604,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             }
             if let Some(value) = input.get("ttl") {
                 arguments.insert("ttl".to_owned(), value.clone());
+            }
+            if let Some(value) = input.get("parent_ref") {
+                arguments.insert("parent_ref".to_owned(), value.clone());
             }
         }
         "tasks.wave" => {
