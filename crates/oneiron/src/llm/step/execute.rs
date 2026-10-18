@@ -128,6 +128,7 @@ pub async fn call_as_step_checked(
         request,
         &super::super::FallbackRegistry::standard(),
         Some(check),
+        DREAMER_STEP_RETRY_BACKOFF_MS.len(),
     )
     .await
 }
@@ -140,7 +141,24 @@ pub async fn call_as_step_with_fallbacks(
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
 ) -> DurableStepResult<StepOutcome> {
-    durable_step(ctx, backend, guard, request, fallbacks, None).await
+    call_as_step_with_fallbacks_and_retries(
+        ctx, backend, guard, request, fallbacks, DREAMER_STEP_RETRY_BACKOFF_MS.len(),
+    ).await
+}
+
+/// The same durable execution path with a declared prefix of the engine's retry schedule.
+pub(super) async fn call_as_step_with_fallbacks_and_retries(
+    ctx: &DurableStepContext<'_>,
+    backend: &dyn LlmBackend,
+    guard: &BudgetGuard,
+    request: LlmRequest,
+    fallbacks: &super::super::FallbackRegistry,
+    max_retries: usize,
+) -> DurableStepResult<StepOutcome> {
+    if max_retries > DREAMER_STEP_RETRY_BACKOFF_MS.len() {
+        return Err(Error::InvalidConfig("model-step retry limit exceeds the engine schedule".into()).into());
+    }
+    durable_step(ctx, backend, guard, request, fallbacks, None, max_retries).await
 }
 
 async fn durable_step(
@@ -150,6 +168,7 @@ async fn durable_step(
     request: LlmRequest,
     fallbacks: &super::super::FallbackRegistry,
     check: Option<&ReplyCheck>,
+    max_retries: usize,
 ) -> DurableStepResult<StepOutcome> {
     let step_hash = request.canonical_hash()?;
 
@@ -241,6 +260,7 @@ async fn durable_step(
                 guard,
                 ctx.deadline,
                 check,
+                max_retries,
             ),
         )
         .await;
@@ -595,13 +615,14 @@ pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,
+    max_retries: usize,
 ) -> LlmResult<LlmResponse> {
     let mut retries = 0_usize;
     loop {
         match backend.generate(request.clone(), lease).await {
             Ok(response) => return Ok(response),
             Err(LlmError::Retryable(error)) => {
-                if retries >= DREAMER_STEP_RETRY_BACKOFF_MS.len() {
+                if retries >= max_retries {
                     return Err(LlmError::Retryable(error));
                 }
                 sleep_ms(DREAMER_STEP_RETRY_BACKOFF_MS[retries]).await;

@@ -16,6 +16,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+mod step_attempt;
+
 use futures_util::StreamExt;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};

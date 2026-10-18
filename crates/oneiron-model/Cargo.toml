@@ -17,6 +17,7 @@ oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 blake3 = { workspace = true }
 futures-core = { workspace = true }
 rmpv = { workspace = true }
+schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

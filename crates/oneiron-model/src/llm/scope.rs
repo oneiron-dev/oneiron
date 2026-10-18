@@ -3,7 +3,7 @@ use oneiron_contracts::{EntityId, Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ScopeResource {
     Bucket {
@@ -11,6 +11,7 @@ pub enum ScopeResource {
     },
     DocumentVersion {
         #[serde(with = "oneiron_contracts::serialize::entity_ref")]
+        #[schemars(with = "String")]
         document: EntityId,
         version: String,
     },
@@ -21,16 +22,20 @@ pub enum ScopeResource {
 
 /// The scope itself rides the call envelope. Empty resource sets grant no
 /// access; optional axes do not turn them into a wildcard permission.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Scope {
     #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
+    #[schemars(with = "Option<String>")]
     pub world: Option<EntityId>,
     #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
+    #[schemars(with = "Option<String>")]
     pub facet: Option<EntityId>,
     #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
+    #[schemars(with = "Option<String>")]
     pub relationship: Option<EntityId>,
     #[serde(with = "oneiron_contracts::serialize::entity_ref::optional")]
+    #[schemars(with = "Option<String>")]
     pub project: Option<EntityId>,
     pub readable: BTreeSet<ScopeResource>,
     pub writable: BTreeSet<ScopeResource>,

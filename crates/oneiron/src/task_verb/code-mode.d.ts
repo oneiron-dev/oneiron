@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 498 code-mode rows (477 host rows, 21 run rows), 1762 declarations.
-// Replies: 437 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 500 code-mode rows (479 host rows, 21 run rows), 1789 declarations.
+// Replies: 437 fully typed, 59 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -1249,6 +1249,41 @@ declare namespace Sdk {
   type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string };
   type SkillForkRequest = { parent: string; id?: string | null; skill_id: string };
   type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown };
+  type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
+  type DeterministicFallback = { name: string; config?: unknown | null };
+  type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
+  type ModelTierRef = string;
+  type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
+  type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
+  type ModelLocality = "on_device" | "own_server" | "third_party";
+  type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
+  type LlmMessageRole = "system" | "user" | "assistant" | "tool";
+  type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
+  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
+  type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
+  type LlmToolSpec = { name: string; description: string; input_schema: unknown };
+  type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
+  type ModelStepRetryPolicy = { max_attempts: number };
+  type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
+  type StepProgression = "started" | "response_received" | "logged" | "finished";
+  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
+  type LlmOutputUsage = { total: number; text: number; reasoning: number };
+  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
+  type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } };
+  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
+  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
+  type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
+  type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
+  type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure };
+  type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
+  type SpentKind = "window" | "credit";
+  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut";
+  type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
+  type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
+  type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
+  type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string };
+  type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null };
+  type ModelStepReceiptRequest = { step_key: string };
   type AiReplyReader = { definition: string; task_family?: string | null };
   type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
   type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
@@ -1269,14 +1304,6 @@ declare namespace Sdk {
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
   type AiVideoTicket = { job: string; model: string; operation: AiOperation };
   type AiVideoJobRequest = { job: string };
-  type SpentKind = "window" | "credit";
-  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut";
-  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
-  type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
-  type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
-  type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure };
-  type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
-  type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError };
   type AiVideoCancelled = { job: string };
   type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
@@ -1790,6 +1817,12 @@ declare const ai: {
   reply(input: Sdk.AiReplyRequest): Promise<Sdk.AiReply | StoredResult>;
   /** Speech audio out of text, from the host's speech model. */
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
+  steps: {
+    /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+    receipt(input: Sdk.ModelStepReceiptRequest): Promise<Sdk.ModelStepReceipt | StoredResult>;
+    /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+    submit(input: Sdk.ModelStepSubmit): Promise<Sdk.ModelStepReceipt | StoredResult>;
+  };
   /** Text out of speech audio, from the host's transcription model. */
   transcribe(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */

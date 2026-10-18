@@ -14,7 +14,7 @@ pub const MEDIA_METADATA_KEY: &str = "media";
 /// The metadata key a catalog row's model family sits under.
 const FAMILY_METADATA_KEY: &str = "family";
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmCapability {
     Streaming,
@@ -266,7 +266,7 @@ pub struct LlmCatalogCost {
     pub cache_write_per_million: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReasoningEffort {
     None,

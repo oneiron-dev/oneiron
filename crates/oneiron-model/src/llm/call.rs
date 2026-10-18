@@ -8,7 +8,7 @@ use super::ModelId;
 use super::model_id::validated_static_model_id;
 use super::protocol::LlmRequest;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CallEnvelope {
     #[serde(default)]
     pub scope: super::scope::Scope,
@@ -22,7 +22,7 @@ pub struct CallEnvelope {
     pub seat_effort: Option<super::ReasoningEffort>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CallPurpose {
     Extraction,
@@ -85,7 +85,7 @@ const SUBAGENT_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1-mini@2026-07-02";
 
 const SUMMARIZER_DEFAULT_MODEL_ID: &str = "openai/gpt-4.1-nano@2026-07-02";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmRole {
     Orchestrator,
@@ -109,21 +109,21 @@ impl LlmRole {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum CallClass {
     Durable { fallback: DeterministicFallback },
     BestEffort,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeterministicFallback {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub config: Option<JsonValue>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(transparent)]
 pub struct ModelTierRef(pub String);
 
@@ -136,7 +136,7 @@ impl ModelTierRef {
 
 /// Resolution inputs in precedence order:
 /// seat override -> vault policy manifest -> purpose default -> global.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TierPrecedence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub per_seat: Option<ModelTierRef>,
@@ -170,14 +170,14 @@ impl TierPrecedence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "format", rename_all = "snake_case")]
 pub enum ResponseFormat {
     Text,
     Json { schema: JsonValue },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelLocality {
     OnDevice,

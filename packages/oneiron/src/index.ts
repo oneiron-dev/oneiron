@@ -1362,6 +1362,12 @@ export class Oneiron {
   /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly ai = {
+    steps: {
+      /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+      submit: (input: Facade.ModelStepSubmit): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsSubmit(input) as Facade.ModelStepReceipt),
+      /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+      receipt: (input: Facade.ModelStepReceiptRequest): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsReceipt(input) as Facade.ModelStepReceipt),
+    },
     /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
     reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
     /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */

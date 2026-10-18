@@ -64,6 +64,7 @@ pub(crate) use super::shared_policy_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -1018,7 +1019,9 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "ai.reply"
+        "ai.steps.submit"
+        | "ai.steps.receipt"
+        | "ai.reply"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.packs.put"

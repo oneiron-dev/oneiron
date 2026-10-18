@@ -11,6 +11,7 @@
 
 mod codec;
 mod execute;
+pub mod public;
 mod schema;
 mod schema_guard;
 mod schema_runtime;

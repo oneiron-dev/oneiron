@@ -1577,6 +1577,8 @@ class Oneiron:
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
     class _AiVerbs:
+        @property
+        def steps(self) -> "Oneiron._AiStepsVerbs": ...
         def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
@@ -1593,6 +1595,11 @@ class Oneiron:
         def video(self) -> "Oneiron._AiVideoVerbs": ...
         def verdict(self, spec: Facade.AiVerdictRequest) -> Facade.AiVerdict:
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
+    class _AiStepsVerbs:
+        def submit(self, spec: Facade.ModelStepSubmit) -> Facade.ModelStepReceipt:
+            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+        def receipt(self, spec: Facade.ModelStepReceiptRequest) -> Facade.ModelStepReceipt:
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
     class _AiVideoVerbs:
         def __call__(self, spec: Facade.AiCallRequest) -> Facade.AiVideoTicket:
             """Starts a video render as a provider job and answers with its ticket."""

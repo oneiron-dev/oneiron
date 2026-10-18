@@ -311,6 +311,8 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    AiStepsSubmit,
+    AiStepsReceipt,
     AiReply,
     VaultReceiptsContext,
     AiOptions,
@@ -797,6 +799,8 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::AiStepsSubmit,
+        Self::AiStepsReceipt,
         Self::AiReply,
         Self::VaultReceiptsContext,
         Self::AiOptions,
@@ -1290,6 +1294,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::AiStepsSubmit => "ai.steps.submit",
+            Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
             Self::AiOptions => "ai.options",
@@ -1779,6 +1785,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiStepsSubmit
+                | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiOptions
@@ -2272,6 +2280,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiStepsSubmit
+                | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiOptions
@@ -2806,6 +2816,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiStepsSubmit
+                | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
                 | Self::AiOptions
@@ -3159,6 +3171,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::AiStepsSubmit
                 | Self::AiReply
                 | Self::AiImage
                 | Self::AiSpeech
@@ -3598,6 +3611,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiStepsSubmit => &["spec"],
+            Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::AiOptions => &["spec"],
@@ -4085,6 +4100,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiStepsSubmit => &["spec"],
+            Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
             Self::AiOptions => &["spec"],
@@ -5140,6 +5157,12 @@ impl AgentVerb {
             }
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
+            }
+            Self::AiStepsSubmit => {
+                "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
+            }
+            Self::AiStepsReceipt => {
+                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
             }
             Self::AiReply => {
                 "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."

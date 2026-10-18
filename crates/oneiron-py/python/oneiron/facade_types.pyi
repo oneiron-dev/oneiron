@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 440 facade rows, 1671 declarations.
-Inputs: 392 of 440 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 390 of 440 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 77; unread shapes: 0.
+Census: 442 facade rows, 1698 declarations.
+Inputs: 393 of 442 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 390 of 442 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6162,6 +6162,173 @@ class CallableCardView(TypedDict):
     reference: str
     arguments: Any
     returns: Any
+class CallPurposeOtherBody(TypedDict):
+    name: str
+class CallPurposeOther(TypedDict):
+    other: CallPurposeOtherBody
+CallPurpose = Literal["extraction", "consolidation", "answer_gen", "auto_check", "tool_routing", "voice", "eval"] | CallPurposeOther
+class DeterministicFallback(TypedDict):
+    name: str
+    config: NotRequired[Any | None]
+class CallClassDurable(TypedDict):
+    kind: Literal["durable"]
+    fallback: DeterministicFallback
+class CallClassBestEffort(TypedDict):
+    kind: Literal["best_effort"]
+CallClass = CallClassDurable | CallClassBestEffort
+ModelTierRef = str
+class TierPrecedence(TypedDict):
+    per_seat: NotRequired[ModelTierRef | None]
+    vault_policy: NotRequired[ModelTierRef | None]
+    purpose_default: NotRequired[ModelTierRef | None]
+    global_default: ModelTierRef
+    seat: NotRequired[ModelTierRef | None]
+class ResponseFormatText(TypedDict):
+    format: Literal["text"]
+class ResponseFormatJson(TypedDict):
+    format: Literal["json"]
+    schema: Any
+ResponseFormat = ResponseFormatText | ResponseFormatJson
+ModelLocality = Literal["on_device", "own_server", "third_party"]
+CallEnvelope = TypedDict("CallEnvelope", {"scope": NotRequired[ScopeScope], "purpose": CallPurpose, "class": CallClass, "tier": TierPrecedence, "response_format": ResponseFormat, "locality": ModelLocality, "seat_effort": NotRequired[ReasoningEffort | None]})
+LlmMessageRole = Literal["system", "user", "assistant", "tool"]
+class ImageContentBase64(TypedDict):
+    source: Literal["base64"]
+    data: str
+class ImageContentUrl(TypedDict):
+    source: Literal["url"]
+    url: str
+ImageContent = ImageContentBase64 | ImageContentUrl
+class ContentPartText(TypedDict):
+    kind: Literal["text"]
+    text: str
+class ContentPartReasoning(TypedDict):
+    kind: Literal["reasoning"]
+    text: str
+    signature: NotRequired[str | None]
+class ContentPartToolCall(TypedDict):
+    kind: Literal["tool_call"]
+    call_id: str
+    name: str
+    input: Any
+class ContentPartToolResult(TypedDict):
+    kind: Literal["tool_result"]
+    call_id: str
+    output: Any
+    is_error: NotRequired[bool]
+class ContentPartImage(TypedDict):
+    kind: Literal["image"]
+    media_type: str
+    image: ImageContent
+class ContentPartAudio(TypedDict):
+    kind: Literal["audio"]
+    media_type: str
+    data: str
+ContentPart = ContentPartText | ContentPartReasoning | ContentPartToolCall | ContentPartToolResult | ContentPartImage | ContentPartAudio
+class LlmMessage(TypedDict):
+    role: LlmMessageRole
+    content: list[ContentPart]
+class LlmToolSpec(TypedDict):
+    name: str
+    description: str
+    input_schema: Any
+class LlmRequest(TypedDict):
+    model: ModelId
+    envelope: CallEnvelope
+    messages: list[LlmMessage]
+    tools: NotRequired[list[LlmToolSpec]]
+    params: NotRequired[dict[str, Any]]
+    provider_options: NotRequired[dict[str, Any]]
+class ModelStepRetryPolicy(TypedDict):
+    max_attempts: int
+class ModelStepSubmit(TypedDict):
+    step_key: str
+    request: LlmRequest
+    retry: NotRequired[ModelStepRetryPolicy]
+StepProgression = Literal["started", "response_received", "logged", "finished"]
+class LlmInputUsage(TypedDict):
+    total: int
+    cache_read: int
+    cache_write: int
+class LlmOutputUsage(TypedDict):
+    total: int
+    text: int
+    reasoning: int
+class LlmUsage(TypedDict):
+    input: LlmInputUsage
+    output: LlmOutputUsage
+    raw_provider: Any
+class FinishReasonOtherBody(TypedDict):
+    name: str
+class FinishReasonOther(TypedDict):
+    other: FinishReasonOtherBody
+FinishReason = Literal["stop", "length", "tool_calls", "content_filtered", "cancelled"] | FinishReasonOther
+class LlmResponse(TypedDict):
+    message: LlmMessage
+    usage: LlmUsage
+    finish_reason: FinishReason
+LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
+class UnsupportedCapability(TypedDict):
+    capability: LlmCapability
+    model: NotRequired[ModelId | None]
+    reason: NotRequired[str | None]
+LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
+class FatalLlmErrorUnsupported(TypedDict):
+    Unsupported: UnsupportedCapability
+class FatalLlmErrorLabelRead(TypedDict):
+    LabelRead: LabelReadFailure
+FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse"] | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
+ModelStepFailureClass = Literal["retryable", "fatal", "budget_denied", "schema_validation", "fallback", "finalize_refused", "deadline_hard_cut", "engine"]
+SpentKind = Literal["window", "credit"]
+class RetryableLlmErrorRateLimitedBody(TypedDict):
+    retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
+class RetryableLlmErrorRateLimited(TypedDict):
+    RateLimited: RetryableLlmErrorRateLimitedBody
+class RetryableLlmErrorQuotaSpentBody(TypedDict):
+    kind: SpentKind
+    retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
+class RetryableLlmErrorQuotaSpent(TypedDict):
+    QuotaSpent: RetryableLlmErrorQuotaSpentBody
+class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
+    retry_after: NotRequired[int | None]
+    resets_at: NotRequired[list[int]]
+class RetryableLlmErrorKeptOnDevice(TypedDict):
+    KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
+RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
+BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied"]
+class LlmErrorRetryable(TypedDict):
+    Retryable: RetryableLlmError
+class LlmErrorFatal(TypedDict):
+    Fatal: FatalLlmError
+class LlmErrorBudgetDenied(TypedDict):
+    BudgetDenied: BudgetDenied
+LlmError = LlmErrorRetryable | LlmErrorFatal | LlmErrorBudgetDenied
+ModelStepFailure = TypedDict("ModelStepFailure", {"class": ModelStepFailureClass, "message": str, "llm": NotRequired[LlmError | None], "validation_attempts": NotRequired[int | None], "validation_errors": list[str], "spent_usage": NotRequired[LlmUsage | None]})
+class ModelStepResultFinished(TypedDict):
+    status: Literal["finished"]
+    response: LlmResponse
+    json: NotRequired[Any | None]
+    memoized: bool
+    fallback_source: NotRequired[FatalLlmError | None]
+    claim_ref: str
+class ModelStepResultFailed(TypedDict):
+    status: Literal["failed"]
+    failure: ModelStepFailure
+class ModelStepResultBudgetDenied(TypedDict):
+    status: Literal["budget_denied"]
+    trap_ref: str
+ModelStepResult = ModelStepResultFinished | ModelStepResultFailed | ModelStepResultBudgetDenied
+class ModelStepReceipt(TypedDict):
+    step_ref: str
+    step_hash: str
+    model: ModelId
+    retry: ModelStepRetryPolicy
+    progression: NotRequired[StepProgression | None]
+    result: NotRequired[ModelStepResult | None]
+class ModelStepReceiptRequest(TypedDict):
+    step_key: str
 class AiReplyReader(TypedDict):
     definition: str
     task_family: NotRequired[str | None]
@@ -6282,43 +6449,6 @@ class AiVideoTicket(TypedDict):
     operation: AiOperation
 class AiVideoJobRequest(TypedDict):
     job: str
-SpentKind = Literal["window", "credit"]
-class RetryableLlmErrorRateLimitedBody(TypedDict):
-    retry_after: NotRequired[int | None]
-    resets_at: NotRequired[list[int]]
-class RetryableLlmErrorRateLimited(TypedDict):
-    RateLimited: RetryableLlmErrorRateLimitedBody
-class RetryableLlmErrorQuotaSpentBody(TypedDict):
-    kind: SpentKind
-    retry_after: NotRequired[int | None]
-    resets_at: NotRequired[list[int]]
-class RetryableLlmErrorQuotaSpent(TypedDict):
-    QuotaSpent: RetryableLlmErrorQuotaSpentBody
-class RetryableLlmErrorKeptOnDeviceBody(TypedDict):
-    retry_after: NotRequired[int | None]
-    resets_at: NotRequired[list[int]]
-class RetryableLlmErrorKeptOnDevice(TypedDict):
-    KeptOnDevice: RetryableLlmErrorKeptOnDeviceBody
-RetryableLlmError = Literal["ServerError", "Timeout", "StreamCut"] | RetryableLlmErrorRateLimited | RetryableLlmErrorQuotaSpent | RetryableLlmErrorKeptOnDevice
-LlmCapability = Literal["streaming", "tool_calling", "tool_results", "image_input", "json_response", "reasoning", "voice", "assistant_prefill", "audio_input"]
-class UnsupportedCapability(TypedDict):
-    capability: LlmCapability
-    model: NotRequired[ModelId | None]
-    reason: NotRequired[str | None]
-LabelReadFailure = Literal["EmittedText", "NotEosStop", "MissingLabels", "Malformed"]
-class FatalLlmErrorUnsupported(TypedDict):
-    Unsupported: UnsupportedCapability
-class FatalLlmErrorLabelRead(TypedDict):
-    LabelRead: LabelReadFailure
-FatalLlmError = Literal["InvalidRequest", "Auth", "ContentFiltered", "EmptyResponse"] | FatalLlmErrorUnsupported | FatalLlmErrorLabelRead
-BudgetDenied = Literal["Exhausted", "LeaseInvalid", "AdmissionDenied"]
-class LlmErrorRetryable(TypedDict):
-    Retryable: RetryableLlmError
-class LlmErrorFatal(TypedDict):
-    Fatal: FatalLlmError
-class LlmErrorBudgetDenied(TypedDict):
-    BudgetDenied: BudgetDenied
-LlmError = LlmErrorRetryable | LlmErrorFatal | LlmErrorBudgetDenied
 class AiVideoJobQueued(TypedDict):
     state: Literal["queued"]
 class AiVideoJobRunning(TypedDict):

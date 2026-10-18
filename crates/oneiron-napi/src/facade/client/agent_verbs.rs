@@ -2870,6 +2870,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_steps_submit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.steps.submit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_steps_receipt(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.steps.receipt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_reply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.reply", input)

@@ -1628,6 +1628,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "ai.steps.submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::ModelStepSubmit,
+                >(),
+            ),
+            (
+                "ai.steps.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::ModelStepReceiptRequest,
+                >(),
+            ),
+            (
                 "ai.reply",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
                 ),
@@ -2564,6 +2576,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
+    "ai.steps.submit",
+    "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
     "vault.decisions.bands.read",
@@ -2612,6 +2626,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
+        "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_step::ModelStepReceipt,
+        >(),
+        "ai.steps.receipt" => crate::code_run::vault_read::request_schema::<
+            crate::llm::model_step::ModelStepReceipt,
+        >(),
         "ai.reply" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
         }
@@ -4843,6 +4863,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.skills.callables" => &[],
+        "ai.steps.submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.steps.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.reply" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6776,6 +6810,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.skills.callables" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "ai.steps.submit" => {
+            let _input: crate::llm::model_step::ModelStepSubmit = decode(value.clone())?;
+        }
+        "ai.steps.receipt" => {
+            let _input: crate::llm::model_step::ModelStepReceiptRequest = decode(value.clone())?;
+        }
         "ai.reply" => {
             let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
         }
@@ -7854,6 +7894,8 @@ pub fn invoke(
         "self.skills.save" => encode(self_skills_save(memory, decode(value)?)?),
         "self.skills.fork" => encode(self_skills_fork(memory, decode(value)?)?),
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
+        "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
+        "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
@@ -10804,6 +10846,18 @@ pub fn self_skills_callables(
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::skill::helper::CallableCardView>> {
     memory.skill_callables()
+}
+pub fn ai_steps_submit(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::ModelStepSubmit,
+) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
+    crate::task_verb::sdk::host_only(memory, "ai.steps.submit", &input)
+}
+pub fn ai_steps_receipt(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::ModelStepReceiptRequest,
+) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
+    crate::task_verb::sdk::host_only(memory, "ai.steps.receipt", &input)
 }
 pub fn ai_reply(
     memory: &Memory<'_>,
