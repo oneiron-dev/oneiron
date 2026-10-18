@@ -764,17 +764,17 @@
      "surface": {
       "crate-vis": 16,
       "enum": 1,
-      "fn": 1
+      "fn": 2
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/agent_dispatch/comm_widen.rs",
      "purpose": "FIX 1380 phase 2: the one widen signal a running child sends when the comm dial refuses it, and the reach…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -2627,6 +2627,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HostActionAuthority"
+     ],
+     "path": "src/authority/host_action.rs",
+     "purpose": "Who a host credential acts as inside its vault (FIX 2222, owner ruling \"A + support\", 2026-10-18)",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/authority/host_actor.rs",
      "purpose": "The owner a self-hosted root binds (H149)",
@@ -2857,8 +2871,8 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 23,
-      "re-export": 39
+      "crate-vis": 24,
+      "re-export": 40
      }
     },
     {
@@ -10482,7 +10496,7 @@
      "path": "src/claim/scoped_read/actor_key.rs",
      "purpose": "Authenticated identity carried by a scoped read",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 1,
       "fn": 9,
       "struct": 1
@@ -11641,7 +11655,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -12051,6 +12065,7 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 7,
       "fn": 1,
       "struct": 22
@@ -14826,7 +14841,7 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 28,
-      "fn": 24,
+      "fn": 25,
       "struct": 2
      }
     },
@@ -18463,7 +18478,7 @@
      "path": "src/dreamer_consolidation/nightly_merge.rs",
      "purpose": "Nightly fan-in over child proposals",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -30916,6 +30931,59 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/code_doors/leases.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/mod.rs",
+     "purpose": "Typed symbol lease, proposal submit and mutation oplog doors (DOOR-137)",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/code_doors/proposals.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CodeMutationEntry",
+      "CodeMutationLog",
+      "CodeMutationState",
+      "CodeProposalSubmitRequest",
+      "CodeProposalSubmitted",
+      "CodeRepoRequest",
+      "CodeSymbolLeaseView",
+      "CodeSymbolsDeclareRequest",
+      "CodeSymbolsDeclared",
+      "CodeSymbolsReleased",
+      "CodeSymbolsTaskRequest"
+     ],
+     "path": "src/memory/code_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 1,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/codebase_doors/mod.rs",
      "purpose": "Typed code snapshot doors (DOOR-118): the import of one committed local Git tree, its pinned manifest, its…",
      "surface": {
@@ -31306,8 +31374,8 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 5,
-      "re-export": 40
+      "mod": 6,
+      "re-export": 42
      }
     },
     {
@@ -31513,7 +31581,7 @@
      "purpose": "The bound actor's one read lane",
      "surface": {
       "crate-vis": 15,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -31720,6 +31788,26 @@
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
       "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ProspectiveQueryHint",
+      "SignalExtractionClaim",
+      "SignalExtractionMessage",
+      "SignalExtractionRequest",
+      "SignalExtractionResult",
+      "SignalExtractionResultRequest",
+      "SignalExtractionSource",
+      "SignalExtractionTicket"
+     ],
+     "path": "src/memory/signal_extraction.rs",
+     "purpose": "Typed signal extraction over the production Dreamer partition queue",
+     "surface": {
+      "fn": 2,
+      "struct": 8
      }
     },
     {
@@ -49175,7 +49263,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 37,
+      "re-export": 38,
       "struct": 36
      }
     },
@@ -49452,7 +49540,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 500
+      "fn": 516
      }
     },
     {
@@ -49897,6 +49985,30 @@
      "surface": {
       "fn": 4,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TrustedContactAsksRequest",
+      "TrustedContactAuthorization",
+      "TrustedContactAuthorizationOutcome",
+      "TrustedContactAuthorizeRequest",
+      "TrustedContactConsentRequest",
+      "TrustedContactDialRequest",
+      "TrustedContactNameRequest",
+      "TrustedContactRevokeRequest",
+      "TrustedContactTierRequest",
+      "TrustedContactTierSet",
+      "TrustedContactsRequest"
+     ],
+     "path": "src/task_verb/sdk_trusted_contact.rs",
+     "purpose": "The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 10
      }
     },
     {
@@ -53897,7 +54009,7 @@
      "path": "src/write_envelope.rs",
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 26,
       "fn": 24,
       "mod": 1,
       "re-export": 1,
@@ -54826,7 +54938,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55603,7 +55715,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 152,
+     "files": 157,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56114,7 +56226,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 149,
+     "files": 150,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56284,7 +56396,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3429,
+   "source_files": 3436,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59331,6 +59443,7 @@
      "path": "src/error/mod.rs",
      "purpose": "—",
      "surface": {
+      "const": 1,
       "enum": 2,
       "fn": 7,
       "re-export": 14,
@@ -59516,7 +59629,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -59532,7 +59645,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 15,
+      "const": 16,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -64697,7 +64810,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 450
+      "fn": 466
      }
     },
     {
@@ -65745,7 +65858,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 451
+      "fn": 467
      }
     },
     {
@@ -68705,6 +68818,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/code_doors.rs",
+     "purpose": "Credential-bound host projections of the typed symbol lease, proposal submit and oplog doors (DOOR-137)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/codebase_doors.rs",
      "purpose": "Credential-bound host projections of the typed code snapshot doors (DOOR-118)",
      "surface": {
@@ -68825,6 +68948,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/extraction_doors.rs",
+     "purpose": "Owner-only extraction doors over the caller's own credential read lane",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fanout_doors.rs",
      "purpose": "The host doors of the owner's fan-out rulings (OF-393): `vault.fanout.resume` on a held launch and…",
      "surface": {
@@ -68878,7 +69011,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 90
+      "crate-vis": 93
      }
     },
     {
@@ -68918,7 +69051,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -69118,6 +69251,16 @@
      "path": "src/api/facade/tests/call_mode.rs",
      "purpose": "Call mode at the HTTP recall door (retrieval hub #call-mode)",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/trusted_contact_doors.rs",
+     "purpose": "The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors`",
+     "surface": {
+      "crate-vis": 8
+     }
     },
     {
      "bucket": "s",
@@ -76263,7 +76406,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 346,
+     "files": 349,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76678,7 +76821,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 671,
+   "source_files": 674,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77139,13 +77282,20 @@
       "CodeExportResult",
       "CodeFileChange",
       "CodeFileDiffView",
+      "CodeMutationEntry",
+      "CodeMutationLog",
+      "CodeMutationState",
+      "CodeOpProvenance",
       "CodeOperationView",
+      "CodeProposalSubmitRequest",
+      "CodeProposalSubmitted",
       "CodeProposalView",
       "CodeProposalViewRequest",
       "CodeProposedStamp",
       "CodeRepoDiffRequest",
       "CodeRepoDiffView",
       "CodeRepoPointer",
+      "CodeRepoRequest",
       "CodeSnapshotDefinition",
       "CodeSnapshotDefinitionsRequest",
       "CodeSnapshotDefinitionsView",
@@ -77158,6 +77308,11 @@
       "CodeSpanView",
       "CodeStateRequest",
       "CodeStateView",
+      "CodeSymbolLeaseView",
+      "CodeSymbolsDeclareRequest",
+      "CodeSymbolsDeclared",
+      "CodeSymbolsReleased",
+      "CodeSymbolsTaskRequest",
       "CodeTreeRequest",
       "CodeUnitBlameView",
       "CodeUnitVersionView",
@@ -77262,6 +77417,7 @@
       "CredentialCeiling",
       "Criterion",
       "CriticBinding",
+      "CriticLens",
       "CriticPrediction",
       "CriticReviewOutcome",
       "CriticReviewSubmit",
@@ -77352,6 +77508,7 @@
       "DocxRun",
       "DollarBasis",
       "DoneMeans",
+      "DreamerAttemptView",
       "EditNoteRequest",
       "EmbeddingSpace",
       "EmbeddingSpaceBindRequest",
@@ -77471,6 +77628,8 @@
       "GateCheckerSet",
       "GateCheckerView",
       "GateDecisionId",
+      "GateSystemNoticeAction",
+      "GateSystemNoticeRecord",
       "GeneratedLens",
       "GeneratedUiActionDeclaration",
       "GeneratedUiActionTier",
@@ -77630,6 +77789,7 @@
       "LensApproval",
       "LensAtomWire",
       "LensBackingTargetKind",
+      "LensCatalog",
       "LensDeactivateRequest",
       "LensDefaultRequest",
       "LensDossierSource",
@@ -77669,6 +77829,7 @@
       "LinkedText",
       "LiveRunRequestAgentSpawnInput",
       "LiveRunRequestLeaderSplitInput",
+      "LiveRunRequestMemorySupersedeInput",
       "LlmCapability",
       "LlmError",
       "LlmInputUsage",
@@ -77697,6 +77858,8 @@
       "MembershipConsent",
       "MemoryExport",
       "MemoryProjection",
+      "MemorySupersedeInput",
+      "MemoryWriteOutput",
       "MergeCrossover",
       "MergedFinding",
       "MeshPathDirection",
@@ -77959,6 +78122,7 @@
       "ProposalSettleRequest",
       "ProposalSettlement",
       "ProseSpan",
+      "ProspectiveQueryHint",
       "ProviderPin",
       "PruneReason",
       "PruneReceipt",
@@ -78278,6 +78442,13 @@
       "SharedVaultChange",
       "SharedVaultDeletion",
       "SharedVaultRequest",
+      "SignalExtractionClaim",
+      "SignalExtractionMessage",
+      "SignalExtractionRequest",
+      "SignalExtractionResult",
+      "SignalExtractionResultRequest",
+      "SignalExtractionSource",
+      "SignalExtractionTicket",
       "SignatureRow",
       "SignedAuthorityHistory",
       "SigningStatus",
@@ -78435,6 +78606,24 @@
       "TranscriptFileDropInput",
       "TranscriptIngestOutcome",
       "TravelChoice",
+      "TrustedContact",
+      "TrustedContactAcceptance",
+      "TrustedContactAnswer",
+      "TrustedContactAsk",
+      "TrustedContactAuthorization",
+      "TrustedContactAuthorizationOutcome",
+      "TrustedContactAuthorizeRequest",
+      "TrustedContactConsentRequest",
+      "TrustedContactDial",
+      "TrustedContactDialRequest",
+      "TrustedContactNameRequest",
+      "TrustedContactParty",
+      "TrustedContactReach",
+      "TrustedContactRevocation",
+      "TrustedContactRevokeRequest",
+      "TrustedContactTier",
+      "TrustedContactTierRequest",
+      "TrustedContactTierSet",
       "TurnAction",
       "TurnActionReceipt",
       "TurnActionRequest",
@@ -78528,8 +78717,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 450,
-      "struct": 1203
+      "enum": 455,
+      "struct": 1244
      }
     },
     {

@@ -44,6 +44,7 @@ pub mod caps;
 pub mod channel_doors;
 mod chat;
 mod claims;
+pub mod code_doors;
 pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;
@@ -75,6 +76,7 @@ mod room_turn;
 mod scoped_export;
 mod search_hybrid;
 mod session_writes;
+mod signal_extraction;
 mod shape_doors;
 mod structural;
 mod subscriptions;
@@ -127,6 +129,10 @@ pub use diary_read::{
 };
 pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
 pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use signal_extraction::{
+    ProspectiveQueryHint, SignalExtractionClaim, SignalExtractionMessage, SignalExtractionRequest,
+    SignalExtractionResult, SignalExtractionResultRequest, SignalExtractionSource, SignalExtractionTicket,
+};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };
@@ -160,6 +166,8 @@ pub use crate::lens::{
     LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview,
     ResolveRecordRefRequest,
 };
+// FIX 2222: a host credential where no host acts as a person.
+pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{

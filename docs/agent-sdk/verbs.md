@@ -139,6 +139,14 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.trusted_contacts.name`
+- `vault.trusted_contacts.list`
+- `vault.trusted_contacts.consent`
+- `vault.trusted_contacts.revoke`
+- `vault.trusted_contacts.dial.set`
+- `vault.trusted_contacts.tier.set`
+- `vault.trusted_contacts.concern.asks`
+- `vault.trusted_contacts.concern.authorize`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.residence.mode`
@@ -244,6 +252,11 @@ both bindings and their export-census tests in one change.
 - `vault.code.diff`
 - `vault.code.blame`
 - `vault.code.proposal_view`
+- `vault.code.symbols.declare`
+- `vault.code.symbols.renew`
+- `vault.code.symbols.release`
+- `vault.code.proposal_submit`
+- `vault.code.oplog`
 - `vault.code.repo_diff`
 - `vault.code.export`
 - `vault.code.origin.authority.get`
@@ -374,6 +387,7 @@ both bindings and their export-census tests in one change.
 - `vault.get`
 - `vault.refs.resolve`
 - `vault.refs.links`
+- `vault.search.hybrid`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`
@@ -415,6 +429,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.memory.signal_extraction`
+- `vault.memory.signal_extraction.result`
 - `vault.claims.seed`
 - `vault.channel_identities.provision`
 - `vault.channel_identities.bind`

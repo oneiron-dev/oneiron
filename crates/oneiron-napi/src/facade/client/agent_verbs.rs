@@ -1189,6 +1189,78 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_trusted_contacts_name(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.name", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_consent(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.consent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.revoke", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_dial_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.dial.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_tier_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.tier.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_concern_asks(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.concern.asks", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_trusted_contacts_concern_authorize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.trusted_contacts.concern.authorize", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_guests_revoke(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.guests.revoke", input)
@@ -2140,6 +2212,48 @@ impl NativeClient {
             .agent_verb("vault.code.proposal_view", input)
             .map_err(facade_error)?;
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
+    }
+    #[napi]
+    pub fn vault_code_symbols_declare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.declare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_symbols_renew(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.renew", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_symbols_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.release", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_proposal_submit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.proposal_submit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_oplog(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.oplog", input)
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_code_repo_diff(&self, request_json: String) -> napi::Result<String> {
@@ -3946,6 +4060,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_memory_signal_extraction(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.memory.signal_extraction", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_memory_signal_extraction_result(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.memory.signal_extraction.result", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_seed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.seed", input)
@@ -4286,6 +4418,15 @@ impl NativeClient {
     pub fn self_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_supersede(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.supersede", input)
             .map_err(facade_error)
     }
     #[napi]

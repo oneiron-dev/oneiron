@@ -1386,6 +1386,97 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_trusted_contacts_name(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.name")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.trusted_contacts.name", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.trusted_contacts.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_consent(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.consent")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.consent", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.revoke")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.revoke", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_dial_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.dial.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.dial.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_tier_set(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.tier.set")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.tier.set", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_concern_asks(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.trusted_contacts.concern.asks")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.concern.asks", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_trusted_contacts_concern_authorize(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.trusted_contacts.concern.authorize")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.trusted_contacts.concern.authorize", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py
@@ -2280,6 +2371,41 @@ impl NativeClient {
         let input: serde_json::Value = decode(request_json, "vault.code.proposal_view")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.code.proposal_view", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_symbols_declare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.declare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.declare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_symbols_renew(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.renew")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.renew", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_symbols_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_submit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_submit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_submit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_oplog(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.oplog")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.oplog", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -3680,6 +3806,30 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_memory_signal_extraction(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.memory.signal_extraction")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.memory.signal_extraction", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_memory_signal_extraction_result(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.memory.signal_extraction.result")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.memory.signal_extraction.result", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_claims_seed(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.claims.seed")?;
         let output = py
@@ -4034,6 +4184,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.history")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.history", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_claims_supersede(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.supersede")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.claims.supersede", input))
             .map_err(raise)?;
         encode(&output)
     }

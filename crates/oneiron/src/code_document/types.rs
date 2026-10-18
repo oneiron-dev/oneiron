@@ -88,7 +88,7 @@ pub enum CodeSpanResolution {
 /// Who and why behind one operation: the turn and activity that made it, the
 /// intent it serves and the model that ran. The actor itself is on the receipt.
 /// Absent fields are unrecorded, never inferred.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeOpProvenance {
     /// The TURN (a Dreamer or agent turn) that made the operation.

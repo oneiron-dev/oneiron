@@ -549,6 +549,8 @@ class Oneiron:
         @property
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
+        def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs": ...
+        @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
@@ -645,6 +647,8 @@ class Oneiron:
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
+        def memory(self) -> "Oneiron._VaultMemoryVerbs": ...
+        @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs": ...
         @property
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
@@ -711,6 +715,8 @@ class Oneiron:
             """Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides."""
         def seed(self, input: Facade.ScopedCommitRequest) -> list[Facade.CommitOutcome]:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
+        def supersede(self, spec: Facade.LiveRunRequest[Facade.MemorySupersedeInput]) -> Facade.MemoryWriteOutput:
+            """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
@@ -953,6 +959,32 @@ class Oneiron:
             """The invitee declines their own invitation; nothing is granted."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin with the add_member power takes back a pending invitation."""
+    class _VaultTrustedContactsVerbs:
+        def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
+            """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
+        def list(self, spec: Facade.TrustedContactsRequest) -> list[Facade.TrustedContact]:
+            """A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."""
+        def consent(self, spec: Facade.TrustedContactConsentRequest) -> Facade.TrustedContact:
+            """The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this."""
+        def revoke(self, spec: Facade.TrustedContactRevokeRequest) -> Facade.TrustedContact:
+            """Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close."""
+        @property
+        def dial(self) -> "Oneiron._VaultTrustedContactsDialVerbs": ...
+        @property
+        def tier(self) -> "Oneiron._VaultTrustedContactsTierVerbs": ...
+        @property
+        def concern(self) -> "Oneiron._VaultTrustedContactsConcernVerbs": ...
+    class _VaultTrustedContactsDialVerbs:
+        def set(self, spec: Facade.TrustedContactDialRequest) -> Facade.TrustedContact:
+            """The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."""
+    class _VaultTrustedContactsTierVerbs:
+        def set(self, spec: Facade.TrustedContactTierRequest) -> Facade.TrustedContactTierSet:
+            """The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."""
+    class _VaultTrustedContactsConcernVerbs:
+        def asks(self, spec: Facade.TrustedContactAsksRequest) -> list[Facade.TrustedContactAsk]:
+            """The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."""
+        def authorize(self, spec: Facade.TrustedContactAuthorizeRequest) -> Facade.TrustedContactAuthorization:
+            """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
     class _VaultGuestsVerbs:
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
@@ -1244,6 +1276,12 @@ class Oneiron:
         def diff(self, request: Facade.CodeDiffRequest) -> Facade.CodeDiffView | None: ...
         def blame(self, request: Facade.CodeStateRequest) -> Facade.CodeBlameView | None: ...
         def proposal_view(self, request: Facade.CodeProposalViewRequest) -> Facade.CodeProposalView | None: ...
+        @property
+        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs": ...
+        def proposal_submit(self, spec: Facade.CodeProposalSubmitRequest) -> Facade.CodeProposalSubmitted:
+            """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
+        def oplog(self, spec: Facade.CodeRepoRequest) -> Facade.CodeMutationLog:
+            """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
         def repo_diff(self, request: Facade.CodeRepoDiffRequest) -> Facade.CodeRepoDiffView | None: ...
         def export(self, spec: Facade.CodeExportRequest) -> Facade.CodeExportResult:
             """Export one already-finalized and reviewed document revision through the existing origin publication protocol."""
@@ -1253,8 +1291,15 @@ class Oneiron:
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs": ...
         @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs": ...
-        @property
-        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs": ...
+    class _VaultCodeSymbolsVerbs:
+        def declare(self, spec: Facade.CodeSymbolsDeclareRequest) -> Facade.CodeSymbolsDeclared:
+            """Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."""
+        def renew(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolLeaseView:
+            """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
+        def release(self, spec: Facade.CodeSymbolsTaskRequest) -> Facade.CodeSymbolsReleased:
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+        def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
     class _VaultCodeOriginVerbs:
         @property
         def authority(self) -> "Oneiron._VaultCodeOriginAuthorityVerbs": ...
@@ -1275,9 +1320,6 @@ class Oneiron:
             """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
         def read(self, spec: Facade.CodeSnapshotReadRequest) -> Facade.CodeSnapshotPinnedFile | None:
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
-    class _VaultCodeSymbolsVerbs:
-        def definitions(self, spec: Facade.CodeSnapshotDefinitionsRequest) -> Facade.CodeSnapshotDefinitionsView:
-            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
@@ -1508,6 +1550,14 @@ class Oneiron:
             """Enqueues one consolidation attempt and returns its durable job reference."""
         def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
             """Reads the status of one consolidation attempt by its durable job reference."""
+    class _VaultMemoryVerbs:
+        @property
+        def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...
+    class _VaultMemorySignalExtractionVerbs:
+        def __call__(self, spec: Facade.SignalExtractionRequest) -> Facade.SignalExtractionTicket:
+            """Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."""
+        def result(self, spec: Facade.SignalExtractionResultRequest) -> Facade.SignalExtractionResult | None:
+            """Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."""
     class _VaultChannelIdentitiesVerbs:
         def provision(self, spec: Facade.ChannelIdentityProvisionRequest) -> Facade.ChannelIdentityLifecycleReceipt:
             """Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."""
