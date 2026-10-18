@@ -67602,7 +67602,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 737
+      "fn": 742
      }
     },
     {
@@ -68651,7 +68651,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 738
+      "fn": 743
      }
     },
     {
@@ -71548,7 +71548,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_verbs.rs",
@@ -71614,7 +71614,7 @@
      "path": "src/api/facade/browser_doors.rs",
      "purpose": "Typed browser calls on the caller's own attached run and existing guest door",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 20
      }
     },
     {
@@ -80230,7 +80230,7 @@
      "purpose": "RC42 observation-only wire counters"
     }
    },
-   "over_bar": 55,
+   "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 733,
    "test_files": 182
@@ -81577,6 +81577,14 @@
       "LensStatus",
       "LensTextSpan",
       "LibraryCard",
+      "LibraryFindInput",
+      "LibraryFindOutput",
+      "LibraryRetireInput",
+      "LibraryRetireOutput",
+      "LibraryRetiredInput",
+      "LibraryRetiredOutput",
+      "LibraryRunInput",
+      "LibraryRunOutput",
       "LiftCause",
       "LiftCauseCount",
       "LiftCloseReason",
@@ -81606,10 +81614,15 @@
       "LiveRunRequestFindInput",
       "LiveRunRequestHandoverInput",
       "LiveRunRequestLeaderSplitInput",
+      "LiveRunRequestLibraryFindInput",
+      "LiveRunRequestLibraryRetireInput",
+      "LiveRunRequestLibraryRetiredInput",
+      "LiveRunRequestLibraryRunInput",
       "LiveRunRequestMemorySupersedeInput",
       "LiveRunRequestObserveInput",
       "LiveRunRequestOpenInput",
       "LiveRunRequestPointInput",
+      "LiveRunRequestProposeInput",
       "LiveRunRequestScreenshotInput",
       "LiveRunRequestSecretGrantMintRequest",
       "LiveRunRequestSecretGrantRenewRequest",
@@ -82037,6 +82050,8 @@
       "ProposalMember",
       "ProposalSettleRequest",
       "ProposalSettlement",
+      "ProposeInput",
+      "ProposeOutput",
       "ProseSpan",
       "ProspectiveQueryHint",
       "ProviderPin",
@@ -82226,6 +82241,7 @@
       "ResultTaintState",
       "ResultWithheld",
       "RetentionDefault",
+      "RetiredCard",
       "RetrievalAction",
       "RetrievalBlendWeights",
       "RetrievalDiagnosticExport",
@@ -82955,6 +82971,7 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowCheck",
       "WorkflowDispatchRequest",
       "WorkflowRequest",
       "WorkflowRunRequest",
@@ -83001,8 +83018,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 644,
-      "struct": 1927
+      "enum": 645,
+      "struct": 1943
      }
     },
     {
