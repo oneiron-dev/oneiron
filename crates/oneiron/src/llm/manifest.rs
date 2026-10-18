@@ -119,7 +119,9 @@ pub enum ModelDisposition {
     Offline,
     Served,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelSlot {
     Llm,
@@ -147,7 +149,9 @@ pub struct ModelBinding {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reads_audio: bool,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ConfidenceBand {
     Low,
@@ -166,15 +170,16 @@ impl ConfidenceBand {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VerdictMode {
     Shadow,
     Enforce,
 }
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VerdictBinding {
+    #[schemars(with = "String")]
     pub model: ModelId,
     pub slot: ModelSlot,
     pub floor: ConfidenceBand,

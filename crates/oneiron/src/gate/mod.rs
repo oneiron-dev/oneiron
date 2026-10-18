@@ -48,6 +48,7 @@ mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;
 mod pack_install_policy;
+pub mod policy_manifest_doors;
 mod policy_upgrade;
 pub(crate) mod policy_values;
 #[cfg(test)]

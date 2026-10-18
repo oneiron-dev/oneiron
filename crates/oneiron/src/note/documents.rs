@@ -134,7 +134,11 @@ impl NoteDocument {
         }
         let canonical = super::document::NoteDocument::from_loro(self.note, self.doc.fork())?;
         let selected = canonical.fork_at(&version.frontier)?;
-        Ok(Self { note: self.note, head: self.head, doc: selected.doc })
+        Ok(Self {
+            note: self.note,
+            head: self.head,
+            doc: selected.doc,
+        })
     }
     pub fn head(&self) -> EntityId {
         self.head

@@ -318,6 +318,31 @@ impl Vault {
         Ok(())
     }
 
+    /// Store a fresh, untrusted policy proposal without contributing to policy.
+    /// The ordinary writer validates its bytes, then all local authority stamps
+    /// are removed and the exact body is quarantined before this transaction
+    /// can commit. No owner proof is created or inherited by this path.
+    pub(in crate::gate) fn write_policy_manifest_proposal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<()> {
+        if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, &id)? {
+            return Err(Error::InvalidConfig(
+                "a policy proposal requires a fresh id".into(),
+            ));
+        }
+        self.write_policy_manifest_in_txn(txn, id, data, now)?;
+        let key = HexId(id);
+        TRUSTED_ORIGIN.delete(&self.store, txn, &key)?;
+        RETENTION_HOLDER.delete(&self.store, txn, &key)?;
+        SEEDED.delete(&self.store, txn, &key)?;
+        quarantine_current_in_txn(&self.store, txn, &id)?;
+        Ok(())
+    }
+
     /// Whether each manifest in `installs`, written in order on the vault as
     /// it stands, narrows the resolved policy the one before it left, on
     /// every axis (ARCH-0070), and what `read` finds once every install is in
