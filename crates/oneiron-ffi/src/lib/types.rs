@@ -34,6 +34,10 @@ pub enum OneironStatus {
     BufferTooSmall = 6,
     /// Input bytes were not valid UTF-8.
     Utf8 = 7,
+    /// The request needs a model this library does not serve: a context
+    /// pack's media needs the `ai.embed` rung its space names (OF-370).
+    /// Retry without it, or on a server that serves that rung.
+    ModelUnavailable = 8,
 }
 
 /// Borrowed byte/string input for arrays such as `dict_search_paths`.

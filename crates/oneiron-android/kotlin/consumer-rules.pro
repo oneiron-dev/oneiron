@@ -1,5 +1,7 @@
 -keep class org.oneiron.EmbeddedVault { *; }
 -keep class org.oneiron.EmbeddedEngine { *; }
 -keep class org.oneiron.EngineReply { *; }
+-keep class org.oneiron.VaultEdge { *; }
+-keep class org.oneiron.ScoredEntity { *; }
 -keep interface org.oneiron.AppHost { *; }
 -keep class * implements org.oneiron.AppHost { *; }

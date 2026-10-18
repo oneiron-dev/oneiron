@@ -2,8 +2,10 @@
 
 use std::str;
 
+use oneiron::code_run::vault_read::ContextPackMediaQuery;
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_NOT_FOUND, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVENTED_REFERENCE, MEMORY_CODE_MODEL_UNAVAILABLE,
+    MEMORY_CODE_NOT_FOUND, MemoryResult,
 };
 use oneiron::{EdgeKind, EntityId, PackFormat};
 
@@ -92,14 +94,31 @@ pub(super) fn engine<T>(result: Result<T, oneiron::Error>) -> Result<T, OneironS
 }
 
 /// A bound handle's typed refusal as a status (OF-063): a malformed input
-/// is `InvalidArg`, an id or ref naming no record is `NotFound`, and every
-/// other refusal (the actor, its grants, the owner gate) is `EngineError`.
+/// is `InvalidArg`, an id or ref naming no record is `NotFound`, a model
+/// this library does not serve is `ModelUnavailable`, and every other
+/// refusal (the actor, its grants, the owner gate) is `EngineError`.
 pub(super) fn memory_result<T>(result: MemoryResult<T>) -> Result<T, OneironStatus> {
     result.map_err(|error| match error.code.as_str() {
         MEMORY_CODE_BAD_REQUEST => OneironStatus::InvalidArg,
         MEMORY_CODE_NOT_FOUND | MEMORY_CODE_INVENTED_REFERENCE => OneironStatus::NotFound,
+        MEMORY_CODE_MODEL_UNAVAILABLE => OneironStatus::ModelUnavailable,
         _ => OneironStatus::EngineError,
     })
+}
+
+/// A context pack's optional `media` (OF-370), UTF-8 JSON of the served
+/// route's media query: `{"space", "mime", "bytes_b64" (or "bytesB64"),
+/// "kinds"}`, kinds among `text`, `image` and `audio`. A null pointer with
+/// length 0 names none. JSON of another shape is `InvalidArg`. A valid one
+/// is refused `ModelUnavailable`, as an embedded `vault.recall` refuses it:
+/// this library serves no `ai.embed` rung to embed the bytes into their
+/// space, and it never packs the rest of the request without them.
+pub(super) fn refuse_unserved_media(ptr: *const u8, len: usize) -> Result<(), OneironStatus> {
+    let Some(json) = string_from_optional(ptr, len)? else {
+        return Ok(());
+    };
+    serde_json::from_str::<ContextPackMediaQuery>(&json).map_err(|_| OneironStatus::InvalidArg)?;
+    Err(OneironStatus::ModelUnavailable)
 }
 
 pub(super) fn id_array(id: &EntityId) -> [u8; ENTITY_ID_LEN] {
