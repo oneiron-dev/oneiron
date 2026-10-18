@@ -28,6 +28,7 @@ use super::consult_fanout_admission::CachedAuto;
 use super::consult_fanout_store::{append_human_ruling, encode, policy_in};
 use super::create_origin::TaskCreateOrigin;
 use super::create_validation::consult_refusal;
+use super::task_actor::TaskActor;
 use super::{
     ConsultFanOutChoice, ConsultFanOutMode, ConsultFanOutPause, ConsultFanOutScope, TaskAskClass,
     TaskAskHandle, TaskAskHoldReason, TaskAskLaunchHold, TaskAskReceipt, TaskAskSpec,
@@ -71,7 +72,7 @@ use crate::wave_orchestration::{
 use serde::{Deserialize, Serialize};
 
 /// One fan-out launch, keyed by its launch ref.
-const FANOUT_LAUNCHES: SideTable<HexId, StoredLaunch, Named> =
+pub(super) const FANOUT_LAUNCHES: SideTable<HexId, StoredLaunch, Named> =
     SideTable::new(&side_table::TASK_FANOUT_LAUNCH);
 
 /// Domain of a wave launch's ref: one launch per actor and plan_ref.
@@ -246,28 +247,28 @@ impl LaunchPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct StoredLaunch {
-    launch_ref: EntityId,
-    actor: EntityId,
+    pub(super) launch_ref: EntityId,
+    pub(super) actor: TaskActor,
     /// The actor's [`EdgeActorClass`] byte: the launch runs as this actor.
     actor_class: u8,
     /// The project whose live lead and board may rule on this launch beside
     /// the owner, bound at admission; `None` leaves it to the owner.
     approval_project: Option<EntityId>,
     pub(super) payload: LaunchPayload,
-    plan: FanoutPlan,
+    pub(super) plan: FanoutPlan,
     estimate: FanoutEstimate,
     /// Stated before anything launched; every read returns this copy.
     pub(super) statement: FanoutStatement,
     policy_scope: ConsultFanOutScope,
     /// The standing-policy scope AUTO reads and a ruling records under.
-    scope: String,
+    pub(super) scope: String,
     pause: Option<FanoutApprovalRow>,
     /// The non-blocking question row of a launch that went out above the
     /// threshold.
     check_row: Option<FanoutApprovalRow>,
     /// Planning attempts parked under the fan-out hold for this launch.
-    held_attempts: Vec<AttemptId>,
-    dispatched_at: Option<u64>,
+    pub(super) held_attempts: Vec<AttemptId>,
+    pub(super) dispatched_at: Option<u64>,
     pub(super) task_refs: Vec<EntityId>,
     denied: bool,
     choice_receipt_ref: Option<String>,
@@ -280,6 +281,17 @@ impl StoredLaunch {
     fn class(&self) -> MemoryResult<EdgeActorClass> {
         EdgeActorClass::try_from_u8(self.actor_class)
             .ok_or_else(|| Error::CorruptedIndex("fan-out launch actor class").into())
+    }
+
+    /// The actor the launch runs as; an erased one refuses (FIX 3520).
+    fn launcher(&self) -> MemoryResult<EntityId> {
+        self.actor.id().ok_or_else(|| {
+            consult_refusal(
+                MEMORY_CODE_INVALID_STATE,
+                "the fan-out's launcher was erased",
+                "Its launch stays as history; there is nothing left to rule on.",
+            )
+        })
     }
 
     fn pause_row_ref(&self) -> String {
@@ -592,7 +604,7 @@ pub(super) fn admit_wave_launch_in(
     let estimate = fanout_estimate(&plan)?;
     let mut launch = StoredLaunch {
         launch_ref,
-        actor: input.actor,
+        actor: TaskActor::Actor(input.actor),
         actor_class: input.actor_class as u8,
         approval_project: None,
         payload,
@@ -832,7 +844,7 @@ pub(super) fn hold_ask_in(
     let plan = payload.plan(hold.group_ref, hold.actor, policy.mode)?;
     let mut launch = StoredLaunch {
         launch_ref: hold.group_ref,
-        actor: hold.actor,
+        actor: TaskActor::Actor(hold.actor),
         actor_class: hold.actor_class as u8,
         approval_project: hold.approval_project,
         payload,
@@ -935,7 +947,7 @@ pub(super) fn held_ask_receipt_in(
     else {
         return Ok(None);
     };
-    if launch.actor != actor || frozen != request_digest {
+    if !launch.actor.is(actor) || frozen != request_digest {
         return Err(MemoryError::bad_request(
             "ask intent key was used for different arguments",
         ));
@@ -950,7 +962,7 @@ pub(super) fn held_ask_owner_in(
     txn: &heed::RoTxn<'_>,
     group_ref: EntityId,
 ) -> MemoryResult<Option<EntityId>> {
-    Ok(held_ask_in(vault, txn, group_ref)?.map(|launch| launch.actor))
+    Ok(held_ask_in(vault, txn, group_ref)?.and_then(|launch| launch.actor.id()))
 }
 
 /// A held ask as its approval releases it.
@@ -1120,7 +1132,7 @@ fn record_dispatched_check_in(
                 .plan(check.launch_ref, check.actor, governed.policy.mode)?;
             StoredLaunch {
                 launch_ref: check.launch_ref,
-                actor: check.actor,
+                actor: TaskActor::Actor(check.actor),
                 actor_class: check.actor_class as u8,
                 approval_project: None,
                 payload: check.payload,
@@ -1243,7 +1255,7 @@ impl Memory<'_> {
         let Some(launch) = load_launch(vault, txn, launch_ref)? else {
             return Ok(None);
         };
-        let own = launch.actor == self.actor() && launch.actor_class == self.actor_class() as u8;
+        let own = launch.actor.is(self.actor()) && launch.actor_class == self.actor_class() as u8;
         if !own
             && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?
             && !launch_role_is_held_in(
@@ -1572,13 +1584,12 @@ impl Memory<'_> {
     ) -> MemoryResult<(StoredLaunch, FanoutPlan)> {
         let launch = load_launch(self.vault(), txn, launch_ref)?
             .ok_or_else(|| MemoryError::not_found("fan-out launch not found"))?;
-        verify_actor_binding_in_txn(self.vault(), txn, launch.actor, launch.class()?)?;
+        let actor = launch.launcher()?;
+        verify_actor_binding_in_txn(self.vault(), txn, actor, launch.class()?)?;
         if launch.estimate.plan_digest != expected_digest {
             return Err(stale_digest());
         }
-        let plan = launch
-            .payload
-            .plan(launch_ref, launch.actor, launch.plan.mode)?;
+        let plan = launch.payload.plan(launch_ref, actor, launch.plan.mode)?;
         if plan != launch.plan || fanout_plan_digest(&plan)? != expected_digest {
             return Err(stale_digest());
         }
@@ -1594,7 +1605,7 @@ impl Memory<'_> {
         owner_actor: EntityId,
         now: u64,
     ) -> MemoryResult<()> {
-        let class = launch.class()?;
+        let (actor, class) = (launch.launcher()?, launch.class()?);
         let task_refs: Vec<EntityId> = match &launch.payload {
             LaunchPayload::Wave {
                 cut,
@@ -1603,7 +1614,7 @@ impl Memory<'_> {
                 self.vault(),
                 txn,
                 super::wave_port::ApprovedCut {
-                    actor: launch.actor,
+                    actor,
                     actor_class: class,
                     origin: creator_origin.clone(),
                     cut: cut.clone(),
@@ -1626,7 +1637,7 @@ impl Memory<'_> {
                 effect,
                 ..
             } => {
-                let asker = self.vault().memory(launch.actor, class);
+                let asker = self.vault().memory(actor, class);
                 let task_refs = asker.release_held_ask_in(
                     txn,
                     *group_ref,
@@ -1668,7 +1679,7 @@ impl Memory<'_> {
         let mut pending = Vec::new();
         for (_, launch) in FANOUT_LAUNCHES.scan(&vault.store, &txn)? {
             let own =
-                launch.actor == self.actor() && launch.actor_class == self.actor_class() as u8;
+                launch.actor.is(self.actor()) && launch.actor_class == self.actor_class() as u8;
             if !owner
                 && !own
                 && !launch_role_is_held_in(

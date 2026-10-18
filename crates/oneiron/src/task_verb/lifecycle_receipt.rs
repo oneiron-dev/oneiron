@@ -28,6 +28,7 @@ use crate::task_type::TaskTypeRef;
 use super::brief::QueueTaskBrief;
 use super::highway_post::brief_type_ref_in;
 use super::highway_types::{TaskCallReceipt, TaskLifecycleRecord};
+use super::task_actor::names_no_actor;
 use super::wire_decode::task_verb_body_in;
 
 /// Domain of a lifecycle receipt's id.
@@ -139,7 +140,7 @@ fn project(
         receipt_id: id.to_owned(),
         receipt_kind: ReceiptKind::TaskLifecycle,
         occurred_at: lifecycle.occurred_at,
-        actor: Some(lifecycle.actor.to_hex()),
+        actor: lifecycle.actor.id().as_ref().map(EntityId::to_hex),
         on_behalf_of: lifecycle.on_behalf_of.clone(),
         outcome: lifecycle.outcome.clone(),
         job_ref: lifecycle.job_ref.clone(),
@@ -169,6 +170,44 @@ pub(crate) fn erase_in_txn(
         {
             RECEIPTS.delete(store, txn, &key)?;
         }
+    }
+    Ok(())
+}
+
+/// Erasing `actor` from the lifecycle receipts (FIX 3520): each one that
+/// names it as its actor, or as whom the call ran on behalf of, keeps its
+/// row, call, outcome, time, refs and fields, and names no one there. The
+/// task erase above deletes by TASK, not by actor. One-way, in the erase's
+/// own transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a receipt row that cannot be read.
+pub(crate) fn erase_lifecycle_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let hex = actor.to_hex();
+    let mut rows = Vec::new();
+    for (key, mut row) in RECEIPTS.scan(&vault.store, wtxn)? {
+        let acted = row.actor.as_deref() == Some(hex.as_str());
+        let behalf = row.on_behalf_of.as_deref() == Some(hex.as_str());
+        if acted {
+            row.actor = None;
+        }
+        if behalf {
+            row.on_behalf_of = None;
+        }
+        if acted || behalf {
+            rows.push((key, row));
+        }
+    }
+    for (key, row) in rows {
+        RECEIPTS.put(&vault.store, wtxn, &key, &row)?;
     }
     Ok(())
 }
