@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "area": "privacy",
+  "assets": [
+    {
+      "id": "privacy-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "owner-authored:oneiron-e2e-privacy-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "641bf6556dc0002d4e0c2c2f3e6b31ca3081234309058bdc26b4fff6e99c741a",
+      "expectedFacts": {
+        "tests": [
+          "PRIVACY-01",
+          "PRIVACY-02",
+          "PRIVACY-03",
+          "PRIVACY-04",
+          "PRIVACY-05",
+          "PRIVACY-06",
+          "PRIVACY-07",
+          "PRIVACY-08"
+        ],
+        "oracle": "Owner brief, pinned canon and authored fixture content; never engine output",
+        "historicalSweepMaxSeconds": 2592000,
+        "anonymousReceipts": 0,
+        "sharedBlobCopiesSurviveUntilLastHolder": true
+      },
+      "scenarios": [
+        "PRIVACY-01",
+        "PRIVACY-02",
+        "PRIVACY-03",
+        "PRIVACY-04",
+        "PRIVACY-05",
+        "PRIVACY-06",
+        "PRIVACY-07",
+        "PRIVACY-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "privacy-blob-v1",
+      "path": "shared-v1.txt",
+      "source": {
+        "uri": "owner-authored:oneiron-e2e-privacy-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "a7467420ce4ac49549a47e4c7049477f979d983f3f3f66c1c39b5a1de2e2ff5f",
+      "expectedFacts": {
+        "version": 1,
+        "byteLength": 87,
+        "sha256": "a7467420ce4ac49549a47e4c7049477f979d983f3f3f66c1c39b5a1de2e2ff5f",
+        "encoding": "utf-8",
+        "independentlyUploadedRecords": 2
+      },
+      "scenarios": [
+        "PRIVACY-04",
+        "PRIVACY-05"
+      ],
+      "requires": []
+    },
+    {
+      "id": "privacy-blob-v2",
+      "path": "shared-v2.txt",
+      "source": {
+        "uri": "owner-authored:oneiron-e2e-privacy-20261018",
+        "revision": "1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "d545ea0a1996b8c320c5db509bf87184f2c8e4f3afaf79ab762cfa0aa1f540b6",
+      "expectedFacts": {
+        "version": 2,
+        "byteLength": 87,
+        "sha256": "d545ea0a1996b8c320c5db509bf87184f2c8e4f3afaf79ab762cfa0aa1f540b6",
+        "encoding": "utf-8",
+        "independentlyUploadedRecords": 2
+      },
+      "scenarios": [
+        "PRIVACY-04"
+      ],
+      "requires": []
+    }
+  ],
+  "sourcePins": [
+    {
+      "uri": "/oneiron/core/oneiron-arch-0038-deletion-redaction-canonical-snapshot-v1/",
+      "sha256": "629dc4de88f758f6b8c8151109352913ee493ec8758bbb9e1778a106ffd369c2"
+    },
+    {
+      "uri": "/oneiron/core/oneiron-arch-0052-off-record-branch-store-v1/",
+      "sha256": "3d47f616cdadfce6ce30558750cff7d8b721af681e0a2ce9d5f3057c03704bf9"
+    },
+    {
+      "uri": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/",
+      "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+    },
+    {
+      "uri": "/oneiron/core/oneiron-arch-0040-write-gates-provenance-trust-v1/",
+      "sha256": "6b960493c722c1182a81a5c168d63a9be3d8a669559addf3a749f556c4628050"
+    },
+    {
+      "uri": "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/",
+      "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
+    },
+    {
+      "uri": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
+      "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+    },
+    {
+      "uri": "/oneiron/sync/oneiron-arch-0023b-crdt-sync-implementation-v1/",
+      "sha256": "92160a74ea205a7d4e6cdbc9fcaa642dc31f0230ff5e71f116dc32f32a2dbcc4"
+    }
+  ],
+  "registryPin": {
+    "uri": "/registry/oneiron/",
+    "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7",
+    "rows": [
+      "OF-013",
+      "OF-044",
+      "OF-045",
+      "OF-143",
+      "OF-270",
+      "OF-282",
+      "OF-283",
+      "OF-326",
+      "OF-449",
+      "OF-468",
+      "OF-470",
+      "OF-500",
+      "OF-597"
+    ]
+  },
+  "bindingHead": "5ecd5af5bea2c70e25760f0583f276790f49fba4",
+  "assumptions": {
+    "profile": "deterministic",
+    "slots": 1,
+    "engineConstantsChanged": false,
+    "testsNotExecutedOnMac": true
+  }
+}

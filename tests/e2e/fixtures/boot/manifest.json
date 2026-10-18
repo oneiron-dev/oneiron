@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "area": "boot",
+  "assets": [
+    {
+      "id": "boot-journeys",
+      "path": "journeys.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-boot-authored-memory-journeys",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "85f8b440e5d2dadcfe34029786922c336aad1d6427a46796ec9e2da4cbedd6a9",
+      "expectedFacts": {
+        "oracle": "Fixed authored message IDs, exact preference values and shared isolation text; no model output or engine-derived answers.",
+        "source": "user_stated",
+        "ordinaryClaimApproval": "auto",
+        "outOfScopeError": "FORBIDDEN",
+        "crossVaultCredentialError": "UNAUTHORIZED",
+        "timeUnits": "Unix seconds",
+        "modelRoutes": "none",
+        "isolation": "A=window, B=aisle; identical witnessed text, distinct entity IDs and owners"
+      },
+      "scenarios": [
+        "BOOT-01",
+        "BOOT-02",
+        "BOOT-03",
+        "BOOT-04",
+        "BOOT-05",
+        "BOOT-07",
+        "BOOT-08"
+      ],
+      "requires": []
+    },
+    {
+      "id": "boot-execute-mode-design",
+      "path": "execute-mode-design.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-boot-execute-mode-canon-design",
+        "revision": "2026-10-18-v1"
+      },
+      "licence": "CC0-1.0",
+      "sha256": "6af573928c427b5c0d7a528e6a31542ad0c5ea50e1b8eed09132af020817eb3e",
+      "expectedFacts": {
+        "blocked": "Read-only and propose-only execute_code admission must exist without granting core:write.",
+        "proposalApproval": "proposed",
+        "provenance": "Actor is credential-bound; source is host-bound; foreign input grants no authority.",
+        "bindingSnapshot": "5ecd5af5bea2c70e25760f0583f276790f49fba4"
+      },
+      "scenarios": [
+        "BOOT-06"
+      ],
+      "requires": []
+    }
+  ]
+}
