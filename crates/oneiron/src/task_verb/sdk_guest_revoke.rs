@@ -13,7 +13,8 @@ use crate::entity_id::EntityId;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::receipt::{GuestRevokeResponse, project_guest_revoke};
 
-/// `vault.guests.revoke`'s input: the ask guest's FEDERATION_GRANT.
+/// `vault.guests.revoke`'s input: the guest's FEDERATION_GRANT, an ask
+/// guest's or a Connect peer's.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GuestRevokeRequest {

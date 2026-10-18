@@ -334,20 +334,30 @@ pub(crate) fn task_realize_confession(
     }))
 }
 
-/// Seals a realization's confession once its try has closed (OF-544). A
-/// refusal is logged and the completed work stands.
-pub(crate) fn seal_task_realize_confession(
+/// Seals a realization's confession in the write that closes its try
+/// (OF-544), after the try is terminal there, so no crash can leave a
+/// completed realization unsealed. The seal writes in its own savepoint: a
+/// refusal rolls back alone, is logged, and the completed work stands.
+///
+/// # Errors
+///
+/// Storage errors opening or committing the savepoint.
+pub(crate) fn seal_task_realize_confession_in_txn(
     vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
     confession: &AttemptConfession,
     now: u64,
-) {
-    if let Err(error) = vault.record_attempt_confession(confession, now) {
-        tracing::warn!(
+) -> Result<()> {
+    let mut savepoint = vault.store.env.nested_write_txn(txn)?;
+    match vault.record_attempt_confession_in_txn(&mut savepoint, confession, now) {
+        Ok(_) => savepoint.commit()?,
+        Err(error) => tracing::warn!(
             kind = ?error.kind(),
             attempt = ?confession.attempt,
             "a TASK realization's confession was not sealed"
-        );
+        ),
     }
+    Ok(())
 }
 
 /// A realization's answer as it was stored, whole: its result NOTE, then

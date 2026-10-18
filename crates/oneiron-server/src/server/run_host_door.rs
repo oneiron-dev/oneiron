@@ -65,7 +65,7 @@ use crate::api::{
 };
 use crate::decision_artifact::HostUnitDecider;
 use crate::decision_graph::LadderGraphAnswerer;
-use crate::decision_verdict::{HELD_IMAGE, HeldImage, run_verdict};
+use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdict};
 
 /// The host rows whose success lands a turn, which wakes its conversation.
 const LANDS_TURN: [AgentVerb; 5] = [
@@ -133,8 +133,14 @@ impl AgentVerbDoor for RunHostDoor {
         origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let line = self
+            .line
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         if call.verb.is_browser() {
-            // The run's thread holds the call while its guest acts.
+            // The run's thread holds the call while its guest acts; its step
+            // verdicts spend on the run's line (FIX 3574).
             let memory = agent_memory(&self.server, self.actor, origin, invocation);
             return self.guests.call(
                 &self.server,
@@ -142,7 +148,7 @@ impl AgentVerbDoor for RunHostDoor {
                 call,
                 origin,
                 &memory,
-                VerdictAsker::Agent(self.actor),
+                VerdictAsker::Agent(self.actor, line),
                 self.actor.entity_ref(),
             );
         }
@@ -159,11 +165,6 @@ impl AgentVerbDoor for RunHostDoor {
         let origin = origin.clone();
         let verb = call.verb;
         let input = call.input.clone();
-        let line = self
-            .line
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
         self.runtime.spawn_blocking(move || {
             let _ = sender.send(match board {
                 Some(board) => {
@@ -470,6 +471,8 @@ fn host_row(
                 lane.as_ref(),
                 held,
                 &request,
+                // It bills the payer the run's line binds (FIX 3574).
+                line.and_then(RunAdmission::payer),
             )?)
         }
         AgentVerb::VaultGraphAsk => {
@@ -492,19 +495,14 @@ fn host_row(
             let mut answerer = LadderGraphAnswerer::new(server, actor, dial, budget)?
                 .with_posture(request.posture)
                 .with_criteria(request.criteria.unwrap_or_default());
-            encode(
-                match run_graph_ask_receipted(
-                    &lane,
-                    actor,
-                    request.question,
-                    &units,
-                    &mut answerer,
-                    now,
-                ) {
-                    Ok(receipts) => GraphAskOutcome::from(receipts),
-                    Err(failure) => GraphAskOutcome::from_failure(failure)?,
-                },
-            )
+            // Its model rungs bill the payer the run's line binds (FIX 3574).
+            let asked = on_caller_payer(line.and_then(RunAdmission::payer), || {
+                run_graph_ask_receipted(&lane, actor, request.question, &units, &mut answerer, now)
+            });
+            encode(match asked {
+                Ok(receipts) => GraphAskOutcome::from(receipts),
+                Err(failure) => GraphAskOutcome::from_failure(failure)?,
+            })
         }
         AgentVerb::VaultQuestionsCreate => {
             let request: QuestionCreateRequest = decode(input)?;

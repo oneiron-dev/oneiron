@@ -78,13 +78,13 @@ pub struct VaultVmConfig {
     #[serde(default)]
     pub artifact_domains: Vec<String>,
     /// This vault's managed settings files, as a read-only ext4 image the
-    /// supervisor builds (FIX 2168, FIX 3487). The guest mounts it at
-    /// `/config` and passes each file it holds to the engine: `models.toml`
-    /// as `--models-file`, and under `seal/` `key.pem`, `chain.pem`,
-    /// `trust.pem` and `organ` as the matching `--seal-*-file` and
-    /// `--seal-organ` flags, and the one-line `tsa-url` and `signing-url` as
-    /// `--seal-tsa-url` and `--seal-signing-url`. Without it the guest runs
-    /// with none of them.
+    /// supervisor builds (FIX 2168, FIX 3487, FIX 777). The guest mounts it
+    /// at `/config` and passes each file it holds to the engine: `models.toml`
+    /// as `--models-file`, `embedder.toml` as `--embedder-file`, and under
+    /// `seal/` `key.pem`, `chain.pem`, `trust.pem` and `organ` as the
+    /// matching `--seal-*-file` and `--seal-organ` flags, and the one-line
+    /// `tsa-url` and `signing-url` as `--seal-tsa-url` and
+    /// `--seal-signing-url`. Without it the guest runs with none of them.
     #[serde(default)]
     pub config_disk: Option<PathBuf>,
 }

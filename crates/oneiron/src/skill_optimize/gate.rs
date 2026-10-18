@@ -207,8 +207,8 @@ pub(crate) use admission::{
     with_optimized_skill_admission,
 };
 pub(crate) use ledger::{
-    displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_receipts,
-    validate_judge_revision,
+    displaced_judge_revision_in_txn, ensure_current_judge_in_txn, skill_edit_verdict_in_txn,
+    skill_edit_verdict_receipts, validate_judge_revision,
 };
 pub(crate) use preflight::{
     SkillEditTrialBasis, skill_edit_preflight_passed_in_txn, skill_edit_trial_basis_in_txn,

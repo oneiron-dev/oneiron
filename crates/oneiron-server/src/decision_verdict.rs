@@ -24,7 +24,9 @@
 //! caller ([`rung_meter`]), never the host's. No caller has a spending cap
 //! (rule 5). A caller whose verdicts spend past [`VERDICT_SPEND_CHECK_UNITS`]
 //! in a window raises the host's typed "is everything okay" check, and every
-//! verdict still answers.
+//! verdict still answers. A caller whose run a room's root spend scope funds
+//! bills that payer on every rung, as its run's other model calls do (FIX
+//! 3574); every other caller's verdict bills the vault owner.
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -38,6 +40,7 @@ use oneiron::llm::decision::{
     routine_choice,
 };
 use oneiron::llm::image::ImageBytes;
+use oneiron::llm::run_admission::PayerPerson;
 use oneiron::memory::caps::MAX_RECALL_DEADLINE_MS;
 use oneiron::memory::{
     BlobArtifactInput, BlobVersionView, ImageViewRequest, MEMORY_CODE_INTERNAL,
@@ -70,6 +73,8 @@ pub(crate) const VERDICT_SPEND_WINDOW_SECS: u64 = 86_400;
 thread_local! {
     /// The caller's own meter the verdict on this thread spends on.
     static CALLER_METER: RefCell<Option<BudgetGuard>> = const { RefCell::new(None) };
+    /// The payer the caller's run bills, while a room funds it.
+    static CALLER_PAYER: RefCell<Option<PayerPerson>> = const { RefCell::new(None) };
 }
 
 /// The meter a model rung spends on: inside a verdict, the caller's own
@@ -84,6 +89,13 @@ fn caller_meter() -> Option<BudgetGuard> {
     CALLER_METER.with(|slot| slot.borrow().clone())
 }
 
+/// The payer a model rung's run bills: inside a caller's scope on this
+/// thread, the PERSON a room's root spend scope funds the caller's run
+/// through (FIX 3574); else none, the vault owner.
+pub(crate) fn rung_payer() -> Option<PayerPerson> {
+    CALLER_PAYER.with(|slot| slot.borrow().clone())
+}
+
 /// Runs `call` with every model rung it reaches on this thread spending on
 /// `meter`, and puts back what was there before, panic or not.
 fn on_caller_meter<T>(meter: &BudgetGuard, call: impl FnOnce() -> T) -> T {
@@ -95,6 +107,22 @@ fn on_caller_meter<T>(meter: &BudgetGuard, call: impl FnOnce() -> T) -> T {
         }
     }
     let _restore = Restore(CALLER_METER.with(|slot| slot.replace(Some(meter.clone()))));
+    call()
+}
+
+/// Runs `call` with every model rung it reaches on this thread billing
+/// `payer`, the PERSON the caller's run line binds, and puts back what was
+/// there before, panic or not. The host hands it in from the run's own line;
+/// no request names it.
+pub(crate) fn on_caller_payer<T>(payer: Option<&PayerPerson>, call: impl FnOnce() -> T) -> T {
+    struct Restore(Option<PayerPerson>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let previous = self.0.take();
+            CALLER_PAYER.with(|slot| *slot.borrow_mut() = previous);
+        }
+    }
+    let _restore = Restore(CALLER_PAYER.with(|slot| slot.replace(payer.cloned())));
     call()
 }
 
@@ -184,7 +212,13 @@ impl HeldImage {
 /// Every model rung blocks on the server's runtime: call this on a blocking
 /// thread. Each rung spends on the caller's own line, a meter bound to
 /// `principal` with no limit ([`BudgetGuard::uncapped`]), and its spend counts
-/// toward the caller's check (FIX 1123).
+/// toward the caller's check (FIX 1123). `payer` is the PERSON the caller's
+/// run line bills when a room's root spend scope funds the run (FIX 3574),
+/// as the host bound it; `None` bills the vault owner.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the caller's verdict"
+)]
 pub(crate) fn run_verdict(
     server: &SyncServer,
     principal: EntityId,
@@ -193,6 +227,7 @@ pub(crate) fn run_verdict(
     lane: Option<&ScopedRead<'_>>,
     held: Option<DecisionImage>,
     request: &AiVerdictRequest,
+    payer: Option<&PayerPerson>,
 ) -> MemoryResult<AiVerdict> {
     let vault = server.vault();
     // The caller's own Read line: it admits and charges every rung's call,
@@ -207,7 +242,9 @@ pub(crate) fn run_verdict(
         WriteActor::new(principal, class),
     );
     let answered = on_caller_meter(&meter, || {
-        answer_verdict(server, principal, class, reader, lane, held, request)
+        on_caller_payer(payer, || {
+            answer_verdict(server, principal, class, reader, lane, held, request)
+        })
     });
     let now = vault.now_recorded_at();
     if let Some((window, spent)) =
@@ -639,7 +676,11 @@ pub(crate) fn vision_rung(
                 )
             })?,
     };
-    let run = server.ai.undeclared_run(run_id, meter);
+    // It bills the payer the caller's run binds (FIX 3574).
+    let run = server
+        .ai
+        .model_runtime()
+        .funded_run(run_id, meter, rung_payer());
     let seat = LocalVisionModel::new(&server.ai, vault, run, tokio::runtime::Handle::current())
         .ok_or_else(unbound)?;
     seat.rung().map_err(|_| unbound())

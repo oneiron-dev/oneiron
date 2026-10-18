@@ -3,28 +3,18 @@ use super::layout::{Flow, Style};
 use super::*;
 use dom_query::{Document, NodeRef};
 
+/// Parses and merges a template of any size, with merge values of any number
+/// and length (Rule 5). The one bound is the nesting the renderer's recursion
+/// ([`walk`]) takes, not the template's size.
 pub(super) fn parse(html: &str, values: &BTreeMap<String, String>) -> Result<Document> {
-    if html.len() > 1024 * 1024
-        || values.len() > 4096
-        || values.values().map(String::len).sum::<usize>() > 1024 * 1024
-    {
-        return Err(ContentTemplateError::Limit);
-    }
     let document = Document::from(html);
-    let mut count = 0;
-    let mut total = 0;
     let mut stack = vec![(document.root(), 0)];
     while let Some((node, depth)) = stack.pop() {
-        count += 1;
-        if count > 50_000 || depth > 64 {
+        if depth > 64 {
             return Err(ContentTemplateError::Limit);
         }
         if node.is_text() {
             let text = merge(&node.text(), values)?;
-            total += text.len();
-            if total > 2 * 1024 * 1024 {
-                return Err(ContentTemplateError::Limit);
-            }
             node.set_text(text);
         } else if node.is_element() {
             let name = node
@@ -118,7 +108,6 @@ fn merge(text: &str, values: &BTreeMap<String, String>) -> Result<String> {
         let end = rest.find("}}").ok_or(ContentTemplateError::MergeField)?;
         let key = rest[..end].trim();
         if key.is_empty()
-            || key.len() > 128
             || !key
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
@@ -126,9 +115,6 @@ fn merge(text: &str, values: &BTreeMap<String, String>) -> Result<String> {
             return Err(ContentTemplateError::MergeField);
         }
         let value = values.get(key).ok_or(ContentTemplateError::MergeField)?;
-        if out.len() + value.len() > 2 * 1024 * 1024 {
-            return Err(ContentTemplateError::Limit);
-        }
         out.push_str(value);
         rest = &rest[end + 2..];
     }
@@ -160,7 +146,6 @@ pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
             for selector in selectors.split(',') {
                 let selector = selector.trim();
                 if selector.is_empty()
-                    || selector.len() > 128
                     || !selector
                         .bytes()
                         .all(|b| b.is_ascii_alphanumeric() || b".#_-".contains(&b))
@@ -175,21 +160,9 @@ pub(super) fn render(document: &Document, flow: &mut Flow) -> Result<()> {
                     matcher,
                     declarations: declarations.into(),
                 });
-                if rules.len() > 1024 {
-                    return Err(ContentTemplateError::Limit);
-                }
             }
             rest = remaining;
         }
-    }
-    if document
-        .root()
-        .descendants_it()
-        .count()
-        .saturating_mul(rules.len().max(1))
-        > 500_000
-    {
-        return Err(ContentTemplateError::Limit);
     }
     walk(document.root(), flow, Style::default(), &rules, 0)?;
     flow.flush()
@@ -466,6 +439,8 @@ fn walk(
     }
     Ok(())
 }
+/// The narrowest a table cell's content is laid out, in points.
+const MIN_CELL_POINTS: f64 = 12.;
 fn table(
     node: NodeRef<'_>,
     flow: &mut Flow,
@@ -491,28 +466,31 @@ fn table(
             return Err(ContentTemplateError::UnsupportedHtml);
         }
         let cells = row.element_children();
-        if cells.is_empty() || cells.len() > 32 {
-            return Err(ContentTemplateError::Limit);
+        if cells.is_empty() {
+            continue;
         }
-        let width = flow.width() / cells.len() as f64 - 6.;
-        if width < 12. {
-            return Err(ContentTemplateError::Overflow);
-        }
-        let mut rendered = Vec::new();
-        for cell in cells {
-            if !cell.has_name("td") && !cell.has_name("th") {
-                return Err(ContentTemplateError::UnsupportedHtml);
+        // A row of more cells than fit across the flow, each at least
+        // MIN_CELL_POINTS wide, wraps onto further bands of even width; no
+        // column count refuses it (Rule 5).
+        let fit = ((flow.width() / (MIN_CELL_POINTS + 6.)).floor() as usize).max(1);
+        let bands = cells.len().div_ceil(fit);
+        for band in cells.chunks(cells.len().div_ceil(bands)) {
+            let width = flow.width() / band.len() as f64 - 6.;
+            if width < MIN_CELL_POINTS {
+                return Err(ContentTemplateError::Overflow);
             }
-            let mut output = Flow::new(TemplatePage {
-                width,
-                height: flow.page.height,
-                margin: 0.,
-            });
-            walk(cell, &mut output, style, rules, depth + 1)?;
-            output.flush()?;
-            rendered.push(output);
+            let mut rendered = Vec::new();
+            for cell in band {
+                if !cell.has_name("td") && !cell.has_name("th") {
+                    return Err(ContentTemplateError::UnsupportedHtml);
+                }
+                let mut output = Flow::new(flow.cell_page(width));
+                walk(*cell, &mut output, style, rules, depth + 1)?;
+                output.flush()?;
+                rendered.push(output);
+            }
+            flow.table_row(rendered)?;
         }
-        flow.table_row(rendered)?;
     }
     Ok(())
 }

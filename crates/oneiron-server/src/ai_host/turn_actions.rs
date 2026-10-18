@@ -129,10 +129,14 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
     .map_err(|error| error.to_string())?;
     // A reply in a room bills the payer whose consent on its agent's join
     // funds that room (FIX 805): one with no payer to bill is refused, typed,
-    // before anything is written or any model is called.
-    let funding =
-        blocking(|| room_launch_funding(vault, action.conversation, None, context.agent, actor))
-            .map_err(|fault| fault.to_string())?;
+    // before anything is written or any model is called. A reply in a thread
+    // lands beside the turn it answers again, so the join filed for that
+    // thread funds it first, then the room's (FIX 3572).
+    let place = blocking(|| vault.turn_room_work(action.assistant_turn))
+        .map_err(|error| error.to_string())?;
+    let (room, branch) = place.map_or((action.conversation, None), |work| (work.room, work.branch));
+    let funding = blocking(|| room_launch_funding(vault, room, branch, context.agent, actor))
+        .map_err(|fault| fault.to_string())?;
     let seat = ai
         .chat_seat()
         .cloned()
