@@ -350,24 +350,14 @@ pub struct TeamReceiptView {
     pub outcome_receipt: Option<String>,
 }
 
-/// Whether a seat route carries a type stamp. Agent-run seats are born
-/// unstamped until the seat stamp lands (S5).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum RouteStampState {
-    UnstampedBeforeS5,
-    Stamped,
-}
-
 /// One launched run's agent-run seat, as its choice receipt keeps it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RouteObservation {
     pub run_ref: EntityId,
-    /// The seat's own stamp; `None` while `stamp_state` is unstamped. The
-    /// dispatch's stamp is never copied in.
-    #[serde(default)]
-    pub type_ref: Option<TypeStamp>,
-    pub stamp_state: RouteStampState,
+    /// The stamp the seat was born under (S5), as its row keeps it. The
+    /// dispatch's stamp is never copied in: a seat born under another one
+    /// is a stamp mismatch.
+    pub type_ref: TypeStamp,
     pub model: String,
     pub effort: ReasoningEffort,
     pub why: String,

@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 586 facade rows, 2224 declarations.
+Census: 586 facade rows, 2223 declarations.
 Inputs: 535 of 586 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 518 of 586 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
@@ -6767,11 +6767,9 @@ class TeamReceiptView(TypedDict):
     width: int
     models: list[str]
     outcome_receipt: NotRequired[str | None]
-RouteStampState = Literal["unstamped_before_s5", "stamped"]
 class RouteObservation(TypedDict):
     run_ref: EntityId
-    type_ref: NotRequired[TypeStamp | None]
-    stamp_state: RouteStampState
+    type_ref: TypeStamp
     model: str
     effort: ReasoningEffort
     why: str
