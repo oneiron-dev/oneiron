@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 539 facade rows, 2026 declarations.
-Inputs: 488 of 539 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 482 of 539 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 89; unread shapes: 0.
+Census: 540 facade rows, 2057 declarations.
+Inputs: 490 of 540 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 483 of 540 fully typed, 57 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 85; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6564,15 +6564,365 @@ class CriticReviewOutcome(TypedDict):
     triage: CritiqueTriage
     artifacts: list[CritiqueArtifact]
     receipts: list[DecisionReceipt]
+class DeckInspectRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+Digest = str
+class IdMarks(TypedDict):
+    slide: NotRequired[int]
+    shapes: NotRequired[dict[str, int]]
+DeckShapeKind = Literal["shape", "picture", "graphic_frame", "connector", "group"]
+class DeckShapeInspection(TypedDict):
+    kind: DeckShapeKind
+    id: NotRequired[int | None]
+    creation_id: NotRequired[str | None]
+    name: NotRequired[str | None]
+    group_path: list[int]
+    content_fingerprint: Digest
+class DeckSlideInspection(TypedDict):
+    part: str
+    sld_id: int
+    creation_id: NotRequired[int | None]
+    content_fingerprint: Digest
+    render_fingerprint: Digest
+    shapes: list[DeckShapeInspection]
+class DeckIdentityAmbiguityDuplicateSlideCreationId(TypedDict):
+    kind: Literal["duplicate_slide_creation_id"]
+    creation_id: int
+    slides: list[int]
+class DeckIdentityAmbiguityDuplicateShapeId(TypedDict):
+    kind: Literal["duplicate_shape_id"]
+    slide: int
+    id: int
+    shapes: list[int]
+class DeckIdentityAmbiguityDuplicateShapeCreationId(TypedDict):
+    kind: Literal["duplicate_shape_creation_id"]
+    slide: int
+    id: str
+    shapes: list[int]
+DeckIdentityAmbiguity = DeckIdentityAmbiguityDuplicateSlideCreationId | DeckIdentityAmbiguityDuplicateShapeId | DeckIdentityAmbiguityDuplicateShapeCreationId
+class PptxShapeIdentity(TypedDict):
+    shape_id: int
+    creation_id: NotRequired[str | None]
+    fingerprint: list[int]
+    position: NotRequired[tuple[int, int] | None]
+class PptxSlideIdentity(TypedDict):
+    slide: int
+    part: str
+    sld_id: int
+    creation_id: NotRequired[int | None]
+    fingerprint: list[int]
+    shapes: list[PptxShapeIdentity]
+class PptxInspection(TypedDict):
+    slides: list[PptxSlideIdentity]
+    signature_parts: list[str]
+class DeckCommentInspectionInspected(TypedDict):
+    state: Literal["inspected"]
+    inspection: PptxInspection
+class DeckCommentInspectionRefused(TypedDict):
+    state: Literal["refused"]
+    reason: str
+DeckCommentInspection = DeckCommentInspectionInspected | DeckCommentInspectionRefused
+class DeckInspectionView(TypedDict):
+    artifact_id: EntityId
+    version: int
+    base: Digest
+    marks: IdMarks
+    slides: list[DeckSlideInspection]
+    ambiguities: list[DeckIdentityAmbiguity]
+    comments: DeckCommentInspection
+class StepTarget(TypedDict):
+    slide: str
+    shape: int
+    expected: Digest
+class StepXfrm(TypedDict):
+    offset: NotRequired[list[int] | None]
+    extent: NotRequired[list[int] | None]
+    rotation: NotRequired[int | None]
+    flip_h: NotRequired[bool | None]
+    flip_v: NotRequired[bool | None]
+StepAssetKind = Literal["factual", "illustration"]
+class AssetRef(TypedDict):
+    artifact: str
+    version: int
+    hash: Digest
+    kind: StepAssetKind
+    description: str
+StepPreset = Literal["rect", "roundRect", "ellipse", "triangle", "rightArrow"]
+StepSequence = Literal["name", "categories", "values"]
+class StepCellNumber(TypedDict):
+    number: float
+class StepCellText(TypedDict):
+    text: str
+class StepCellDate(TypedDict):
+    date: str
+StepCell = Literal["missing"] | StepCellNumber | StepCellText | StepCellDate
+class DeckStepSetTextBody(TypedDict):
+    target: StepTarget
+    text: str
+class DeckStepSetText(TypedDict):
+    set_text: DeckStepSetTextBody
+class DeckStepReplaceRunTextBody(TypedDict):
+    target: StepTarget
+    paragraph: int
+    run: int
+    expected: str
+    text: str
+class DeckStepReplaceRunText(TypedDict):
+    replace_run_text: DeckStepReplaceRunTextBody
+class DeckStepSetXfrmBody(TypedDict):
+    target: StepTarget
+    xfrm: StepXfrm
+class DeckStepSetXfrm(TypedDict):
+    set_xfrm: DeckStepSetXfrmBody
+class DeckStepMoveInSlideSpaceBody(TypedDict):
+    target: StepTarget
+    dx: int
+    dy: int
+class DeckStepMoveInSlideSpace(TypedDict):
+    move_in_slide_space: DeckStepMoveInSlideSpaceBody
+class DeckStepSetPictureBody(TypedDict):
+    target: StepTarget
+    asset: AssetRef
+class DeckStepSetPicture(TypedDict):
+    set_picture: DeckStepSetPictureBody
+class DeckStepSetNotesBody(TypedDict):
+    slide: str
+    expected: NotRequired[str | None]
+    text: str
+class DeckStepSetNotes(TypedDict):
+    set_notes: DeckStepSetNotesBody
+class DeckStepAddShapeBody(TypedDict):
+    slide: str
+    preset: StepPreset
+    name: str
+    offset: list[int]
+    extent: list[int]
+class DeckStepAddShape(TypedDict):
+    add_shape: DeckStepAddShapeBody
+class DeckStepDeleteShapeBody(TypedDict):
+    target: StepTarget
+    cascade: NotRequired[bool]
+class DeckStepDeleteShape(TypedDict):
+    delete_shape: DeckStepDeleteShapeBody
+class DeckStepReparentBody(TypedDict):
+    target: StepTarget
+    parent: NotRequired[int | None]
+class DeckStepReparent(TypedDict):
+    reparent: DeckStepReparentBody
+class DeckStepDuplicateSlideBody(TypedDict):
+    slide: str
+    expected: Digest
+class DeckStepDuplicateSlide(TypedDict):
+    duplicate_slide: DeckStepDuplicateSlideBody
+class DeckStepReorderSlidesBody(TypedDict):
+    order: list[int]
+class DeckStepReorderSlides(TypedDict):
+    reorder_slides: DeckStepReorderSlidesBody
+class DeckStepSetTableCellBody(TypedDict):
+    slide: str
+    table: int
+    row: int
+    col: int
+    expected: str
+    value: str
+class DeckStepSetTableCell(TypedDict):
+    set_table_cell: DeckStepSetTableCellBody
+class DeckStepSetSeriesValuesBody(TypedDict):
+    chart: str
+    series: int
+    sequence: StepSequence
+    values: list[StepCell]
+class DeckStepSetSeriesValues(TypedDict):
+    set_series_values: DeckStepSetSeriesValuesBody
+DeckStep = DeckStepSetText | DeckStepReplaceRunText | DeckStepSetXfrm | DeckStepMoveInSlideSpace | DeckStepSetPicture | DeckStepSetNotes | DeckStepAddShape | DeckStepDeleteShape | DeckStepReparent | DeckStepDuplicateSlide | DeckStepReorderSlides | DeckStepSetTableCell | DeckStepSetSeriesValues
+class DeckTransaction(TypedDict):
+    schema: int
+    base: Digest
+    marks: NotRequired[IdMarks]
+    seed: str
+    steps: list[DeckStep]
+DeckRenderSide = Literal["base", "candidate"]
+class DeckRender(TypedDict):
+    side: DeckRenderSide
+    slide: str
+    image_hash: list[int]
+    renderer: str
+class DeckEditContext(TypedDict):
+    made_by: NotRequired[EntityId | None]
+    thread: NotRequired[EntityId | None]
+    renders: NotRequired[list[DeckRender]]
 class DeckProposeRequest(TypedDict):
     artifact_ref: str
-    transaction: Any
+    transaction: DeckTransaction
     run_ref: str
-    context: NotRequired[Any]
-    made_by: NotRequired[Any | None]
+    context: NotRequired[DeckEditContext]
+    made_by: NotRequired[MadeBy | None]
+OfficeFormat = Literal["xlsx", "docx", "pptx"]
+class DeckRejectionSheet(TypedDict):
+    name: str
+    index: int
+class DeckRejectionSheetDependency(TypedDict):
+    from_sheet: str
+    to_sheet: str
+class DeckRejectionSummary(TypedDict):
+    format: OfficeFormat
+    sheets: list[DeckRejectionSheet]
+    defined_names: list[str]
+    has_pivots: bool
+    has_charts: bool
+    has_macros: bool
+    cross_sheet_dependencies: list[DeckRejectionSheetDependency]
+    unknown_parts: list[str]
+class DeckRejectionCheck(TypedDict):
+    name: str
+    passed: bool
+    detail: str
+class DeckRejectionReport(TypedDict):
+    ok: bool
+    checks: list[DeckRejectionCheck]
+class DeckNativeRefusalExternalChartSource(TypedDict):
+    kind: Literal["external_chart_source"]
+    detail: str
+class DeckNativeRefusalFormulaBackedSeries(TypedDict):
+    kind: Literal["formula_backed_series"]
+    detail: str
+class DeckNativeRefusalAmbiguousChartData(TypedDict):
+    kind: Literal["ambiguous_chart_data"]
+    detail: str
+class DeckNativeRefusalSharedChartData(TypedDict):
+    kind: Literal["shared_chart_data"]
+class DeckNativeRefusalUnsupportedChartFamily(TypedDict):
+    kind: Literal["unsupported_chart_family"]
+    detail: str
+class DeckNativeRefusalMergedContinuationCell(TypedDict):
+    kind: Literal["merged_continuation_cell"]
+class DeckNativeRefusalUnsupportedMergeTopology(TypedDict):
+    kind: Literal["unsupported_merge_topology"]
+    detail: str
+class DeckNativeRefusalLengthChange(TypedDict):
+    kind: Literal["length_change"]
+    have: int
+    want: int
+class DeckNativeRefusalStale(TypedDict):
+    kind: Literal["stale"]
+    detail: str
+class DeckNativeRefusalInvalid(TypedDict):
+    kind: Literal["invalid"]
+    detail: str
+class DeckNativeRefusalCacheMismatch(TypedDict):
+    kind: Literal["cache_mismatch"]
+class DeckNativeRefusalOutsideAllowedParts(TypedDict):
+    kind: Literal["outside_allowed_parts"]
+    part: str
+class DeckNativeRefusalWorkbook(TypedDict):
+    kind: Literal["workbook"]
+    detail: str
+class DeckNativeRefusalPackage(TypedDict):
+    kind: Literal["package"]
+    detail: str
+class DeckNativeRefusalXml(TypedDict):
+    kind: Literal["xml"]
+    detail: str
+DeckNativeRefusal = DeckNativeRefusalExternalChartSource | DeckNativeRefusalFormulaBackedSeries | DeckNativeRefusalAmbiguousChartData | DeckNativeRefusalSharedChartData | DeckNativeRefusalUnsupportedChartFamily | DeckNativeRefusalMergedContinuationCell | DeckNativeRefusalUnsupportedMergeTopology | DeckNativeRefusalLengthChange | DeckNativeRefusalStale | DeckNativeRefusalInvalid | DeckNativeRefusalCacheMismatch | DeckNativeRefusalOutsideAllowedParts | DeckNativeRefusalWorkbook | DeckNativeRefusalPackage | DeckNativeRefusalXml
+class DeckStepRefusalTargetChanged(TypedDict):
+    kind: Literal["target_changed"]
+class DeckStepRefusalAmbiguousAnchor(TypedDict):
+    kind: Literal["ambiguous_anchor"]
+    detail: str
+class DeckStepRefusalAnimatedTextStructureChanged(TypedDict):
+    kind: Literal["animated_text_structure_changed"]
+class DeckStepRefusalAnimationDependencyUnsupported(TypedDict):
+    kind: Literal["animation_dependency_unsupported"]
+    detail: str
+class DeckStepRefusalNonInvertibleGroupTransform(TypedDict):
+    kind: Literal["non_invertible_group_transform"]
+class DeckStepRefusalUnrepresentableTransform(TypedDict):
+    kind: Literal["unrepresentable_transform"]
+    detail: str
+class DeckStepRefusalInheritedTransform(TypedDict):
+    kind: Literal["inherited_transform"]
+class DeckStepRefusalPartDiffOutsideTransaction(TypedDict):
+    kind: Literal["part_diff_outside_transaction"]
+    part: str
+class DeckStepRefusalWriteOutsideTarget(TypedDict):
+    kind: Literal["write_outside_target"]
+    part: str
+    why: str
+class DeckStepRefusalTextMapping(TypedDict):
+    kind: Literal["text_mapping"]
+    detail: str
+class DeckStepRefusalMissing(TypedDict):
+    kind: Literal["missing"]
+    detail: str
+class DeckStepRefusalIdSpaceExhausted(TypedDict):
+    kind: Literal["id_space_exhausted"]
+class DeckStepRefusalReparentUnsupported(TypedDict):
+    kind: Literal["reparent_unsupported"]
+    detail: str
+class DeckStepRefusalCloneDependencyUnsupported(TypedDict):
+    kind: Literal["clone_dependency_unsupported"]
+    relationship: str
+class DeckStepRefusalReorderUnsupported(TypedDict):
+    kind: Literal["reorder_unsupported"]
+    detail: str
+class DeckStepRefusalGluedConnector(TypedDict):
+    kind: Literal["glued_connector"]
+    connector: NotRequired[int | None]
+class DeckStepRefusalInvalid(TypedDict):
+    kind: Literal["invalid"]
+    detail: str
+class DeckStepRefusalPicture(TypedDict):
+    kind: Literal["picture"]
+    detail: str
+class DeckStepRefusalReadBack(TypedDict):
+    kind: Literal["read_back"]
+    detail: str
+class DeckStepRefusalPackage(TypedDict):
+    kind: Literal["package"]
+    detail: str
+class DeckStepRefusalXml(TypedDict):
+    kind: Literal["xml"]
+    detail: str
+class DeckStepRefusalDeck(TypedDict):
+    kind: Literal["deck"]
+    detail: str
+class DeckStepRefusalNative(TypedDict):
+    kind: Literal["native"]
+    refusal: DeckNativeRefusal
+class DeckStepRefusalAsset(TypedDict):
+    kind: Literal["asset"]
+    detail: str
+DeckStepRefusal = DeckStepRefusalTargetChanged | DeckStepRefusalAmbiguousAnchor | DeckStepRefusalAnimatedTextStructureChanged | DeckStepRefusalAnimationDependencyUnsupported | DeckStepRefusalNonInvertibleGroupTransform | DeckStepRefusalUnrepresentableTransform | DeckStepRefusalInheritedTransform | DeckStepRefusalPartDiffOutsideTransaction | DeckStepRefusalWriteOutsideTarget | DeckStepRefusalTextMapping | DeckStepRefusalMissing | DeckStepRefusalIdSpaceExhausted | DeckStepRefusalReparentUnsupported | DeckStepRefusalCloneDependencyUnsupported | DeckStepRefusalReorderUnsupported | DeckStepRefusalGluedConnector | DeckStepRefusalInvalid | DeckStepRefusalPicture | DeckStepRefusalReadBack | DeckStepRefusalPackage | DeckStepRefusalXml | DeckStepRefusalDeck | DeckStepRefusalNative | DeckStepRefusalAsset
+class DeckTransactionRefusalInvalid(TypedDict):
+    kind: Literal["invalid"]
+    detail: str
+class DeckTransactionRefusalBaseChanged(TypedDict):
+    kind: Literal["base_changed"]
+class DeckTransactionRefusalNotEditable(TypedDict):
+    kind: Literal["not_editable"]
+class DeckTransactionRefusalStep(TypedDict):
+    kind: Literal["step"]
+    step: int
+    verb: str
+    refusal: DeckStepRefusal
+class DeckTransactionRefusalPartDiffOutsideTransaction(TypedDict):
+    kind: Literal["part_diff_outside_transaction"]
+    part: str
+class DeckTransactionRefusalPackage(TypedDict):
+    kind: Literal["package"]
+    detail: str
+class DeckTransactionRefusalDeck(TypedDict):
+    kind: Literal["deck"]
+    detail: str
+DeckTransactionRefusal = DeckTransactionRefusalInvalid | DeckTransactionRefusalBaseChanged | DeckTransactionRefusalNotEditable | DeckTransactionRefusalStep | DeckTransactionRefusalPartDiffOutsideTransaction | DeckTransactionRefusalPackage | DeckTransactionRefusalDeck
+class DeckProposeRejection(TypedDict):
+    inspection: DeckRejectionSummary
+    report: DeckRejectionReport
+    refusal: DeckTransactionRefusal
 class DeckProposeOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
-    rejected: NotRequired[Any | None]
+    rejected: NotRequired[DeckProposeRejection | None]
 class NativeOutputRequest(TypedDict):
     artifact_ref: str
     run_ref: str
@@ -8916,14 +9266,6 @@ class GeometryProps(TypedDict):
     flip_h: NotRequired[bool | None]
     flip_v: NotRequired[bool | None]
 Preset = Literal["rect", "round_rect", "ellipse", "triangle", "right_arrow"]
-Digest = str
-StepAssetKind = Literal["factual", "illustration"]
-class AssetRef(TypedDict):
-    artifact: str
-    version: int
-    hash: Digest
-    kind: StepAssetKind
-    description: str
 class HeldMedia(TypedDict):
     part: str
     hash: Digest

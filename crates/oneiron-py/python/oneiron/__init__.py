@@ -1904,6 +1904,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_ask(json.dumps(spec))))
+        def inspect_deck(self, spec):
+            """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_inspect_deck(json.dumps(spec))))
         def propose_deck(self, request: dict[str, Any]) -> dict[str, Any]:
             """Runs one native deck transaction over the head and holds the proposal for Keep."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_propose_deck(json.dumps(request, allow_nan=False))))

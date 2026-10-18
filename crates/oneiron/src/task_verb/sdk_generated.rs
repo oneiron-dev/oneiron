@@ -1741,6 +1741,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.inspect_deck",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::DeckInspectRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.propose_deck",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::DeckProposeRequest,
@@ -3223,6 +3229,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
+    "vault.artifacts.inspect_deck",
+    "vault.artifacts.propose_deck",
     "ai.steps.submit",
     "ai.steps.receipt",
     "ai.reply",
@@ -3647,6 +3655,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.workspace.roster" => crate::code_run::vault_read::request_schema::<
             Vec<crate::workspace_roster::WorkspaceRosterEntry>,
+        >(),
+        "vault.artifacts.inspect_deck" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::DeckInspectionView,
+        >(),
+        "vault.artifacts.propose_deck" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::DeckProposeOutcome,
         >(),
         "ai.steps.submit" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
@@ -6118,6 +6132,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.critic.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.inspect_deck" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8758,6 +8779,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.critic.review" => {
             let _input: crate::critic::review::CriticReviewSubmit = decode(value.clone())?;
         }
+        "vault.artifacts.inspect_deck" => {
+            let _input: crate::blob_artifact::DeckInspectRequest = decode(value.clone())?;
+        }
         "vault.artifacts.propose_deck" => {
             let _input: crate::blob_artifact::DeckProposeRequest = decode(value.clone())?;
         }
@@ -10166,6 +10190,9 @@ pub fn invoke(
         }
         "vault.artifacts.ask" => encode(vault_artifacts_ask(memory, decode(value)?)?),
         "vault.critic.review" => encode(vault_critic_review(memory, decode(value)?)?),
+        "vault.artifacts.inspect_deck" => {
+            encode(vault_artifacts_inspect_deck(memory, decode(value)?)?)
+        }
         "vault.artifacts.propose_deck" => {
             encode(vault_artifacts_propose_deck(memory, decode(value)?)?)
         }
@@ -13329,6 +13356,18 @@ pub fn vault_critic_review(
     input: crate::critic::review::CriticReviewSubmit,
 ) -> MemoryResult<crate::critic::review::CriticReviewOutcome> {
     crate::task_verb::sdk::host_only(memory, "vault.critic.review", &input)
+}
+pub fn vault_artifacts_inspect_deck(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::DeckInspectRequest,
+) -> MemoryResult<crate::blob_artifact::DeckInspectionView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.inspect_deck",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_inspect_deck(&input)
 }
 pub fn vault_artifacts_propose_deck(
     memory: &Memory<'_>,
