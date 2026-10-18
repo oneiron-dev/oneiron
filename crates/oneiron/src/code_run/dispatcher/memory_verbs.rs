@@ -67,6 +67,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::InferenceDefaultsReplace
             | SelfEffect::WakePolicyWrite
             | SelfEffect::ConnectorAnswer
+            // A world's settings, a proposal or an ask are canonical rows.
+            | SelfEffect::WorldPrivacySet
             | SelfEffect::AgentsSpawn
             | SelfEffect::AgentsPut
             | SelfEffect::TasksAsk

@@ -171,6 +171,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
             ),
             (
+                "vault.companions.access_requests.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.personas.preview",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
+                >(),
+            ),
+            (
+                "vault.personas.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::persona_snapshot::PersonaSnapshotCopyRequest,
+                >(),
+            ),
+            (
+                "vault.personas.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::persona_snapshot::PersonaSnapshotCopyEditRequest,
+                >(),
+            ),
+            (
                 "self.memory.diary.query",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::DiaryQueryRequest,
@@ -547,6 +571,59 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.weave.owner.item.wrong",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
                 ),
+            ),
+            (
+                "vault.weave.enqueue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WeaveEnqueueRequest,
+                >(),
+            ),
+            (
+                "vault.weave.schedules.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.weave.schedules.put",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveScheduleView>(),
+            ),
+            (
+                "vault.weave.schedules.clear",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveReaderRef>(),
+            ),
+            (
+                "vault.weave.owner.digest.render",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.inbox.concerns.review",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.inbox.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxLensRequest,
+                >(),
+            ),
+            (
+                "vault.inbox.groups",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxRunGroupsRequest,
+                >(),
+            ),
+            (
+                "vault.weave.digest.render",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.weave.link.corrections",
+                crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongLinkRequest>(
+                ),
+            ),
+            (
+                "self.inbox.lens",
+                crate::code_run::vault_read::request_schema::<
+                    crate::agent_inbox_lens::InboxLensRequest,
+                >(),
             ),
             (
                 "vault.skill_hubs.put",
@@ -1126,6 +1203,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.residence.prune",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResidencePruneRequest,
+                >(),
+            ),
+            (
+                "vault.residence.directives",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResidenceDirectivesRequest,
                 >(),
             ),
             (
@@ -1766,6 +1849,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.hooks.regen.due",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.hooks.regen.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenBindingRequest,
+                >(),
+            ),
+            (
+                "vault.hooks.regen.adopt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::hook_regen_doors::HookRegenAdoptRequest,
+                >(),
+            ),
+            (
                 "vault.artifacts.publish_approval",
                 crate::code_run::vault_read::request_schema::<
                     crate::artifact_hosting::door_types::ArtifactPublishRequest,
@@ -1934,6 +2033,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.code.proposal_submit",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::code_doors::CodeProposalSubmitRequest,
+                >(),
+            ),
+            (
+                "vault.code.conflict_record",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeConflictRecordRequest,
+                >(),
+            ),
+            (
+                "vault.code.conflict_view",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeConflictViewRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalResolveRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalReviewRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSettleRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_settlement",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSettlementRequest,
                 >(),
             ),
             (
@@ -2881,28 +3016,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
-                "self.browser.library.find",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryFindInput>(),
-            ),
-            (
-                "self.browser.library.propose",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::ProposeInput>(),
-            ),
-            (
-                "self.browser.library.retire",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetireInput>(
-                ),
-            ),
-            (
-                "self.browser.library.retired",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetiredInput>(
-                ),
-            ),
-            (
-                "self.browser.library.run",
-                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
-            ),
-            (
                 "self.desktop.open",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::OpenInput>(),
             ),
@@ -3418,6 +3531,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.sieve.queue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePageRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.retained",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePageRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePageRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.recipe_policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.recipe_policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.lease",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SieveLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.lease.refill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest,
+                >(),
+            ),
+            (
                 "vault.claims.vet",
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
             ),
@@ -3852,6 +4019,46 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.browser.library.find",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryFindInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryProposeInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.retire",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryRetireInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.retired",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryRetiredInput,
+                    >,
+                >(),
+            ),
+            (
+                "self.browser.library.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<
+                        crate::task_verb::sdk::BrowserLibraryRunInput,
+                    >,
+                >(),
+            ),
+            (
                 "self.browser.handover",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<
@@ -3920,6 +4127,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.worlds.privacy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_model::WorldPrivacySetInput,
+                >(),
+            ),
+            (
                 "vault.search",
                 crate::code_run::vault_read::request_schema::<crate::code_run::MemorySearchInput>(),
             ),
@@ -3980,6 +4193,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.standing.get",
     "self.standing.list",
     "self.standing.edit",
+    "vault.companions.access_requests.answer",
+    "vault.personas.preview",
+    "vault.personas.export",
+    "vault.personas.edit",
     "vault.fanout.spawn",
     "vault.fanout.slots",
     "self.budget",
@@ -4016,6 +4233,17 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.campaign.enroll",
     "vault.campaign.stage.evidence",
     "vault.campaign.unsubscribe",
+    "vault.weave.enqueue",
+    "vault.weave.schedules.list",
+    "vault.weave.schedules.put",
+    "vault.weave.schedules.clear",
+    "vault.weave.owner.digest.render",
+    "vault.inbox.concerns.review",
+    "vault.inbox.lens",
+    "vault.inbox.groups",
+    "vault.weave.digest.render",
+    "vault.weave.link.corrections",
+    "self.inbox.lens",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
     "vault.skill_hubs.publishers.admit",
@@ -4089,6 +4317,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.support_grants.mint",
     "vault.support_grants.list",
     "vault.support_grants.revoke",
+    "vault.residence.directives",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -4130,6 +4359,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.secrets.renew",
     "self.secrets.teardown",
     "self.secrets.use",
+    "vault.hooks.regen.due",
+    "vault.hooks.regen.get",
+    "vault.hooks.regen.adopt",
     "vault.artifacts.publish_approval",
     "vault.artifacts.publish",
     "vault.artifacts.repoint",
@@ -4151,6 +4383,13 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.artifacts.threads.list",
     "vault.artifacts.threads.assign",
     "vault.artifacts.threads.state",
+    "vault.code.proposal_submit",
+    "vault.code.conflict_record",
+    "vault.code.conflict_view",
+    "vault.code.proposal_resolve",
+    "vault.code.proposal_review",
+    "vault.code.proposal_settle",
+    "vault.code.proposal_settlement",
     "vault.code.model_heal_count",
     "vault.code.waits.resolve",
     "vault.code.waits.receipt",
@@ -4255,6 +4494,15 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.runs.step",
     "vault.runs.checkpoint",
     "vault.consolidation.promote",
+    "vault.sieve.queue",
+    "vault.sieve.retained",
+    "vault.sieve.receipts",
+    "vault.sieve.policy",
+    "vault.sieve.policy.set",
+    "vault.sieve.recipe_policy",
+    "vault.sieve.recipe_policy.set",
+    "vault.sieve.lease",
+    "vault.sieve.lease.refill",
     "vault.claims.vet",
     "vault.claims.vetting",
     "vault.memory.signal_extraction",
@@ -4325,6 +4573,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.crop",
     "self.browser.zoom",
     "self.browser.batch",
+    "self.browser.library.find",
+    "self.browser.library.propose",
+    "self.browser.library.retire",
+    "self.browser.library.retired",
+    "self.browser.library.run",
     "self.browser.handover",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
@@ -4353,6 +4606,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.standing.edit" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockEditReceipt,
+        >(),
+        "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CompanionAccessRequestAnswered,
+        >(),
+        "vault.personas.preview" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotPreview,
+        >(),
+        "vault.personas.export" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotExportedCopy,
+        >(),
+        "vault.personas.edit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::PersonaSnapshotExportedCopy,
         >(),
         "vault.fanout.spawn" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FanoutBatchView>()
@@ -4462,6 +4727,39 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.campaign.unsubscribe" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::CampaignUnsubscribeReceipt,
         >(),
+        "vault.weave.enqueue" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
+        }
+        "vault.weave.schedules.list" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::claim::WeaveScheduleView>>()
+        }
+        "vault.weave.schedules.put" => {
+            crate::code_run::vault_read::request_schema::<crate::claim::WeaveScheduleView>()
+        }
+        "vault.weave.schedules.clear" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::WeaveScheduleCleared,
+        >(),
+        "vault.weave.owner.digest.render" => crate::code_run::vault_read::request_schema::<
+            Option<crate::claim::WeaveDigestRendered>,
+        >(),
+        "vault.inbox.concerns.review" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::DreamerAttemptRef>()
+        }
+        "vault.inbox.lens" => {
+            crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
+        }
+        "vault.inbox.groups" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::inbox::InboxGroup>>()
+        }
+        "vault.weave.digest.render" => crate::code_run::vault_read::request_schema::<
+            Option<crate::claim::WeaveDigestRendered>,
+        >(),
+        "vault.weave.link.corrections" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::claim::WeaveLinkCorrectionView>,
+        >(),
+        "self.inbox.lens" => {
+            crate::code_run::vault_read::request_schema::<crate::agent_inbox_lens::InboxLensPage>()
+        }
         "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillHubConfigured,
         >(),
@@ -4685,6 +4983,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.support_grants.revoke" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SupportGrantRevokeAnswer,
         >(),
+        "vault.residence.directives" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::ResidenceDirectiveView>,
+        >(),
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
         >(),
@@ -4808,6 +5109,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.secrets.use" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
         }
+        "vault.hooks.regen.due" => {
+            crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
+        }
+        "vault.hooks.regen.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::hook_regen_doors::HookRegenView>,
+        >(),
+        "vault.hooks.regen.adopt" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::PackPutReceipt>()
+        }
         "vault.artifacts.publish_approval" => crate::code_run::vault_read::request_schema::<
             crate::artifact_hosting::door_types::ArtifactPublishApproval,
         >(),
@@ -4874,6 +5184,27 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.artifacts.threads.state" => crate::code_run::vault_read::request_schema::<
             crate::anchored_annotation::AnnotationThreadView,
+        >(),
+        "vault.code.proposal_submit" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.conflict_record" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeConflictView,
+        >(),
+        "vault.code.conflict_view" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeConflictHistory,
+        >(),
+        "vault.code.proposal_resolve" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSubmitted,
+        >(),
+        "vault.code.proposal_review" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.proposal_settle" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
+        >(),
+        "vault.code.proposal_settlement" => crate::code_run::vault_read::request_schema::<
+            crate::memory::code_doors::CodeProposalSettlementView,
         >(),
         "vault.code.model_heal_count" => crate::code_run::vault_read::request_schema::<
             crate::memory::code_run_doors::CodeRunModelHealCountView,
@@ -5187,6 +5518,33 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
         >(),
+        "vault.sieve.queue" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveQueuePage,
+        >(),
+        "vault.sieve.retained" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveRetainedPage,
+        >(),
+        "vault.sieve.receipts" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveReceiptsPage,
+        >(),
+        "vault.sieve.policy" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::SievePolicy>()
+        }
+        "vault.sieve.policy.set" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::SievePolicy>()
+        }
+        "vault.sieve.recipe_policy" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeRecipePolicy>()
+        }
+        "vault.sieve.recipe_policy.set" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeRecipePolicy>()
+        }
+        "vault.sieve.lease" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveLeaseView,
+        >(),
+        "vault.sieve.lease.refill" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveLeaseView,
+        >(),
         "vault.claims.vet" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
         }
@@ -5400,6 +5758,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.browser.batch" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserBatchOutput,
+        >(),
+        "self.browser.library.find" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryFindOutput,
+        >(),
+        "self.browser.library.propose" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryProposeOutput,
+        >(),
+        "self.browser.library.retire" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryRetireOutput,
+        >(),
+        "self.browser.library.retired" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryRetiredOutput,
+        >(),
+        "self.browser.library.run" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BrowserLibraryRunOutput,
         >(),
         "self.browser.handover" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserHandoverOutput,
@@ -5647,6 +6020,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.grants.ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.companions.access_requests.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.preview" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.personas.edit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -6219,6 +6620,83 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.enqueue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.schedules.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.schedules.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.schedules.clear" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.owner.digest.render" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.concerns.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.lens" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.inbox.groups" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.digest.render" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.weave.link.corrections" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.inbox.lens" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7005,6 +7483,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.residence.directives" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.off_record.start" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7734,6 +8219,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.hooks.regen.due" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.hooks.regen.adopt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.artifacts.publish_approval" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7931,6 +8437,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.code.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.conflict_record" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.conflict_view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_settlement" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9768,6 +10316,69 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.sieve.queue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.retained" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.recipe_policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.recipe_policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.lease" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.lease.refill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.vet" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10321,6 +10932,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.browser.library.find" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.retire" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.retired" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.browser.library.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.handover" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10500,6 +11146,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "self.grants.ask" => {
             let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
+        }
+        "vault.companions.access_requests.answer" => {
+            let _input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.preview" => {
+            let _input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.export" => {
+            let _input: crate::persona_snapshot::PersonaSnapshotCopyRequest =
+                decode(value.clone())?;
+        }
+        "vault.personas.edit" => {
+            let _input: crate::persona_snapshot::PersonaSnapshotCopyEditRequest =
+                decode(value.clone())?;
         }
         "self.memory.diary.query" => {
             let input: crate::task_verb::sdk::DiaryQueryRequest = decode(value.clone())?;
@@ -10759,6 +11421,39 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.weave.owner.item.wrong" => {
             let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+        }
+        "vault.weave.enqueue" => {
+            let _input: crate::task_verb::sdk::WeaveEnqueueRequest = decode(value.clone())?;
+        }
+        "vault.weave.schedules.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.weave.schedules.put" => {
+            let _input: crate::claim::WeaveScheduleView = decode(value.clone())?;
+        }
+        "vault.weave.schedules.clear" => {
+            let _input: crate::claim::WeaveReaderRef = decode(value.clone())?;
+        }
+        "vault.weave.owner.digest.render" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.inbox.concerns.review" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.inbox.lens" => {
+            let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
+        }
+        "vault.inbox.groups" => {
+            let _input: crate::agent_inbox_lens::InboxRunGroupsRequest = decode(value.clone())?;
+        }
+        "vault.weave.digest.render" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.weave.link.corrections" => {
+            let _input: crate::claim::WeaveWrongLinkRequest = decode(value.clone())?;
+        }
+        "self.inbox.lens" => {
+            let _input: crate::agent_inbox_lens::InboxLensRequest = decode(value.clone())?;
         }
         "vault.skill_hubs.put" => {
             let _input: SkillHubPutRequest = decode(value.clone())?;
@@ -11111,6 +11806,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.residence.prune" => {
             let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
+        }
+        "vault.residence.directives" => {
+            let input: crate::task_verb::sdk::ResidenceDirectivesRequest = decode(value.clone())?;
+            input.validate()?;
         }
         "vault.off_record.start" => {
             let _input: crate::task_verb::sdk::OffRecordStartRequest = decode(value.clone())?;
@@ -11477,6 +12176,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
         }
+        "vault.hooks.regen.due" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.hooks.regen.get" => {
+            let _input: crate::memory::hook_regen_doors::HookRegenBindingRequest =
+                decode(value.clone())?;
+        }
+        "vault.hooks.regen.adopt" => {
+            let _input: crate::memory::hook_regen_doors::HookRegenAdoptRequest =
+                decode(value.clone())?;
+        }
         "vault.artifacts.publish_approval" => {
             let _input: crate::artifact_hosting::door_types::ArtifactPublishRequest =
                 decode(value.clone())?;
@@ -11580,6 +12290,29 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.code.proposal_submit" => {
             let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.conflict_record" => {
+            let _input: crate::memory::code_doors::CodeConflictRecordRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.conflict_view" => {
+            let _input: crate::memory::code_doors::CodeConflictViewRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_resolve" => {
+            let _input: crate::memory::code_doors::CodeProposalResolveRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_review" => {
+            let _input: crate::memory::code_doors::CodeProposalReviewRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_settle" => {
+            let _input: crate::memory::code_doors::CodeProposalSettleRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.proposal_settlement" => {
+            let _input: crate::memory::code_doors::CodeProposalSettlementRequest =
                 decode(value.clone())?;
         }
         "vault.code.oplog" => {
@@ -12138,21 +12871,6 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "connector.call_status" => {
             let _input: crate::task_verb::sdk::ConnectorCallStatusRequest = decode(value.clone())?;
         }
-        "self.browser.library.find" => {
-            let _input: oneiron_browser::LibraryFindInput = decode(value.clone())?;
-        }
-        "self.browser.library.propose" => {
-            let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
-        }
-        "self.browser.library.retire" => {
-            let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
-        }
-        "self.browser.library.retired" => {
-            let _input: oneiron_browser::LibraryRetiredInput = decode(value.clone())?;
-        }
-        "self.browser.library.run" => {
-            let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
-        }
         "self.desktop.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
         }
@@ -12494,6 +13212,39 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
                 decode(value.clone())?;
         }
+        "vault.sieve.queue" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
+        }
+        "vault.sieve.retained" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
+        }
+        "vault.sieve.receipts" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
+        }
+        "vault.sieve.policy" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.policy.set" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.recipe_policy" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.recipe_policy.set" => {
+            let _input: crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.lease" => {
+            let _input: crate::dreamer_wake::sieve_doors::SieveLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.lease.refill" => {
+            let _input: crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest =
+                decode(value.clone())?;
+        }
         "vault.claims.vet" => {
             let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
         }
@@ -12776,6 +13527,31 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                 crate::task_verb::sdk::BrowserBatchInput,
             > = decode(value.clone())?;
         }
+        "self.browser.library.find" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryFindInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.propose" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryProposeInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.retire" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryRetireInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.retired" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryRetiredInput,
+            > = decode(value.clone())?;
+        }
+        "self.browser.library.run" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BrowserLibraryRunInput,
+            > = decode(value.clone())?;
+        }
         "self.browser.handover" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserHandoverInput,
@@ -12866,19 +13642,19 @@ pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryRe
             let _input: crate::task_verb::sdk::BrowserBatchInput = decode(value.clone())?;
         }
         "self.browser.library.find" => {
-            let _input: oneiron_browser::LibraryFindInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryFindInput = decode(value.clone())?;
         }
         "self.browser.library.propose" => {
-            let _input: oneiron_browser::ProposeInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryProposeInput = decode(value.clone())?;
         }
         "self.browser.library.retire" => {
-            let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryRetireInput = decode(value.clone())?;
         }
         "self.browser.library.retired" => {
-            let _input: oneiron_browser::LibraryRetiredInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryRetiredInput = decode(value.clone())?;
         }
         "self.browser.library.run" => {
-            let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
+            let _input: crate::task_verb::sdk::BrowserLibraryRunInput = decode(value.clone())?;
         }
         "self.browser.handover" => {
             let _input: crate::task_verb::sdk::BrowserHandoverInput = decode(value.clone())?;
@@ -12995,6 +13771,12 @@ pub fn invoke(
         "vault.shape.apply" => encode(vault_shape_apply(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
+        "vault.companions.access_requests.answer" => encode(
+            vault_companions_access_requests_answer(memory, decode(value)?)?,
+        ),
+        "vault.personas.preview" => encode(vault_personas_preview(memory, decode(value)?)?),
+        "vault.personas.export" => encode(vault_personas_export(memory, decode(value)?)?),
+        "vault.personas.edit" => encode(vault_personas_edit(memory, decode(value)?)?),
         "self.memory.diary.query" => encode(self_memory_diary_query(memory, decode(value)?)?),
         "cancel" => encode(cancel(memory, decode(value)?)?),
         "steer" => encode(steer(memory, decode(value)?)?),
@@ -13097,6 +13879,25 @@ pub fn invoke(
         "vault.weave.owner.item.wrong" => {
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
+        "vault.weave.enqueue" => encode(vault_weave_enqueue(memory, decode(value)?)?),
+        "vault.weave.schedules.list" => encode(vault_weave_schedules_list(memory, decode(value)?)?),
+        "vault.weave.schedules.put" => encode(vault_weave_schedules_put(memory, decode(value)?)?),
+        "vault.weave.schedules.clear" => {
+            encode(vault_weave_schedules_clear(memory, decode(value)?)?)
+        }
+        "vault.weave.owner.digest.render" => {
+            encode(vault_weave_owner_digest_render(memory, decode(value)?)?)
+        }
+        "vault.inbox.concerns.review" => {
+            encode(vault_inbox_concerns_review(memory, decode(value)?)?)
+        }
+        "vault.inbox.lens" => encode(vault_inbox_lens(memory, decode(value)?)?),
+        "vault.inbox.groups" => encode(vault_inbox_groups(memory, decode(value)?)?),
+        "vault.weave.digest.render" => encode(vault_weave_digest_render(memory, decode(value)?)?),
+        "vault.weave.link.corrections" => {
+            encode(vault_weave_link_corrections(memory, decode(value)?)?)
+        }
+        "self.inbox.lens" => encode(self_inbox_lens(memory, decode(value)?)?),
         "vault.skill_hubs.put" => encode(vault_skill_hubs_put(memory, decode(value)?)?),
         "vault.skill_hubs.get" => encode(vault_skill_hubs_get(memory, decode(value)?)?),
         "vault.skill_hubs.publishers.admit" => {
@@ -13321,6 +14122,7 @@ pub fn invoke(
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
         "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
+        "vault.residence.directives" => encode(vault_residence_directives(memory, decode(value)?)?),
         "vault.off_record.start" => encode(vault_off_record_start(memory, decode(value)?)?),
         "vault.off_record.status" => encode(vault_off_record_status(memory, decode(value)?)?),
         "vault.off_record.witness" => encode(vault_off_record_witness(memory, decode(value)?)?),
@@ -13529,6 +14331,9 @@ pub fn invoke(
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
+        "vault.hooks.regen.due" => encode(vault_hooks_regen_due(memory, decode(value)?)?),
+        "vault.hooks.regen.get" => encode(vault_hooks_regen_get(memory, decode(value)?)?),
+        "vault.hooks.regen.adopt" => encode(vault_hooks_regen_adopt(memory, decode(value)?)?),
         "vault.artifacts.publish_approval" => {
             encode(vault_artifacts_publish_approval(memory, decode(value)?)?)
         }
@@ -13589,6 +14394,16 @@ pub fn invoke(
         "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
         "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
         "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.conflict_record" => encode(vault_code_conflict_record(memory, decode(value)?)?),
+        "vault.code.conflict_view" => encode(vault_code_conflict_view(memory, decode(value)?)?),
+        "vault.code.proposal_resolve" => {
+            encode(vault_code_proposal_resolve(memory, decode(value)?)?)
+        }
+        "vault.code.proposal_review" => encode(vault_code_proposal_review(memory, decode(value)?)?),
+        "vault.code.proposal_settle" => encode(vault_code_proposal_settle(memory, decode(value)?)?),
+        "vault.code.proposal_settlement" => {
+            encode(vault_code_proposal_settlement(memory, decode(value)?)?)
+        }
         "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
         "vault.code.model_heal_count" => {
             encode(vault_code_model_heal_count(memory, decode(value)?)?)
@@ -13988,6 +14803,17 @@ pub fn invoke(
         "vault.consolidation.evidence" => {
             encode(vault_consolidation_evidence(memory, decode(value)?)?)
         }
+        "vault.sieve.queue" => encode(vault_sieve_queue(memory, decode(value)?)?),
+        "vault.sieve.retained" => encode(vault_sieve_retained(memory, decode(value)?)?),
+        "vault.sieve.receipts" => encode(vault_sieve_receipts(memory, decode(value)?)?),
+        "vault.sieve.policy" => encode(vault_sieve_policy(memory, decode(value)?)?),
+        "vault.sieve.policy.set" => encode(vault_sieve_policy_set(memory, decode(value)?)?),
+        "vault.sieve.recipe_policy" => encode(vault_sieve_recipe_policy(memory, decode(value)?)?),
+        "vault.sieve.recipe_policy.set" => {
+            encode(vault_sieve_recipe_policy_set(memory, decode(value)?)?)
+        }
+        "vault.sieve.lease" => encode(vault_sieve_lease(memory, decode(value)?)?),
+        "vault.sieve.lease.refill" => encode(vault_sieve_lease_refill(memory, decode(value)?)?),
         "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
         "vault.claims.vetting" => encode(vault_claims_vetting(memory, decode(value)?)?),
         "vault.memory.signal_extraction" => {
@@ -14135,6 +14961,17 @@ pub fn invoke(
         "self.browser.crop" => encode(self_browser_crop(memory, decode(value)?)?),
         "self.browser.zoom" => encode(self_browser_zoom(memory, decode(value)?)?),
         "self.browser.batch" => encode(self_browser_batch(memory, decode(value)?)?),
+        "self.browser.library.find" => encode(self_browser_library_find(memory, decode(value)?)?),
+        "self.browser.library.propose" => {
+            encode(self_browser_library_propose(memory, decode(value)?)?)
+        }
+        "self.browser.library.retire" => {
+            encode(self_browser_library_retire(memory, decode(value)?)?)
+        }
+        "self.browser.library.retired" => {
+            encode(self_browser_library_retired(memory, decode(value)?)?)
+        }
+        "self.browser.library.run" => encode(self_browser_library_run(memory, decode(value)?)?),
         "self.browser.handover" => encode(self_browser_handover(memory, decode(value)?)?),
         "vault.claims.supersede" => encode(vault_claims_supersede(memory, decode(value)?)?),
         "self.fold" => encode(self_fold(memory, decode(value)?)?),
@@ -14241,31 +15078,31 @@ pub fn invoke_browser(
             serde_json::to_value(output)
         }
         "self.browser.library.find" => {
-            let input: oneiron_browser::LibraryFindInput =
+            let input: crate::task_verb::sdk::BrowserLibraryFindInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_find(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.propose" => {
-            let input: oneiron_browser::ProposeInput =
+            let input: crate::task_verb::sdk::BrowserLibraryProposeInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_propose(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.retire" => {
-            let input: oneiron_browser::LibraryRetireInput =
+            let input: crate::task_verb::sdk::BrowserLibraryRetireInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_retire(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.retired" => {
-            let input: oneiron_browser::LibraryRetiredInput =
+            let input: crate::task_verb::sdk::BrowserLibraryRetiredInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_retired(input)?;
             serde_json::to_value(output)
         }
         "self.browser.library.run" => {
-            let input: oneiron_browser::LibraryRunInput =
+            let input: crate::task_verb::sdk::BrowserLibraryRunInput =
                 serde_json::from_value(value).map_err(invalid)?;
             let output = driver.library_run(input)?;
             serde_json::to_value(output)
@@ -14626,6 +15463,30 @@ pub fn self_grants_ask(
     input: crate::memory::GrantAskRequest,
 ) -> MemoryResult<crate::memory::GrantAskReceipt> {
     memory.grants_ask(&input)
+}
+pub fn vault_companions_access_requests_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
+) -> MemoryResult<crate::task_verb::sdk::CompanionAccessRequestAnswered> {
+    crate::task_verb::sdk::host_only(memory, "vault.companions.access_requests.answer", &input)
+}
+pub fn vault_personas_preview(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::PersonaSnapshotPreviewRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotPreview> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.preview", &input)
+}
+pub fn vault_personas_export(
+    memory: &Memory<'_>,
+    input: crate::persona_snapshot::PersonaSnapshotCopyRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotExportedCopy> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.export", &input)
+}
+pub fn vault_personas_edit(
+    memory: &Memory<'_>,
+    input: crate::persona_snapshot::PersonaSnapshotCopyEditRequest,
+) -> MemoryResult<crate::task_verb::sdk::PersonaSnapshotExportedCopy> {
+    crate::task_verb::sdk::host_only(memory, "vault.personas.edit", &input)
 }
 pub fn self_memory_diary_query(
     memory: &Memory<'_>,
@@ -15283,6 +16144,92 @@ pub fn vault_weave_owner_item_wrong(
         &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
     )
+}
+pub fn vault_weave_enqueue(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WeaveEnqueueRequest,
+) -> MemoryResult<crate::memory::DreamerAttemptRef> {
+    crate::task_verb::sdk::weave_enqueue(
+        memory,
+        &memory.embedded_owner("vault.weave.enqueue")?,
+        input,
+    )
+}
+pub fn vault_weave_schedules_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::claim::WeaveScheduleView>> {
+    crate::task_verb::sdk::weave_schedules(
+        memory,
+        &memory.embedded_owner("vault.weave.schedules.list")?,
+    )
+}
+pub fn vault_weave_schedules_put(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveScheduleView,
+) -> MemoryResult<crate::claim::WeaveScheduleView> {
+    crate::task_verb::sdk::weave_schedule_put(
+        memory,
+        &memory.embedded_owner("vault.weave.schedules.put")?,
+        input,
+    )
+}
+pub fn vault_weave_schedules_clear(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveReaderRef,
+) -> MemoryResult<crate::task_verb::sdk::WeaveScheduleCleared> {
+    crate::task_verb::sdk::weave_schedule_clear(
+        memory,
+        &memory.embedded_owner("vault.weave.schedules.clear")?,
+        input,
+    )
+}
+pub fn vault_weave_owner_digest_render(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestRendered>> {
+    memory.weave_digest_render(Some(
+        &memory.embedded_owner("vault.weave.owner.digest.render")?,
+    ))
+}
+pub fn vault_inbox_concerns_review(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::DreamerAttemptRef> {
+    crate::task_verb::sdk::inbox_concerns_review(
+        memory,
+        &memory.embedded_owner("vault.inbox.concerns.review")?,
+    )
+}
+pub fn vault_inbox_lens(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxLensRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
+    memory.inbox_lens_as_owner(&memory.embedded_owner("vault.inbox.lens")?, &input)
+}
+pub fn vault_inbox_groups(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxRunGroupsRequest,
+) -> MemoryResult<Vec<crate::inbox::InboxGroup>> {
+    memory.inbox_run_groups(&memory.embedded_owner("vault.inbox.groups")?, &input)
+}
+pub fn vault_weave_digest_render(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Option<crate::claim::WeaveDigestRendered>> {
+    memory.weave_digest_render(None)
+}
+pub fn vault_weave_link_corrections(
+    memory: &Memory<'_>,
+    input: crate::claim::WeaveWrongLinkRequest,
+) -> MemoryResult<Vec<crate::claim::WeaveLinkCorrectionView>> {
+    memory.weave_link_corrections(&input)
+}
+pub fn self_inbox_lens(
+    memory: &Memory<'_>,
+    input: crate::agent_inbox_lens::InboxLensRequest,
+) -> MemoryResult<crate::agent_inbox_lens::InboxLensPage> {
+    memory.inbox_lens(&input)
 }
 pub fn vault_skill_hubs_put(
     memory: &Memory<'_>,
@@ -16252,6 +17199,13 @@ pub fn vault_residence_prune(
 ) -> MemoryResult<crate::task_verb::sdk::ResidencePruneAnswer> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
 }
+pub fn vault_residence_directives(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResidenceDirectivesRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::ResidenceDirectiveView>> {
+    input.validate()?;
+    crate::task_verb::sdk::residence_directives(memory, &input)
+}
 pub fn vault_off_record_start(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::OffRecordStartRequest,
@@ -17120,6 +18074,24 @@ pub fn vault_hooks_replay(
     input.limit()?;
     crate::task_verb::sdk::host_only(memory, "vault.hooks.replay", &input)
 }
+pub fn vault_hooks_regen_due(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::EntityId>> {
+    memory.hooks_regen_due_as(&memory.embedded_owner("vault.hooks.regen.due")?)
+}
+pub fn vault_hooks_regen_get(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenBindingRequest,
+) -> MemoryResult<Option<crate::memory::hook_regen_doors::HookRegenView>> {
+    memory.hooks_regen_record_as(&memory.embedded_owner("vault.hooks.regen.get")?, input)
+}
+pub fn vault_hooks_regen_adopt(
+    memory: &Memory<'_>,
+    input: crate::memory::hook_regen_doors::HookRegenAdoptRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    memory.hooks_regen_adopt_as(&memory.embedded_owner("vault.hooks.regen.adopt")?, input)
+}
 pub fn vault_artifacts_publish_approval(
     memory: &Memory<'_>,
     input: crate::artifact_hosting::door_types::ArtifactPublishRequest,
@@ -17357,6 +18329,48 @@ pub fn vault_code_proposal_submit(
     input: crate::memory::code_doors::CodeProposalSubmitRequest,
 ) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
     memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
+}
+pub fn vault_code_conflict_record(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeConflictRecordRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeConflictView> {
+    memory.code_conflict_record_as(&memory.embedded_owner("vault.code.conflict_record")?, input)
+}
+pub fn vault_code_conflict_view(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeConflictViewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeConflictHistory> {
+    memory.code_conflict_history_as(&memory.embedded_owner("vault.code.conflict_view")?, input)
+}
+pub fn vault_code_proposal_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalResolveRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_resolve_as(
+        &memory.embedded_owner("vault.code.proposal_resolve")?,
+        input,
+    )
+}
+pub fn vault_code_proposal_review(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalReviewRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_review_as(&memory.embedded_owner("vault.code.proposal_review")?, input)
+}
+pub fn vault_code_proposal_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSettleRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_settle_as(&memory.embedded_owner("vault.code.proposal_settle")?, input)
+}
+pub fn vault_code_proposal_settlement(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSettlementRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSettlementView> {
+    memory.code_proposal_settlement_as(
+        &memory.embedded_owner("vault.code.proposal_settlement")?,
+        input,
+    )
 }
 pub fn vault_code_oplog(
     memory: &Memory<'_>,
@@ -18701,36 +19715,6 @@ pub fn connector_call_status(
 ) -> MemoryResult<crate::task_verb::sdk::ConnectorCallStatus> {
     crate::task_verb::sdk::connector_call_status_read(memory, input)
 }
-pub fn self_browser_library_find(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryFindInput,
-) -> Result<oneiron_browser::LibraryFindOutput, oneiron_browser::BrowserError> {
-    driver.library_find(input)
-}
-pub fn self_browser_library_propose(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::ProposeInput,
-) -> Result<oneiron_browser::ProposeOutput, oneiron_browser::BrowserError> {
-    driver.library_propose(input)
-}
-pub fn self_browser_library_retire(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryRetireInput,
-) -> Result<oneiron_browser::LibraryRetireOutput, oneiron_browser::BrowserError> {
-    driver.library_retire(input)
-}
-pub fn self_browser_library_retired(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryRetiredInput,
-) -> Result<oneiron_browser::LibraryRetiredOutput, oneiron_browser::BrowserError> {
-    driver.library_retired(input)
-}
-pub fn self_browser_library_run(
-    driver: &mut dyn oneiron_browser::BrowserDriver,
-    input: oneiron_browser::LibraryRunInput,
-) -> Result<oneiron_browser::LibraryRunOutput, oneiron_browser::BrowserError> {
-    driver.library_run(input)
-}
 pub fn self_desktop_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
@@ -19610,6 +20594,105 @@ pub fn vault_consolidation_evidence(
         &input,
     )
 }
+pub fn vault_sieve_queue(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePageRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveQueuePage> {
+    crate::dreamer_wake::sieve_doors::sieve_queue_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.queue")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_retained(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePageRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveRetainedPage> {
+    crate::dreamer_wake::sieve_doors::sieve_retained_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.retained")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_receipts(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePageRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveReceiptsPage> {
+    crate::dreamer_wake::sieve_doors::sieve_receipts_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.receipts")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_policy(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+) -> MemoryResult<crate::dreamer_wake::SievePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.policy")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_policy_set(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePolicySetRequest,
+) -> MemoryResult<crate::dreamer_wake::SievePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_policy_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.policy.set")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_recipe_policy(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeRecipePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_recipe_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.recipe_policy")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_recipe_policy_set(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeRecipePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_recipe_policy_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.recipe_policy.set")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_lease(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SieveLeaseRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveLeaseView> {
+    crate::dreamer_wake::sieve_doors::sieve_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.lease")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_lease_refill(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveLeaseView> {
+    crate::dreamer_wake::sieve_doors::sieve_lease_refill_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.lease.refill")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_claims_vet(
     memory: &Memory<'_>,
     input: crate::memory::ClaimSettleRequest,
@@ -20250,6 +21333,36 @@ pub fn self_browser_batch(
     input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserBatchInput>,
 ) -> MemoryResult<crate::task_verb::sdk::BrowserBatchOutput> {
     crate::task_verb::sdk::host_only(memory, "self.browser.batch", &input)
+}
+pub fn self_browser_library_find(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryFindInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryFindOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.find", &input)
+}
+pub fn self_browser_library_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryProposeInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryProposeOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.propose", &input)
+}
+pub fn self_browser_library_retire(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetireInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryRetireOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.retire", &input)
+}
+pub fn self_browser_library_retired(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRetiredInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryRetiredOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.retired", &input)
+}
+pub fn self_browser_library_run(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserLibraryRunInput>,
+) -> MemoryResult<crate::task_verb::sdk::BrowserLibraryRunOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.browser.library.run", &input)
 }
 pub fn self_browser_handover(
     memory: &Memory<'_>,

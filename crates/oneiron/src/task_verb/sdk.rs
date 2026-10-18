@@ -568,6 +568,7 @@ pub use super::sdk_live_voice::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_note_history::*;
 pub use super::sdk_off_record::*;
+pub use super::sdk_persona::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
@@ -588,6 +589,7 @@ pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;
+pub use super::sdk_weave::*;
 pub use super::sdk_workflows::*;
 pub use super::sdk_workspace::*;
 

@@ -23,6 +23,23 @@ const HISTORY: SideTable<(EntityId, [u8; 32]), SieveSpan, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_HISTORY);
 const AUDIT: SideTable<AttemptId, SieveAudit, Named> =
     SideTable::new(&side_table::DREAMER_SIEVE_AUDIT);
+const CONSUMED: SideTable<(AttemptId, [u8; 32]), SieveConsumeReceipt, Named> =
+    SideTable::new(&side_table::DREAMER_SIEVE_CONSUMED);
+
+/// One span the nightly spending consumed: its ref, the attempt that spent
+/// it and when. The original reading stays in the retained history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SieveConsumeReceipt {
+    pub span: [u8; 32],
+    pub turn: EntityId,
+    pub source: EntityId,
+    pub start: u64,
+    pub end: u64,
+    pub kind: super::SpanKind,
+    pub score: u32,
+    pub attempt: AttemptId,
+    pub at: u64,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +101,17 @@ pub(super) fn forget_in_txn(
     for id in audits {
         AUDIT.delete(store, txn, &id)?;
     }
+    let consumed = CONSUMED
+        .iter_from(store, txn, &[])?
+        .filter_map(|row| match row {
+            Ok((key, receipt)) if receipt.turn == *turn => Some(Ok(key)),
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for key in consumed {
+        CONSUMED.delete(store, txn, &key)?;
+    }
     Ok(())
 }
 
@@ -119,6 +147,35 @@ pub(crate) fn spend_in_txn(
     QUEUE.delete(store, txn, &key)?;
     SPANS.delete(store, txn, &(span.turn, key))?;
     Ok(())
+}
+
+/// Spends `span` as consumed work: its receipt lands in the same
+/// transaction that takes it out of the queue, so a span is never both
+/// queued and receipted, and never spent twice.
+pub(crate) fn spend_consumed_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    span: &SieveSpan,
+    attempt: AttemptId,
+    now: u64,
+) -> Result<()> {
+    CONSUMED.put(
+        store,
+        txn,
+        &(attempt, span.id),
+        &SieveConsumeReceipt {
+            span: span.id,
+            turn: span.turn,
+            source: span.source,
+            start: span.start,
+            end: span.end,
+            kind: span.kind,
+            score: span.score,
+            attempt,
+            at: now,
+        },
+    )?;
+    spend_in_txn(store, txn, span)
 }
 
 pub(crate) fn enqueue_rungs_in_txn(
@@ -420,6 +477,41 @@ pub(crate) fn finish_rungs(
 }
 
 impl Vault {
+    /// The retained original span readings, in turn then span order.
+    /// Spending never removes a reading: a consumed span stays here.
+    pub fn sieve_retained(&self, limit: usize) -> Result<Vec<SieveSpan>> {
+        let txn = self.store.env.read_txn()?;
+        let mut spans = Vec::new();
+        if limit == 0 {
+            return Ok(spans);
+        }
+        for row in HISTORY.iter_from(&self.store, &txn, &[])? {
+            let (_, span) = row?;
+            spans.push(span);
+            if spans.len() >= limit {
+                break;
+            }
+        }
+        Ok(spans)
+    }
+
+    /// The spans nightly spending has consumed, oldest attempt first.
+    pub fn sieve_consumed(&self, limit: usize) -> Result<Vec<SieveConsumeReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        let mut receipts = Vec::new();
+        if limit == 0 {
+            return Ok(receipts);
+        }
+        for row in CONSUMED.iter_from(&self.store, &txn, &[])? {
+            let (_, receipt) = row?;
+            receipts.push(receipt);
+            if receipts.len() >= limit {
+                break;
+            }
+        }
+        Ok(receipts)
+    }
+
     pub fn sieve_audits(&self, limit: usize) -> Result<Vec<SieveAudit>> {
         let txn = self.store.env.read_txn()?;
         let mut audits = Vec::new();

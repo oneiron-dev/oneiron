@@ -111,6 +111,10 @@ pub enum Destination {
 pub struct FoldedWorld {
     /// Each live edit and the machine that signed it.
     pub live: BTreeMap<AuthorityEntryHash, EntityId>,
+    /// Each live edit's settings as it states them: the heads a change's
+    /// direction is judged against (FIX 4480).
+    #[serde(default)]
+    pub live_settings: BTreeMap<AuthorityEntryHash, WorldPrivacy>,
     pub effective: EffectiveWorldPrivacy,
     /// The read the roster rule alone gives, the same on every install.
     pub roster_read: EffectiveRead,
@@ -466,6 +470,11 @@ pub(super) fn folded_worlds(
                         .live
                         .iter()
                         .map(|(hash, edit)| (*hash, edit.machine))
+                        .collect(),
+                    live_settings: frontier
+                        .live
+                        .iter()
+                        .map(|(hash, edit)| (*hash, edit.settings.clone()))
                         .collect(),
                     effective: world_meet(&standing, *world, StandingView::Install).effective(),
                     roster_read,
