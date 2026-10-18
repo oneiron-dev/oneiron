@@ -5,7 +5,7 @@ use oneiron::WriteActor;
 use oneiron::code_run::live_run::LiveRunCredential;
 use oneiron::code_run::{
     AgentSpawnInput, AgentSpawnOutput, HostSelfDispatcher, LeaderSplitInput, LeaderSplitOutput,
-    TaskRefuseInput, TaskRefuseOutput,
+    ReportBlockedInput, ReportBlockedOutput, TaskRefuseInput, TaskRefuseOutput,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::LiveRunRequest;
@@ -28,6 +28,23 @@ pub(crate) async fn tasks_refuse(
         input.live_run,
         "tasks.refuse",
         move |dispatcher| dispatcher.refuse_task_from_host(input.spec),
+    )
+    .await
+}
+
+pub(crate) async fn self_report_blocked(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<ReportBlockedInput>,
+) -> MemoryResult<ReportBlockedOutput> {
+    on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "self.report_blocked",
+        move |dispatcher| dispatcher.report_blocked_from_host(input.spec),
     )
     .await
 }

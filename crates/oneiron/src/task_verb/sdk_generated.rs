@@ -140,6 +140,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.diagnostics.list",
+                crate::code_run::vault_read::request_schema::<crate::memory::DiagnosticsListRequest>(
+                ),
+            ),
+            (
+                "vault.diagnostics.get",
+                crate::code_run::vault_read::request_schema::<crate::memory::DiagnosticsGetRequest>(
+                ),
+            ),
+            (
+                "vault.coach.inspect",
+                crate::code_run::vault_read::request_schema::<crate::memory::CoachInspectRequest>(),
+            ),
+            (
                 "vault.people.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::PeopleListRequest>(),
             ),
@@ -4169,6 +4183,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "self.report_blocked",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput>,
+                >(),
+            ),
+            (
                 "self.agents.spawn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
@@ -4259,6 +4279,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.standing.get",
     "self.standing.list",
     "self.standing.edit",
+    "vault.diagnostics.list",
+    "vault.diagnostics.get",
+    "vault.coach.inspect",
     "vault.companions.access_requests.answer",
     "vault.personas.preview",
     "vault.personas.export",
@@ -4656,6 +4679,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.library.retired",
     "self.browser.library.run",
     "self.browser.handover",
+    "self.report_blocked",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
@@ -4683,6 +4707,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.standing.edit" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockEditReceipt,
+        >(),
+        "vault.diagnostics.list" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>,
+        >(),
+        "vault.diagnostics.get" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>,
+        >(),
+        "vault.coach.inspect" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>,
         >(),
         "vault.companions.access_requests.answer" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::CompanionAccessRequestAnswered,
@@ -5893,6 +5926,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.browser.handover" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserHandoverOutput,
         >(),
+        "self.report_blocked" => {
+            crate::code_run::vault_read::request_schema::<crate::code_run::ReportBlockedOutput>()
+        }
         _ => return None,
     })
 }
@@ -6087,6 +6123,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.inbox.concern.move" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.diagnostics.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.diagnostics.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.coach.inspect" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11209,6 +11266,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.report_blocked" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.agents.spawn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11318,6 +11382,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.inbox.concern.move" => {
             let _input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest =
                 decode(value.clone())?;
+        }
+        "vault.diagnostics.list" => {
+            let input: crate::memory::DiagnosticsListRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
+        }
+        "vault.diagnostics.get" => {
+            let _input: crate::memory::DiagnosticsGetRequest = decode(value.clone())?;
+        }
+        "vault.coach.inspect" => {
+            let _input: crate::memory::CoachInspectRequest = decode(value.clone())?;
         }
         "vault.people.list" => {
             let _input: crate::memory::PeopleListRequest = decode(value.clone())?;
@@ -13811,6 +13885,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput> =
                 decode(value.clone())?;
         }
+        "self.report_blocked" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput> =
+                decode(value.clone())?;
+        }
         "self.agents.spawn" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
                 decode(value.clone())?;
@@ -13997,6 +14075,9 @@ pub fn invoke(
         "self.inbox.concern" => encode(self_inbox_concern(memory, decode(value)?)?),
         "self.inbox.concern.outcome" => encode(self_inbox_concern_outcome(memory, decode(value)?)?),
         "self.inbox.concern.move" => encode(self_inbox_concern_move(memory, decode(value)?)?),
+        "vault.diagnostics.list" => encode(vault_diagnostics_list(memory, decode(value)?)?),
+        "vault.diagnostics.get" => encode(vault_diagnostics_get(memory, decode(value)?)?),
+        "vault.coach.inspect" => encode(vault_coach_inspect(memory, decode(value)?)?),
         "vault.people.list" => encode(vault_people_list(memory, decode(value)?)?),
         "vault.people.get" => encode(vault_people_get(memory, decode(value)?)?),
         "vault.shape.read" => encode(vault_shape_read(memory, decode(value)?)?),
@@ -15247,6 +15328,7 @@ pub fn invoke(
         "self.unfold" => encode(self_unfold(memory, decode(value)?)?),
         "self.folds" => encode(self_folds(memory, decode(value)?)?),
         "tasks.refuse" => encode(tasks_refuse(memory, decode(value)?)?),
+        "self.report_blocked" => encode(self_report_blocked(memory, decode(value)?)?),
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         "self.skills.call" => encode(self_skills_call(memory, decode(value)?)?),
@@ -15689,6 +15771,25 @@ pub fn self_inbox_concern_move(
     input: crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest,
 ) -> MemoryResult<crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome> {
     memory.concern_move(&input)
+}
+pub fn vault_diagnostics_list(
+    memory: &Memory<'_>,
+    input: crate::memory::DiagnosticsListRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::DiagnosticEventView>>> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.diagnostics_list(&input)
+}
+pub fn vault_diagnostics_get(
+    memory: &Memory<'_>,
+    input: crate::memory::DiagnosticsGetRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::DiagnosticEventView>>> {
+    memory.diagnostics_get(&input)
+}
+pub fn vault_coach_inspect(
+    memory: &Memory<'_>,
+    input: crate::memory::CoachInspectRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CoachInspectionView>> {
+    memory.coach_inspect(&input)
 }
 pub fn vault_people_list(
     memory: &Memory<'_>,
@@ -21794,6 +21895,12 @@ pub fn tasks_refuse(
     input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::TaskRefuseInput>,
 ) -> MemoryResult<crate::code_run::TaskRefuseOutput> {
     crate::task_verb::sdk::host_only(memory, "tasks.refuse", &input)
+}
+pub fn self_report_blocked(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::ReportBlockedInput>,
+) -> MemoryResult<crate::code_run::ReportBlockedOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.report_blocked", &input)
 }
 pub fn self_agents_spawn(
     memory: &Memory<'_>,

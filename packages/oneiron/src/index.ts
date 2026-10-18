@@ -259,6 +259,42 @@ export class Oneiron {
       /** The owner reads the content-free payload a publisher delivery for one report issue would carry now, with its quoted text only when disclosure approved it. */
       outbound: (input: Facade.ReportOutboundRequest): Facade.ReportOutboundView => this.#call(() => this.#client.vaultReportsOutbound(input) as Facade.ReportOutboundView),
     },
+    diagnostics: {
+      /** Lists the engine-authored diagnostic events the caller reads, by class, actor, or evidence, with the read's narrowing receipt. */
+      list: (input: Facade.DiagnosticsListRequest): Facade.ScopedReadResult<Facade.DiagnosticEventView[]> => this.#call(() => this.#client.vaultDiagnosticsList(input) as Facade.ScopedReadResult<Facade.DiagnosticEventView[]>),
+      /** Reads one diagnostic event the caller may read, by ref, with the read's narrowing receipt. */
+      get: (input: Facade.DiagnosticsGetRequest): Facade.ScopedReadResult<Facade.DiagnosticEventView | null> => this.#call(() => this.#client.vaultDiagnosticsGet(input) as Facade.ScopedReadResult<Facade.DiagnosticEventView | null>),
+    },
+    coach: {
+      /** Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane. */
+      inspect: (input: Facade.CoachInspectRequest): Facade.ScopedReadResult<Facade.CoachInspectionView> => this.#call(() => this.#client.vaultCoachInspect(input) as Facade.ScopedReadResult<Facade.CoachInspectionView>),
+      /** Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers. */
+      training_offers: Object.assign((input: Facade.OfferListRequest): Facade.OfferView[] => this.#call(() => this.#client.vaultCoachTrainingOffers(input) as Facade.OfferView[]), {
+        /** Read one Coach offer snapshot with its owner answer and receipt-backed promise checks. */
+        get: (input: Facade.OfferRef): Facade.OfferView | null => this.#call(() => this.#client.vaultCoachTrainingOffersGet(input) as Facade.OfferView | null),
+        /** Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body. */
+        trigger: (input: Facade.OfferPassRequest): Facade.OfferPassRef => this.#call(() => this.#client.vaultCoachTrainingOffersTrigger(input) as Facade.OfferPassRef),
+        /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
+        result: (input: Facade.OfferPassRef): Facade.OfferPassResult | null => this.#call(() => this.#client.vaultCoachTrainingOffersResult(input) as Facade.OfferPassResult | null),
+        /** Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice. */
+        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerRecord => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerRecord),
+        /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
+        undo: (input: Facade.OfferRef): Facade.OfferUndoReceipt => this.#call(() => this.#client.vaultCoachTrainingOffersUndo(input) as Facade.OfferUndoReceipt),
+        /** Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination. */
+        candidates: Object.assign((input: Facade.OfferCandidateQuery): Facade.OfferCandidateRecord[] => this.#call(() => this.#client.vaultCoachTrainingOffersCandidates(input) as Facade.OfferCandidateRecord[]), {
+          /** Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains. */
+          prepare: (input: Facade.OfferCandidateSetup): Facade.OfferCandidateRecord => this.#call(() => this.#client.vaultCoachTrainingOffersCandidatesPrepare(input) as Facade.OfferCandidateRecord),
+        }),
+        pilots: {
+          /** Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress. */
+          prepare: (input: Facade.OfferPilotPrepare): Facade.OfferPilotPrepared => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsPrepare(input) as Facade.OfferPilotPrepared),
+          /** Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score. */
+          complete: (input: Facade.OfferPilotComplete): Facade.OfferPilot => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsComplete(input) as Facade.OfferPilot),
+          /** Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card. */
+          get: (input: Facade.OfferPilotRef): Facade.OfferPilot | null => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsGet(input) as Facade.OfferPilot | null),
+        },
+      }),
+    },
     people: {
       /** One page of the people the caller reads, in handle order. */
       list: (input: Facade.PeopleListRequest): Facade.PeoplePage => this.#call(() => this.#client.vaultPeopleList(input) as Facade.PeoplePage),
@@ -945,34 +981,6 @@ export class Oneiron {
         /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
       },
-    },
-    coach: {
-      /** Read Coach offer snapshots, their exact owner answers and later promise checks; optionally select a seat or only pending offers. */
-      training_offers: Object.assign((input: Facade.OfferListRequest): Facade.OfferView[] => this.#call(() => this.#client.vaultCoachTrainingOffers(input) as Facade.OfferView[]), {
-        /** Read one Coach offer snapshot with its owner answer and receipt-backed promise checks. */
-        get: (input: Facade.OfferRef): Facade.OfferView | null => this.#call(() => this.#client.vaultCoachTrainingOffersGet(input) as Facade.OfferView | null),
-        /** Queue one production Coach training-offer pass under the owner proof; the offer skill decides what to raise and no caller supplies an offer body. */
-        trigger: (input: Facade.OfferPassRequest): Facade.OfferPassRef => this.#call(() => this.#client.vaultCoachTrainingOffersTrigger(input) as Facade.OfferPassRef),
-        /** Read the production Coach offer attempt state and the exact snapshots it raised; a completed pass may raise no offer. */
-        result: (input: Facade.OfferPassRef): Facade.OfferPassResult | null => this.#call(() => this.#client.vaultCoachTrainingOffersResult(input) as Facade.OfferPassResult | null),
-        /** Answer the exact shown Coach snapshot: keep baseline, decline, postpone, approve switch or approve train; training still needs its separate result-swap choice. */
-        answer: (input: Facade.OfferAnswerRequest): Facade.OfferAnswerRecord => this.#call(() => this.#client.vaultCoachTrainingOffersAnswer(input) as Facade.OfferAnswerRecord),
-        /** Undo an approved stock switch only while its own seat still holds the switched binding; restore the previous whole binding. */
-        undo: (input: Facade.OfferRef): Facade.OfferUndoReceipt => this.#call(() => this.#client.vaultCoachTrainingOffersUndo(input) as Facade.OfferUndoReceipt),
-        /** Read pinned own-seat stock or training-recipe candidates, including their incumbent and explicit compute destination. */
-        candidates: Object.assign((input: Facade.OfferCandidateQuery): Facade.OfferCandidateRecord[] => this.#call(() => this.#client.vaultCoachTrainingOffersCandidates(input) as Facade.OfferCandidateRecord[]), {
-          /** Pin an own-seat catalog stock candidate or existing training recipe and its destination; this nominates only and never switches, downloads or trains. */
-          prepare: (input: Facade.OfferCandidateSetup): Facade.OfferCandidateRecord => this.#call(() => this.#client.vaultCoachTrainingOffersCandidatesPrepare(input) as Facade.OfferCandidateRecord),
-        }),
-        pilots: {
-          /** Prepare an eval-only pilot of a pinned seat candidate, counting its sealed cohort exposure before releasing receipt-backed cases; launch no compute or egress. */
-          prepare: (input: Facade.OfferPilotPrepare): Facade.OfferPilotPrepared => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsPrepare(input) as Facade.OfferPilotPrepared),
-          /** Record immutable owner-evaluator pilot measurements bound to counted own-seat families; fixed code derives sufficiency and preserves unknown cost and score. */
-          complete: (input: Facade.OfferPilotComplete): Facade.OfferPilot => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsComplete(input) as Facade.OfferPilot),
-          /** Read one counted Coach pilot, its pins, measurement receipts, one-off cost and computed sufficiency card. */
-          get: (input: Facade.OfferPilotRef): Facade.OfferPilot | null => this.#call(() => this.#client.vaultCoachTrainingOffersPilotsGet(input) as Facade.OfferPilot | null),
-        },
-      }),
     },
     cleanup: {
       /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
@@ -2056,6 +2064,8 @@ export class Oneiron {
     compact: (input: Facade.FoldCompactRequest): Facade.FoldReply<Facade.FoldCompactAsked> => this.#call(() => this.#client.selfCompact(input) as Facade.FoldReply<Facade.FoldCompactAsked>),
     /** Appends a fold of the attached run after its current tail, without replacing the earlier stub. */
     unfold: (input: Facade.FoldUnfoldRequest): Facade.FoldReply<Facade.FoldUnfolded> => this.#call(() => this.#client.selfUnfold(input) as Facade.FoldReply<Facade.FoldUnfolded>),
+    /** Files this credential's attached agent run's own blocked report: a closed category and its detail as the fenced, untrusted leaf of a witnessed receipt for the Coach's Issues job; it grants nothing and completes no task. */
+    report_blocked: (input: Facade.LiveRunRequest<Facade.ReportBlockedInput>): Facade.ReportBlockedOutput => this.#call(() => this.#client.selfReportBlocked(input) as Facade.ReportBlockedOutput),
     agents: {
       /** Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity. */
       spawn: (input: Facade.LiveRunRequest<Facade.AgentSpawnInput>): Facade.AgentSpawnOutput => this.#call(() => this.#client.selfAgentsSpawn(input) as Facade.AgentSpawnOutput),

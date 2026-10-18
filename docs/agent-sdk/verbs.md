@@ -28,6 +28,9 @@ both bindings and their export-census tests in one change.
 - `self.inbox.concern`
 - `self.inbox.concern.outcome`
 - `self.inbox.concern.move`
+- `vault.diagnostics.list`
+- `vault.diagnostics.get`
+- `vault.coach.inspect`
 - `vault.people.list`
 - `vault.people.get`
 - `vault.shape.read`

@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 753 facade rows, 2655 declarations.
-Inputs: 701 of 753 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 676 of 753 fully typed, 77 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 95; unread shapes: 0.
+Census: 757 facade rows, 2666 declarations.
+Inputs: 705 of 757 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 677 of 757 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -407,6 +407,123 @@ class ConcernMoveRequest(TypedDict):
 class ConcernMoveOutcome(TypedDict):
     card: str
     ask: AgentHealthCoachAsk
+class DiagnosticsListRequest(TypedDict):
+    event_class: NotRequired[str | None]
+    actor_ref: NotRequired[str | None]
+    evidence_ref: NotRequired[str | None]
+    limit: int
+class ReadScope(TypedDict):
+    entity_types: NotRequired[list[int] | None]
+    max_sensitivity_band: int
+    include_stale: bool
+    min_confidence: float
+    min_salience: float
+    deny_all: bool
+class ScopedReadReceipt(TypedDict):
+    requested: ReadScope
+    actor_ceiling: ReadScope
+    applied: ReadScope
+    narrowed_axes: list[str]
+    suppressed_count: int
+    replan_hint: list[str]
+class ScopedReadResult(TypedDict, Generic[T]):
+    value: T
+    narrowing: ScopedReadReceipt
+class DiagnosticEventView(TypedDict):
+    diagnostic_ref: str
+    detector_id: str
+    event_class: str
+    signal: NotRequired[str | None]
+    actor_class: str
+    actor_ref: NotRequired[str | None]
+    source: str
+    criticality: str
+    expected: Any
+    actual: Any
+    delta: Any
+    replay_content_hash: str
+    replay_run_ref: NotRequired[str | None]
+    replay_checkpoint_ref: NotRequired[str | None]
+    evidence_refs: list[str]
+    untrusted_detail: NotRequired[str | None]
+    valid_from: int
+    valid_to: NotRequired[int | None]
+class DiagnosticsGetRequest(TypedDict):
+    diagnostic_ref: str
+class CoachInspectRequest(TypedDict):
+    receipt_ref: str
+class BlockedReportView(TypedDict):
+    receipt_ref: str
+    category: str
+    untrusted_detail: str
+    attempt: NotRequired[str | None]
+    semi_trusted: bool
+class CoachWorkingSetView(TypedDict):
+    evidence_refs: list[str]
+    diagnostic_refs: list[str]
+    reporter: NotRequired[str | None]
+    run_ref: NotRequired[str | None]
+    reported_at: NotRequired[int | None]
+    retries: NotRequired[int | None]
+AllRelationships = Literal["all"]
+ClaimRelationships = AllRelationships | list[str]
+class ClaimScope(TypedDict):
+    world_id: str
+    scope_facet_id: str
+    scope_relationship_id: ClaimRelationships
+    scope_project_id: str
+MadeByInputRole = Literal["input", "prompt"]
+class MadeByInput(TypedDict):
+    row: str
+    role: MadeByInputRole
+MadeByClass = Literal["stated", "concluded"]
+MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
+class MadeByTriggerTask(TypedDict):
+    task: str
+class MadeByTriggerAsk(TypedDict):
+    ask: str
+class MadeByTriggerRun(TypedDict):
+    run: str
+class MadeByTriggerSkill(TypedDict):
+    skill: str
+MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
+class MadeBy(TypedDict):
+    inputs: list[MadeByInput]
+    process: MadeByProcess
+    at: int
+    trigger: NotRequired[MadeByTrigger | None]
+class ClaimView(TypedDict):
+    claim_ref: str
+    short_ref: NotRequired[str | None]
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    approval: str
+    lifecycle: str
+    source: NotRequired[str | None]
+    world_ref: NotRequired[str | None]
+    scope: NotRequired[Any | None]
+    claim_scope: ClaimScope
+    made_by: NotRequired[MadeBy | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    salience: NotRequired[float | None]
+    stale: bool
+    claim: NotRequired[RecordRef | None]
+class CoachProposalView(TypedDict):
+    claim: ClaimView
+    route: NotRequired[str | None]
+    decided: NotRequired[str | None]
+    repair: NotRequired[Any | None]
+    settled_at: int
+class CoachInspectionView(TypedDict):
+    receipt_ref: str
+    state: str
+    report: NotRequired[BlockedReportView | None]
+    diagnostic: NotRequired[DiagnosticEventView | None]
+    working_set: CoachWorkingSetView
+    proposal: NotRequired[CoachProposalView | None]
 class PeopleListRequest(TypedDict):
     vault: NotRequired[str | None]
     page: NotRequired[int | None]
@@ -1639,13 +1756,6 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     occurred_at: int
     assertions: NotRequired[WitnessAssertions]
-AllRelationships = Literal["all"]
-ClaimRelationships = AllRelationships | list[str]
-class ClaimScope(TypedDict):
-    world_id: str
-    scope_facet_id: str
-    scope_relationship_id: ClaimRelationships
-    scope_project_id: str
 class ScopedClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
@@ -1782,20 +1892,6 @@ class RetrievalMeta(TypedDict):
     temporal_hints: NotRequired[list[TemporalHintReport]]
     rerank: NotRequired[RerankReport | None]
     limit_clamped: NotRequired[bool]
-class ReadScope(TypedDict):
-    entity_types: NotRequired[list[int] | None]
-    max_sensitivity_band: int
-    include_stale: bool
-    min_confidence: float
-    min_salience: float
-    deny_all: bool
-class ScopedReadReceipt(TypedDict):
-    requested: ReadScope
-    actor_ceiling: ReadScope
-    applied: ReadScope
-    narrowed_axes: list[str]
-    suppressed_count: int
-    replan_hint: list[str]
 class RetrievalRunId(TypedDict):
     bytes: list[int]
 class MemoryPack(TypedDict):
@@ -2225,9 +2321,6 @@ class CredentialAttenuated(TypedDict):
     binding_key: list[int]
 class RecordPositionRequest(TypedDict):
     record_ref: str
-class ScopedReadResult(TypedDict, Generic[T]):
-    value: T
-    narrowing: ScopedReadReceipt
 class RecordPosition(TypedDict):
     kind: Literal["position"]
     scope: Scope
@@ -2264,26 +2357,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-MadeByInputRole = Literal["input", "prompt"]
-class MadeByInput(TypedDict):
-    row: str
-    role: MadeByInputRole
-MadeByClass = Literal["stated", "concluded"]
-MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
-class MadeByTriggerTask(TypedDict):
-    task: str
-class MadeByTriggerAsk(TypedDict):
-    ask: str
-class MadeByTriggerRun(TypedDict):
-    run: str
-class MadeByTriggerSkill(TypedDict):
-    skill: str
-MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
-class MadeBy(TypedDict):
-    inputs: list[MadeByInput]
-    process: MadeByProcess
-    at: int
-    trigger: NotRequired[MadeByTrigger | None]
 WithheldRole = Literal["input", "prompt", "trigger"]
 class WithheldRef(TypedDict):
     handle: str
@@ -2574,25 +2647,6 @@ class WeaveSectionInput(TypedDict):
     edge_kinds: NotRequired[list[str]]
 class WeaveReportRequest(TypedDict):
     sections: list[WeaveSectionInput]
-class ClaimView(TypedDict):
-    claim_ref: str
-    short_ref: NotRequired[str | None]
-    predicate: str
-    subject_ref: str
-    value: Any
-    confidence: float
-    approval: str
-    lifecycle: str
-    source: NotRequired[str | None]
-    world_ref: NotRequired[str | None]
-    scope: NotRequired[Any | None]
-    claim_scope: ClaimScope
-    made_by: NotRequired[MadeBy | None]
-    valid_from: NotRequired[int | None]
-    valid_to: NotRequired[int | None]
-    salience: NotRequired[float | None]
-    stale: bool
-    claim: NotRequired[RecordRef | None]
 class WeaveItemViewClaim(TypedDict):
     item: Literal["claim"]
     claim: ClaimView
@@ -13569,6 +13623,12 @@ class TaskRefuseOutput(TypedDict):
     level: RefusalLevel
     outcome: RefusalOutcome
     replay: bool
+BlockedCategory = Literal["tool", "permission", "context", "environment"]
+class ReportBlockedInput(TypedDict):
+    category: BlockedCategory
+    detail: str
+class ReportBlockedOutput(TypedDict):
+    receipt: str
 SpawnCare = Literal["light", "medium", "high", "xhigh", "max"]
 class SpawnKnobSeed(TypedDict, Generic[T]):
     mode: Literal["seed"]

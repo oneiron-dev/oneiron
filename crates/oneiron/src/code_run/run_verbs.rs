@@ -144,6 +144,29 @@ pub enum TaskRefuseDomain {
     Logistics,
 }
 
+/// `self.report_blocked`: the agent's own word that it cannot go on
+/// (ARCH-0066 #grammar). Only the closed category can drive routing; the
+/// detail is witnessed as the escaped, untrusted leaf of the blocked
+/// receipt, never a planner instruction.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReportBlockedInput {
+    /// The closed blocked category: `tool`, `permission`, `context` or
+    /// `environment`.
+    pub category: super::blocked::BlockedCategory,
+    /// What blocked the agent, in its own words.
+    pub detail: String,
+}
+
+impl ReportBlockedInput {
+    /// The same blocked-report call on code mode and the credential-bound
+    /// run door. The host stamps its order and time; the guest supplies
+    /// neither.
+    pub(crate) fn into_call(self) -> super::blocked::SelfReportBlockedCall {
+        super::blocked::SelfReportBlockedCall::new(self.category, self.detail)
+    }
+}
+
 /// `self.skills.call`: one agent-callable skill, run under the run's own
 /// attempt lease (OF-353).
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -475,6 +498,16 @@ pub struct TaskRefuseOutput {
     pub outcome: crate::agent_def::RefusalOutcome,
     /// A byte-identical retry answered by the first decision.
     pub replay: bool,
+}
+
+/// `self.report_blocked`'s output: the witnessed blocked receipt. The
+/// report grants no authority, widens no scope, and completes no task;
+/// it is supplementary, semi-trusted evidence for the Coach's Issues
+/// job, read back with `vault.coach.inspect`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ReportBlockedOutput {
+    /// The blocked receipt's MESSAGE id, hex.
+    pub receipt: String,
 }
 
 /// `self.agents.spawn`'s output: the queued attempt, or the widening its
