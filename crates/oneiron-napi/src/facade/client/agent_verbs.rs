@@ -5837,6 +5837,123 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_models_catalog_refresh(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.catalog.refresh", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_catalog_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.catalog.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_catalog_diff(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.catalog.diff", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_nominate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.nominate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_approve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.approve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_run(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.run", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_complete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.complete", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_accept(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.accept", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_bindings_deny(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.bindings.deny", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.options", js_json(input))

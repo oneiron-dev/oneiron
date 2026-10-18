@@ -2069,6 +2069,45 @@ impl OneironClient {
                 "ai.anonymous_chat" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AnonymousChatResponse,
                 >(client, verb, &input),
+                "vault.models.catalog.refresh" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelCatalogRevision,
+                >(client, verb, &input),
+                "vault.models.catalog.get" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelCatalogRevision,
+                >(client, verb, &input),
+                "vault.models.catalog.diff" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelCatalogDiff,
+                >(client, verb, &input),
+                "vault.models.trials.nominate" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelTrialView,
+                >(client, verb, &input),
+                "vault.models.trials.get" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelTrialView,
+                >(client, verb, &input),
+                "vault.models.trials.approve" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelTrialView,
+                >(client, verb, &input),
+                "vault.models.trials.run" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelTrialView,
+                >(client, verb, &input),
+                "vault.models.trials.complete" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelTrialView,
+                >(client, verb, &input),
+                "vault.models.bindings.propose" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelBindingProposal,
+                >(client, verb, &input),
+                "vault.models.bindings.get" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelBindingProposal,
+                >(client, verb, &input),
+                "vault.models.bindings.read" => remote_agent_verb_output::<
+                    oneiron::llm::manifest::ModelBinding,
+                >(client, verb, &input),
+                "vault.models.bindings.accept" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelBindingProposal,
+                >(client, verb, &input),
+                "vault.models.bindings.deny" => remote_agent_verb_output::<
+                    oneiron::llm::catalog_doors::ModelBindingProposal,
+                >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
                 ),
@@ -11004,6 +11043,162 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("ai.anonymous_chat", value)
+    }
+    pub fn vault_models_catalog_refresh(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelCatalogRefresh,
+    ) -> Result<oneiron::llm::catalog_doors::ModelCatalogRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.catalog.refresh", value)
+    }
+    pub fn vault_models_catalog_get(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelCatalogGet,
+    ) -> Result<oneiron::llm::catalog_doors::ModelCatalogRevision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.catalog.get", value)
+    }
+    pub fn vault_models_catalog_diff(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelCatalogDiffRequest,
+    ) -> Result<oneiron::llm::catalog_doors::ModelCatalogDiff, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.catalog.diff", value)
+    }
+    pub fn vault_models_trials_nominate(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelTrialNominate,
+    ) -> Result<oneiron::llm::catalog_doors::ModelTrialView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.trials.nominate", value)
+    }
+    pub fn vault_models_trials_get(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelTrialRef,
+    ) -> Result<oneiron::llm::catalog_doors::ModelTrialView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.trials.get", value)
+    }
+    pub fn vault_models_trials_approve(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelTrialRef,
+    ) -> Result<oneiron::llm::catalog_doors::ModelTrialView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.trials.approve", value)
+    }
+    pub fn vault_models_trials_run(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelTrialRef,
+    ) -> Result<oneiron::llm::catalog_doors::ModelTrialView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.trials.run", value)
+    }
+    pub fn vault_models_trials_complete(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelTrialComplete,
+    ) -> Result<oneiron::llm::catalog_doors::ModelTrialView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.trials.complete", value)
+    }
+    pub fn vault_models_bindings_propose(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelBindingPropose,
+    ) -> Result<oneiron::llm::catalog_doors::ModelBindingProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.bindings.propose", value)
+    }
+    pub fn vault_models_bindings_get(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelBindingProposalRef,
+    ) -> Result<oneiron::llm::catalog_doors::ModelBindingProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.bindings.get", value)
+    }
+    pub fn vault_models_bindings_read(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelBindingRead,
+    ) -> Result<oneiron::llm::manifest::ModelBinding, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.bindings.read", value)
+    }
+    pub fn vault_models_bindings_accept(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelBindingAccept,
+    ) -> Result<oneiron::llm::catalog_doors::ModelBindingProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.bindings.accept", value)
+    }
+    pub fn vault_models_bindings_deny(
+        &self,
+        input: &oneiron::llm::catalog_doors::ModelBindingProposalRef,
+    ) -> Result<oneiron::llm::catalog_doors::ModelBindingProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.models.bindings.deny", value)
     }
     pub fn ai_options(
         &self,

@@ -3311,6 +3311,71 @@ export_facade! {
     let output = client.ai_anonymous_chat(&input)?;
     crate::codec::lift_record("ai.anonymous_chat", &output)
 };
+"vault.models.catalog.refresh" => fn vault_models_catalog_refresh(&self, input: ModelCatalogRefresh) -> ModelCatalogRevision = |client| {
+    let input: oneiron::llm::catalog_doors::ModelCatalogRefresh = crate::codec::lower_record("vault.models.catalog.refresh", input)?;
+    let output = client.vault_models_catalog_refresh(&input)?;
+    crate::codec::lift_record("vault.models.catalog.refresh", &output)
+};
+"vault.models.catalog.get" => fn vault_models_catalog_get(&self, input: ModelCatalogGet) -> ModelCatalogRevision = |client| {
+    let input: oneiron::llm::catalog_doors::ModelCatalogGet = crate::codec::lower_record("vault.models.catalog.get", input)?;
+    let output = client.vault_models_catalog_get(&input)?;
+    crate::codec::lift_record("vault.models.catalog.get", &output)
+};
+"vault.models.catalog.diff" => fn vault_models_catalog_diff(&self, input: ModelCatalogDiffRequest) -> ModelCatalogDiff = |client| {
+    let input: oneiron::llm::catalog_doors::ModelCatalogDiffRequest = crate::codec::lower_record("vault.models.catalog.diff", input)?;
+    let output = client.vault_models_catalog_diff(&input)?;
+    crate::codec::lift_record("vault.models.catalog.diff", &output)
+};
+"vault.models.trials.nominate" => fn vault_models_trials_nominate(&self, input: ModelTrialNominate) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialNominate = crate::codec::lower_record("vault.models.trials.nominate", input)?;
+    let output = client.vault_models_trials_nominate(&input)?;
+    crate::codec::lift_record("vault.models.trials.nominate", &output)
+};
+"vault.models.trials.get" => fn vault_models_trials_get(&self, input: ModelTrialRef) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialRef = crate::codec::lower_record("vault.models.trials.get", input)?;
+    let output = client.vault_models_trials_get(&input)?;
+    crate::codec::lift_record("vault.models.trials.get", &output)
+};
+"vault.models.trials.approve" => fn vault_models_trials_approve(&self, input: ModelTrialRef) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialRef = crate::codec::lower_record("vault.models.trials.approve", input)?;
+    let output = client.vault_models_trials_approve(&input)?;
+    crate::codec::lift_record("vault.models.trials.approve", &output)
+};
+"vault.models.trials.run" => fn vault_models_trials_run(&self, input: ModelTrialRef) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialRef = crate::codec::lower_record("vault.models.trials.run", input)?;
+    let output = client.vault_models_trials_run(&input)?;
+    crate::codec::lift_record("vault.models.trials.run", &output)
+};
+"vault.models.trials.complete" => fn vault_models_trials_complete(&self, input: ModelTrialComplete) -> ModelTrialView = |client| {
+    let input: oneiron::llm::catalog_doors::ModelTrialComplete = crate::codec::lower_record("vault.models.trials.complete", input)?;
+    let output = client.vault_models_trials_complete(&input)?;
+    crate::codec::lift_record("vault.models.trials.complete", &output)
+};
+"vault.models.bindings.propose" => fn vault_models_bindings_propose(&self, input: ModelBindingPropose) -> ModelBindingProposal = |client| {
+    let input: oneiron::llm::catalog_doors::ModelBindingPropose = crate::codec::lower_record("vault.models.bindings.propose", input)?;
+    let output = client.vault_models_bindings_propose(&input)?;
+    crate::codec::lift_record("vault.models.bindings.propose", &output)
+};
+"vault.models.bindings.get" => fn vault_models_bindings_get(&self, input: ModelBindingProposalRef) -> ModelBindingProposal = |client| {
+    let input: oneiron::llm::catalog_doors::ModelBindingProposalRef = crate::codec::lower_record("vault.models.bindings.get", input)?;
+    let output = client.vault_models_bindings_get(&input)?;
+    crate::codec::lift_record("vault.models.bindings.get", &output)
+};
+"vault.models.bindings.read" => fn vault_models_bindings_read(&self, input: ModelBindingRead) -> ModelBinding = |client| {
+    let input: oneiron::llm::catalog_doors::ModelBindingRead = crate::codec::lower_record("vault.models.bindings.read", input)?;
+    let output = client.vault_models_bindings_read(&input)?;
+    crate::codec::lift_record("vault.models.bindings.read", &output)
+};
+"vault.models.bindings.accept" => fn vault_models_bindings_accept(&self, input: ModelBindingAccept) -> ModelBindingProposal = |client| {
+    let input: oneiron::llm::catalog_doors::ModelBindingAccept = crate::codec::lower_record("vault.models.bindings.accept", input)?;
+    let output = client.vault_models_bindings_accept(&input)?;
+    crate::codec::lift_record("vault.models.bindings.accept", &output)
+};
+"vault.models.bindings.deny" => fn vault_models_bindings_deny(&self, input: ModelBindingProposalRef) -> ModelBindingProposal = |client| {
+    let input: oneiron::llm::catalog_doors::ModelBindingProposalRef = crate::codec::lower_record("vault.models.bindings.deny", input)?;
+    let output = client.vault_models_bindings_deny(&input)?;
+    crate::codec::lift_record("vault.models.bindings.deny", &output)
+};
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
     let output = client.ai_options(&input)?;
