@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 868 facade rows, 2995 declarations.
-Inputs: 816 of 868 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 784 of 868 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 871 facade rows, 3003 declarations.
+Inputs: 819 of 871 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 787 of 871 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -1970,6 +1970,15 @@ class RecallRequest(TypedDict):
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
     telemetry: NotRequired[RecallTelemetry | None]
+InputKind = Literal["text", "image", "audio"]
+class EmbeddingMatchEvidence(TypedDict):
+    space: str
+    embedding_kind: InputKind
+    query_kind: InputKind
+    score: float
+    floor: float
+    strong: float
+    matched: bool
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -1984,6 +1993,8 @@ class CitedMessage(TypedDict):
     value_text: str
     record: NotRequired[RecordRef | None]
 class MemoryItem(TypedDict):
+    asset_ref: NotRequired[str | None]
+    embedding_matches: NotRequired[list[EmbeddingMatchEvidence]]
     short_id: str
     source_revision_ref: NotRequired[str | None]
     kind: str
@@ -2682,6 +2693,46 @@ class MemoryReceipt(TypedDict):
     claim_ref: NotRequired[str | None]
     claim: NotRequired[RecordRef | None]
     fields: NotRequired[dict[str, str]]
+class AssetIngestRequest(TypedDict):
+    asset_ref: NotRequired[str | None]
+    embedding_kind: InputKind
+    mime_type: str
+    bytes_b64: str
+    text: NotRequired[str | None]
+    occurred_at: int
+class AssetIngestReceipt(TypedDict):
+    asset_ref: str
+    asset_text_ref: NotRequired[str | None]
+    embedding_kind: InputKind
+    mime_type: str
+    blake3: str
+    byte_size: int
+class AssetResolveRequest(TypedDict):
+    asset_ref: str
+    image_input: NotRequired[bool]
+    audio_input: NotRequired[bool]
+    room_bytes: NotRequired[int | None]
+ServedAssetForm = Literal["image", "audio", "thumbnail", "asset_text", "ask"]
+class AssetResolved(TypedDict):
+    asset_ref: str
+    form: ServedAssetForm
+    mime_type: NotRequired[str | None]
+    bytes_b64: NotRequired[str | None]
+    text: NotRequired[str | None]
+    asset_text_ref: NotRequired[str | None]
+    handle: NotRequired[str | None]
+    receipt_refs: list[str]
+class VectorSearchRequest(TypedDict):
+    space: NotRequired[str | None]
+    query_kind: NotRequired[InputKind | None]
+    query: list[float]
+    kinds: NotRequired[list[InputKind]]
+    limit: int
+class VectorSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    embedding_matches: list[EmbeddingMatchEvidence]
 class PixelRegion(TypedDict):
     x: int
     y: int
@@ -6744,7 +6795,6 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-InputKind = Literal["text", "image", "audio"]
 class EvidenceFloors(TypedDict):
     floor: float
     strong: float
