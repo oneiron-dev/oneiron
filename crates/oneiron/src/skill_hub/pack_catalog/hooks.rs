@@ -732,10 +732,18 @@ impl Vault {
     /// A hub hook whose publisher's Grant was revoked is not live.
     pub fn pack_hook_bindings(&self) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let txn = self.store.env.read_txn()?;
+        self.pack_hook_bindings_in_txn(&txn)
+    }
+
+    /// Live bindings in the caller's snapshot, including publisher Grant checks.
+    pub(crate) fn pack_hook_bindings_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let mut live = Vec::new();
-        for (id, row) in bindings_in_txn(&self.store, &txn)? {
+        for (id, row) in bindings_in_txn(&self.store, txn)? {
             if let HookAuthor::ForeignActor { grant, .. } = &row.author
-                && !crate::consent::standing_grant_is_active_in_txn(&self.store, &txn, grant)?
+                && !crate::consent::standing_grant_is_active_in_txn(&self.store, txn, grant)?
             {
                 continue;
             }

@@ -784,6 +784,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
             (
+                "vault.packs.hooks.grant.set",
+                crate::code_run::vault_read::request_schema::<HookGrantSetRequest>(),
+            ),
+            (
+                "vault.packs.hooks.grant.get",
+                crate::code_run::vault_read::request_schema::<HookGrantRequest>(),
+            ),
+            (
                 "vault.packs.hooks.qualify",
                 crate::code_run::vault_read::request_schema::<HubHookQualifyRequest>(),
             ),
@@ -4502,6 +4510,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.governance.set",
     "vault.packs.hooks.bind",
     "vault.packs.hooks.list",
+    "vault.packs.hooks.grant.set",
+    "vault.packs.hooks.grant.get",
     "vault.packs.hooks.qualify",
     "vault.packs.connector.prepare",
     "vault.packs.connector.get",
@@ -5128,6 +5138,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.packs.hooks.list" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::HubHookBindingRow>,
         >(),
+        "vault.packs.hooks.grant.set" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HookGrantView>()
+        }
+        "vault.packs.hooks.grant.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HookGrantView>()
+        }
         "vault.packs.hooks.qualify" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubHookQualificationReceipt,
         >(),
@@ -7329,6 +7345,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.hooks.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.grant.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.grant.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12216,6 +12246,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.hooks.list" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
+        "vault.packs.hooks.grant.set" => {
+            let _input: HookGrantSetRequest = decode(value.clone())?;
+        }
+        "vault.packs.hooks.grant.get" => {
+            let _input: HookGrantRequest = decode(value.clone())?;
+        }
         "vault.packs.hooks.qualify" => {
             let _input: HubHookQualifyRequest = decode(value.clone())?;
         }
@@ -14747,6 +14783,12 @@ pub fn invoke(
         }
         "vault.packs.hooks.bind" => encode(vault_packs_hooks_bind(memory, decode(value)?)?),
         "vault.packs.hooks.list" => encode(vault_packs_hooks_list(memory, decode(value)?)?),
+        "vault.packs.hooks.grant.set" => {
+            encode(vault_packs_hooks_grant_set(memory, decode(value)?)?)
+        }
+        "vault.packs.hooks.grant.get" => {
+            encode(vault_packs_hooks_grant_get(memory, decode(value)?)?)
+        }
         "vault.packs.hooks.qualify" => encode(vault_packs_hooks_qualify(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.connector.prepare" => {
@@ -17446,6 +17488,26 @@ pub fn vault_packs_hooks_list(
         memory.vault(),
         &memory.embedded_owner("vault.packs.hooks.list")?,
         &crate::task_verb::sdk::EmptyRequest {},
+    )
+}
+pub fn vault_packs_hooks_grant_set(
+    memory: &Memory<'_>,
+    input: HookGrantSetRequest,
+) -> MemoryResult<crate::task_verb::sdk::HookGrantView> {
+    crate::task_verb::sdk::hook_grant_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.hooks.grant.set")?,
+        &input,
+    )
+}
+pub fn vault_packs_hooks_grant_get(
+    memory: &Memory<'_>,
+    input: HookGrantRequest,
+) -> MemoryResult<crate::task_verb::sdk::HookGrantView> {
+    crate::task_verb::sdk::hook_grant_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.hooks.grant.get")?,
+        &input,
     )
 }
 pub fn vault_packs_hooks_qualify(

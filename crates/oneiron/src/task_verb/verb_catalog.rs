@@ -158,6 +158,8 @@ pub enum AgentVerb {
     VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
     VaultPacksHooksList,
+    VaultPacksHooksGrantSet,
+    VaultPacksHooksGrantGet,
     VaultPacksHooksQualify,
     VaultPacksPut,
     VaultPacksConnectorPrepare,
@@ -964,6 +966,8 @@ impl AgentVerb {
         Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
         Self::VaultPacksHooksList,
+        Self::VaultPacksHooksGrantSet,
+        Self::VaultPacksHooksGrantGet,
         Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
         Self::VaultPacksConnectorPrepare,
@@ -1773,6 +1777,8 @@ impl AgentVerb {
             Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
+            Self::VaultPacksHooksGrantSet => "vault.packs.hooks.grant.set",
+            Self::VaultPacksHooksGrantGet => "vault.packs.hooks.grant.get",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksConnectorPrepare => "vault.packs.connector.prepare",
@@ -2600,6 +2606,8 @@ impl AgentVerb {
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksGrantSet
+                | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -3433,6 +3441,8 @@ impl AgentVerb {
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksGrantSet
+                | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -4336,6 +4346,8 @@ impl AgentVerb {
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksGrantSet
+                | Self::VaultPacksHooksGrantGet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -5044,6 +5056,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksGrantSet
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksConnectorPrepare
@@ -5637,6 +5650,8 @@ impl AgentVerb {
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksGrantSet => &["spec"],
+            Self::VaultPacksHooksGrantGet => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksConnectorPrepare => &["spec"],
@@ -6444,6 +6459,8 @@ impl AgentVerb {
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksGrantSet => &["spec"],
+            Self::VaultPacksHooksGrantGet => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksConnectorPrepare => &["spec"],
@@ -7550,7 +7567,13 @@ impl AgentVerb {
                 "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
             }
             Self::VaultPacksHooksList => {
-                "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."
+                "Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants."
+            }
+            Self::VaultPacksHooksGrantSet => {
+                "The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant."
+            }
+            Self::VaultPacksHooksGrantGet => {
+                "Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set."
             }
             Self::VaultPacksHooksQualify => {
                 "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 780 facade rows, 2686 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 736.
+// UniFFI census: 782 facade rows, 2690 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 738.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10971,6 +10971,23 @@ pub struct PackHookBinding {
     pub author: HookAuthor,
 }
 
+/// `oneiron::runtime_hooks::grant::HookGrant`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookGrant {
+    #[serde(rename = "reader")]
+    pub reader: String,
+    #[serde(rename = "reader_class")]
+    pub reader_class: HookActorClass,
+    #[serde(
+        rename = "predicates",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub predicates: Option<Vec<String>>,
+    #[serde(rename = "worlds", default, skip_serializing_if = "Option::is_none")]
+    pub worlds: Option<Vec<String>>,
+}
+
 /// `oneiron::task_verb::sdk_hub::HubHookBindingRow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubHookBindingRow {
@@ -10978,6 +10995,35 @@ pub struct HubHookBindingRow {
     pub id: String,
     #[serde(rename = "binding")]
     pub binding: PackHookBinding,
+    #[serde(rename = "grant")]
+    pub grant: HookGrant,
+}
+
+/// `oneiron::task_verb::sdk_hub::HookGrantSetRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookGrantSetRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "grant")]
+    pub grant: HookGrant,
+}
+
+/// `oneiron::task_verb::sdk_hub::HookGrantView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HookGrantView {
+    #[serde(rename = "binding")]
+    pub binding: String,
+    #[serde(rename = "grant")]
+    pub grant: HookGrant,
+}
+
+/// `oneiron::task_verb::sdk_hub::HookGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HookGrantRequest {
+    #[serde(rename = "binding")]
+    pub binding: String,
 }
 
 /// `oneiron::task_verb::sdk_hub::HubHookQualifyRequest`.

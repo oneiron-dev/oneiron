@@ -2574,10 +2574,40 @@
     },
     {
       "name": "vault.packs.hooks.list",
-      "description": "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants.",
+      "description": "Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants.",
       "input": "EmptyRequest",
       "output": "Vec<crate::task_verb::sdk::HubHookBindingRow>",
       "call": "crate::task_verb::sdk::hub_hooks_list_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.list\")?, &crate::task_verb::sdk::EmptyRequest {})?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.hooks.grant.set",
+      "description": "The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant.",
+      "input": "HookGrantSetRequest",
+      "output": "crate::task_verb::sdk::HookGrantView",
+      "call": "crate::task_verb::sdk::hook_grant_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.grant.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.packs.hooks.grant.get",
+      "description": "Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set.",
+      "input": "HookGrantRequest",
+      "output": "crate::task_verb::sdk::HookGrantView",
+      "call": "crate::task_verb::sdk::hook_grant_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.hooks.grant.get\")?, &input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",
