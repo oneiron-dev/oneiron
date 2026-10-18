@@ -1,5 +1,6 @@
 //! ARCH-0038 deletion/redaction contract types.
 
+mod actor_fields;
 mod coop_delivery;
 mod coop_reply;
 mod coop_request;
