@@ -60,6 +60,7 @@ impl Vault {
             grant_ref: None,
             invitation_ref: Some(invitation.to_owned()),
             delegation: None,
+            comm: None,
         };
         self.mint_slip_in_txn(txn, issuer, claims)
     }

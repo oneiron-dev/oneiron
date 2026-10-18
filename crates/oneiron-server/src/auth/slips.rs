@@ -219,7 +219,10 @@ impl CoreAuth {
                 verified.allows_verb(class) || verified.allows_verb(scope.as_str())
             })
             .collect();
+        // A slip whose comm reach the owner capped is never owner grade, or
+        // it could mint itself a wider one (FIX 3899).
         let owner_grade = unattenuated
+            && verified.comm() == oneiron::agent_dispatch::CommReach::Vault
             && claims.scope == Scope::top()
             && claims.org_ref.is_none()
             && claims.records.is_empty()

@@ -80,6 +80,11 @@ pub fn slip_mint_value(action: &SlipMintAction) -> Value {
             delegation_value(delegation),
         ));
     }
+    // FIX 3899: only a mint whose owner set a reach carries the key, after
+    // the delegation's.
+    if let Some(comm) = claims.comm {
+        entries.push((Value::from(SLIP_KEY_COMM), Value::from(comm.as_str())));
+    }
     Value::Map(entries)
 }
 
@@ -130,19 +135,18 @@ fn decode_delegation(value: &Value) -> Result<SupportDelegation> {
 }
 
 pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    // The support delegation (OF-606) is the one optional key: at most once,
-    // and every other key exactly as before.
-    let delegations: Vec<&Value> = entries
-        .iter()
-        .filter(|(key, _)| key.as_str() == Some(SLIP_KEY_DELEGATION))
-        .map(|(_, value)| value)
-        .collect();
-    if delegations.len() > 1 {
+    // The support delegation (OF-606) and the comm reach (FIX 3899) are the
+    // optional keys: each at most once, and every other key exactly as before.
+    let delegations = optional_values(entries, SLIP_KEY_DELEGATION);
+    let comms = optional_values(entries, SLIP_KEY_COMM);
+    if delegations.len() > 1 || comms.len() > 1 {
         return Err(invalid_authority());
     }
     let base: Vec<(Value, Value)> = entries
         .iter()
-        .filter(|(key, _)| key.as_str() != Some(SLIP_KEY_DELEGATION))
+        .filter(|(key, _)| {
+            key.as_str() != Some(SLIP_KEY_DELEGATION) && key.as_str() != Some(SLIP_KEY_COMM)
+        })
         .cloned()
         .collect();
     validate_keys(&base, &SLIP_MINT_KEYS)?;
@@ -215,9 +219,27 @@ pub fn decode_slip_mint(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
             .first()
             .map(|value| decode_delegation(value))
             .transpose()?,
+        comm: comms
+            .first()
+            .map(|value| {
+                value
+                    .as_str()
+                    .and_then(CommReach::parse)
+                    .ok_or_else(invalid_authority)
+            })
+            .transpose()?,
     };
     claims.validate()?;
     Ok(AuthorityOp::SlipMint(SlipMintAction { claims }))
+}
+
+/// Every value `entries` keeps under the optional key `name`.
+fn optional_values<'a>(entries: &'a [(Value, Value)], name: &str) -> Vec<&'a Value> {
+    entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(name))
+        .map(|(_, value)| value)
+        .collect()
 }
 
 fn strings_value(values: &BTreeSet<String>) -> Value {

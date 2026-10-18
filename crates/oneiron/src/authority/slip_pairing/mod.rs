@@ -96,6 +96,11 @@ pub struct PairingPrincipal {
     /// ([`Vault::paired_write_facet`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write_facet: Option<String>,
+    /// Whom the paired slip may message (FIX 3899): the owner sets it when
+    /// he makes the link, and redemption copies it into the slip's signed
+    /// claims; the redeemer never picks it. `None` is the vault-wide reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<super::CommReach>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

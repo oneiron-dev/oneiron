@@ -15852,6 +15852,19 @@ pub struct GuestRevokeResponse {
     pub courtesy_targets: Option<Vec<GuestRevokeCourtesyTargetView>>,
 }
 
+/// `oneiron_authority::authority::comm_reach::CommReach`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CommReach {
+    #[serde(rename = "parent")]
+    Parent,
+    #[serde(rename = "subtree")]
+    Subtree,
+    #[serde(rename = "project")]
+    Project,
+    #[serde(rename = "vault")]
+    Vault,
+}
+
 /// `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -15862,6 +15875,8 @@ pub struct GuestSlipMintRequest {
     pub holder_key: String,
     #[serde(rename = "expires_at")]
     pub expires_at: u64,
+    #[serde(rename = "comm", default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<CommReach>,
 }
 
 /// `oneiron::task_verb::sdk_shared_members::GuestSlipMinted`.
@@ -46537,19 +46552,6 @@ pub enum SpawnKnobU64 {
         #[serde(rename = "value")]
         value: u64,
     },
-}
-
-/// `oneiron::agent_dispatch::comm::CommReach`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum CommReach {
-    #[serde(rename = "parent")]
-    Parent,
-    #[serde(rename = "subtree")]
-    Subtree,
-    #[serde(rename = "project")]
-    Project,
-    #[serde(rename = "vault")]
-    Vault,
 }
 
 /// `oneiron::code_run::run_verbs::AgentSpawnInput`.

@@ -15,8 +15,6 @@
 
 use std::collections::HashSet;
 
-use serde::{Deserialize, Serialize};
-
 use crate::Vault;
 use crate::agent_def::AgentDefinition;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
@@ -33,75 +31,29 @@ use super::widen_record::invalid;
 /// Most dispatch hops a lineage walk follows before it refuses as a cycle.
 pub(super) const MAX_LINEAGE_HOPS: usize = 256;
 
-/// Whom a dispatched agent may address. Declaration order is the narrowing
-/// order (CALLS C1): a child's reach is never wider than its parent's.
-#[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum CommReach {
-    /// Its parent and its own children.
-    Parent,
-    /// Also every live dispatch below it.
-    Subtree,
-    /// Also its project's leader and every live dispatch in that project.
-    Project,
-    /// Anyone in the vault.
-    Vault,
-}
+/// Whom a dispatched agent may address: the value lives with the slip claims
+/// that carry it (FIX 3899), and keeps this path.
+pub use crate::authority::CommReach;
 
-impl CommReach {
-    /// The wire spelling.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Parent => "parent",
-            Self::Subtree => "subtree",
-            Self::Project => "project",
-            Self::Vault => "vault",
+/// The prompt's comm block, generated from the slip (ARCH-0028 :611): whom
+/// the run may message, and how it asks for more (CALLS FIX 1380 comm
+/// block). A free fn, since the reach is now another crate's type (FIX 3899).
+#[must_use]
+pub fn comm_prompt_block(reach: CommReach) -> String {
+    let whom = match reach {
+        CommReach::Parent => "your parent and your own children",
+        CommReach::Subtree => "your parent, your own children and every live run below you",
+        CommReach::Project => {
+            "your parent, every live run below you, your project's leader and every live run in your project"
         }
-    }
-
-    /// The prompt's comm block, generated from the slip (ARCH-0028 :611):
-    /// whom the run may message, and how it asks for more (CALLS FIX 1380
-    /// comm block).
-    #[must_use]
-    pub fn prompt_block(self) -> String {
-        let whom = match self {
-            Self::Parent => "your parent and your own children",
-            Self::Subtree => "your parent, your own children and every live run below you",
-            Self::Project => {
-                "your parent, every live run below you, your project's leader and every live run in your project"
-            }
-            Self::Vault => {
-                return "Comm reach: vault. self.message reaches anyone in the vault.".to_owned();
-            }
-        };
-        format!(
-            "Comm reach: {}. self.message reaches {whom}. A message to anyone else is refused, and the refusal asks your parent once to widen your reach: an approval holds for this run, a decline is final for that reach.",
-            self.as_str()
-        )
-    }
-
-    pub(super) fn parse(value: &str) -> Option<Self> {
-        match value {
-            "parent" => Some(Self::Parent),
-            "subtree" => Some(Self::Subtree),
-            "project" => Some(Self::Project),
-            "vault" => Some(Self::Vault),
-            _ => None,
+        CommReach::Vault => {
+            return "Comm reach: vault. self.message reaches anyone in the vault.".to_owned();
         }
-    }
+    };
+    format!(
+        "Comm reach: {}. self.message reaches {whom}. A message to anyone else is refused, and the refusal asks your parent once to widen your reach: an approval holds for this run, a decline is final for that reach.",
+        reach.as_str()
+    )
 }
 
 /// The role a dispatch's default reach is read from (ARCH-0028 :611). An
@@ -309,6 +261,20 @@ pub(crate) fn live_dispatch_projects_in_txn(
     Ok(projects)
 }
 
+/// The narrowest reach from which a sender outside any live dispatch may
+/// address `target`, once its credential caps it below the vault's (FIX
+/// 3899): such a sender's parent is the vault owner's PERSON, as a root
+/// dispatch's is (CALLS C10), so it reaches the owners at any reach and
+/// everyone else only at the vault's. Its project is never guessed from
+/// what its credential reads.
+fn unbound_needed_reach(vault: &Vault, txn: &heed::RoTxn<'_>, target: EntityId) -> CommReach {
+    if is_root_parent(vault, txn, target) {
+        CommReach::Parent
+    } else {
+        CommReach::Vault
+    }
+}
+
 /// A root dispatch's parent: the vault owner's PERSON, as the people roster
 /// reads the owner (CALLS C10). A dispatch whose spawner is no agent run has
 /// no other parent to hear from.
@@ -405,16 +371,23 @@ fn needed_reach_in_txn(
     Ok(CommReach::Vault)
 }
 
-/// Who a message is sent by, as the dial reads it.
+/// Who a message is sent by, as the dial reads it. `ceiling` is the reach
+/// the credential the request was admitted on carries (FIX 3899), verified
+/// again in this snapshot; `None` for a sender no credential bounds (the
+/// in-process host's own surface).
 pub(crate) enum SenderDispatch<'a> {
     /// An agent speaking from the live dispatch its host bound.
     Bound {
         attempt: &'a AttemptRecord,
         input: &'a AgentDispatchInput,
+        ceiling: Option<CommReach>,
     },
     /// A person, the owner, the house mind, or an agent outside any live
     /// dispatch.
-    Unbound { actor: EntityId },
+    Unbound {
+        actor: EntityId,
+        ceiling: Option<CommReach>,
+    },
 }
 
 /// Why the dial refused an address.
@@ -423,6 +396,10 @@ pub(crate) enum AddressRefusal {
     /// The target is outside the sender's reach; `needed` is the narrowest
     /// reach that would admit it.
     OutboundReach { reach: CommReach, needed: CommReach },
+    /// The target is outside the reach the sender's credential carries, the
+    /// owner's mint-time ceiling (FIX 3899): no widen of the run lifts it,
+    /// only a new mint by the owner.
+    CredentialReach { reach: CommReach, needed: CommReach },
     /// A live dispatch of the target hears only its parent and its children.
     TargetHearsParentOnly,
 }
@@ -432,16 +409,18 @@ impl AddressRefusal {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::OutboundReach { .. } => "outbound_reach",
+            Self::CredentialReach { .. } => "credential_reach",
             Self::TargetHearsParentOnly => "target_hears_parent_only",
         }
     }
 
-    /// The narrowest sender reach that would admit the target; `None` when
-    /// no sender reach would, because the target's own dial refused.
+    /// The narrowest reach a widen of the sending run would need to admit
+    /// the target; `None` when no widen of the run would, because the
+    /// target's own dial or the sender's credential refused.
     pub(crate) const fn needed_reach(self) -> Option<CommReach> {
         match self {
             Self::OutboundReach { needed, .. } => Some(needed),
-            Self::TargetHearsParentOnly => None,
+            Self::CredentialReach { .. } | Self::TargetHearsParentOnly => None,
         }
     }
 }
@@ -454,9 +433,9 @@ pub(crate) enum AddressDecision {
 }
 
 /// Whether `sender` may address the actor `target`: the sender's reach must
-/// cover it, and every live dispatch of the target must hear the sender
-/// (the most restrictive wins). A storage or codec failure is an error,
-/// never an allow.
+/// cover it, the reach its credential carries too, and every live dispatch
+/// of the target must hear the sender (the most restrictive wins). A storage
+/// or codec failure is an error, never an allow.
 pub(crate) fn may_address_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -466,9 +445,11 @@ pub(crate) fn may_address_in_txn(
     address_in_txn(vault, txn, sender, target, true)
 }
 
-/// The target half of [`may_address_in_txn`] alone: every live dispatch of
-/// `target` must hear the sender. A leader-to-leader message takes its
-/// outbound rule from leader chat (CALLS C8) and this check still.
+/// [`may_address_in_txn`] without the run's own reach: the credential's
+/// reach must cover `target`, and every live dispatch of `target` must hear
+/// the sender. A leader-to-leader message takes its outbound rule from
+/// leader chat (CALLS C8) in place of the run's reach, and meets its
+/// credential's ceiling still (FIX 3899).
 pub(crate) fn target_admits_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -476,6 +457,12 @@ pub(crate) fn target_admits_in_txn(
     target: EntityId,
 ) -> Result<AddressDecision> {
     address_in_txn(vault, txn, sender, target, false)
+}
+
+/// Whether a credential `ceiling` below the vault's bounds this sender; a
+/// sender without one, or with the vault's, reads as today.
+fn caps(ceiling: Option<CommReach>) -> Option<CommReach> {
+    ceiling.filter(|reach| *reach < CommReach::Vault)
 }
 
 fn address_in_txn(
@@ -488,11 +475,26 @@ fn address_in_txn(
     let dispatcher = AgentDispatcher::new(vault);
     let live = live_dispatches_in_txn(&dispatcher, txn)?;
     let actor = match sender {
-        SenderDispatch::Bound { attempt, input } => {
+        SenderDispatch::Bound {
+            attempt,
+            input,
+            ceiling,
+        } => {
             let me = Dispatch::of(&dispatcher, txn, attempt, input)?;
-            if outbound {
+            let cap = caps(*ceiling);
+            if outbound || cap.is_some() {
                 let needed = needed_reach_in_txn(&dispatcher, txn, &me, &live, target)?;
-                if needed > me.comm {
+                // The run's reach is the narrower of its own and its
+                // credential's: past the credential's, no widen helps.
+                if let Some(reach) = cap
+                    && needed > reach
+                {
+                    return Ok(AddressDecision::Refuse(AddressRefusal::CredentialReach {
+                        reach,
+                        needed,
+                    }));
+                }
+                if outbound && needed > me.comm {
                     return Ok(AddressDecision::Refuse(AddressRefusal::OutboundReach {
                         reach: me.comm,
                         needed,
@@ -501,7 +503,7 @@ fn address_in_txn(
             }
             me.actor
         }
-        SenderDispatch::Unbound { actor } => {
+        SenderDispatch::Unbound { actor, ceiling } => {
             // No lineage to measure: only the vault-wide reach reaches anyone.
             let reach = unbound_comm_reach();
             if outbound && reach < CommReach::Vault {
@@ -509,6 +511,15 @@ fn address_in_txn(
                     reach,
                     needed: CommReach::Vault,
                 }));
+            }
+            if let Some(reach) = caps(*ceiling) {
+                let needed = unbound_needed_reach(vault, txn, target);
+                if needed > reach {
+                    return Ok(AddressDecision::Refuse(AddressRefusal::CredentialReach {
+                        reach,
+                        needed,
+                    }));
+                }
             }
             *actor
         }

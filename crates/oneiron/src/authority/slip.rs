@@ -27,6 +27,11 @@ pub struct SlipCaveat {
     )]
     #[schemars(with = "Option<(crate::federation::ScopeId, Vec<u8>)>")]
     pub pact: Option<(crate::EntityId, crate::federation::FederationDirectionScope)>,
+    /// A lower comm reach (FIX 3899): the verifier meets it with the slip's,
+    /// so a caveat only lowers whom the holder may message. A wider reach is
+    /// a new owner mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<super::CommReach>,
 }
 
 /// A holder-signed narrowing, optionally transferring proof to a new holder.
@@ -107,9 +112,12 @@ impl VerifiedSlip {
         self.unattenuated
     }
     /// A verified, unattenuated full-vault instrument, not merely `core:read`.
+    /// A slip whose comm reach the owner capped below the vault's is not one
+    /// (FIX 3899): it could otherwise mint itself a wider reach.
     #[must_use]
     pub fn is_full_vault_owner_grade(&self) -> bool {
         self.unattenuated
+            && self.comm() == super::CommReach::Vault
             && self.claims.scope == Scope::top()
             && self.claims.org_ref.is_none()
             && self.claims.records.is_empty()
@@ -126,6 +134,13 @@ impl VerifiedSlip {
     #[must_use]
     pub fn scope(&self) -> &Scope {
         &self.claims.scope
+    }
+    /// Whom the slip lets its holder message, every caveat met (FIX 3899):
+    /// the owner's mint-time ceiling, or the vault-wide reach when he set
+    /// none.
+    #[must_use]
+    pub fn comm(&self) -> super::CommReach {
+        super::effective_slip_comm(self.claims.comm)
     }
     #[must_use]
     pub fn allows_verb(&self, verb: &str) -> bool {
@@ -413,6 +428,9 @@ impl CapabilitySlip {
                 effective.ttl_secs = effective.ttl_secs.min(ttl);
             }
             effective.single_use |= caveat.single_use;
+            if let Some(comm) = caveat.comm {
+                effective.comm = Some(super::effective_slip_comm(effective.comm).min(comm));
+            }
             if let Some((grant, bound)) = &caveat.pact {
                 bound.validate()?;
                 pact = Some(match &pact {

@@ -242,6 +242,12 @@ pub struct GuestSlipMintRequest {
     pub grant_ref: EntityId,
     pub holder_key: String,
     pub expires_at: u64,
+    /// The owner's cap on whom the slip may message (FIX 3899), signed into
+    /// it: `parent`, `subtree`, `project` or `vault`. A guest runs in no
+    /// dispatch, so any reach narrower than `vault` reaches the vault's
+    /// owners only. Absent is `vault`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comm: Option<crate::agent_dispatch::CommReach>,
 }
 
 /// `vault.guests.mint_slip`'s answer: the slip credential for the guest, who
@@ -277,7 +283,14 @@ pub fn mint_guest_slip_as(
     input: GuestSlipMintRequest,
 ) -> MemoryResult<GuestSlipMinted> {
     let key = holder_key(&input.holder_key)?;
-    let slip = vault.mint_guest_slip(owner, issuer, input.grant_ref, key, input.expires_at)?;
+    let slip = vault.mint_guest_slip(
+        owner,
+        issuer,
+        input.grant_ref,
+        key,
+        input.expires_at,
+        input.comm,
+    )?;
     Ok(GuestSlipMinted {
         slip_id: crate::entity_id::bytes_to_hex_lower(&slip.claims.slip_id),
         slip: slip.to_token()?,

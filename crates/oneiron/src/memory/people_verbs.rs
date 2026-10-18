@@ -10,7 +10,9 @@ use super::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
-use crate::agent_dispatch::{AddressDecision, AddressRefusal, AgentDispatchInput, SenderDispatch};
+use crate::agent_dispatch::{
+    AddressDecision, AddressRefusal, AgentDispatchInput, CommReach, SenderDispatch,
+};
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
 use crate::context_board::{People, PersonKind, PersonRow};
@@ -27,6 +29,13 @@ const DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.direct-room.v1";
 /// keyed by both projects and the actors leading them, so a new leader gets
 /// a new room and the old one stops admitting turns (FIX 1380; CALLS C6).
 const LEADER_DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.leader-room.v1";
+
+/// Policy hook (CALLS "FIX 3899 ceiling source", open): the comm
+/// ceiling of a caller whose credential is no capability slip (a host
+/// secret, a managed login, an ask guest's task grant), which carries no
+/// signed reach. None: it reads as before FIX 3899, by its run's reach, or
+/// C5's when unbound.
+const UNSLIPPED_TRANSPORT_COMM: Option<CommReach> = None;
 
 /// `vault.people.list`'s input.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -433,9 +442,19 @@ impl Memory<'_> {
     ) -> MemoryResult<Result<MessageRoute, AddressRefused>> {
         let vault = self.vault;
         let run = crate::task_verb::message_dispatch_in_txn(self, txn)?;
+        // The credential's reach caps the sender, bound run or none (FIX
+        // 3899), read again in this snapshot.
+        let ceiling = self.message_comm_in_txn(txn)?;
         let sender = match &run {
-            Some((attempt, input)) => SenderDispatch::Bound { attempt, input },
-            None => SenderDispatch::Unbound { actor: self.actor },
+            Some((attempt, input)) => SenderDispatch::Bound {
+                attempt,
+                input,
+                ceiling,
+            },
+            None => SenderDispatch::Unbound {
+                actor: self.actor,
+                ceiling,
+            },
         };
         let child = run.as_ref().map(|(attempt, _)| attempt.id);
         // The roster was read in its own snapshots: re-prove both persons'
@@ -587,6 +606,18 @@ impl Memory<'_> {
                 ),
                 "Ask the run's parent to widen its comm reach, then send again.",
             ),
+            // The owner's mint-time ceiling: no parent widen lifts it (FIX
+            // 3899), so the remedy names the Grant, never a run or a place.
+            AddressRefusal::CredentialReach { reach, needed } => (
+                format!(
+                    "{}: {} is outside the comm reach the owner set on this credential ({}); it needs {}",
+                    refusal.as_str(),
+                    target.handle,
+                    reach.as_str(),
+                    needed.as_str()
+                ),
+                "Ask the owner to re-mint this credential with a wider comm reach, then send again.",
+            ),
             AddressRefusal::TargetHearsParentOnly => (
                 format!(
                     "{}: {} hears only from its parent and its own children",
@@ -597,6 +628,33 @@ impl Memory<'_> {
             ),
         };
         crate::gate::message_address_refusal(&reason, suggestion)
+    }
+
+    /// FIX 3899: the comm reach the credential this request was admitted on
+    /// carries, read in `txn`. The slip its host kept is verified again,
+    /// every caveat met, and its signed reach caps the sender. With no kept
+    /// slip, the verified proof the host bound for reads answers. A surface
+    /// no slip bounds has no ceiling: the in-process host's own (its native
+    /// marker), or a caller whose credential is no slip
+    /// ([`UNSLIPPED_TRANSPORT_COMM`]). A kept slip that no longer verifies
+    /// refuses: a transport sender whose proof fails reaches no one.
+    fn message_comm_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<Option<CommReach>> {
+        if let Some(binding) = self.invocation_slip() {
+            return match self.vault.invocation_slip_in_txn(txn, binding) {
+                Ok(slip) => Ok(Some(slip.comm())),
+                Err(_) => Err(crate::gate::message_address_refusal(
+                    "credential_unverified: the credential this request was admitted on no longer verifies, so it reaches no one",
+                    "Ask the owner to re-mint this credential, then send again.",
+                )),
+            };
+        }
+        if let Some(proof) = &self.read_proof {
+            return Ok(Some(proof.comm()));
+        }
+        if self.native_invocation() {
+            return Ok(None);
+        }
+        Ok(UNSLIPPED_TRANSPORT_COMM)
     }
 
     /// The one place a dial refusal leaves `self.message`, after any write it

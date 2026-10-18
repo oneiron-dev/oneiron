@@ -176,6 +176,16 @@ fn off_needs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId
     super::super::authority::owners_in_txn(vault, txn)
 }
 
+/// Policy hook (CALLS "FIX 4480 widen ask live owners", open): the live
+/// Owners whose yes a pending widen ask opened under "widen needs every
+/// owner" needs, by the same live-owner set. It is read again at each
+/// answer, as a turn-off's is: an owner who left no longer holds it up, and
+/// his yes no longer counts; one who joined must say yes too, and may answer
+/// it though it did not go to him.
+pub(super) fn ask_needs_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<EntityId>> {
+    super::super::authority::owners_in_txn(vault, txn)
+}
+
 impl Vault {
     /// The "widen needs every owner" row as it stands.
     pub fn widen_needs_every_owner(&self) -> Result<WidenUnanimity> {

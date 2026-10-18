@@ -211,6 +211,7 @@ impl Vault {
                 approved_at,
                 wall_expires_at: approved_at.checked_add(ttl).ok_or_else(overflow)?,
             }),
+            comm: None,
         };
         claims.validate().map_err(|_| {
             refused("the support grant's purpose, ticket or bounds are not well formed")
