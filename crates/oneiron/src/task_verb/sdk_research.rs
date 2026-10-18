@@ -597,7 +597,7 @@ pub struct ResearchChildWire {
     pub briefing: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchChildReceipt {
     pub root: EntityId,

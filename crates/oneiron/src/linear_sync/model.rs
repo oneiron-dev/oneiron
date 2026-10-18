@@ -113,7 +113,9 @@ impl LinearMirrorStatus {
 }
 
 /// The tracker-side identity of a mirrored issue.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct LinearIssueRef {
     /// Opaque tracker id; the join key of the link row.
@@ -621,7 +623,9 @@ pub trait LinearTaskStore {
 }
 
 /// One field both sides edited since the common base.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[derive(
+    serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct LinearFieldConflict {
     /// The bidirectional field name.

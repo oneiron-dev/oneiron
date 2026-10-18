@@ -40,7 +40,7 @@ pub(super) const MAX_CHANNEL_BYTES: usize = 128;
 
 pub(super) const MINUTES_PER_DAY: u16 = 24 * 60;
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeliveryWindowDecision {
     #[default]
     DeliverNow,
@@ -238,7 +238,7 @@ impl DeliveryWindowResolvedLevel {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum DeliveryWindowLadderRung {
     HumanExplicitInstant,
     Ambient,
@@ -263,14 +263,14 @@ impl DeliveryWindowLadderRung {
 }
 
 /// Evidence retained from every live policy match, even when execution takes a higher rung.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowMatch {
     pub predicate: String,
     pub reason: String,
     pub retry_at: Option<u64>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeliveryWindowResolution {
     pub observed: DeliveryWindowDecision,
     pub effective: DeliveryWindowDecision,

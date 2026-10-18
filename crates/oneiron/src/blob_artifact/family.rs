@@ -18,7 +18,7 @@ use super::store_keys::BLOB_ARTIFACT_CONTENT_HASH_LEN;
 use super::versions::BlobArtifactVersion;
 
 /// One kind of the artifact family. A kind is a body plus its fidelity rules.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactKind {
     /// docx and friends.

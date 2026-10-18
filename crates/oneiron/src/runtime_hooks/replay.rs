@@ -41,7 +41,7 @@ pub struct HookReplayEntry {
 }
 
 /// What a replayed entry is: a fact the hook took, or a verb run it saved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "on", rename_all = "snake_case")]
 pub enum HookReplayCase {
     /// A fact the hook took, at its source position.
@@ -50,6 +50,7 @@ pub enum HookReplayCase {
         position: FactPositionHex,
         kind: FactKind,
         #[serde(with = "crate::serialize::entity_ref")]
+        #[schemars(with = "String")]
         entity: EntityId,
     },
     /// A verb run the hook saved, by its run key.
@@ -64,7 +65,7 @@ pub enum HookReplayCase {
 }
 
 /// How a replayed outcome stands to the one its run recorded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HookReplayCompare {
     /// The same outcome, as JSON.

@@ -455,6 +455,40 @@ pub(crate) fn machine_history_ids_for_target(
     Ok(ids)
 }
 
+/// The target a resident machine-history control names, read from its body
+/// and confirmed by the target index: `None` for any other row.
+pub(crate) fn indexed_machine_history_target(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    body: &ClaimBody,
+) -> Result<Option<EntityId>> {
+    if machine_history_kind(&body.predicate).is_none() {
+        return Ok(None);
+    }
+    let ClaimSubject::Entity(target) = body.subject else {
+        return Ok(None);
+    };
+    let mut key = target_prefix(target);
+    key.extend_from_slice(id.as_bytes());
+    Ok(store.vault_meta.get(txn, &key)?.map(|_| target))
+}
+
+/// Whether `target`'s index names any control: a CLAIM row at `target` has a
+/// machine history to adopt, whatever its own body carries.
+pub(crate) fn machine_history_indexed(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+) -> Result<bool> {
+    Ok(store
+        .vault_meta
+        .prefix_iter(txn, &target_prefix(target))?
+        .next()
+        .transpose()?
+        .is_some())
+}
+
 /// A local erasure of a MACHINE claim takes its signed history with it, as
 /// the controls embed the born content: this drops the pin, the target index
 /// and a host move's carry record, and returns the controls, which the caller
