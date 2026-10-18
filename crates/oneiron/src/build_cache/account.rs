@@ -38,13 +38,17 @@ impl<'a> BuildCache<'a> {
         {
             return Err(BuildCacheError::AccountMismatch);
         }
-        Ok(Self { vault, owner: Some(owner) })
+        Ok(Self {
+            vault,
+            owner: Some(owner),
+        })
     }
 
     pub(crate) fn admit_account_in_txn(&self, txn: &heed::RoTxn<'_>) -> BuildCacheResult<()> {
         if let Some(owner) = self.owner {
             let actor = owner.revalidate_in_txn(self.vault, txn)?;
-            if ACCOUNT.get(&self.vault.store, txn, &())?.as_deref() != Some(actor.to_hex().as_str()) {
+            if ACCOUNT.get(&self.vault.store, txn, &())?.as_deref() != Some(actor.to_hex().as_str())
+            {
                 return Err(BuildCacheError::AccountMismatch);
             }
         }

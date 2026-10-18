@@ -67,6 +67,11 @@ pub enum AgentVerb {
     VaultBudgetsHoldResume,
     VaultBudgetsLocal,
     VaultBudgetsSettlements,
+    VaultBudgetsRsiConfigure,
+    VaultBudgetsRsi,
+    VaultBudgetsRsiTopUp,
+    VaultBudgetsRsiHold,
+    VaultBudgetsRsiHoldResume,
     VaultFanoutResume,
     VaultFanoutResumeAs,
     VaultFanoutAck,
@@ -222,6 +227,9 @@ pub enum AgentVerb {
     VaultPacksConnectorGrantsGet,
     VaultPacksConnectorGrantsPut,
     VaultPacksRemove,
+    AiChatCompletions,
+    VaultConnectorsProxyAdmit,
+    VaultConnectorsProxyRevokeWrite,
     VaultConnectorsSubscriptionsPut,
     VaultConnectorsSubscriptionsList,
     VaultConnectorsSubscriptionsRevoke,
@@ -362,6 +370,8 @@ pub enum AgentVerb {
     VaultResearchReserveWork,
     VaultResearchSettleWork,
     VaultResearchRefundWork,
+    VaultResearchReserveExploration,
+    VaultResearchBudget,
     VaultResearchRecordBenchmark,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
@@ -991,6 +1001,11 @@ impl AgentVerb {
         Self::VaultBudgetsHoldResume,
         Self::VaultBudgetsLocal,
         Self::VaultBudgetsSettlements,
+        Self::VaultBudgetsRsiConfigure,
+        Self::VaultBudgetsRsi,
+        Self::VaultBudgetsRsiTopUp,
+        Self::VaultBudgetsRsiHold,
+        Self::VaultBudgetsRsiHoldResume,
         Self::VaultFanoutResume,
         Self::VaultFanoutResumeAs,
         Self::VaultFanoutAck,
@@ -1146,6 +1161,9 @@ impl AgentVerb {
         Self::VaultPacksConnectorGrantsGet,
         Self::VaultPacksConnectorGrantsPut,
         Self::VaultPacksRemove,
+        Self::AiChatCompletions,
+        Self::VaultConnectorsProxyAdmit,
+        Self::VaultConnectorsProxyRevokeWrite,
         Self::VaultConnectorsSubscriptionsPut,
         Self::VaultConnectorsSubscriptionsList,
         Self::VaultConnectorsSubscriptionsRevoke,
@@ -1286,6 +1304,8 @@ impl AgentVerb {
         Self::VaultResearchReserveWork,
         Self::VaultResearchSettleWork,
         Self::VaultResearchRefundWork,
+        Self::VaultResearchReserveExploration,
+        Self::VaultResearchBudget,
         Self::VaultResearchRecordBenchmark,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
@@ -1918,6 +1938,11 @@ impl AgentVerb {
             Self::VaultBudgetsHoldResume => "vault.budgets.hold.resume",
             Self::VaultBudgetsLocal => "vault.budgets.local",
             Self::VaultBudgetsSettlements => "vault.budgets.settlements",
+            Self::VaultBudgetsRsiConfigure => "vault.budgets.rsi.configure",
+            Self::VaultBudgetsRsi => "vault.budgets.rsi",
+            Self::VaultBudgetsRsiTopUp => "vault.budgets.rsi.top_up",
+            Self::VaultBudgetsRsiHold => "vault.budgets.rsi.hold",
+            Self::VaultBudgetsRsiHoldResume => "vault.budgets.rsi.hold.resume",
             Self::VaultFanoutResume => "vault.fanout.resume",
             Self::VaultFanoutResumeAs => "vault.fanout.resume_as",
             Self::VaultFanoutAck => "vault.fanout.ack",
@@ -2073,6 +2098,9 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => "vault.packs.connector.grants.get",
             Self::VaultPacksConnectorGrantsPut => "vault.packs.connector.grants.put",
             Self::VaultPacksRemove => "vault.packs.remove",
+            Self::AiChatCompletions => "ai.chat.completions",
+            Self::VaultConnectorsProxyAdmit => "vault.connectors.proxy.admit",
+            Self::VaultConnectorsProxyRevokeWrite => "vault.connectors.proxy.revoke_write",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
             Self::VaultConnectorsSubscriptionsList => "vault.connectors.subscriptions.list",
             Self::VaultConnectorsSubscriptionsRevoke => "vault.connectors.subscriptions.revoke",
@@ -2223,6 +2251,8 @@ impl AgentVerb {
             Self::VaultResearchReserveWork => "vault.research.reserve_work",
             Self::VaultResearchSettleWork => "vault.research.settle_work",
             Self::VaultResearchRefundWork => "vault.research.refund_work",
+            Self::VaultResearchReserveExploration => "vault.research.reserve_exploration",
+            Self::VaultResearchBudget => "vault.research.budget",
             Self::VaultResearchRecordBenchmark => "vault.research.record_benchmark",
             Self::VaultAuthorityHandoffAlarms => "vault.authority.handoff_alarms",
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
@@ -2863,6 +2893,11 @@ impl AgentVerb {
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
                 | Self::VaultBudgetsSettlements
+                | Self::VaultBudgetsRsiConfigure
+                | Self::VaultBudgetsRsi
+                | Self::VaultBudgetsRsiTopUp
+                | Self::VaultBudgetsRsiHold
+                | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -3018,6 +3053,9 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::AiChatCompletions
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -3158,6 +3196,8 @@ impl AgentVerb {
                 | Self::VaultResearchReserveWork
                 | Self::VaultResearchSettleWork
                 | Self::VaultResearchRefundWork
+                | Self::VaultResearchReserveExploration
+                | Self::VaultResearchBudget
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -3814,6 +3854,11 @@ impl AgentVerb {
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
                 | Self::VaultBudgetsSettlements
+                | Self::VaultBudgetsRsiConfigure
+                | Self::VaultBudgetsRsi
+                | Self::VaultBudgetsRsiTopUp
+                | Self::VaultBudgetsRsiHold
+                | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -3969,6 +4014,9 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::AiChatCompletions
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -4109,6 +4157,8 @@ impl AgentVerb {
                 | Self::VaultResearchReserveWork
                 | Self::VaultResearchSettleWork
                 | Self::VaultResearchRefundWork
+                | Self::VaultResearchReserveExploration
+                | Self::VaultResearchBudget
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -4770,6 +4820,7 @@ impl AgentVerb {
                 | Self::VaultExportScoped
                 | Self::VaultAssetsResolve
                 | Self::VaultSearchVector
+                | Self::AiChatCompletions
                 | Self::ExecuteCode
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
@@ -4862,6 +4913,11 @@ impl AgentVerb {
                 | Self::VaultBudgetsHoldResume
                 | Self::VaultBudgetsLocal
                 | Self::VaultBudgetsSettlements
+                | Self::VaultBudgetsRsiConfigure
+                | Self::VaultBudgetsRsi
+                | Self::VaultBudgetsRsiTopUp
+                | Self::VaultBudgetsRsiHold
+                | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5004,6 +5060,8 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorGrantsGet
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsList
                 | Self::VaultConnectorsSubscriptionsRevoke
@@ -5144,6 +5202,8 @@ impl AgentVerb {
                 | Self::VaultResearchReserveWork
                 | Self::VaultResearchSettleWork
                 | Self::VaultResearchRefundWork
+                | Self::VaultResearchReserveExploration
+                | Self::VaultResearchBudget
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
@@ -5713,6 +5773,10 @@ impl AgentVerb {
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLeaseTopUp
                 | Self::VaultBudgetsHoldResume
+                | Self::VaultBudgetsRsiConfigure
+                | Self::VaultBudgetsRsiTopUp
+                | Self::VaultBudgetsRsiHold
+                | Self::VaultBudgetsRsiHoldResume
                 | Self::VaultFanoutResume
                 | Self::VaultFanoutResumeAs
                 | Self::VaultFanoutAck
@@ -5801,6 +5865,9 @@ impl AgentVerb {
                 | Self::VaultPacksConnectorUpdate
                 | Self::VaultPacksConnectorGrantsPut
                 | Self::VaultPacksRemove
+                | Self::AiChatCompletions
+                | Self::VaultConnectorsProxyAdmit
+                | Self::VaultConnectorsProxyRevokeWrite
                 | Self::VaultConnectorsSubscriptionsPut
                 | Self::VaultConnectorsSubscriptionsRevoke
                 | Self::VaultPacksSetupPrepare
@@ -5893,6 +5960,7 @@ impl AgentVerb {
                 | Self::VaultResearchReserveWork
                 | Self::VaultResearchSettleWork
                 | Self::VaultResearchRefundWork
+                | Self::VaultResearchReserveExploration
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
                 | Self::VaultCleanupRun
@@ -6226,6 +6294,7 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultClusterPropose
+                | Self::AiChatCompletions
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -6325,6 +6394,11 @@ impl AgentVerb {
             Self::VaultBudgetsHoldResume => &["spec"],
             Self::VaultBudgetsLocal => &["spec"],
             Self::VaultBudgetsSettlements => &["spec"],
+            Self::VaultBudgetsRsiConfigure => &["spec"],
+            Self::VaultBudgetsRsi => &["spec"],
+            Self::VaultBudgetsRsiTopUp => &["spec"],
+            Self::VaultBudgetsRsiHold => &["spec"],
+            Self::VaultBudgetsRsiHoldResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -6480,6 +6554,9 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::AiChatCompletions => &["spec"],
+            Self::VaultConnectorsProxyAdmit => &["spec"],
+            Self::VaultConnectorsProxyRevokeWrite => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -6620,6 +6697,8 @@ impl AgentVerb {
             Self::VaultResearchReserveWork => &["spec"],
             Self::VaultResearchSettleWork => &["spec"],
             Self::VaultResearchRefundWork => &["spec"],
+            Self::VaultResearchReserveExploration => &["spec"],
+            Self::VaultResearchBudget => &["spec"],
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
@@ -7250,6 +7329,11 @@ impl AgentVerb {
             Self::VaultBudgetsHoldResume => &["spec"],
             Self::VaultBudgetsLocal => &["spec"],
             Self::VaultBudgetsSettlements => &["spec"],
+            Self::VaultBudgetsRsiConfigure => &["spec"],
+            Self::VaultBudgetsRsi => &["spec"],
+            Self::VaultBudgetsRsiTopUp => &["spec"],
+            Self::VaultBudgetsRsiHold => &["spec"],
+            Self::VaultBudgetsRsiHoldResume => &["spec"],
             Self::VaultFanoutResume => &["spec"],
             Self::VaultFanoutResumeAs => &["spec"],
             Self::VaultFanoutAck => &["spec"],
@@ -7405,6 +7489,9 @@ impl AgentVerb {
             Self::VaultPacksConnectorGrantsGet => &["spec"],
             Self::VaultPacksConnectorGrantsPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
+            Self::AiChatCompletions => &["spec"],
+            Self::VaultConnectorsProxyAdmit => &["spec"],
+            Self::VaultConnectorsProxyRevokeWrite => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
             Self::VaultConnectorsSubscriptionsList => &["spec"],
             Self::VaultConnectorsSubscriptionsRevoke => &["spec"],
@@ -7545,6 +7632,8 @@ impl AgentVerb {
             Self::VaultResearchReserveWork => &["spec"],
             Self::VaultResearchSettleWork => &["spec"],
             Self::VaultResearchRefundWork => &["spec"],
+            Self::VaultResearchReserveExploration => &["spec"],
+            Self::VaultResearchBudget => &["spec"],
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
@@ -8296,6 +8385,21 @@ impl AgentVerb {
             Self::VaultBudgetsSettlements => {
                 "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."
             }
+            Self::VaultBudgetsRsiConfigure => {
+                "The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend."
+            }
+            Self::VaultBudgetsRsi => {
+                "The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure."
+            }
+            Self::VaultBudgetsRsiTopUp => {
+                "The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself."
+            }
+            Self::VaultBudgetsRsiHold => {
+                "The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."
+            }
+            Self::VaultBudgetsRsiHoldResume => {
+                "The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."
+            }
             Self::VaultFanoutResume => {
                 "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible."
             }
@@ -8759,6 +8863,15 @@ impl AgentVerb {
             Self::VaultPacksRemove => {
                 "The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate."
             }
+            Self::AiChatCompletions => {
+                "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling."
+            }
+            Self::VaultConnectorsProxyAdmit => {
+                "The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key."
+            }
+            Self::VaultConnectorsProxyRevokeWrite => {
+                "The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact."
+            }
             Self::VaultConnectorsSubscriptionsPut => {
                 "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer."
             }
@@ -9165,6 +9278,12 @@ impl AgentVerb {
             }
             Self::VaultResearchSettleWork => "Settles a work reservation at its actual spend.",
             Self::VaultResearchRefundWork => "Refunds a work reservation nothing was spent on.",
+            Self::VaultResearchReserveExploration => {
+                "Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work."
+            }
+            Self::VaultResearchBudget => {
+                "Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state."
+            }
             Self::VaultResearchRecordBenchmark => {
                 "Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."
             }

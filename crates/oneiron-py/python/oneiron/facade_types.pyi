@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 898 facade rows, 3085 declarations.
-Inputs: 844 of 898 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 814 of 898 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 908 facade rows, 3120 declarations.
+Inputs: 854 of 908 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 822 of 908 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
@@ -1817,6 +1817,45 @@ class RunSettlementsView(TypedDict):
     run: str
     metering_enabled: bool
     settlements: list[RunRungSettlement]
+class RsiBudgetShare(TypedDict):
+    units: int
+    pinned: bool
+class RsiBudgetConfig(TypedDict):
+    limit: int
+    exploration_exposure_limit: int
+    shares: dict[str, RsiBudgetShare]
+class RsiWorkLineView(TypedDict):
+    unit: str
+    limit: int
+    spent: int
+    reserved: int
+class RsiShareView(TypedDict):
+    label: str
+    units: int
+    pinned: bool
+class RsiExposureLineView(TypedDict):
+    unit: str
+    limit: int
+    spent: int
+    reserved: int
+class RsiLineView(TypedDict):
+    work_line: RsiWorkLineView
+    shares: list[RsiShareView]
+    exposure_line: RsiExposureLineView
+    suspended: bool
+class RsiLineRequest(TypedDict):
+    ...
+class RsiTopUpTokens(TypedDict):
+    line: Literal["tokens"]
+    units: int
+class RsiTopUpExploration(TypedDict):
+    line: Literal["exploration"]
+    units: int
+class RsiTopUpShare(TypedDict):
+    line: Literal["share"]
+    share: str
+    units: int
+RsiTopUp = RsiTopUpTokens | RsiTopUpExploration | RsiTopUpShare
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId
@@ -4592,6 +4631,95 @@ class ConnectorPackGrantsPutRequest(TypedDict):
     rows: list[ConnectorPackGrantRow]
 class PackRemoveRequest(TypedDict):
     pack: str
+ChatRole = Literal["system", "developer", "user", "assistant"]
+class ChatPart(TypedDict):
+    type: Literal["text"]
+    text: str
+ChatContent = str | list[ChatPart]
+class ChatMessage(TypedDict):
+    role: ChatRole
+    content: ChatContent
+    name: NotRequired[str | None]
+ChatStop = str | list[str]
+class ChatCompletionRequest(TypedDict):
+    model: str
+    messages: list[ChatMessage]
+    stream: NotRequired[bool | None]
+    n: NotRequired[int | None]
+    temperature: NotRequired[float | None]
+    top_p: NotRequired[float | None]
+    max_tokens: NotRequired[int | None]
+    max_completion_tokens: NotRequired[int | None]
+    stop: NotRequired[ChatStop | None]
+    presence_penalty: NotRequired[float | None]
+    frequency_penalty: NotRequired[float | None]
+    seed: NotRequired[int | None]
+    user: NotRequired[str | None]
+ChatCompletionObject = Literal["chat.completion"]
+ChatCompletionRole = Literal["assistant"]
+class ChatCompletionMessage(TypedDict):
+    role: ChatCompletionRole
+    content: str
+class ChatCompletionChoice(TypedDict):
+    index: int
+    message: ChatCompletionMessage
+    finish_reason: str
+class ChatCompletionUsage(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+class ChatCompletionRememberError(TypedDict):
+    code: str
+    message: str
+class ChatCompletionRememberedSaved(TypedDict):
+    claim: str
+    approval: str
+class ChatCompletionRememberedRefused(TypedDict):
+    error: ChatCompletionRememberError
+ChatCompletionRemembered = ChatCompletionRememberedSaved | ChatCompletionRememberedRefused
+class ChatCompletionMemory(TypedDict):
+    injected: bool
+    remembered: ChatCompletionRemembered
+class ChatCompletionResponse(TypedDict):
+    id: str
+    object: ChatCompletionObject
+    created: int
+    model: str
+    choices: list[ChatCompletionChoice]
+    usage: ChatCompletionUsage
+    oneiron: ChatCompletionMemory
+class ProxyConnectorAdmitRequest(TypedDict):
+    actor: str
+class ConnectorPendingManifestView(TypedDict):
+    candidate: str
+    protocol_revision: str
+    report_hash: NotRequired[str | None]
+class ConnectorKeyView(TypedDict):
+    id: str
+    status: str
+    secret_ref: NotRequired[str | None]
+    protocol_revision: NotRequired[str | None]
+    accepted_slate_revision: NotRequired[int | None]
+    consent_required: bool
+    qualification: NotRequired[ConnectorQualificationReceipt | None]
+    manifest_hash: NotRequired[str | None]
+    pending_manifest: NotRequired[ConnectorPendingManifestView | None]
+class ConnectorSlateView(TypedDict):
+    id: str
+    revision: int
+    stamped: bool
+    facet_limit: NotRequired[list[str] | None]
+    manifest: list[SlateToolManifest]
+    rows: list[SlateRow]
+    reach: ShapePlanReach
+class ProxyConnectorRegistration(TypedDict):
+    connector: str
+    key: ConnectorKeyView
+    slate: ConnectorSlateView
+class ProxyConnectorRevokeWriteRequest(TypedDict):
+    actor: str
+    key: str
+    revision: int
 class ChannelSubscriptionRequest(TypedDict):
     agent: str
     channel: str
@@ -6829,6 +6957,36 @@ class ResearchReservation(TypedDict):
 class ResearchRefundWire(TypedDict):
     root: EntityId
     reservation: EntityId
+class ResearchExplorationWire(TypedDict):
+    root: EntityId
+    units: int
+    attempt: NotRequired[EntityId | None]
+class RsiOverdraftReceipt(TypedDict):
+    share: str
+    units: int
+class ResearchReservationWire(TypedDict):
+    id: EntityId
+    line: ResearchReservationLine
+    units: int
+    attempt: NotRequired[EntityId | None]
+    settlement: NotRequired[RsiSettlement | None]
+    overdraft: NotRequired[RsiOverdraftReceipt | None]
+    reserved_at: int
+class RsiBudgetRead(TypedDict):
+    limit: int
+    spent: int
+    reserved: int
+    suspended: bool
+class RsiExplorationRead(TypedDict):
+    exposure_limit: int
+    spent_exposure: int
+    reserved_exposure: int
+    suspended: bool
+class ResearchBudgetView(TypedDict):
+    budget: ResearchBudgetRead
+    reservations: list[ResearchReservationWire]
+    rsi_work: NotRequired[RsiBudgetRead | None]
+    rsi_exploration: NotRequired[RsiExplorationRead | None]
 class ResearchBenchmarkWire(TypedDict):
     estimator_version: str
     benchmark: CampaignDatasetRef

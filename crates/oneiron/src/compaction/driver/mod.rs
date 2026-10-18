@@ -131,7 +131,9 @@ pub trait CompactionBackend: Send + Sync {
 }
 
 /// One message-log row the host hands the backend.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 pub struct CompactionWindowMessage {
     /// The MESSAGE whose words `content` renders: a `DerivedFrom` target
     /// when the vault stores it.
@@ -250,7 +252,10 @@ impl CompactionRequest {
         let (turn_start, last) = validate_window_span(&window)?;
         let sources = conversation_sources(vault, &window)?;
         let rtxn = vault.store.env.read_txn()?;
-        validate_epoch_boundary(prior_epoch_in_txn(&vault.store, &rtxn, &session_ref)?, turn_start)?;
+        validate_epoch_boundary(
+            prior_epoch_in_txn(&vault.store, &rtxn, &session_ref)?,
+            turn_start,
+        )?;
         Ok(Self {
             request_id: vault.store.clock.entity_id()?,
             session_ref,
@@ -279,7 +284,10 @@ impl CompactionRequest {
     }
 }
 
-fn conversation_sources(vault: &Vault, window: &[CompactionWindowMessage]) -> Result<Vec<EntityId>> {
+fn conversation_sources(
+    vault: &Vault,
+    window: &[CompactionWindowMessage],
+) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut seen = BTreeSet::new();
     let mut sources = Vec::new();

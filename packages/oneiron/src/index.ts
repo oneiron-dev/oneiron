@@ -368,6 +368,18 @@ export class Oneiron {
       local: (input: Facade.LocalRunnerBudgetRequest): Facade.LocalRunnerBudgetView => this.#call(() => this.#client.vaultBudgetsLocal(input) as Facade.LocalRunnerBudgetView),
       /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
       settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
+      /** The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure. */
+      rsi: Object.assign((input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsi(input) as Facade.RsiLineView), {
+        /** The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend. */
+        configure: (input: Facade.RsiBudgetConfig): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiConfigure(input) as Facade.RsiLineView),
+        /** The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself. */
+        top_up: (input: Facade.RsiTopUp): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiTopUp(input) as Facade.RsiLineView),
+        /** The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay. */
+        hold: Object.assign((input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiHold(input) as Facade.RsiLineView), {
+          /** The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt. */
+          resume: (input: Facade.RsiLineRequest): Facade.RsiLineView => this.#call(() => this.#client.vaultBudgetsRsiHoldResume(input) as Facade.RsiLineView),
+        }),
+      }),
     },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
     commit_message: (input: Facade.CommitMessageRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultCommitMessage(input) as Facade.WitnessReceipt),
@@ -868,6 +880,12 @@ export class Oneiron {
       route_tradeoff: (input: Facade.ProjectTradeoffRouteRequest): Facade.TaskAskReceipt => this.#call(() => this.#client.vaultProjectsRouteTradeoff(input) as Facade.TaskAskReceipt),
     },
     connectors: {
+      proxy: {
+        /** The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key. */
+        admit: (input: Facade.ProxyConnectorAdmitRequest): Facade.ProxyConnectorRegistration => this.#call(() => this.#client.vaultConnectorsProxyAdmit(input) as Facade.ProxyConnectorRegistration),
+        /** The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact. */
+        revoke_write: (input: Facade.ProxyConnectorRevokeWriteRequest): Facade.ProxyConnectorRegistration => this.#call(() => this.#client.vaultConnectorsProxyRevokeWrite(input) as Facade.ProxyConnectorRegistration),
+      },
       subscriptions: {
         /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
         put: (input: Facade.ChannelSubscriptionRequest): Facade.ChannelMessageSubscription => this.#call(() => this.#client.vaultConnectorsSubscriptionsPut(input) as Facade.ChannelMessageSubscription),
@@ -1145,6 +1163,10 @@ export class Oneiron {
       settle_work: (input: Facade.ResearchSettleWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchSettleWork(input) as Facade.ResearchReservation),
       /** Refunds a work reservation nothing was spent on. */
       refund_work: (input: Facade.ResearchRefundWire): Facade.ResearchReservation => this.#call(() => this.#client.vaultResearchRefundWork(input) as Facade.ResearchReservation),
+      /** Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work. */
+      reserve_exploration: (input: Facade.ResearchExplorationWire): Facade.EntityId => this.#call(() => this.#client.vaultResearchReserveExploration(input) as Facade.EntityId),
+      /** Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state. */
+      budget: (input: Facade.ResearchArchiveWire): Facade.ResearchBudgetView => this.#call(() => this.#client.vaultResearchBudget(input) as Facade.ResearchBudgetView),
       /** Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents. */
       record_benchmark: (input: Facade.ResearchBenchmarkWire): Facade.SelectionBenchmark => this.#call(() => this.#client.vaultResearchRecordBenchmark(input) as Facade.SelectionBenchmark),
     },
@@ -2429,34 +2451,11 @@ export class Oneiron {
     /** Applies this credential's attached agent run refusal dial to its own TASK, with a durable reason; the live lease supplies the actor and TASK and the engine owns replay. */
     refuse: (input: Facade.LiveRunRequest<Facade.TaskRefuseInput>): Facade.TaskRefuseOutput => this.#call(() => this.#client.tasksRefuse(input) as Facade.TaskRefuseOutput),
   }
-  /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
-  readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
-    /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
-    wait: (input: Facade.RevealWaitRequest): Facade.RevealWaitAnswer => this.#call(() => this.#client.revealWait(input) as Facade.RevealWaitAnswer),
-    /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
-    describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
-  })
-  readonly host = {
-    /** Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint. */
-    compact: (input: Facade.HostCompactRequest): Facade.HostCompactResult => this.#call(() => this.#client.hostCompact(input) as Facade.HostCompactResult),
-    /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
-    wake: (input: Facade.HostWakeRequest): Facade.HostWakeResult => this.#call(() => this.#client.hostWake(input) as Facade.HostWakeResult),
-    budget: {
-      /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
-      hit: (input: Facade.HostBudgetHitRequest): Facade.HostBudgetHitResult => this.#call(() => this.#client.hostBudgetHit(input) as Facade.HostBudgetHitResult),
-    },
-  }
-  /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
-  execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
-  /** Read-only ask routing or attributed partial answers. */
-  can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
-  /** Read-only ask routing or attributed partial answers. */
-  peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
-  /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
-  ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
-  /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
-  wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly ai = {
+    chat: {
+      /** Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling. */
+      completions: (input: Facade.ChatCompletionRequest): Facade.ChatCompletionResponse => this.#call(() => this.#client.aiChatCompletions(input) as Facade.ChatCompletionResponse),
+    },
     steps: {
       /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
       submit: (input: Facade.ModelStepSubmit): Facade.ModelStepReceipt => this.#call(() => this.#client.aiStepsSubmit(input) as Facade.ModelStepReceipt),
@@ -2515,6 +2514,33 @@ export class Oneiron {
     /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
     verdict: (input: Facade.AiVerdictRequest): Facade.AiVerdict => this.#call(() => this.#client.aiVerdict(input) as Facade.AiVerdict),
   }
+  /** Asks for a secret's value for the model, by its handle and why; answers a pending reveal that reveal.wait collects. */
+  readonly reveal = Object.assign((input: Facade.RevealRequest): Facade.RevealPending => this.#call(() => this.#client.reveal(input) as Facade.RevealPending), {
+    /** Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt. */
+    wait: (input: Facade.RevealWaitRequest): Facade.RevealWaitAnswer => this.#call(() => this.#client.revealWait(input) as Facade.RevealWaitAnswer),
+    /** What a secret handle names, where it was found and what a reveal of it would do now; never the value. */
+    describe: (input: Facade.RevealDescribeRequest): Facade.RevealHandleCard => this.#call(() => this.#client.revealDescribe(input) as Facade.RevealHandleCard),
+  })
+  readonly host = {
+    /** Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint. */
+    compact: (input: Facade.HostCompactRequest): Facade.HostCompactResult => this.#call(() => this.#client.hostCompact(input) as Facade.HostCompactResult),
+    /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
+    wake: (input: Facade.HostWakeRequest): Facade.HostWakeResult => this.#call(() => this.#client.hostWake(input) as Facade.HostWakeResult),
+    budget: {
+      /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
+      hit: (input: Facade.HostBudgetHitRequest): Facade.HostBudgetHitResult => this.#call(() => this.#client.hostBudgetHit(input) as Facade.HostBudgetHitResult),
+    },
+  }
+  /** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
+  execute_code(input: Facade.ForeignCodeRunRequest): Facade.ForeignCodeRunResult { return this.#call(() => this.#client.executeCode(input) as Facade.ForeignCodeRunResult) }
+  /** Read-only ask routing or attributed partial answers. */
+  can(request: TaskCanAskRequest): TaskAskPreflight { return this.#call(() => {  const result = JSON.parse(this.#client.can(keyedJson(request))) as TaskAskPreflight; return result }) }
+  /** Read-only ask routing or attributed partial answers. */
+  peek(request: TaskAskHandle): TaskAskPersonEvidence[] { return this.#call(() => {  const result = JSON.parse(this.#client.peek(keyedJson(request))) as TaskAskPersonEvidence[]; return result.map(item => item) }) }
+  /** Asks people or an authority a typed question and returns at admission with the ask's handle. */
+  ask(...args: [spec: TaskAskSpec] | [who: TaskAskWho | undefined, what: TaskAskQuestion, until?: number | null, defaultBranch?: TaskAskDefault]): TaskAskReceipt { return this.#call(() => { const input: TaskAskSpec | TaskAskShort = args.length === 1 ? args[0] : {who: typeof args[0] === "string" ? {people: [args[0]]} : Array.isArray(args[0]) ? {people: args[0]} : args[0], what: args[1], until: args[2], default: args[3]}; return this.#client.ask(input) as TaskAskReceipt }) }
+  /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
+  wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly connector = {
     /** Every live catalogued connector whose name or summary matches the query. */
     list: (input: Facade.ConnectorListRequest): Facade.ConnectorEntry[] => this.#call(() => this.#client.connectorList(input) as Facade.ConnectorEntry[]),

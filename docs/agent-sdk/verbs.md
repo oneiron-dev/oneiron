@@ -69,6 +69,11 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.hold.resume`
 - `vault.budgets.local`
 - `vault.budgets.settlements`
+- `vault.budgets.rsi.configure`
+- `vault.budgets.rsi`
+- `vault.budgets.rsi.top_up`
+- `vault.budgets.rsi.hold`
+- `vault.budgets.rsi.hold.resume`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
@@ -224,6 +229,9 @@ both bindings and their export-census tests in one change.
 - `vault.packs.connector.grants.get`
 - `vault.packs.connector.grants.put`
 - `vault.packs.remove`
+- `ai.chat.completions`
+- `vault.connectors.proxy.admit`
+- `vault.connectors.proxy.revoke_write`
 - `vault.connectors.subscriptions.put`
 - `vault.connectors.subscriptions.list`
 - `vault.connectors.subscriptions.revoke`
@@ -364,6 +372,8 @@ both bindings and their export-census tests in one change.
 - `vault.research.reserve_work`
 - `vault.research.settle_work`
 - `vault.research.refund_work`
+- `vault.research.reserve_exploration`
+- `vault.research.budget`
 - `vault.research.record_benchmark`
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`

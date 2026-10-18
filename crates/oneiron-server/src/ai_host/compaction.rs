@@ -96,11 +96,16 @@ pub(super) struct LiveCompaction {
 impl CodeModeCompaction {
     /// The registered cheap route already used by code mode, for an
     /// owner's explicit host compaction. An off route has no replacement.
-    pub(super) fn host_backend(&self) -> Option<(Arc<dyn CompactionBackend>, CompactionGatePolicy)> {
+    pub(super) fn host_backend(
+        &self,
+    ) -> Option<(Arc<dyn CompactionBackend>, CompactionGatePolicy)> {
         match self {
             Self::Off(_) => None,
             Self::Live(live) => live.served.first().map(|backend| {
-                (Arc::clone(backend) as Arc<dyn CompactionBackend>, live.policy)
+                (
+                    Arc::clone(backend) as Arc<dyn CompactionBackend>,
+                    live.policy,
+                )
             }),
         }
     }

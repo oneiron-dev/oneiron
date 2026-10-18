@@ -33,32 +33,49 @@ pub(crate) fn record_event_outcome_as_in_txn(
     evidence: Option<EntityId>,
 ) -> Result<EntityId> {
     if value.basis == EventOutcomeBasis::OwnerAttested
-        && live_outcome_heads_in(vault, txn, &event)?.iter()
+        && live_outcome_heads_in(vault, txn, &event)?
+            .iter()
             .any(|head| head.value.basis == EventOutcomeBasis::Machine)
     {
-        return Err(crate::Error::InvalidClaimBody("owner check-in cannot replace machine evidence"));
+        return Err(crate::Error::InvalidClaimBody(
+            "owner check-in cannot replace machine evidence",
+        ));
     }
     let mut candidate = crate::ClaimCandidate::new(
         PREDICATE_CALENDAR_EVENT_OUTCOME,
         ClaimSubject::Entity(event),
         encode_event_outcome_value(value),
         1.0,
-    ).with_validity(Some(value.recorded_at), None);
+    )
+    .with_validity(Some(value.recorded_at), None);
     if let Some(evidence) = evidence {
         candidate = candidate.with_evidence(rmpv::Value::Map(vec![(
-            rmpv::Value::from("evidence_ref"), rmpv::Value::from(evidence.to_hex()),
+            rmpv::Value::from("evidence_ref"),
+            rmpv::Value::from(evidence.to_hex()),
         )]));
     }
-    record_with(vault, txn, event, value, Some(envelope.actor()), |txn, id, occurred| {
-        vault.batch_in()
-            .claim_candidate(id, candidate, envelope, occurred, value.recorded_at)
-            .apply(txn)?;
-        let stored = vault.get_claim_in_txn(txn, id)?.ok_or(crate::Error::EntityNotFound)?;
-        if !claim_surfaceable(&stored) {
-            return Err(crate::Error::InvalidClaimBody("calendar outcome requires live gate admission"));
-        }
-        Ok(())
-    })
+    record_with(
+        vault,
+        txn,
+        event,
+        value,
+        Some(envelope.actor()),
+        |txn, id, occurred| {
+            vault
+                .batch_in()
+                .claim_candidate(id, candidate, envelope, occurred, value.recorded_at)
+                .apply(txn)?;
+            let stored = vault
+                .get_claim_in_txn(txn, id)?
+                .ok_or(crate::Error::EntityNotFound)?;
+            if !claim_surfaceable(&stored) {
+                return Err(crate::Error::InvalidClaimBody(
+                    "calendar outcome requires live gate admission",
+                ));
+            }
+            Ok(())
+        },
+    )
 }
 
 fn record_with(
@@ -75,7 +92,10 @@ fn record_with(
         return Err(crate::Error::EntityNotFound);
     }
     let new_id = vault.store.clock.entity_id()?;
-    let occurred = TimeRange { start: value.recorded_at, end: value.recorded_at };
+    let occurred = TimeRange {
+        start: value.recorded_at,
+        end: value.recorded_at,
+    };
     let prior = live_outcome_heads_in(vault, wtxn, &event_ref)?;
     write(wtxn, &new_id, occurred)?;
     for head in prior {

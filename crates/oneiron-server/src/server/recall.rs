@@ -67,9 +67,13 @@ impl SyncServer {
         let embed = self.recall_embed_media(input.effort, media, &refused, payer);
         let arrived = Instant::now();
         let (_, budget) = oneiron::memory::resolve_recall_dial(
-            input.effort, input.deadline_ms, self.vault.call_mode_deadline(),
+            input.effort,
+            input.deadline_ms,
+            self.vault.call_mode_deadline(),
         )?;
-        let hyde = self.hyde_host.expander(memory, effort, budget.map(|budget| arrived + budget))?;
+        let hyde =
+            self.hyde_host
+                .expander(memory, effort, budget.map(|budget| arrived + budget))?;
         let door = RecallDoor {
             arrived,
             hyde: hyde.as_ref().map(|hyde| hyde.binding()),
@@ -304,7 +308,9 @@ impl SyncServer {
                     .at(locality)
                     .listing_producers(&listing);
                 let hyde = server.hyde_host.expander(
-                    &memory, effort, budget.map(|budget| arrived + budget),
+                    &memory,
+                    effort,
+                    budget.map(|budget| arrived + budget),
                 )?;
                 let door = RecallDoor {
                     arrived,

@@ -38,7 +38,10 @@ impl ScopedRead<'_> {
                 .map(|_| vault.store.clock.entity_id())
                 .collect::<Result<Vec<_>>>()?;
             let at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let refs = ids.iter().map(|id| format!("served_form:{}", id.to_hex())).collect();
+            let refs = ids
+                .iter()
+                .map(|id| format!("served_form:{}", id.to_hex()))
+                .collect();
             for (id, served) in ids.into_iter().zip(&served) {
                 crate::receipt::put_served_form_in_txn(
                     vault,

@@ -40,8 +40,8 @@ use crate::dreamer_promotion::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::ports::EdgeStoreRead;
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_TASK};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
@@ -192,7 +192,15 @@ pub fn fulfill_commitment_from(
     learned_at: u64,
 ) -> Result<CommitmentCloseResult> {
     vault.with_write_txn_grouped(|wtxn| {
-        fulfill_commitment_from_in_txn(vault, wtxn, commitment_ref, source, envelope, learned_at, None)
+        fulfill_commitment_from_in_txn(
+            vault,
+            wtxn,
+            commitment_ref,
+            source,
+            envelope,
+            learned_at,
+            None,
+        )
     })
 }
 
@@ -208,7 +216,10 @@ pub(crate) fn fulfill_commitment_from_in_txn(
     evidence: Option<Value>,
 ) -> Result<CommitmentCloseResult> {
     if let FulfillmentSource::BriefCompletion { brief_ref } = source
-        && vault.store.port_edge_get(wtxn, &brief_ref, EdgeKind::Fulfills, commitment_ref)?.is_none()
+        && vault
+            .store
+            .port_edge_get(wtxn, &brief_ref, EdgeKind::Fulfills, commitment_ref)?
+            .is_none()
     {
         return Err(Error::InvalidClaimBody("brief does not fulfill commitment"));
     }
@@ -225,8 +236,13 @@ pub(crate) fn fulfill_commitment_from_in_txn(
         Value::Map(entries)
     });
     close_commitment_in_txn(
-        vault, wtxn, commitment_ref, envelope, learned_at,
-        CommitmentInstanceOutcome::Fulfilled, evidence,
+        vault,
+        wtxn,
+        commitment_ref,
+        envelope,
+        learned_at,
+        CommitmentInstanceOutcome::Fulfilled,
+        evidence,
     )
 }
 
@@ -420,13 +436,24 @@ fn close_with_hook(
     mismatch: &'static str,
 ) -> Result<CommitmentCloseResult> {
     vault.with_write_txn_grouped(|wtxn| {
-        let body = vault.get_claim_in_txn(wtxn, commitment_ref)?.ok_or(Error::EntityNotFound)?;
-        let record = crate::commitment::decode_commitment_claim(&body)?
-            .ok_or(Error::InvalidClaimBody("claim predicate is not commitment.record"))?;
+        let body = vault
+            .get_claim_in_txn(wtxn, commitment_ref)?
+            .ok_or(Error::EntityNotFound)?;
+        let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
+            Error::InvalidClaimBody("claim predicate is not commitment.record"),
+        )?;
         if record.status != CommitmentStatus::Open && record.status != outcome.status() {
             return Err(Error::InvalidClaimBody(mismatch));
         }
-        close_commitment_in_txn(vault, wtxn, commitment_ref, envelope, learned_at, outcome, None)
+        close_commitment_in_txn(
+            vault,
+            wtxn,
+            commitment_ref,
+            envelope,
+            learned_at,
+            outcome,
+            None,
+        )
     })
 }
 
@@ -441,22 +468,38 @@ pub(crate) fn close_commitment_in_txn(
     outcome: CommitmentInstanceOutcome,
     evidence: Option<Value>,
 ) -> Result<CommitmentCloseResult> {
-    let body = vault.get_claim_in_txn(wtxn, commitment_ref)?.ok_or(Error::EntityNotFound)?;
-    let record = crate::commitment::decode_commitment_claim(&body)?
-        .ok_or(Error::InvalidClaimBody("claim predicate is not commitment.record"))?;
+    let body = vault
+        .get_claim_in_txn(wtxn, commitment_ref)?
+        .ok_or(Error::EntityNotFound)?;
+    let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(
+        Error::InvalidClaimBody("claim predicate is not commitment.record"),
+    )?;
     let target = outcome.status();
     if record.status == CommitmentStatus::Open {
         vault.update_commitment_status_in_txn(
-            wtxn, commitment_ref, target, envelope, learned_at, evidence,
+            wtxn,
+            commitment_ref,
+            target,
+            envelope,
+            learned_at,
+            evidence,
         )?;
     } else if record.status != target {
-        return Err(Error::InvalidClaimBody("commitment is closed with another status"));
+        return Err(Error::InvalidClaimBody(
+            "commitment is closed with another status",
+        ));
     }
-    let raw = vault.get_raw_in(wtxn, commitment_ref)?.ok_or(Error::EntityNotFound)?;
+    let raw = vault
+        .get_raw_in(wtxn, commitment_ref)?
+        .ok_or(Error::EntityNotFound)?;
     let closed_at = EntityMetadataHeader::parse(&raw)
-        .ok_or(Error::CorruptedIndex("commitment claim header"))?.learned_at;
+        .ok_or(Error::CorruptedIndex("commitment claim header"))?
+        .learned_at;
     vault.on_instance_closed_in_txn(wtxn, commitment_ref, outcome, envelope, closed_at)?;
-    Ok(CommitmentCloseResult { commitment_ref: *commitment_ref, status: target })
+    Ok(CommitmentCloseResult {
+        commitment_ref: *commitment_ref,
+        status: target,
+    })
 }
 
 /// Writes a Dreamer-witnessed fulfillment PROPOSAL — never a status.
