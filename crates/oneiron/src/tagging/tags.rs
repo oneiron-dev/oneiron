@@ -355,6 +355,32 @@ pub(crate) fn tag_set_in_txn(
     TAG_SET.get(store, txn, turn)
 }
 
+/// Whether this replica lacks the row of a MESSAGE that `turn`'s saved tags
+/// were read from: a window demoted back to thin took it (OF-534), and the
+/// kept turn reads only partly here until a promotion brings the row back.
+/// Queued work on the turn (its tag pass, its sieve read, its projection and
+/// consolidation) waits on this one predicate rather than reading the
+/// fragment, and keeps every row it holds. No saved set is `false`: an
+/// untagged turn keeps no list to tell by.
+///
+/// An intentional raw maintenance read of the stored set, not a read door:
+/// it reads only the set's own MESSAGE list and hands no tag out.
+pub(crate) fn tagged_messages_absent_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    turn: &EntityId,
+) -> Result<bool> {
+    let Some(tags) = TAG_SET.get(store, txn, turn)? else {
+        return Ok(false);
+    };
+    for message in &tags.messages {
+        if !crate::ports::EntityStoreRead::port_entity_present(store, txn, message)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The tag set of `turn` while the text it was read from reads: the turn and
 /// every message it was read from are stored and none reads deleted.
 pub(super) fn readable_in_txn(
@@ -380,7 +406,9 @@ pub(super) fn readable_in_txn(
 /// is hidden, so no reader meets an id it cannot open. A provisional entity
 /// is local and shows while it stands. Only the copy changes: no row goes
 /// and no stored link is rewritten, so a promotion shows the link again.
-fn readable_view_in_txn(
+/// Readers of a tag set outside tagging take it through this view; only
+/// [`tagged_messages_absent_in_txn`] reads the stored set's MESSAGE list.
+pub(crate) fn readable_view_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,

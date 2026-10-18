@@ -25,7 +25,7 @@ pub use self::gate::{GateDenial, GateDenialOutcome, GateDenialReason, GateError}
 pub use self::hook::VerbHookStop;
 pub use self::maintenance::{CompactionPacketError, MaintenanceError};
 pub use self::off_record::OffRecordError;
-pub use self::record::RecordError;
+pub use self::record::{RecordError, RoomLiveSpeakersHold};
 pub use self::registry::RegistryError;
 pub use self::relay::RelayError;
 pub use self::secret::{KitRecord, SecretError};
