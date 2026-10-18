@@ -20,6 +20,8 @@ use oneiron::recovery::{
 };
 use oneiron::sync::WindowManager;
 use oneiron::sync::bridge::Materializer;
+use oneiron::sync::client::fetch_sealed_bundle_with_kit;
+use oneiron::sync::residence::sealed_generation_from_hex;
 use oneiron::world_keys::{
     IssuedWorldKit, KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads,
     SealedVaultBundle, VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
@@ -404,8 +406,8 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
         }
         None => args.confirm_unverified.then_some(KitConfirmation::Owner),
     };
-    if let Some(bundle) = &args.sealed_bundle {
-        return restore_from_bundle(&args, bundle, confirm);
+    if args.sealed_bundle.is_some() || args.sealed_home.is_some() {
+        return restore_from_bundle(&args, confirm);
     }
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let vault = open(&args.serve)?;
@@ -446,24 +448,31 @@ struct BundleRestored {
     skipped: usize,
 }
 
-/// `recovery-kit restore --sealed-bundle`: the kit alone restores the vault on
-/// an install that holds no copy of it yet, from the sealed cloud bundle and
-/// its pad object in owner-given files. The pieces rebuild the kit's seed for
-/// the vault `--vault-id` names, never one read from the bundle.
+/// `recovery-kit restore --sealed-bundle` or `--sealed-home`: the kit alone
+/// restores the vault on an install that holds no copy of it yet, from the
+/// sealed cloud bundle and its pad object, in owner-given files or fetched from
+/// the home. The pieces rebuild the kit's seed for the vault `--vault-id`
+/// names, never one read from the bundle, before the home is asked.
 fn restore_from_bundle(
     args: &RecoveryKitRestoreArgs,
-    bundle: &Path,
     confirm: Option<KitConfirmation>,
 ) -> anyhow::Result<()> {
     let vault_id = args.vault_id.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("--sealed-bundle names the vault the kit is bound to: --vault-id")
+        anyhow::anyhow!("a sealed bundle restore names the vault the kit is bound to: --vault-id")
     })?;
     let vault_id = secret32(vault_id.as_bytes(), "a vault id")?;
-    let pads = args.sealed_pads.as_deref().ok_or_else(|| {
-        anyhow::anyhow!("--sealed-bundle reads the bundle's pad object: --sealed-pads")
-    })?;
-    let bundle = SealedVaultBundle::from_bytes(&read_sealed(bundle)?)?;
-    let pads = SealedKeyPads::from_bytes(&read_sealed(pads)?)?;
+    let files = match &args.sealed_bundle {
+        Some(bundle) => {
+            let pads = args.sealed_pads.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--sealed-bundle reads the bundle's pad object: --sealed-pads")
+            })?;
+            Some((
+                SealedVaultBundle::from_bytes(&read_sealed(bundle)?)?,
+                SealedKeyPads::from_bytes(&read_sealed(pads)?)?,
+            ))
+        }
+        None => None,
+    };
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let kit = pieces
@@ -480,6 +489,10 @@ fn restore_from_bundle(
     let reissue_advised = secret.reissue_advised();
     let seed = RecoveryRootSeed::from_restored_kit(secret)?;
     let root = seed.public(&vault_id)?.id;
+    let (bundle, pads) = match files {
+        Some(objects) => objects,
+        None => fetch_from_home(args, &vault_id, &seed, root, confirm)?,
+    };
     let config = resolve_serve_config(&args.serve)?;
     let vault = Arc::new(open_stopped_vault(&config, INSTEAD)?);
     let owner = local_owner(&vault)?;
@@ -507,6 +520,56 @@ fn restore_from_bundle(
         unchanged: take.unchanged,
         skipped: take.skipped,
     })
+}
+
+/// `--sealed-home`: the sealed bundle and its pad object, fetched from the home
+/// with the kit's `seed` alone: the generation `--sealed-generation` names, or
+/// the newest the home keeps for the kit's `root`. The restore's kit rule goes
+/// first, so a kit this install cannot verify asks nothing of the home.
+fn fetch_from_home(
+    args: &RecoveryKitRestoreArgs,
+    vault_id: &[u8; 32],
+    seed: &RecoveryRootSeed,
+    root: RecoveryRootId,
+    confirm: Option<KitConfirmation>,
+) -> anyhow::Result<(SealedVaultBundle, SealedKeyPads)> {
+    let home = args
+        .sealed_home
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("--sealed-home names the home to fetch from"))?;
+    let generation = args
+        .sealed_generation
+        .as_deref()
+        .map(|hex| {
+            sealed_generation_from_hex(hex)
+                .ok_or_else(|| anyhow::anyhow!("--sealed-generation is 48 lower-case hex digits"))
+        })
+        .transpose()?;
+    if matches!(confirm, Some(KitConfirmation::Fingerprint(id)) if id != root) {
+        anyhow::bail!("the fingerprint is not this kit's root");
+    }
+    anyhow::ensure!(
+        seed.authenticated() || confirm.is_some(),
+        "a kit opened with one piece and the passphrase is not verified: give --fingerprint, \
+         read on one of your machines, or --confirm-unverified"
+    );
+    // The command runs on the CLI's runtime, so the fetch gets a thread and a
+    // runtime of its own.
+    let fetched = std::thread::scope(|scope| {
+        scope
+            .spawn(|| -> anyhow::Result<_> {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()?;
+                let fetch = fetch_sealed_bundle_with_kit(home, vault_id, seed, generation);
+                runtime
+                    .block_on(fetch)
+                    .map_err(|error| anyhow::anyhow!("fetch from {home}: {error}"))
+            })
+            .join()
+            .map_err(|_| anyhow::anyhow!("the sealed bundle fetch stopped"))?
+    })?;
+    fetched.ok_or_else(|| anyhow::anyhow!("{home} keeps no sealed bundle this kit may read"))
 }
 
 /// A sealed bundle or pad object from the owner's file, read whole.

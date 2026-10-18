@@ -5,13 +5,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use super::BridgeLimits;
 use super::codec::{self, Frame, Request, Response};
-use super::{BridgeLimits, MAX_TEXT_BYTES};
 use crate::Vault;
 use crate::speculative::SpeculativeFireDecision;
 use crate::voice_cascade::{PartialEnricher, SpeculativeRetrievalBridge, UtteranceHandle};
 
-const MAX_REQUESTS: usize = 4096;
 const MAX_ERRORS: usize = 8;
 const IO_TICK: Duration = Duration::from_millis(200);
 
@@ -46,7 +45,8 @@ impl Connection {
     }
 
     /// Requires actual host enrichment. No default or fake production enricher
-    /// exists. Returns on EOF, shutdown, framing failure or connection budget.
+    /// exists. Returns on EOF, shutdown, framing failure or repeated errors;
+    /// valid requests are served for as long as the connection lasts.
     /// Dropping the local bridge releases every open utterance on every exit,
     /// including I/O errors and unwinding. This does not dispatch audio stops.
     pub fn serve(
@@ -64,7 +64,7 @@ impl Connection {
         let mut writer = &self.stream;
         let mut session = WireSession::new(vault, limits);
         let mut errors = 0;
-        for _ in 0..MAX_REQUESTS {
+        loop {
             let bytes = match codec::read_frame(&mut reader, &self.shutdown)? {
                 Frame::Data(bytes) => bytes,
                 Frame::End => break,
@@ -141,7 +141,7 @@ impl WireSession {
     }
 
     fn open(&mut self, utterance_id: String) -> Response {
-        if utterance_id.len() > 128 || utterance_id.trim().is_empty() {
+        if utterance_id.trim().is_empty() {
             return Response::error("invalid_request");
         }
         if self.open.is_some() {
@@ -174,7 +174,7 @@ impl WireSession {
         if current != token {
             return Response::error("stale_handle");
         }
-        if text.len() > MAX_TEXT_BYTES || text.trim().is_empty() {
+        if text.trim().is_empty() {
             return Response::error("invalid_request");
         }
         if final_text {

@@ -248,6 +248,11 @@ pub struct OfficeBodyExportRecord {
     /// The engine that recalculated an XLSX export and the local time it
     /// read; `None` when the file recalculates on open, and for DOCX.
     pub recalc: Option<String>,
+    /// What the projection adapted, as Excel would, so the file stays one
+    /// its application opens: a pivot cache whose source went keeps its
+    /// cached results, a picture whose cells were deleted collapses, a note
+    /// goes with its cell. One line each; none for DOCX.
+    pub effects: Vec<String>,
 }
 
 /// `version` is `None` when the body equals its import: a no-op keeps the
@@ -682,7 +687,7 @@ impl Vault {
             .office_body_head(artifact)?
             .ok_or(Error::EntityNotFound)?;
         let at = self.now_recorded_at();
-        let Some((bytes, changes, recalc)) =
+        let Some((bytes, changes, recalc, effects)) =
             self.project_body(artifact, &head, request.author, at, request.zone)?
         else {
             return Ok(OfficeBodyExport {
@@ -729,6 +734,7 @@ impl Vault {
                 recalc: recalc
                     .as_ref()
                     .map(|stamp| recalc_label(stamp, request.zone)),
+                effects,
             };
             EXPORTS.put(
                 &self.store,
@@ -760,7 +766,7 @@ impl Vault {
         let at = self.now_recorded_at();
         let limits = self.docedit_package_limits()?;
         let (bytes, recalc) = match self.project_body(artifact, &head, "preview", at, zone)? {
-            Some((bytes, _, recalc)) => (bytes, recalc),
+            Some((bytes, _, recalc, _)) => (bytes, recalc),
             None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
         };
         let book = read_xlsx_cells(&bytes, limits)
@@ -783,8 +789,9 @@ impl Vault {
     }
 
     /// The body at `head` projected onto its imported package: the bytes, the
-    /// change count and the engine that recalculated a workbook. `None` when the
-    /// body equals its import, so a no-op keeps the original package.
+    /// change count, the engine that recalculated a workbook and what the
+    /// projection adapted. `None` when the body equals its import, so a no-op
+    /// keeps the original package.
     fn project_body(
         &self,
         artifact: &EntityId,
@@ -792,7 +799,7 @@ impl Vault {
         author: &str,
         at: u64,
         zone: &OfficeRecalcZone,
-    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>)>> {
+    ) -> Result<Option<(Vec<u8>, usize, Option<CalcEngineStamp>, Vec<String>)>> {
         if head.kind == OfficeBodyKind::Pptx {
             return Err(invalid(
                 "a deck exports through vault.artifacts.body.deck.export, which lands only once its export gate opens",
@@ -834,7 +841,7 @@ impl Vault {
                 ArchiveLimits::DEFAULT,
             )
             .map_err(|_| invalid("the body could not be projected onto its package"))?;
-            return Ok(Some((bytes, changes.len(), None)));
+            return Ok(Some((bytes, changes.len(), None, Vec::new())));
         }
         let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
         if changes.is_empty() {
@@ -843,8 +850,8 @@ impl Vault {
         let limits = self.docedit_package_limits()?;
         let projected = project_xlsx(&self.body_source(artifact, head)?, &changes, limits)
             .map_err(|_| invalid("the body could not be projected onto its package"))?;
-        let (bytes, recalc) = recalc_xlsx(&projected, limits, at, zone)?;
-        Ok(Some((bytes, changes.len(), recalc)))
+        let (bytes, recalc) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
+        Ok(Some((bytes, changes.len(), recalc, projected.effects)))
     }
 
     /// The imported version, checked against the hash the import recorded.
