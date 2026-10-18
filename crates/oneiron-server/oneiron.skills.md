@@ -1192,7 +1192,7 @@ Method: `POST`
 Authentication: no bearer and no slip. The body's `signature` is the authentication: the Ed25519 signature of the owner anchor of the kit's recovery root, over `b"oneiron/kit-bundle-fetch/v1\0" || vault_id || root || authority || "POST" || "/v1/recovery/sealed-bundle/part" || object || generation || offset (u64 BE) || timestamp (u64 BE) || nonce`.
 
 - `authority`, `"POST"`, the path and `object` each go in as their byte length (u64 BE), then their UTF-8 bytes. `generation` is `0x01` and its 24 bytes, or `0x00` for the newest.
-- `authority` is the home's address as the request names it: the host, then `:port` when the address names a port, in lower case. The home reads it from the URI authority (HTTP/2) or the `Host` header, never from a forwarded host. A reverse proxy in front of the home must pass `Host` on unchanged, port included (`DEPLOYMENT.md`).
+- `authority` is the home's address: the host, then `:port` when the address names a port other than its scheme's, in lower case. The home checks the signature against the address the request names, read from the URI authority (HTTP/2) or the `Host` header, never from a forwarded host, and against the host and port of its configured public URL (`oauth_resource_indicator`) when it has one. A reverse proxy in front of the home must pass `Host` on unchanged, port included, unless that URL is the address the kit dials (`DEPLOYMENT.md`).
 - A home serves a generation only to the root its publisher named for it.
 
 Request body (JSON, at most 4 KiB; unknown fields are refused):
@@ -1212,9 +1212,9 @@ Response:
 - `total`: the object's whole length in bytes.
 - `digest`: the BLAKE3 digest of the whole object, 64 hex.
 - `last`: `true` when this slice ends the object.
-- `part`: the slice in standard base64, at most 16 MiB decoded.
+- `part`: the slice in standard base64, at most 256 KiB decoded.
 
-A malformed body or field, or a request that names no host, is `400 BAD_REQUEST`. A request that does not verify, a generation not kept for the root, and an offset at or past the object's end are all `404 NOT_FOUND`. A read that stopped is `500`.
+A malformed body or field, or a request that names no host at a home with no public URL configured, is `400 BAD_REQUEST`. A request that does not verify, a generation not kept for the root, and an offset at or past the object's end are all `404 NOT_FOUND`. A read that stopped is `500`.
 
 ### Booking Agent Surface
 
