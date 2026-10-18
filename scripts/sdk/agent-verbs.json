@@ -495,6 +495,128 @@
       "section": false
     },
     {
+      "name": "self.budget",
+      "description": "The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money.",
+      "input": "crate::agent_dispatch::budget_doors::SelfBudgetRequest",
+      "output": "crate::agent_dispatch::budget_doors::AgentBudgetView",
+      "call": "crate::agent_dispatch::budget_doors::self_budget(memory, &input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.budget.land",
+      "description": "The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later.",
+      "input": "crate::agent_dispatch::budget_doors::BudgetLandRequest",
+      "output": "crate::agent_dispatch::PartialResultHold",
+      "call": "crate::agent_dispatch::budget_doors::land_for_budget(memory, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.lease.open",
+      "description": "The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit.",
+      "input": "crate::agent_dispatch::budget_doors::OpenSpendLeaseRequest",
+      "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
+      "call": "crate::agent_dispatch::budget_doors::open_spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease.open\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.lease",
+      "description": "The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it.",
+      "input": "crate::agent_dispatch::budget_doors::SpendScopeRequest",
+      "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
+      "call": "crate::agent_dispatch::budget_doors::spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.lease.top_up",
+      "description": "The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap.",
+      "input": "crate::agent_dispatch::budget_doors::TopUpSpendLeaseRequest",
+      "output": "crate::agent_dispatch::budget_doors::SpendLeaseView",
+      "call": "crate::agent_dispatch::budget_doors::top_up_spend_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.lease.top_up\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.hold",
+      "description": "The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume.",
+      "input": "crate::agent_dispatch::budget_doors::BudgetHoldRequest",
+      "output": "Option<crate::agent_dispatch::PartialResultHold>",
+      "call": "crate::agent_dispatch::budget_doors::budget_hold_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.hold\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.hold.resume",
+      "description": "The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion.",
+      "input": "crate::agent_dispatch::budget_doors::BudgetHoldRequest",
+      "output": "crate::agent_dispatch::PartialResultHold",
+      "call": "crate::agent_dispatch::budget_doors::resume_budget_hold_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.hold.resume\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.local",
+      "description": "The owner observes a device-local runner budget counter without creating it, including absence after an owner restore.",
+      "input": "crate::agent_dispatch::budget_doors::LocalRunnerBudgetRequest",
+      "output": "crate::agent_dispatch::budget_doors::LocalRunnerBudgetView",
+      "call": "crate::agent_dispatch::budget_doors::local_runner_budget_as_owner(memory.vault(), &memory.embedded_owner(\"vault.budgets.local\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.budgets.settlements",
+      "description": "The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced.",
+      "input": "crate::agent_dispatch::budget_doors::RunSettlementsRequest",
+      "output": "crate::agent_dispatch::budget_doors::RunSettlementsView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.budgets.settlements\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.fanout.resume",
       "description": "The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible.",
       "input": "crate::task_verb::sdk::FanoutResumeRequest",

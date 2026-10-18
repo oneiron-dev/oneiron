@@ -137,6 +137,57 @@ impl AgentDispatcher<'_> {
         Ok(scope)
     }
 
+    /// Raises a persisted lease's hard maximum as its authenticated owner.
+    /// The replacement cap makes a replay idempotent. A carved child's
+    /// increase is reserved from its parent, never minted past an ancestor.
+    pub fn top_up_spend_scope_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        id: &SpendScopeId,
+        expected_cap_units: u64,
+        maximum: DeclaredMaximum,
+        shown: MaximumShown,
+    ) -> Result<SpendScope> {
+        JobMaximum::start(id.as_str(), maximum.clone(), Some(shown))
+            .map_err(|_| invalid("spend lease top-up requires a valid shown maximum"))?;
+        let mut txn = self.vault.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self.vault, &txn)?;
+        let mut scope = SCOPE.get(&self.vault.store, &txn, &id.0)?
+            .ok_or_else(|| invalid("spend scope is missing"))?;
+        if scope.state != SpendState::Open || !scope.hard || scope.unit != maximum.unit {
+            return Err(invalid("top up an open hard lease in its existing unit"));
+        }
+        if maximum.units <= expected_cap_units {
+            return Err(invalid("a top-up raises the maximum the owner saw"));
+        }
+        if scope.cap_units == maximum.units {
+            return Ok(scope);
+        }
+        if scope.cap_units != expected_cap_units {
+            return Err(invalid("spend cap changed; read the lease again"));
+        }
+        if scope.payer.as_ref().is_some_and(|payer| payer.party != actor) {
+            return Err(invalid("only the payer may raise its accepted root cap"));
+        }
+        if let Some(payer) = &mut scope.payer {
+            payer.granted_by = actor;
+            payer.at_ms = shown.at_ms;
+        }
+        let additional = maximum.units - scope.cap_units;
+        if scope.parent.is_some() {
+            let host = self.open_parent_in_txn(&txn, &scope)?;
+            let mut host = self.make_local_in_txn(&mut txn, host, additional)?;
+            host.held_units = host.held_units.checked_add(additional)
+                .ok_or(crate::Error::ArithmeticOverflow("spend lease top-up"))?;
+            SCOPE.put(&self.vault.store, &mut txn, &host.scope.0, &host)?;
+        }
+        scope.cap_units = maximum.units;
+        scope.shown_at_ms = Some(shown.at_ms);
+        SCOPE.put(&self.vault.store, &mut txn, &scope.scope.0, &scope)?;
+        txn.commit()?;
+        Ok(scope)
+    }
+
     /// Reserves `child`'s scope under `parent` in one transaction: units move
     /// from the parent's available into its held units. Refuses only a carve
     /// the nearest hard ancestor cannot cover. A hold larger than what is

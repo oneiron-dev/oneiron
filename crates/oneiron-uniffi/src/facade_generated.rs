@@ -138,6 +138,51 @@ export_facade! {
     let output = client.vault_fanout_launch(&input)?;
     crate::codec::lift_record("vault.fanout.launch", &output)
 };
+"self.budget" => fn self_budget(&self, input: SelfBudgetRequest) -> AgentBudgetView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::SelfBudgetRequest = crate::codec::lower_record("self.budget", input)?;
+    let output = client.self_budget(&input)?;
+    crate::codec::lift_record("self.budget", &output)
+};
+"self.budget.land" => fn self_budget_land(&self, input: BudgetLandRequest) -> PartialResultHold = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::BudgetLandRequest = crate::codec::lower_record("self.budget.land", input)?;
+    let output = client.self_budget_land(&input)?;
+    crate::codec::lift_record("self.budget.land", &output)
+};
+"vault.budgets.lease.open" => fn vault_budgets_lease_open(&self, input: OpenSpendLeaseRequest) -> SpendLeaseView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest = crate::codec::lower_record("vault.budgets.lease.open", input)?;
+    let output = client.vault_budgets_lease_open(&input)?;
+    crate::codec::lift_record("vault.budgets.lease.open", &output)
+};
+"vault.budgets.lease" => fn vault_budgets_lease(&self, input: SpendScopeRequest) -> SpendLeaseView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::SpendScopeRequest = crate::codec::lower_record("vault.budgets.lease", input)?;
+    let output = client.vault_budgets_lease(&input)?;
+    crate::codec::lift_record("vault.budgets.lease", &output)
+};
+"vault.budgets.lease.top_up" => fn vault_budgets_lease_top_up(&self, input: TopUpSpendLeaseRequest) -> SpendLeaseView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::TopUpSpendLeaseRequest = crate::codec::lower_record("vault.budgets.lease.top_up", input)?;
+    let output = client.vault_budgets_lease_top_up(&input)?;
+    crate::codec::lift_record("vault.budgets.lease.top_up", &output)
+};
+"vault.budgets.hold" => fn vault_budgets_hold(&self, input: BudgetHoldRequest) -> Option<PartialResultHold> = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::BudgetHoldRequest = crate::codec::lower_record("vault.budgets.hold", input)?;
+    let output = client.vault_budgets_hold(&input)?;
+    crate::codec::lift_record("vault.budgets.hold", &output)
+};
+"vault.budgets.hold.resume" => fn vault_budgets_hold_resume(&self, input: BudgetHoldRequest) -> PartialResultHold = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::BudgetHoldRequest = crate::codec::lower_record("vault.budgets.hold.resume", input)?;
+    let output = client.vault_budgets_hold_resume(&input)?;
+    crate::codec::lift_record("vault.budgets.hold.resume", &output)
+};
+"vault.budgets.local" => fn vault_budgets_local(&self, input: LocalRunnerBudgetRequest) -> LocalRunnerBudgetView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetRequest = crate::codec::lower_record("vault.budgets.local", input)?;
+    let output = client.vault_budgets_local(&input)?;
+    crate::codec::lift_record("vault.budgets.local", &output)
+};
+"vault.budgets.settlements" => fn vault_budgets_settlements(&self, input: RunSettlementsRequest) -> RunSettlementsView = |client| {
+    let input: oneiron::agent_dispatch::budget_doors::RunSettlementsRequest = crate::codec::lower_record("vault.budgets.settlements", input)?;
+    let output = client.vault_budgets_settlements(&input)?;
+    crate::codec::lift_record("vault.budgets.settlements", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;

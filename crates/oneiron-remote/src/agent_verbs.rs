@@ -127,6 +127,33 @@ impl OneironClient {
                 "vault.fanout.launch" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
+                "self.budget" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::AgentBudgetView,
+                >(client, verb, &input),
+                "self.budget.land" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::PartialResultHold,
+                >(client, verb, &input),
+                "vault.budgets.lease.open" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::SpendLeaseView,
+                >(client, verb, &input),
+                "vault.budgets.lease" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::SpendLeaseView,
+                >(client, verb, &input),
+                "vault.budgets.lease.top_up" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::SpendLeaseView,
+                >(client, verb, &input),
+                "vault.budgets.hold" => remote_agent_verb_output::<
+                    Option<oneiron::agent_dispatch::PartialResultHold>,
+                >(client, verb, &input),
+                "vault.budgets.hold.resume" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::PartialResultHold,
+                >(client, verb, &input),
+                "vault.budgets.local" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetView,
+                >(client, verb, &input),
+                "vault.budgets.settlements" => remote_agent_verb_output::<
+                    oneiron::agent_dispatch::budget_doors::RunSettlementsView,
+                >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::FanoutLaunchView,
                 >(client, verb, &input),
@@ -1601,6 +1628,114 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.fanout.launch", value)
+    }
+    pub fn self_budget(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::SelfBudgetRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::AgentBudgetView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.budget", value)
+    }
+    pub fn self_budget_land(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::BudgetLandRequest,
+    ) -> Result<oneiron::agent_dispatch::PartialResultHold, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.budget.land", value)
+    }
+    pub fn vault_budgets_lease_open(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::SpendLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.lease.open", value)
+    }
+    pub fn vault_budgets_lease(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::SpendScopeRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::SpendLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.lease", value)
+    }
+    pub fn vault_budgets_lease_top_up(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::TopUpSpendLeaseRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::SpendLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.lease.top_up", value)
+    }
+    pub fn vault_budgets_hold(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::BudgetHoldRequest,
+    ) -> Result<Option<oneiron::agent_dispatch::PartialResultHold>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.hold", value)
+    }
+    pub fn vault_budgets_hold_resume(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::BudgetHoldRequest,
+    ) -> Result<oneiron::agent_dispatch::PartialResultHold, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.hold.resume", value)
+    }
+    pub fn vault_budgets_local(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.local", value)
+    }
+    pub fn vault_budgets_settlements(
+        &self,
+        input: &oneiron::agent_dispatch::budget_doors::RunSettlementsRequest,
+    ) -> Result<oneiron::agent_dispatch::budget_doors::RunSettlementsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.budgets.settlements", value)
     }
     pub fn vault_fanout_resume(
         &self,

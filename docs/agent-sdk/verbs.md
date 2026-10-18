@@ -34,6 +34,15 @@ both bindings and their export-census tests in one change.
 - `tasks.create`
 - `tasks.wave`
 - `vault.fanout.launch`
+- `self.budget`
+- `self.budget.land`
+- `vault.budgets.lease.open`
+- `vault.budgets.lease`
+- `vault.budgets.lease.top_up`
+- `vault.budgets.hold`
+- `vault.budgets.hold.resume`
+- `vault.budgets.local`
+- `vault.budgets.settlements`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`

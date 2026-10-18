@@ -22,6 +22,7 @@
 
 mod agent_run;
 mod attenuation;
+pub mod budget_doors;
 mod budget_hold;
 mod codec;
 mod comm;

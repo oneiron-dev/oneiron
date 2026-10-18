@@ -58,6 +58,15 @@ describe(input: unknown): unknown
 tasksCreate(input: unknown): unknown
 tasksWave(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
+selfBudget(input: unknown): unknown
+selfBudgetLand(input: unknown): unknown
+vaultBudgetsLeaseOpen(input: unknown): unknown
+vaultBudgetsLease(input: unknown): unknown
+vaultBudgetsLeaseTopUp(input: unknown): unknown
+vaultBudgetsHold(input: unknown): unknown
+vaultBudgetsHoldResume(input: unknown): unknown
+vaultBudgetsLocal(input: unknown): unknown
+vaultBudgetsSettlements(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
