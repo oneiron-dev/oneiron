@@ -13,7 +13,7 @@
 //! with none gets a minimal one. The body itself (its Loro document, actors
 //! and forks) lives in the engine; this module knows only SpreadsheetML.
 
-use crate::edit::xml::{escape_attribute, next_part, set_attribute, splice};
+use crate::edit::xml::{Splice, escape_attribute, next_part, set_attribute, splice};
 use crate::ooxml::{
     DOCUMENT_RELATIONSHIPS as REL, Node, SPREADSHEET_MAIN as SML, XmlError, XmlTree, escape_text,
 };
@@ -43,6 +43,10 @@ const WORKSHEET_KIND: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet";
 const EXTENDED_PROPERTIES: &str =
     "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+/// A worksheet drawing's anchors.
+const XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+/// The Excel elements of a legacy VML drawing (a note's cell and box).
+const VML_EXCEL: &str = "urn:schemas-microsoft-com:office:excel";
 /// The elements whose text is a formula: cells, rules and validations,
 /// chart ranges, table columns.
 const FORMULA_ELEMENTS: &[&str] = &[
@@ -445,6 +449,15 @@ pub enum XlsxBodyError {
 
 type Result<T> = std::result::Result<T, XlsxBodyError>;
 
+/// A projected workbook and what the projection adapted on the way, as
+/// Excel would (a pivot cache whose source sheet went, a picture its rows
+/// collapsed, a note whose cell was deleted), one line each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct XlsxProjection {
+    pub bytes: Vec<u8>,
+    pub effects: Vec<String>,
+}
+
 /// Read every worksheet's cells, the defined names and the cell formats.
 pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
     let book = Book::open(bytes, limits)?;
@@ -475,9 +488,16 @@ pub fn read_xlsx_cells(bytes: &[u8], limits: Limits) -> Result<XlsxBook> {
 /// out again or rows and columns move, the workbook's calculation chain is
 /// dropped, since it would name the wrong cells; the opening application
 /// rebuilds it.
-pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Result<Vec<u8>> {
+pub fn project_xlsx(
+    source: &[u8],
+    changes: &[XlsxChange],
+    limits: Limits,
+) -> Result<XlsxProjection> {
     if changes.is_empty() {
-        return Ok(source.to_vec());
+        return Ok(XlsxProjection {
+            bytes: source.to_vec(),
+            effects: Vec::new(),
+        });
     }
     let mut book = Book::open(source, limits)?;
     let mut defined = changes.iter().filter_map(|change| match change {
@@ -637,7 +657,10 @@ pub fn project_xlsx(source: &[u8], changes: &[XlsxChange], limits: Limits) -> Re
             book.package.remove_part(&chain.target)?;
         }
     }
-    Ok(book.package.export()?)
+    Ok(XlsxProjection {
+        bytes: book.package.export()?,
+        effects: book.effects,
+    })
 }
 
 /// Whether `change` keeps `held`'s stored value and formula: a write of its
@@ -829,6 +852,8 @@ struct Book {
     /// The stylesheet part, when the workbook has one.
     styles_part: Option<String>,
     styles: Vec<XlsxStyle>,
+    /// What the projection adapted, for its receipt.
+    effects: Vec<String>,
 }
 
 impl Book {
@@ -906,6 +931,7 @@ impl Book {
             names,
             styles_part,
             styles,
+            effects: Vec::new(),
         })
     }
 
@@ -1319,11 +1345,21 @@ impl Book {
         }
         let mut fates: HashMap<String, SheetFate> = HashMap::new();
         let mut dropped = Vec::new();
+        // The tables that go with a deleted worksheet, for the pivot caches
+        // that name them.
+        let mut gone_tables = HashSet::new();
         for (at, name) in self.order.iter().enumerate() {
             match moved[at] {
                 None => {
                     fates.insert(name.to_lowercase(), SheetFate::Delete);
                     dropped.extend(entries[at].attr_ns(REL, "id").map(str::to_owned));
+                    if let Some(part) = self.worksheets.get(name) {
+                        gone_tables.extend(
+                            self.tables(part)?
+                                .into_iter()
+                                .map(|table| table.name.to_lowercase()),
+                        );
+                    }
                 }
                 Some(new) if layout[new].1 != *name => {
                     fates.insert(
@@ -1534,6 +1570,21 @@ impl Book {
             for part in parts {
                 self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &order, &fate))?;
             }
+            self.move_pivot_sources(&|source: &Node| {
+                if let Some(sheet) = source.attr("sheet") {
+                    return match fate(sheet) {
+                        SheetFate::Keep => SourceFate::Keep,
+                        SheetFate::Rename(name) => SourceFate::Sheet(name),
+                        SheetFate::Delete => SourceFate::Lost(sheet.to_owned()),
+                    };
+                }
+                match source.attr("name") {
+                    Some(table) if gone_tables.contains(&table.to_lowercase()) => {
+                        SourceFate::Lost(table.to_owned())
+                    }
+                    _ => SourceFate::Keep,
+                }
+            })?;
         }
         if layout.iter().map(|(_, name, _)| name).ne(self.order.iter()) {
             self.drop_part_titles()?;
@@ -1579,6 +1630,76 @@ impl Book {
         let value = splice(&bytes, edits)
             .map_err(|_| refused("the extended properties could not be rewritten"))?;
         self.package.replace_xml_part(&part, value)?;
+        Ok(())
+    }
+
+    /// The workbook's pivot cache definitions.
+    fn pivot_caches(&self) -> Result<Vec<String>> {
+        let mut caches: Vec<String> = Vec::new();
+        for rel in self.package.relationships(&self.part)? {
+            if !rel.external
+                && rel.kind.ends_with("/pivotCacheDefinition")
+                && !caches.contains(&rel.target)
+                && self.package.names().any(|name| name == rel.target)
+            {
+                caches.push(rel.target);
+            }
+        }
+        Ok(caches)
+    }
+
+    /// Point each pivot cache whose source is a range of this workbook
+    /// (`worksheetSource` without a link to another file) where `fate`
+    /// says. A cache whose source is gone keeps its cached results, as
+    /// Excel's does: its source reads `#REF!`, it no longer refreshes on
+    /// open, and the effects name it.
+    fn move_pivot_sources(&mut self, fate: &dyn Fn(&Node) -> SourceFate) -> Result<()> {
+        for cache in self.pivot_caches()? {
+            let bytes = self
+                .package
+                .part(&cache)?
+                .ok_or(refused("a workbook part is missing"))?;
+            let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+            let mut edits = Vec::new();
+            let mut lost = Vec::new();
+            for node in &tree.nodes {
+                if !node.is(SML, "worksheetSource") || node.attr_ns(REL, "id").is_some() {
+                    continue;
+                }
+                match fate(node) {
+                    SourceFate::Keep => {}
+                    SourceFate::Sheet(name) => {
+                        edits.push(set_attribute(&bytes, node, "sheet", &name))
+                    }
+                    SourceFate::Range(reference) => {
+                        edits.push(set_attribute(&bytes, node, "ref", &reference));
+                    }
+                    SourceFate::Lost(source) => {
+                        edits.extend(drop_attribute(&bytes, node, "sheet"));
+                        edits.extend(drop_attribute(&bytes, node, "ref"));
+                        edits.push(set_attribute(&bytes, node, "name", "#REF!"));
+                        lost.push(source);
+                    }
+                }
+            }
+            if !lost.is_empty() {
+                let root = &tree.nodes[0];
+                if root.attr("refreshOnLoad").is_some_and(truthy) {
+                    edits.push(set_attribute(&bytes, root, "refreshOnLoad", "0"));
+                }
+                for source in lost {
+                    self.effects.push(format!(
+                        "pivot_source_deleted: {cache}, {source}; its cached results stay and it no longer refreshes on open"
+                    ));
+                }
+            }
+            if edits.is_empty() {
+                continue;
+            }
+            let value = splice(&bytes, edits)
+                .map_err(|_| refused("a pivot cache could not be rewritten"))?;
+            self.package.replace_xml_part(&cache, value)?;
+        }
         Ok(())
     }
 
@@ -1704,12 +1825,14 @@ impl Book {
 
     /// Insert or delete rows or columns in one worksheet, as Excel does. Its
     /// rows and cells, merged ranges, conditional formats, validations,
-    /// hyperlinks, filters, column widths, tables and comments move; what the
-    /// edit deletes goes, and a range that loses part of itself shrinks. A
-    /// table gains or loses the columns inserted or deleted inside it. Then
-    /// every formula, chart range, hyperlink location and defined name that
-    /// reaches the sheet follows, a reference to a deleted cell reading
-    /// `#REF!`. Shared formulas must be written out first.
+    /// hyperlinks, filters, column widths, page breaks, views and panes,
+    /// data table inputs, tables, comments and their note shapes, drawn
+    /// objects and the pivot caches sourced from it move; what the edit
+    /// deletes goes, and a range that loses part of itself shrinks. A table
+    /// gains or loses the columns inserted or deleted inside it. Then every
+    /// formula, chart range, hyperlink location and defined name that reaches
+    /// the sheet follows, a reference to a deleted cell reading `#REF!`.
+    /// Shared formulas must be written out first.
     fn shift(&mut self, sheet: &str, edit: &XlsxAxisEdit) -> Result<()> {
         if !edit.fits() {
             return Err(refused("rows or columns off the sheet"));
@@ -1721,12 +1844,20 @@ impl Book {
             .clone();
         let mut parts = vec![part.clone()];
         let mut tables = Vec::new();
+        let mut drawings = Vec::new();
+        let mut notes = Vec::new();
         for rel in self.package.relationships(&part)? {
             if rel.external {
                 continue;
             }
             if rel.kind.ends_with("/table") {
                 tables.push(rel.target.clone());
+            }
+            if rel.kind.ends_with("/drawing") {
+                drawings.push(rel.target.clone());
+            }
+            if rel.kind.ends_with("/vmlDrawing") {
+                notes.push(rel.target.clone());
             }
             if ["/table", "/comments", "/threadedComment"]
                 .iter()
@@ -1750,8 +1881,28 @@ impl Book {
             headers.extend(self.move_table_columns(sheet, table, edit)?);
         }
         for target in &parts {
-            self.move_coordinates(target, edit)?;
+            self.move_coordinates(sheet, target, edit)?;
         }
+        for drawing in &drawings {
+            self.move_anchors(sheet, drawing, edit)?;
+        }
+        for drawing in &notes {
+            self.move_notes(sheet, drawing, edit)?;
+        }
+        let lower = sheet.to_lowercase();
+        self.move_pivot_sources(&|source: &Node| {
+            let (Some(name), Some(reference)) = (source.attr("sheet"), source.attr("ref")) else {
+                return SourceFate::Keep;
+            };
+            if name.to_lowercase() != lower {
+                return SourceFate::Keep;
+            }
+            match moved_area(reference, edit) {
+                Some(Some(to)) if to != reference => SourceFate::Range(to),
+                Some(None) => SourceFate::Lost(format!("{name}!{reference}")),
+                _ => SourceFate::Keep,
+            }
+        })?;
         // An inserted table column's header cell holds its name, in the
         // format of the header cell to its left.
         if !headers.is_empty() {
@@ -1805,10 +1956,11 @@ impl Book {
         Ok(())
     }
 
-    /// Move one part's cell coordinates by a row or column edit: a
-    /// worksheet's rows, cells and ranges, a table's range, a comment's cell.
-    /// What the edit deletes goes, and a list it empties goes with it.
-    fn move_coordinates(&mut self, part: &str, edit: &XlsxAxisEdit) -> Result<()> {
+    /// Move one part's cell coordinates by a row or column edit to worksheet
+    /// `sheet`: a worksheet's rows, cells, ranges, page breaks, views and
+    /// data table inputs, a table's range, a comment's cell. What the edit
+    /// deletes goes, and a list it empties goes with it.
+    fn move_coordinates(&mut self, sheet: &str, part: &str, edit: &XlsxAxisEdit) -> Result<()> {
         /// Lists that go when the edit removes every entry.
         const LISTS: &[&str] = &[
             "mergeCells",
@@ -1818,6 +1970,8 @@ impl Book {
             "conditionalFormattings",
             "protectedRanges",
             "ignoredErrors",
+            "rowBreaks",
+            "colBreaks",
             "ext",
             "extLst",
         ];
@@ -1830,6 +1984,14 @@ impl Book {
         let mut sets: Vec<(usize, &'static str, String)> = Vec::new();
         let mut unsets: Vec<(usize, &'static str)> = Vec::new();
         let mut texts: Vec<(usize, String)> = Vec::new();
+        let mut effects = Vec::new();
+        // A view's panes that a frozen split losing all its rows or columns
+        // takes with it, by the view.
+        let mut gone_panes: HashMap<usize, &[&str]> = HashMap::new();
+        let last_line = match edit.axis {
+            XlsxAxis::Row => MAX_ROW,
+            XlsxAxis::Column => MAX_COLUMN,
+        };
         for (index, node) in tree.nodes.iter().enumerate() {
             let parent = node.parent.map(|parent| &tree.nodes[parent]);
             let sml = node.namespace == SML;
@@ -1870,6 +2032,35 @@ impl Book {
                 | "sortCondition" | "table"
                     if sml =>
                 {
+                    // A data table's input cells; Excel flags one the edit
+                    // deletes rather than naming another cell.
+                    if node.name == "f" && node.attr("t") == Some("dataTable") {
+                        let master = parent
+                            .and_then(|cell| cell.attr("r"))
+                            .and_then(cell_ref)
+                            .and_then(|master| edit.cell(master));
+                        for (input, deleted, number) in [("r1", "del1", 1), ("r2", "del2", 2)] {
+                            let Some(at) = node.attr(input).and_then(cell_ref) else {
+                                continue;
+                            };
+                            if node.attr(deleted).is_some_and(truthy) {
+                                continue;
+                            }
+                            match edit.cell(at) {
+                                None => {
+                                    sets.push((index, deleted, "1".to_owned()));
+                                    if let Some(master) = master {
+                                        effects.push(format!(
+                                            "data_table_input_deleted: {sheet}, {}, input {number}",
+                                            a1(master.0, master.1)
+                                        ));
+                                    }
+                                }
+                                Some(to) if to != at => sets.push((index, input, a1(to.0, to.1))),
+                                Some(_) => {}
+                            }
+                        }
+                    }
                     let Some(reference) = node.attr("ref") else {
                         continue;
                     };
@@ -1965,6 +2156,180 @@ impl Book {
                         }
                     }
                 }
+                // A page break, zero-based: before row or column `id`, across
+                // `min..=max` of the other axis.
+                "brk" if sml => {
+                    let Some(own) = parent.and_then(|list| match list.name.as_str() {
+                        "rowBreaks" => Some(XlsxAxis::Row),
+                        "colBreaks" => Some(XlsxAxis::Column),
+                        _ => None,
+                    }) else {
+                        continue;
+                    };
+                    let number =
+                        |name: &str| node.attr(name).and_then(|v| v.trim().parse::<u32>().ok());
+                    if own == edit.axis {
+                        let Some(id) = number("id") else {
+                            continue;
+                        };
+                        match edit.moved(id + 1) {
+                            None => {
+                                removed.insert(index);
+                            }
+                            Some(to) if to != id + 1 => {
+                                sets.push((index, "id", (to - 1).to_string()))
+                            }
+                            Some(_) => {}
+                        }
+                    } else if let (Some(min), Some(max)) = (number("min"), number("max")) {
+                        match edit.range(min + 1, max + 1) {
+                            None => {
+                                removed.insert(index);
+                            }
+                            Some((low, high)) => {
+                                if low != min + 1 {
+                                    sets.push((index, "min", (low - 1).to_string()));
+                                }
+                                if high != max + 1 {
+                                    sets.push((index, "max", (high - 1).to_string()));
+                                }
+                            }
+                        }
+                    }
+                }
+                "sheetView" | "customSheetView" if sml => {
+                    if let Some(at) = node.attr("topLeftCell").and_then(cell_ref) {
+                        let to = kept_cell(at, edit);
+                        if to != at {
+                            sets.push((index, "topLeftCell", a1(to.0, to.1)));
+                        }
+                    }
+                }
+                "pane" if sml => {
+                    if let Some(at) = node.attr("topLeftCell").and_then(cell_ref) {
+                        let to = kept_cell(at, edit);
+                        if to != at {
+                            sets.push((index, "topLeftCell", a1(to.0, to.1)));
+                        }
+                    }
+                    // A frozen split counts the rows or columns it holds; a
+                    // plain split is a distance, which no edit moves.
+                    if !node
+                        .attr("state")
+                        .is_some_and(|state| state.starts_with("frozen"))
+                    {
+                        continue;
+                    }
+                    let (split, other) = match edit.axis {
+                        XlsxAxis::Row => ("ySplit", "xSplit"),
+                        XlsxAxis::Column => ("xSplit", "ySplit"),
+                    };
+                    let held = |name: &str| {
+                        node.attr(name)
+                            .and_then(|v| v.trim().parse::<f64>().ok())
+                            .filter(|v| *v >= 1.0)
+                            .map(|v| v as u32)
+                    };
+                    let Some(frozen) = held(split) else {
+                        continue;
+                    };
+                    let kept = if edit.delete {
+                        let end = edit.at + edit.count - 1;
+                        frozen - (end.min(frozen) + 1).saturating_sub(edit.at)
+                    } else if edit.at <= frozen {
+                        (frozen + edit.count).min(last_line - 1)
+                    } else {
+                        frozen
+                    };
+                    if kept == frozen {
+                        continue;
+                    }
+                    if kept > 0 {
+                        sets.push((index, split, kept.to_string()));
+                        continue;
+                    }
+                    // The split loses every row or column it froze, and the
+                    // panes past it go.
+                    let (gone, kept_pane): (&[&str], &[(&str, &str)]) = match edit.axis {
+                        XlsxAxis::Row => (
+                            &["bottomLeft", "bottomRight"],
+                            &[("bottomLeft", "topLeft"), ("bottomRight", "topRight")],
+                        ),
+                        XlsxAxis::Column => (
+                            &["topRight", "bottomRight"],
+                            &[("topRight", "topLeft"), ("bottomRight", "bottomLeft")],
+                        ),
+                    };
+                    let Some(view) = node.parent else {
+                        continue;
+                    };
+                    if held(other).is_none() {
+                        removed.insert(index);
+                        gone_panes.insert(view, &["topRight", "bottomLeft", "bottomRight"]);
+                        continue;
+                    }
+                    unsets.push((index, split));
+                    if let Some((_, to)) = node
+                        .attr("activePane")
+                        .and_then(|active| kept_pane.iter().find(|(from, _)| *from == active))
+                    {
+                        sets.push((index, "activePane", (*to).to_owned()));
+                    }
+                    gone_panes.insert(view, gone);
+                }
+                "selection" if sml => {
+                    let pane = node.attr("pane").unwrap_or("topLeft");
+                    if node
+                        .parent
+                        .and_then(|view| gone_panes.get(&view))
+                        .is_some_and(|gone| gone.contains(&pane))
+                    {
+                        removed.insert(index);
+                        continue;
+                    }
+                    let active = node
+                        .attr("activeCell")
+                        .and_then(cell_ref)
+                        .map(|at| (at, kept_cell(at, edit)));
+                    if let Some((at, to)) = active
+                        && to != at
+                    {
+                        sets.push((index, "activeCell", a1(to.0, to.1)));
+                    }
+                    let Some(list) = node.attr("sqref") else {
+                        continue;
+                    };
+                    let holds = |reference: &str, (col, row): (u32, u32)| {
+                        XlsxArea::parse(reference, XlsxLock::Unsupported)
+                            .is_some_and(|area| area.contains(col, row))
+                    };
+                    let mut moved = moved_list(list, edit);
+                    match active {
+                        // The selection keeps its active cell.
+                        Some((_, to)) if !moved.split_whitespace().any(|r| holds(r, to)) => {
+                            moved = a1(to.0, to.1);
+                        }
+                        None if moved.is_empty() => moved = "A1".to_owned(),
+                        _ => {}
+                    }
+                    if moved == list {
+                        continue;
+                    }
+                    if let Some((_, to)) = active {
+                        let id = moved
+                            .split_whitespace()
+                            .position(|r| holds(r, to))
+                            .unwrap_or(0);
+                        let held = node
+                            .attr("activeCellId")
+                            .and_then(|id| id.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if id != held {
+                            sets.push((index, "activeCellId", id.to_string()));
+                        }
+                    }
+                    sets.push((index, "sqref", moved));
+                }
                 "comment" | "threadedComment" => {
                     let Some(at) = node.attr("ref").and_then(cell_ref) else {
                         continue;
@@ -2002,6 +2367,17 @@ impl Book {
                 .count();
             if kept != node.children.len() {
                 sets.push((index, "count", kept.to_string()));
+            }
+            if node.attr("manualBreakCount").is_some() && kept != node.children.len() {
+                let manual = node
+                    .children
+                    .iter()
+                    .filter(|child| {
+                        !removed.contains(child)
+                            && tree.nodes[**child].attr("man").is_some_and(truthy)
+                    })
+                    .count();
+                sets.push((index, "manualBreakCount", manual.to_string()));
             }
         }
         let gone = |index: usize| {
@@ -2045,10 +2421,212 @@ impl Book {
                 ));
             }
         }
+        self.effects.extend(effects);
         if edits.is_empty() {
             return Ok(());
         }
         let value = splice(&bytes, edits).map_err(|_| refused("a part could not be rewritten"))?;
+        self.package.replace_xml_part(part, value)?;
+        Ok(())
+    }
+
+    /// Move a worksheet drawing's objects by a row or column edit to `sheet`,
+    /// as Excel places them: a two-cell anchor moves and sizes with its cells
+    /// (`editAs` twoCell, the default) or moves alone (oneCell), a one-cell
+    /// anchor moves, and an absolute one stays. An object sized by cells the
+    /// edit deletes collapses where they were, as Excel's does, and the
+    /// effects name it.
+    fn move_anchors(&mut self, sheet: &str, part: &str, edit: &XlsxAxisEdit) -> Result<()> {
+        let Some(bytes) = self.package.part(part)? else {
+            return Ok(());
+        };
+        let tree = XmlTree::parse(&bytes, self.package.limits().xml)?;
+        let (line, offset, lines, last) = match edit.axis {
+            XlsxAxis::Row => ("row", "rowOff", "rows", MAX_ROW),
+            XlsxAxis::Column => ("col", "colOff", "columns", MAX_COLUMN),
+        };
+        // One end of an anchor: its row or column node and 1-based number,
+        // and its offset node.
+        let marker = |anchor: usize, end: &str| -> Option<(usize, u32, Option<usize>)> {
+            let (at, _) = tree.child(anchor, XDR, end).ok()??;
+            let (node, value) = tree.child(at, XDR, line).ok()??;
+            let number = value.text.trim().parse::<u32>().ok()?.checked_add(1)?;
+            let nudge = tree
+                .child(at, XDR, offset)
+                .ok()?
+                .filter(|(_, node)| !node.empty)
+                .map(|(at, _)| at);
+            (!value.empty).then_some((node, number, nudge))
+        };
+        // Where an end lands, and whether the edit deleted its cell.
+        let place = |n: u32| match edit.moved(n) {
+            Some(to) => (to, false),
+            None if edit.delete => (edit.at, true),
+            None => (last, false),
+        };
+        let mut edits = Vec::new();
+        for (index, anchor) in tree.nodes.iter().enumerate() {
+            if anchor.namespace != XDR {
+                continue;
+            }
+            let sizes = match anchor.name.as_str() {
+                "twoCellAnchor" => match anchor.attr("editAs") {
+                    Some("absolute") => continue,
+                    Some("oneCell") => false,
+                    _ => true,
+                },
+                "oneCellAnchor" => false,
+                _ => continue,
+            };
+            let Some((from, first, from_offset)) = marker(index, "from") else {
+                continue;
+            };
+            let to = marker(index, "to");
+            // Each end's node, old and new number, and the offset a deleted
+            // cell resets.
+            let mut ends = Vec::new();
+            let (moved, cut) = place(first);
+            if sizes {
+                let Some((to, end, to_offset)) = to else {
+                    continue;
+                };
+                let (moved_end, cut_end) = place(end);
+                ends.push((from, first, moved, from_offset.filter(|_| cut)));
+                ends.push((to, end, moved_end, to_offset.filter(|_| cut_end)));
+                if cut && cut_end {
+                    let name = tree.nodes[index..]
+                        .iter()
+                        .take_while(|node| node.span.start < anchor.span.end)
+                        .find(|node| node.name == "cNvPr")
+                        .and_then(|node| node.attr("name"))
+                        .unwrap_or("an object");
+                    self.effects.push(format!(
+                        "drawing_collapsed: {sheet}, {name}; the {lines} it spanned were deleted"
+                    ));
+                }
+            } else {
+                ends.push((from, first, moved, None));
+                if let Some((to, end, _)) = to {
+                    let shifted = i64::from(end) + i64::from(moved) - i64::from(first);
+                    let shifted = shifted.clamp(1, i64::from(last)) as u32;
+                    ends.push((to, end, shifted, None));
+                }
+            }
+            for (node, old, new, reset) in ends {
+                if new != old {
+                    edits.push((
+                        tree.nodes[node].content.clone(),
+                        (new - 1).to_string().into_bytes(),
+                    ));
+                }
+                if let Some(reset) = reset {
+                    edits.push((tree.nodes[reset].content.clone(), b"0".to_vec()));
+                }
+            }
+        }
+        if edits.is_empty() {
+            return Ok(());
+        }
+        let value =
+            splice(&bytes, edits).map_err(|_| refused("a drawing could not be rewritten"))?;
+        self.package.replace_xml_part(part, value)?;
+        Ok(())
+    }
+
+    /// Move a worksheet's note shapes (its legacy VML drawing) by a row or
+    /// column edit to `sheet`: each note's cell, its box beside it. A note
+    /// whose cell the edit deletes goes, as its comment does, and the effects
+    /// name it. Form controls and other shapes stay as written.
+    fn move_notes(&mut self, sheet: &str, part: &str, edit: &XlsxAxisEdit) -> Result<()> {
+        let Some(bytes) = self.package.part(part)? else {
+            return Ok(());
+        };
+        // An older writer's VML need not be XML; its shapes stay as written.
+        let Ok(tree) = XmlTree::parse(&bytes, self.package.limits().xml) else {
+            self.effects.push(format!(
+                "note_shapes_kept: {sheet}, {part}; the drawing does not read as XML"
+            ));
+            return Ok(());
+        };
+        let mut edits = Vec::new();
+        for (index, data) in tree.nodes.iter().enumerate() {
+            if !data.is(VML_EXCEL, "ClientData") || data.attr("ObjectType") != Some("Note") {
+                continue;
+            }
+            let field = |name: &str| {
+                tree.child(index, VML_EXCEL, name)
+                    .ok()
+                    .flatten()
+                    .filter(|(_, node)| !node.empty)
+            };
+            let (Some((row_at, row)), Some((col_at, col))) = (field("Row"), field("Column")) else {
+                continue;
+            };
+            let (Ok(row), Ok(col)) = (
+                row.text.trim().parse::<u32>(),
+                col.text.trim().parse::<u32>(),
+            ) else {
+                continue;
+            };
+            // Zero-based.
+            let at = (col + 1, row + 1);
+            let Some(to) = edit.cell(at) else {
+                if let Some(shape) = data.parent {
+                    edits.push((tree.nodes[shape].span.clone(), Vec::new()));
+                }
+                self.effects
+                    .push(format!("note_removed: {sheet}, {}", a1(at.0, at.1)));
+                continue;
+            };
+            if to == at {
+                continue;
+            }
+            edits.push((
+                tree.nodes[row_at].content.clone(),
+                (to.1 - 1).to_string().into_bytes(),
+            ));
+            edits.push((
+                tree.nodes[col_at].content.clone(),
+                (to.0 - 1).to_string().into_bytes(),
+            ));
+            // The box: left column and offset, top row and offset, then the
+            // right column and bottom row with theirs.
+            let Some((box_at, anchor)) = field("Anchor") else {
+                continue;
+            };
+            let Some(mut corners) = anchor
+                .text
+                .split(',')
+                .map(|value| value.trim().parse::<i64>().ok())
+                .collect::<Option<Vec<i64>>>()
+                .filter(|values| values.len() == 8)
+            else {
+                continue;
+            };
+            let (across, down) = (
+                i64::from(to.0) - i64::from(at.0),
+                i64::from(to.1) - i64::from(at.1),
+            );
+            for (value, by, last) in [
+                (0, across, MAX_COLUMN),
+                (4, across, MAX_COLUMN),
+                (2, down, MAX_ROW),
+                (6, down, MAX_ROW),
+            ] {
+                corners[value] = (corners[value] + by).clamp(0, i64::from(last) - 1);
+            }
+            let text = corners
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            edits.push((tree.nodes[box_at].content.clone(), text.into_bytes()));
+        }
+        if edits.is_empty() {
+            return Ok(());
+        }
+        let value =
+            splice(&bytes, edits).map_err(|_| refused("a note drawing could not be rewritten"))?;
         self.package.replace_xml_part(part, value)?;
         Ok(())
     }
@@ -2695,6 +3273,46 @@ fn escape_at(text: &str) -> Option<char> {
         return None;
     }
     char::from_u32(u32::from_str_radix(&text[2..6], 16).ok()?)
+}
+
+/// What becomes of a pivot cache's worksheet source.
+enum SourceFate {
+    Keep,
+    /// Its sheet, renamed.
+    Sheet(String),
+    /// Its range, moved.
+    Range(String),
+    /// Gone, as it was named (a sheet, a range or a table).
+    Lost(String),
+}
+
+/// Remove attribute `name` and the space before it; `None` when it is
+/// absent.
+fn drop_attribute(bytes: &[u8], node: &Node, name: &str) -> Option<Splice> {
+    let span = node.attr_spans.get(name)?;
+    let start = if span.start > 0 && bytes[span.start - 1].is_ascii_whitespace() {
+        span.start - 1
+    } else {
+        span.start
+    };
+    Some((start..span.end, Vec::new()))
+}
+
+/// Where a view's cell goes after a row or column edit: a deleted one's
+/// place is the first line after the edit, and one an insert pushes off the
+/// sheet stops at its edge.
+fn kept_cell(at: (u32, u32), edit: &XlsxAxisEdit) -> (u32, u32) {
+    edit.cell(at).unwrap_or_else(|| {
+        let (line, last) = match edit.axis {
+            XlsxAxis::Row => (at.1, MAX_ROW),
+            XlsxAxis::Column => (at.0, MAX_COLUMN),
+        };
+        let to = if edit.delete { edit.at.min(line) } else { last };
+        match edit.axis {
+            XlsxAxis::Row => (at.0, to),
+            XlsxAxis::Column => (to, at.1),
+        }
+    })
 }
 
 fn truthy(value: &str) -> bool {

@@ -443,7 +443,9 @@ impl EditSession for NativeCellSession {
                 })
             })
             .collect::<Result<Vec<_>>>()?;
-        let bytes = project_xlsx(&doc.bytes, &changes, self.limits).map_err(|_| failed())?;
+        let bytes = project_xlsx(&doc.bytes, &changes, self.limits)
+            .map_err(|_| failed())?
+            .bytes;
         Ok(AppliedEdit {
             bytes,
             applied_ops: plan.ops.clone(),

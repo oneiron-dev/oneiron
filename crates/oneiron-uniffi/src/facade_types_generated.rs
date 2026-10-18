@@ -18093,6 +18093,8 @@ pub struct OfficeBodyExportRecord {
     pub changes: u64,
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
+    #[serde(rename = "effects")]
+    pub effects: Vec<String>,
 }
 
 /// `oneiron::office_body::verbs::OfficeBodyExportView`.

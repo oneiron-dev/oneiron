@@ -2359,7 +2359,7 @@ export type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_r
 /** `oneiron::office_body::verbs::OfficeBodyExportVerbRequest` */
 export type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null }
 /** `oneiron::office_body::OfficeBodyExportRecord` */
-export type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null }
+export type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: EntityId; author: string; at: number; changes: number; recalc?: string | null; effects: string[] }
 /** `oneiron::office_body::verbs::OfficeBodyExportView` */
 export type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null }
 /** `oneiron::office_body::verbs::OfficeBodyPreviewRequest` */

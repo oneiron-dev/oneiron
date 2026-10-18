@@ -438,7 +438,9 @@ impl Package {
         if self.editability != Editability::Unsigned {
             return Err(Error::Edit("signed or unsupported metadata is read-only"));
         }
-        if !name.ends_with(".xml") {
+        // A legacy VML drawing (a workbook's note shapes) is XML under its
+        // own extension.
+        if !(name.ends_with(".xml") || name.ends_with(".vml")) {
             return Err(Error::Edit("not an XML part"));
         }
         self.entries
