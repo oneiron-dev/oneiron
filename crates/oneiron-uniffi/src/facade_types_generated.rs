@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 541 facade rows, 1940 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 503.
+// UniFFI census: 543 facade rows, 1962 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 505.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -15122,6 +15122,474 @@ pub struct GateCheckerReceipt {
     pub receipt_ref: String,
 }
 
+/// `oneiron::learning::doors::MeasuredLearningPredicate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MeasuredLearningPredicate {
+    #[serde(rename = "learning.reliability")]
+    Reliability,
+    #[serde(rename = "learning.edit_cost")]
+    EditCost,
+    #[serde(rename = "learning.retest_noise")]
+    RetestNoise,
+    #[serde(rename = "learning.setting")]
+    Setting,
+}
+
+/// `oneiron::learning::cell::TypeRef`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CellTypeRef {
+    #[serde(rename = "node_id")]
+    pub node_id: String,
+    #[serde(rename = "tree_version")]
+    pub tree_version: u32,
+}
+
+/// `oneiron::learning::doors::LearningCellKey`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LearningCellKey {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "predicate")]
+    pub predicate: MeasuredLearningPredicate,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(rename = "typeRef", default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<CellTypeRef>,
+    #[serde(rename = "axis", default, skip_serializing_if = "Option::is_none")]
+    pub axis: Option<String>,
+    #[serde(
+        rename = "consent_scope",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub consent_scope: Option<String>,
+    #[serde(
+        rename = "setting_key",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub setting_key: Option<String>,
+}
+
+/// `oneiron::learning::doors::LearningReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LearningReadRequest {
+    #[serde(rename = "cell")]
+    pub cell: LearningCellKey,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
+}
+
+/// `oneiron::learning::estimate::PriorOrigin`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum PriorOrigin {
+    #[serde(rename = "shipped")]
+    Shipped,
+    #[serde(rename = "provenance")]
+    Provenance,
+    #[serde(rename = "carried")]
+    Carried,
+    #[serde(rename = "parent")]
+    Parent,
+    #[serde(rename = "model")]
+    Model,
+    #[serde(rename = "seed")]
+    Seed,
+}
+
+/// `oneiron::learning::doors::LearningBetaValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningBetaValue {
+    #[serde(rename = "alpha")]
+    pub alpha: f64,
+    #[serde(rename = "beta")]
+    pub beta: f64,
+}
+
+/// `oneiron::learning::doors::LearningMeanValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningMeanValue {
+    #[serde(rename = "mean")]
+    pub mean: f64,
+    #[serde(rename = "spread")]
+    pub spread: f64,
+}
+
+/// `oneiron::learning::doors::LearningPriorValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum LearningPriorValue {
+    Beta(LearningBetaValue),
+    Mean(LearningMeanValue),
+    Counts(std::collections::HashMap<String, f64>),
+}
+
+/// `oneiron::learning::doors::LearningPriorView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningPriorView {
+    #[serde(rename = "origin")]
+    pub origin: PriorOrigin,
+    #[serde(rename = "value")]
+    pub value: LearningPriorValue,
+    #[serde(rename = "weight_runs")]
+    pub weight_runs: f64,
+    #[serde(rename = "from", default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+}
+
+/// `oneiron::learning::estimate::EstimateLabels`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EstimateLabels {
+    #[serde(rename = "by_judge", default, skip_serializing_if = "Option::is_none")]
+    pub by_judge: Option<std::collections::HashMap<String, f64>>,
+    #[serde(rename = "converted", default, skip_serializing_if = "Option::is_none")]
+    pub converted: Option<f64>,
+    #[serde(
+        rename = "on_judge_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_judge_model: Option<f64>,
+    #[serde(
+        rename = "outcome_counts",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_counts: Option<std::collections::HashMap<String, f64>>,
+}
+
+/// `oneiron::learning::estimate::Window`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EstimateWindow {
+    #[serde(rename = "half_life")]
+    pub half_life: u64,
+}
+
+/// `oneiron::learning::doors::MeasuredLearningValue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "form", content = "value")]
+pub enum MeasuredLearningValue {
+    #[serde(rename = "beta")]
+    Beta(LearningBetaValue),
+    #[serde(rename = "mean")]
+    Mean(LearningMeanValue),
+    #[serde(rename = "counts")]
+    Counts(std::collections::HashMap<String, f64>),
+}
+
+/// `oneiron::learning::doors::MeasuredLearningEstimate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MeasuredLearningEstimate {
+    #[serde(rename = "runs")]
+    pub runs: f64,
+    #[serde(rename = "prior")]
+    pub prior: LearningPriorView,
+    #[serde(rename = "untested")]
+    pub untested: bool,
+    #[serde(rename = "of")]
+    pub of: String,
+    #[serde(rename = "labels")]
+    pub labels: EstimateLabels,
+    #[serde(rename = "window")]
+    pub window: EstimateWindow,
+    #[serde(rename = "ver")]
+    pub ver: String,
+    #[serde(flatten)]
+    pub measured_learning_value: MeasuredLearningValue,
+}
+
+/// `oneiron::learning::doors::LearningHeadView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningHeadView {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "evidence_receipts")]
+    pub evidence_receipts: Vec<String>,
+    #[serde(rename = "supersedes")]
+    pub supersedes: Vec<String>,
+}
+
+/// `oneiron::learning::evidence::Anchor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum Anchor {
+    #[serde(rename = "held_out")]
+    HeldOut,
+    #[serde(rename = "owner_verdict")]
+    OwnerVerdict,
+    #[serde(rename = "world_outcome")]
+    WorldOutcome,
+    #[serde(rename = "audit")]
+    Audit {
+        #[serde(rename = "rate")]
+        rate: f64,
+    },
+    #[serde(rename = "retest")]
+    Retest,
+    #[serde(rename = "fitting_check")]
+    FittingCheck,
+}
+
+/// `oneiron::learning::evidence::Observation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "v")]
+pub enum Observation {
+    #[serde(rename = "success")]
+    Success(bool),
+    #[serde(rename = "magnitude")]
+    Magnitude(f64),
+    #[serde(rename = "category")]
+    Category(String),
+}
+
+/// `oneiron::receipt::pack_attribution::ContributionCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ContributionCheck {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "contributed")]
+    pub contributed: bool,
+}
+
+/// `oneiron::receipt::pack_attribution::SkillContribution`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillContribution {
+    #[serde(rename = "skill")]
+    pub skill: String,
+    #[serde(rename = "check")]
+    pub check: ContributionCheck,
+}
+
+/// `oneiron::receipt::pack_attribution::UsedProvenanceEdge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct UsedProvenanceEdge {
+    #[serde(rename = "derived")]
+    pub derived: String,
+    #[serde(rename = "source")]
+    pub source: String,
+    #[serde(rename = "check", default, skip_serializing_if = "Option::is_none")]
+    pub check: Option<ContributionCheck>,
+}
+
+/// `oneiron::receipt::pack_attribution::CreditOptions`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CreditOptions {
+    #[serde(rename = "enabled")]
+    pub enabled: bool,
+    #[serde(rename = "depth_cap", default, skip_serializing_if = "Option::is_none")]
+    pub depth_cap: Option<u32>,
+    #[serde(rename = "check_every_hop")]
+    pub check_every_hop: bool,
+}
+
+/// `oneiron::receipt::pack_attribution::PackAttributionFields`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PackAttributionFields {
+    #[serde(rename = "typeRef")]
+    pub type_ref: CellTypeRef,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "judge")]
+    pub judge: String,
+    #[serde(rename = "pattern")]
+    pub pattern: String,
+    #[serde(rename = "team_shape")]
+    pub team_shape: Vec<String>,
+    #[serde(rename = "decider")]
+    pub decider: String,
+    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(rename = "output", default, skip_serializing_if = "Option::is_none")]
+    pub output: Option<String>,
+    #[serde(rename = "contributions")]
+    pub contributions: Vec<SkillContribution>,
+    #[serde(rename = "used_edges")]
+    pub used_edges: Vec<UsedProvenanceEdge>,
+    #[serde(rename = "credit")]
+    pub credit: CreditOptions,
+}
+
+/// `oneiron::receipt::pack_attribution::PackLearningContext`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PackLearningContext {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "attribution")]
+    pub attribution: PackAttributionFields,
+}
+
+/// `oneiron::learning::evidence::EvidenceRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EvidenceRow {
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "anchor")]
+    pub anchor: Anchor,
+    #[serde(rename = "observation")]
+    pub observation: Observation,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+    #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
+    #[serde(
+        rename = "on_judge_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub on_judge_model: Option<bool>,
+    #[serde(
+        rename = "outcome_label",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_label: Option<String>,
+    #[serde(
+        rename = "pack_attribution",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pack_attribution: Option<PackLearningContext>,
+    #[serde(
+        rename = "goal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_revision: Option<String>,
+}
+
+/// `oneiron::learning::doors::LearningEvidenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningEvidenceView {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "evidence")]
+    pub evidence: EvidenceRow,
+}
+
+/// `oneiron::learning::doors::LearningProvenanceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningProvenanceView {
+    #[serde(rename = "cell")]
+    pub cell: LearningCellKey,
+    #[serde(rename = "heads")]
+    pub heads: Vec<LearningHeadView>,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<LearningEvidenceView>,
+}
+
+/// `oneiron::learning::doors::MeasuredLearningView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MeasuredLearningView {
+    #[serde(rename = "estimate")]
+    pub estimate: MeasuredLearningEstimate,
+    #[serde(rename = "own")]
+    pub own: bool,
+    #[serde(
+        rename = "borrowed_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub borrowed_from: Option<LearningCellKey>,
+    #[serde(rename = "attributed_outcome_receipts")]
+    pub attributed_outcome_receipts: Vec<String>,
+    #[serde(rename = "provenance")]
+    pub provenance: LearningProvenanceView,
+    #[serde(
+        rename = "prior_provenance",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub prior_provenance: Option<LearningProvenanceView>,
+}
+
+/// `oneiron::learning::doors::LearningCellView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningCellView {
+    #[serde(rename = "cell")]
+    pub cell: LearningCellKey,
+    #[serde(rename = "view")]
+    pub view: MeasuredLearningView,
+}
+
+/// `oneiron::learning::doors::LearningProjectionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LearningProjectionRequest {
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "axis")]
+    pub axis: String,
+}
+
+/// `oneiron::skill_attribution::late_credit::LateCreditShare`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LateCreditShare {
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(
+        rename = "origin_skill",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub origin_skill: Option<String>,
+    #[serde(rename = "chain")]
+    pub chain: Vec<UsedProvenanceEdge>,
+    #[serde(rename = "decay")]
+    pub decay: f64,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+}
+
+/// `oneiron::skill_attribution::late_credit::LateCreditReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LateCreditReceipt {
+    #[serde(rename = "receipt_id")]
+    pub receipt_id: String,
+    #[serde(rename = "attempt_receipt")]
+    pub attempt_receipt: String,
+    #[serde(rename = "outcome_receipt")]
+    pub outcome_receipt: String,
+    #[serde(rename = "anchor")]
+    pub anchor: Anchor,
+    #[serde(rename = "succeeded")]
+    pub succeeded: bool,
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(
+        rename = "goal_revision",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub goal_revision: Option<String>,
+    #[serde(rename = "attribution")]
+    pub attribution: PackAttributionFields,
+    #[serde(rename = "direct_subjects")]
+    pub direct_subjects: Vec<String>,
+    #[serde(rename = "shares")]
+    pub shares: Vec<LateCreditShare>,
+}
+
+/// `oneiron::learning::doors::LearningProjectionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningProjectionView {
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<LateCreditReceipt>,
+}
+
 /// `oneiron::learning_setting_doors::LearningSettingsRequest`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -16258,7 +16726,7 @@ pub struct SecretUseAnswer {
     pub receipt: SecretUseRecord,
 }
 
-/// `oneiron::share_travel::BornWithField`.
+/// `oneiron_authority::share_travel::BornWithField`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum BornWithField {
     #[serde(rename = "prompt")]
@@ -16271,7 +16739,7 @@ pub enum BornWithField {
     IntentPrompt,
 }
 
-/// `oneiron::share_travel::TravelChoice`.
+/// `oneiron_authority::share_travel::TravelChoice`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct TravelChoice {
@@ -19465,15 +19933,6 @@ pub enum LearningPredicate {
     Setting,
 }
 
-/// `oneiron::learning::cell::TypeRef`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct CellTypeRef {
-    #[serde(rename = "node_id")]
-    pub node_id: String,
-    #[serde(rename = "tree_version")]
-    pub tree_version: u32,
-}
-
 /// `oneiron::learning::cell::LearningCell`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct LearningCell {
@@ -22097,73 +22556,6 @@ pub struct SkillPackReceiptRequest {
     pub attempt_receipt: String,
 }
 
-/// `oneiron::receipt::pack_attribution::ContributionCheck`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct ContributionCheck {
-    #[serde(rename = "receipt")]
-    pub receipt: String,
-    #[serde(rename = "contributed")]
-    pub contributed: bool,
-}
-
-/// `oneiron::receipt::pack_attribution::SkillContribution`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct SkillContribution {
-    #[serde(rename = "skill")]
-    pub skill: String,
-    #[serde(rename = "check")]
-    pub check: ContributionCheck,
-}
-
-/// `oneiron::receipt::pack_attribution::UsedProvenanceEdge`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct UsedProvenanceEdge {
-    #[serde(rename = "derived")]
-    pub derived: String,
-    #[serde(rename = "source")]
-    pub source: String,
-    #[serde(rename = "check", default, skip_serializing_if = "Option::is_none")]
-    pub check: Option<ContributionCheck>,
-}
-
-/// `oneiron::receipt::pack_attribution::CreditOptions`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct CreditOptions {
-    #[serde(rename = "enabled")]
-    pub enabled: bool,
-    #[serde(rename = "depth_cap", default, skip_serializing_if = "Option::is_none")]
-    pub depth_cap: Option<u32>,
-    #[serde(rename = "check_every_hop")]
-    pub check_every_hop: bool,
-}
-
-/// `oneiron::receipt::pack_attribution::PackAttributionFields`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct PackAttributionFields {
-    #[serde(rename = "typeRef")]
-    pub type_ref: CellTypeRef,
-    #[serde(rename = "executor")]
-    pub executor: String,
-    #[serde(rename = "judge")]
-    pub judge: String,
-    #[serde(rename = "pattern")]
-    pub pattern: String,
-    #[serde(rename = "team_shape")]
-    pub team_shape: Vec<String>,
-    #[serde(rename = "decider")]
-    pub decider: String,
-    #[serde(rename = "project", default, skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    #[serde(rename = "output", default, skip_serializing_if = "Option::is_none")]
-    pub output: Option<String>,
-    #[serde(rename = "contributions")]
-    pub contributions: Vec<SkillContribution>,
-    #[serde(rename = "used_edges")]
-    pub used_edges: Vec<UsedProvenanceEdge>,
-    #[serde(rename = "credit")]
-    pub credit: CreditOptions,
-}
-
 /// `oneiron::task_verb::sdk_skill_execution::SkillPackReceipt`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct SkillPackReceipt {
@@ -22195,77 +22587,6 @@ pub struct SkillPackOutcomeRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub goal_revision: Option<String>,
-}
-
-/// `oneiron::learning::evidence::Anchor`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-#[serde(tag = "kind")]
-pub enum Anchor {
-    #[serde(rename = "held_out")]
-    HeldOut,
-    #[serde(rename = "owner_verdict")]
-    OwnerVerdict,
-    #[serde(rename = "world_outcome")]
-    WorldOutcome,
-    #[serde(rename = "audit")]
-    Audit {
-        #[serde(rename = "rate")]
-        rate: f64,
-    },
-    #[serde(rename = "retest")]
-    Retest,
-    #[serde(rename = "fitting_check")]
-    FittingCheck,
-}
-
-/// `oneiron::skill_attribution::late_credit::LateCreditShare`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LateCreditShare {
-    #[serde(rename = "subject")]
-    pub subject: String,
-    #[serde(
-        rename = "origin_skill",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub origin_skill: Option<String>,
-    #[serde(rename = "chain")]
-    pub chain: Vec<UsedProvenanceEdge>,
-    #[serde(rename = "decay")]
-    pub decay: f64,
-    #[serde(rename = "weight")]
-    pub weight: f64,
-}
-
-/// `oneiron::skill_attribution::late_credit::LateCreditReceipt`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LateCreditReceipt {
-    #[serde(rename = "receipt_id")]
-    pub receipt_id: String,
-    #[serde(rename = "attempt_receipt")]
-    pub attempt_receipt: String,
-    #[serde(rename = "outcome_receipt")]
-    pub outcome_receipt: String,
-    #[serde(rename = "anchor")]
-    pub anchor: Anchor,
-    #[serde(rename = "succeeded")]
-    pub succeeded: bool,
-    #[serde(rename = "axis")]
-    pub axis: String,
-    #[serde(rename = "at")]
-    pub at: u64,
-    #[serde(
-        rename = "goal_revision",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub goal_revision: Option<String>,
-    #[serde(rename = "attribution")]
-    pub attribution: PackAttributionFields,
-    #[serde(rename = "direct_subjects")]
-    pub direct_subjects: Vec<String>,
-    #[serde(rename = "shares")]
-    pub shares: Vec<LateCreditShare>,
 }
 
 /// `oneiron::task_verb::sdk_skill_execution::SkillPackOutcomeProjection`.

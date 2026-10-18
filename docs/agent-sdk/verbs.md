@@ -233,6 +233,8 @@ both bindings and their export-census tests in one change.
 - `vault.gate.policy.propose`
 - `vault.gate.checker.get`
 - `vault.gate.checker.set`
+- `vault.learning.read`
+- `vault.learning.projection`
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`

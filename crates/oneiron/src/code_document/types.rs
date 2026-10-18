@@ -3,9 +3,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::write_envelope::WriteActor;
 
-/// One tested file state. The operation fold includes durable actor stamps.
+/// One tested file state. The operation fold includes each operation's
+/// durable stamp, which names no actor: the actor is on its receipts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CodeDocumentFrontier {
@@ -119,22 +121,34 @@ impl CodeOpProvenance {
 pub struct CodeOpAttribution {
     pub operation: EntityId,
     pub session_id: EntityId,
-    pub actor: WriteActor,
+    /// None once that actor was erased (FIX 3520).
+    pub actor: Option<WriteActor>,
     pub sequence: u64,
     pub provenance: CodeOpProvenance,
 }
 
 impl CodeOpAttribution {
-    /// The symbol-manifest chain entry, once turn, activity and intent are all recorded.
+    /// The symbol-manifest chain entry, once turn, activity and intent are all
+    /// recorded. An erased actor's operation has none: no actor is made up.
     #[must_use]
     pub fn producing_operation(&self) -> Option<crate::code_symbol::CodeProducingOperation> {
         Some(crate::code_symbol::CodeProducingOperation {
             operation: self.operation,
-            actor: self.actor.entity_ref(),
+            actor: self.actor?.entity_ref(),
             turn: self.provenance.turn?,
             activity: self.provenance.activity?,
             intent: self.provenance.intent?,
         })
+    }
+
+    /// How a view names the actor: its hex id, or [`ERASED_CALL_IDENTITY`]
+    /// once that actor was erased.
+    #[must_use]
+    pub fn actor_ref(&self) -> String {
+        self.actor.map_or_else(
+            || ERASED_CALL_IDENTITY.to_owned(),
+            |actor| actor.entity_ref().to_hex(),
+        )
     }
 }
 
@@ -163,7 +177,8 @@ pub struct CodeEditReceipt {
     /// The durable ingress identity; a replay with it appends nothing.
     pub operation: EntityId,
     pub session_id: EntityId,
-    pub actor: WriteActor,
+    /// None once that actor was erased (FIX 3520).
+    pub actor: Option<WriteActor>,
     pub provenance: CodeOpProvenance,
     pub sequence: u64,
     pub peer_id: u64,

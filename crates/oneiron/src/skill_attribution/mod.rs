@@ -55,7 +55,9 @@ pub use contribution::{
 };
 mod late_credit;
 mod pack_learning;
-pub use late_credit::{LateCreditReceipt, LateCreditShare, late_credit_receipt};
+pub use late_credit::{
+    LateCreditReceipt, LateCreditShare, late_credit_receipt, late_credit_receipt_for_outcome,
+};
 pub use pack_learning::{
     AnchoredPackOutcome, project_anchored_pack_outcome, project_anchored_pack_outcome_as_owner,
 };

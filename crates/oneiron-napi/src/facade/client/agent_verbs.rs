@@ -2026,6 +2026,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_learning_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.learning.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_learning_projection(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.learning.projection", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_settings_learning(
         &self,
         input: serde_json::Value,

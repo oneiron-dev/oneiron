@@ -130,7 +130,7 @@ impl Vault {
                 .ok_or(Error::InvalidClaimBody("review has no document operation"))?;
             let reviewed_mode = proposal.reviewed_file_mode(self, &edit.after)?;
             if edit.session_id != proposal.session
-                || edit.actor.entity_ref() != proposal.actor
+                || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()
                 || edit.provenance != proposal.op_provenance
                 || edit.edit.path != proposal.path
                 || reviews

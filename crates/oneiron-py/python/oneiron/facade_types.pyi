@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 541 facade rows, 2010 declarations.
-Inputs: 489 of 541 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 483 of 541 fully typed, 58 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 543 facade rows, 2032 declarations.
+Inputs: 491 of 543 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 485 of 543 fully typed, 58 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -5018,6 +5018,158 @@ class GateCheckerSet(TypedDict):
 class GateCheckerReceipt(TypedDict):
     binding: VerdictBinding
     receipt_ref: str
+MeasuredLearningPredicate = Literal["learning.reliability", "learning.edit_cost", "learning.retest_noise", "learning.setting"]
+class CellTypeRef(TypedDict):
+    node_id: str
+    tree_version: int
+class LearningCellKey(TypedDict):
+    subject: str
+    predicate: MeasuredLearningPredicate
+    executor: NotRequired[str | None]
+    typeRef: NotRequired[CellTypeRef | None]
+    axis: NotRequired[str | None]
+    consent_scope: NotRequired[str | None]
+    setting_key: NotRequired[str | None]
+class LearningReadRequest(TypedDict):
+    cell: LearningCellKey
+    project_ref: NotRequired[str | None]
+class LearningBetaValue(TypedDict):
+    alpha: float
+    beta: float
+class LearningMeanValue(TypedDict):
+    mean: float
+    spread: float
+class MeasuredLearningValueBeta(TypedDict):
+    form: Literal["beta"]
+    value: LearningBetaValue
+class MeasuredLearningValueMean(TypedDict):
+    form: Literal["mean"]
+    value: LearningMeanValue
+class MeasuredLearningValueCounts(TypedDict):
+    form: Literal["counts"]
+    value: dict[str, float]
+MeasuredLearningValue = MeasuredLearningValueBeta | MeasuredLearningValueMean | MeasuredLearningValueCounts
+PriorOrigin = Literal["shipped", "provenance", "carried", "parent", "model", "seed"]
+LearningPriorValue = LearningBetaValue | LearningMeanValue | dict[str, float]
+LearningPriorView = TypedDict("LearningPriorView", {"origin": PriorOrigin, "value": LearningPriorValue, "weight_runs": float, "from": NotRequired[str | None]})
+class EstimateLabels(TypedDict):
+    by_judge: NotRequired[dict[str, float]]
+    converted: NotRequired[float]
+    on_judge_model: NotRequired[float]
+    outcome_counts: NotRequired[dict[str, float] | None]
+class EstimateWindow(TypedDict):
+    half_life: int
+MeasuredLearningEstimate = dict[str, Any]
+class LearningHeadView(TypedDict):
+    claim_ref: str
+    at: int
+    evidence_receipts: list[str]
+    supersedes: list[str]
+class AnchorHeldOut(TypedDict):
+    kind: Literal["held_out"]
+class AnchorOwnerVerdict(TypedDict):
+    kind: Literal["owner_verdict"]
+class AnchorWorldOutcome(TypedDict):
+    kind: Literal["world_outcome"]
+class AnchorAudit(TypedDict):
+    kind: Literal["audit"]
+    rate: float
+class AnchorRetest(TypedDict):
+    kind: Literal["retest"]
+class AnchorFittingCheck(TypedDict):
+    kind: Literal["fitting_check"]
+Anchor = AnchorHeldOut | AnchorOwnerVerdict | AnchorWorldOutcome | AnchorAudit | AnchorRetest | AnchorFittingCheck
+class ObservationSuccess(TypedDict):
+    kind: Literal["success"]
+    v: bool
+class ObservationMagnitude(TypedDict):
+    kind: Literal["magnitude"]
+    v: float
+class ObservationCategory(TypedDict):
+    kind: Literal["category"]
+    v: str
+Observation = ObservationSuccess | ObservationMagnitude | ObservationCategory
+class ContributionCheck(TypedDict):
+    receipt: str
+    contributed: bool
+class SkillContribution(TypedDict):
+    skill: EntityId
+    check: ContributionCheck
+class UsedProvenanceEdge(TypedDict):
+    derived: EntityId
+    source: EntityId
+    check: NotRequired[ContributionCheck | None]
+class CreditOptions(TypedDict):
+    enabled: bool
+    depth_cap: NotRequired[int | None]
+    check_every_hop: bool
+class PackAttributionFields(TypedDict):
+    typeRef: CellTypeRef
+    executor: str
+    judge: str
+    pattern: EntityId
+    team_shape: list[str]
+    decider: EntityId
+    project: NotRequired[EntityId | None]
+    output: NotRequired[EntityId | None]
+    contributions: list[SkillContribution]
+    used_edges: list[UsedProvenanceEdge]
+    credit: CreditOptions
+class PackLearningContext(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    attribution: PackAttributionFields
+class EvidenceRow(TypedDict):
+    at: int
+    anchor: Anchor
+    observation: Observation
+    weight: float
+    judge: NotRequired[str | None]
+    on_judge_model: NotRequired[bool]
+    outcome_label: NotRequired[str | None]
+    pack_attribution: NotRequired[PackLearningContext | None]
+    goal_revision: NotRequired[str | None]
+class LearningEvidenceView(TypedDict):
+    receipt: str
+    evidence: EvidenceRow
+class LearningProvenanceView(TypedDict):
+    cell: LearningCellKey
+    heads: list[LearningHeadView]
+    evidence: list[LearningEvidenceView]
+class MeasuredLearningView(TypedDict):
+    estimate: MeasuredLearningEstimate
+    own: bool
+    borrowed_from: NotRequired[LearningCellKey | None]
+    attributed_outcome_receipts: list[str]
+    provenance: LearningProvenanceView
+    prior_provenance: NotRequired[LearningProvenanceView | None]
+class LearningCellView(TypedDict):
+    cell: LearningCellKey
+    view: MeasuredLearningView
+class LearningProjectionRequest(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    axis: str
+class LateCreditShare(TypedDict):
+    subject: EntityId
+    origin_skill: NotRequired[EntityId | None]
+    chain: list[UsedProvenanceEdge]
+    decay: float
+    weight: float
+class LateCreditReceipt(TypedDict):
+    receipt_id: str
+    attempt_receipt: str
+    outcome_receipt: str
+    anchor: Anchor
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+    attribution: PackAttributionFields
+    direct_subjects: list[EntityId]
+    shares: list[LateCreditShare]
+class LearningProjectionView(TypedDict):
+    receipt: NotRequired[LateCreditReceipt | None]
 class LearningSettingsRequest(TypedDict):
     key: NotRequired[str | None]
 class LearningSettingSpecView(TypedDict):
@@ -6377,9 +6529,6 @@ class CritiqueProvenance(TypedDict):
     model_id: str
     model_revision: NotRequired[str | None]
 LearningPredicate = Literal["reliability", "edit_cost", "retest_noise", "setting"]
-class CellTypeRef(TypedDict):
-    node_id: str
-    tree_version: int
 class LearningCell(TypedDict):
     predicate: LearningPredicate
     subject: EntityId
@@ -7169,32 +7318,6 @@ class CallableCardView(TypedDict):
     returns: Any
 class SkillPackReceiptRequest(TypedDict):
     attempt_receipt: str
-class ContributionCheck(TypedDict):
-    receipt: str
-    contributed: bool
-class SkillContribution(TypedDict):
-    skill: EntityId
-    check: ContributionCheck
-class UsedProvenanceEdge(TypedDict):
-    derived: EntityId
-    source: EntityId
-    check: NotRequired[ContributionCheck | None]
-class CreditOptions(TypedDict):
-    enabled: bool
-    depth_cap: NotRequired[int | None]
-    check_every_hop: bool
-class PackAttributionFields(TypedDict):
-    typeRef: CellTypeRef
-    executor: str
-    judge: str
-    pattern: EntityId
-    team_shape: list[str]
-    decider: EntityId
-    project: NotRequired[EntityId | None]
-    output: NotRequired[EntityId | None]
-    contributions: list[SkillContribution]
-    used_edges: list[UsedProvenanceEdge]
-    credit: CreditOptions
 class SkillPackReceipt(TypedDict):
     receipt: ReceiptRecord
     loaded_skills: list[str]
@@ -7206,38 +7329,6 @@ class SkillPackOutcomeRequest(TypedDict):
     axis: str
     at: int
     goal_revision: NotRequired[str | None]
-class AnchorHeldOut(TypedDict):
-    kind: Literal["held_out"]
-class AnchorOwnerVerdict(TypedDict):
-    kind: Literal["owner_verdict"]
-class AnchorWorldOutcome(TypedDict):
-    kind: Literal["world_outcome"]
-class AnchorAudit(TypedDict):
-    kind: Literal["audit"]
-    rate: float
-class AnchorRetest(TypedDict):
-    kind: Literal["retest"]
-class AnchorFittingCheck(TypedDict):
-    kind: Literal["fitting_check"]
-Anchor = AnchorHeldOut | AnchorOwnerVerdict | AnchorWorldOutcome | AnchorAudit | AnchorRetest | AnchorFittingCheck
-class LateCreditShare(TypedDict):
-    subject: EntityId
-    origin_skill: NotRequired[EntityId | None]
-    chain: list[UsedProvenanceEdge]
-    decay: float
-    weight: float
-class LateCreditReceipt(TypedDict):
-    receipt_id: str
-    attempt_receipt: str
-    outcome_receipt: str
-    anchor: Anchor
-    succeeded: bool
-    axis: str
-    at: int
-    goal_revision: NotRequired[str | None]
-    attribution: PackAttributionFields
-    direct_subjects: list[EntityId]
-    shares: list[LateCreditShare]
 class SkillPackOutcomeProjection(TypedDict):
     receipt: LateCreditReceipt
     persisted: bool

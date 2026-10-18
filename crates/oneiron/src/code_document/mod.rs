@@ -1,4 +1,5 @@
-//! Base-mode live code files: actor-stamped Loro operations and verified tested frontiers.
+//! Base-mode live code files: stamped Loro operations, receipts naming their
+//! actors, and verified tested frontiers.
 //!
 //! This is the approved-write primitive below the gate. It changes documents,
 //! never repository refs. Each session edits its own observed state; persistence
@@ -20,7 +21,8 @@ pub use review_views::{
 };
 pub use session::CodeDocumentSession;
 pub(crate) use storage::{
-    CodeDocumentRows, CodeFileIngress, code_document_texts_in_txn, verify_frontier_in_txn,
+    CodeDocumentRows, CodeFileIngress, code_document_texts_in_txn, erase_head_actor_in_txn,
+    erase_ingress_actor_in_txn, verify_frontier_in_txn,
 };
 pub use types::{
     CodeDocumentFrontier, CodeEditReceipt, CodeFileEdit, CodeOpAttribution, CodeOpProvenance,

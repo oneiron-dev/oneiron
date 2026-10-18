@@ -168,6 +168,8 @@ impl Vault {
             return Err(Error::ConcurrentWrite("reviewed stack recovery diverged"));
         }
         for row in rows.into_iter().skip(outcomes.len()) {
+            // An erased actor's member never runs again, so its failed attempt stays failed.
+            row.actor.live()?;
             if row.operation_seq.is_some() {
                 // Recovery proved this failed attempt had no repository effect.
                 // Keep its old terminal receipt, but allocate a fresh sequence on
@@ -361,7 +363,7 @@ fn require_receipt(
         || entry.repo_ref != request.repo_ref
         || entry.operation_kind != request.operation.kind()
         || entry.operation_subject.as_deref() != Some(row.path.as_str())
-        || entry.actor_id != Some(row.actor)
+        || entry.actor_id != row.actor.id()
         || entry.session_id != Some(row.session)
     {
         return Err(invalid("reviewed stack receipt binding differs"));
@@ -398,10 +400,12 @@ fn require_document_base(
             if receipt.document_id != session.document_id()
                 || receipt.session_id != row.session
                 || receipt.actor
-                    != crate::write_envelope::WriteActor::new(
-                        row.actor,
-                        crate::edge::EdgeActorClass::Agent,
-                    )
+                    != row.actor.id().map(|actor| {
+                        crate::write_envelope::WriteActor::new(
+                            actor,
+                            crate::edge::EdgeActorClass::Agent,
+                        )
+                    })
                 || receipt.provenance != row.op_provenance
                 || receipt.edit
                     != crate::code_document::CodeFileEdit::between(&row.path, old, new) =>
