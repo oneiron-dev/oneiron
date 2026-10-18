@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 868 facade rows, 2961 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 824.
+// UniFFI census: 877 facade rows, 2994 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 833.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -6882,6 +6882,281 @@ pub struct WellnessProjection {
     pub receipt_ref: Option<String>,
 }
 
+/// `oneiron::memory::clustering::ClusterClaimInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterClaimInput {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "embedding")]
+    pub embedding: Vec<f64>,
+}
+
+/// `oneiron::memory::clustering::ClusterRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterRequest {
+    #[serde(rename = "claims")]
+    pub claims: Vec<ClusterClaimInput>,
+    #[serde(
+        rename = "cohesion_threshold",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cohesion_threshold: Option<f64>,
+}
+
+/// `oneiron::memory::clustering::ClusterPartition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClusterPartition {
+    #[serde(rename = "subject_ref")]
+    pub subject_ref: String,
+    #[serde(rename = "predicate_root")]
+    pub predicate_root: String,
+    #[serde(rename = "world_ref", default, skip_serializing_if = "Option::is_none")]
+    pub world_ref: Option<String>,
+    #[serde(rename = "facet_ref", default, skip_serializing_if = "Option::is_none")]
+    pub facet_ref: Option<String>,
+}
+
+/// `oneiron::memory::clustering::ClusterCohort`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClusterCohort {
+    #[serde(rename = "cohort_id")]
+    pub cohort_id: Vec<u8>,
+    #[serde(rename = "partition")]
+    pub partition: ClusterPartition,
+    #[serde(rename = "member_refs")]
+    pub member_refs: Vec<String>,
+    #[serde(rename = "cohesion")]
+    pub cohesion: f64,
+}
+
+/// `oneiron::memory::clustering::ClusterProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClusterProposal {
+    #[serde(rename = "cohorts")]
+    pub cohorts: Vec<ClusterCohort>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `ClusterProposal`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultClusterProposal {
+    #[serde(rename = "value")]
+    pub value: ClusterProposal,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::clustering::ClusterProposalRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterProposalRequest {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+}
+
+/// `oneiron::memory::clustering::ClusterEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterEvidence {
+    #[serde(rename = "refs")]
+    pub refs: Vec<String>,
+    #[serde(rename = "rationale")]
+    pub rationale: String,
+}
+
+/// `oneiron::memory::clustering::ClusterSurvivorship`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClusterSurvivorship {
+    #[serde(rename = "read_through")]
+    ReadThrough,
+}
+
+/// `oneiron::memory::clustering::ClusterMerge`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterMerge {
+    #[serde(rename = "sources")]
+    pub sources: Vec<String>,
+    #[serde(rename = "survivor")]
+    pub survivor: String,
+    #[serde(rename = "evidence")]
+    pub evidence: ClusterEvidence,
+    #[serde(
+        rename = "survivorship_plan",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub survivorship_plan: Option<ClusterSurvivorship>,
+}
+
+/// `oneiron::memory::clustering::ClusterReassignmentTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum ClusterReassignmentTarget {
+    #[serde(rename = "head")]
+    Head {
+        #[serde(rename = "entity_ref")]
+        entity_ref: String,
+    },
+    #[serde(rename = "residue")]
+    Residue,
+}
+
+/// `oneiron::memory::clustering::ClusterReassignment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterReassignment {
+    #[serde(rename = "item")]
+    pub item: String,
+    #[serde(rename = "target")]
+    pub target: ClusterReassignmentTarget,
+}
+
+/// `oneiron::memory::clustering::ClusterSplit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterSplit {
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "heads")]
+    pub heads: Vec<String>,
+    #[serde(rename = "reassignment_map")]
+    pub reassignment_map: Vec<ClusterReassignment>,
+    #[serde(rename = "evidence")]
+    pub evidence: ClusterEvidence,
+}
+
+/// `oneiron::memory::clustering::ClusterOperation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ClusterOperation {
+    #[serde(rename = "merge")]
+    Merge(ClusterMerge),
+    #[serde(rename = "split")]
+    Split(ClusterSplit),
+}
+
+/// `oneiron::memory::clustering::ClusterTopologyOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ClusterTopologyOutcome {
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "approved_untouched")]
+    ApprovedUntouched,
+    #[serde(rename = "approved_amended")]
+    ApprovedAmended,
+    #[serde(rename = "rejected")]
+    Rejected,
+}
+
+/// `oneiron::memory::clustering::ClusterProposalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClusterProposalView {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "operation")]
+    pub operation: ClusterOperation,
+    #[serde(rename = "seen")]
+    pub seen: Vec<u8>,
+    #[serde(
+        rename = "resolution",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resolution: Option<ClusterTopologyOutcome>,
+    #[serde(rename = "moot")]
+    pub moot: bool,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `ClusterProposalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultClusterProposalView {
+    #[serde(rename = "value")]
+    pub value: ClusterProposalView,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::clustering::ClusterProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterProposeRequest {
+    #[serde(rename = "operation")]
+    pub operation: ClusterOperation,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+}
+
+/// `oneiron::memory::clustering::ClusterTopologyReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ClusterTopologyReceipt {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(
+        rename = "proposal_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub proposal_ref: Option<String>,
+    #[serde(rename = "outcome")]
+    pub outcome: ClusterTopologyOutcome,
+}
+
+/// `oneiron::memory::clustering::ClusterMergeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterMergeRequest {
+    #[serde(rename = "merge")]
+    pub merge: ClusterMerge,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+}
+
+/// `oneiron::memory::clustering::ClusterSplitRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterSplitRequest {
+    #[serde(rename = "split")]
+    pub split: ClusterSplit,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+}
+
+/// `oneiron::memory::clustering::ClusterRuling`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "verdict")]
+#[serde(deny_unknown_fields)]
+pub enum ClusterRuling {
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "amend_then_approve")]
+    AmendThenApprove {
+        #[serde(rename = "operation")]
+        operation: ClusterOperation,
+    },
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron::memory::clustering::ClusterResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ClusterResolveRequest {
+    #[serde(rename = "proposal_ref")]
+    pub proposal_ref: String,
+    #[serde(rename = "seen")]
+    pub seen: Vec<u8>,
+    #[serde(rename = "ruling")]
+    pub ruling: ClusterRuling,
+    #[serde(rename = "grant_ref", default, skip_serializing_if = "Option::is_none")]
+    pub grant_ref: Option<String>,
+}
+
 /// `oneiron::memory::recall::call_mode::RecallEffort`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RecallEffort {
@@ -8032,6 +8307,196 @@ pub struct ScopedExport {
     pub applied: Scope,
     #[serde(rename = "records")]
     pub records: Vec<ScopedExportRecord>,
+}
+
+/// `oneiron::embed::space::InputKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum InputKind {
+    #[serde(rename = "text")]
+    Text,
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "audio")]
+    Audio,
+}
+
+/// `oneiron::memory::asset_doors::AssetIngestRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AssetIngestRequest {
+    #[serde(rename = "asset_ref", default, skip_serializing_if = "Option::is_none")]
+    pub asset_ref: Option<String>,
+    #[serde(rename = "embedding_kind")]
+    pub embedding_kind: InputKind,
+    #[serde(rename = "mime_type")]
+    pub mime_type: String,
+    #[serde(rename = "bytes_b64")]
+    pub bytes_b64: String,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "occurred_at")]
+    pub occurred_at: u64,
+}
+
+/// `oneiron::memory::asset_doors::AssetIngestReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AssetIngestReceipt {
+    #[serde(rename = "asset_ref")]
+    pub asset_ref: String,
+    #[serde(
+        rename = "asset_text_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub asset_text_ref: Option<String>,
+    #[serde(rename = "embedding_kind")]
+    pub embedding_kind: InputKind,
+    #[serde(rename = "mime_type")]
+    pub mime_type: String,
+    #[serde(rename = "blake3")]
+    pub blake3: String,
+    #[serde(rename = "byte_size")]
+    pub byte_size: u64,
+}
+
+/// `oneiron::memory::asset_doors::AssetResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AssetResolveRequest {
+    #[serde(rename = "asset_ref")]
+    pub asset_ref: String,
+    #[serde(
+        rename = "image_input",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub image_input: Option<bool>,
+    #[serde(
+        rename = "audio_input",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audio_input: Option<bool>,
+    #[serde(
+        rename = "room_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub room_bytes: Option<u64>,
+}
+
+/// `oneiron::memory::asset_resolve::ServedAssetForm`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ServedAssetForm {
+    #[serde(rename = "image")]
+    Image,
+    #[serde(rename = "audio")]
+    Audio,
+    #[serde(rename = "thumbnail")]
+    Thumbnail,
+    #[serde(rename = "asset_text")]
+    AssetText,
+    #[serde(rename = "ask")]
+    Ask,
+}
+
+/// `oneiron::memory::asset_doors::AssetResolved`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AssetResolved {
+    #[serde(rename = "asset_ref")]
+    pub asset_ref: String,
+    #[serde(rename = "form")]
+    pub form: ServedAssetForm,
+    #[serde(rename = "mime_type", default, skip_serializing_if = "Option::is_none")]
+    pub mime_type: Option<String>,
+    #[serde(rename = "bytes_b64", default, skip_serializing_if = "Option::is_none")]
+    pub bytes_b64: Option<String>,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(
+        rename = "asset_text_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub asset_text_ref: Option<String>,
+    #[serde(rename = "handle", default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
+    #[serde(rename = "receipt_refs")]
+    pub receipt_refs: Vec<String>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `AssetResolved`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultAssetResolved {
+    #[serde(rename = "value")]
+    pub value: AssetResolved,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::memory::search_vector::VectorSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct VectorSearchRequest {
+    #[serde(rename = "space", default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<String>,
+    #[serde(
+        rename = "query_kind",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_kind: Option<InputKind>,
+    #[serde(rename = "query")]
+    pub query: Vec<f64>,
+    #[serde(rename = "kinds", default, skip_serializing_if = "Option::is_none")]
+    pub kinds: Option<Vec<InputKind>>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::embed::evidence::EmbeddingMatchEvidence`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct EmbeddingMatchEvidence {
+    #[serde(rename = "space")]
+    pub space: String,
+    #[serde(rename = "embedding_kind")]
+    pub embedding_kind: InputKind,
+    #[serde(rename = "query_kind")]
+    pub query_kind: InputKind,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "floor")]
+    pub floor: f64,
+    #[serde(rename = "strong")]
+    pub strong: f64,
+    #[serde(rename = "matched")]
+    pub matched: bool,
+}
+
+/// `oneiron::memory::search_vector::VectorSearchHit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct VectorSearchHit {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "embedding_matches")]
+    pub embedding_matches: Vec<EmbeddingMatchEvidence>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `VectorSearchHitList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultVectorSearchHitList {
+    #[serde(rename = "value")]
+    pub value: Vec<VectorSearchHit>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::memory::asset_resolve::PixelRegion`.
@@ -20589,17 +21054,6 @@ pub struct CourtesyDeleteAnswerRequest {
     pub hold: Option<Vec<String>>,
     #[serde(rename = "reply_to", default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<String>,
-}
-
-/// `oneiron::embed::space::InputKind`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum InputKind {
-    #[serde(rename = "text")]
-    Text,
-    #[serde(rename = "image")]
-    Image,
-    #[serde(rename = "audio")]
-    Audio,
 }
 
 /// `oneiron::embed::space::Row`.

@@ -24,6 +24,9 @@
 //!
 //! A root request's `seen` is [`AuthorityFold::root_work_revision`]: the
 //! owner roots and the target's standing, as the deciding surface saw them.
+//! A custody request's is its secret's live custody requests, compared here
+//! before it joins them, and an admitted revoke is terminal for its secret
+//! (`custody`).
 //!
 //! As for every act kind, an owner the request's parents hold removed carries
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
@@ -32,6 +35,8 @@
 //! root work is owner-only until a Grant line names it. Neither op rides a
 //! side branch ([`super::world_privacy::side_world`] is `None`), so every
 //! proven linked machine folds both.
+
+mod custody;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -81,6 +86,8 @@ pub(super) struct OwnerWorkState {
     heads: BTreeMap<(OwnerWorkKind, EntityId), WorkHeads>,
     /// Well-signed requests and results without effect.
     refused: BTreeSet<AuthorityEntryHash>,
+    /// Each secret an admitted custody revoke names: terminal for it.
+    revoked: BTreeSet<EntityId>,
 }
 
 /// One admitted request as this install reads it.
@@ -114,6 +121,8 @@ pub(crate) struct FoldedOwnerWork {
     /// Each (kind, target)'s live requests.
     heads: BTreeMap<(OwnerWorkKind, EntityId), BTreeSet<AuthorityEntryHash>>,
     refused: BTreeSet<AuthorityEntryHash>,
+    /// Each secret an admitted custody revoke names.
+    revoked: BTreeSet<EntityId>,
 }
 
 impl AuthorityFold {
@@ -321,10 +330,11 @@ fn apply_request(
     drop(standing);
     // A carrier the one rule does not admit, or an owner the request's
     // parents hold removed (mesh contract §4), records a valid request
-    // without effect.
+    // without effect; so does a custody change on a revision it did not see,
+    // or an active one after its secret's revoke.
     let live = admitted && super::owner_act::owner_live_at(state, request.act.owner);
     let work = &mut state.owner_work;
-    if !live {
+    if !live || !custody::custody_request_lands(work, request) {
         work.refused.insert(hash);
         return Ok(());
     }
@@ -335,10 +345,11 @@ fn apply_request(
     let replaced = std::mem::take(&mut heads.live);
     heads.superseded.extend(replaced);
     heads.live.insert(hash);
+    custody::note_custody_revoke(work, request);
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: *request,
+            request: request.clone(),
             key,
             marks,
             narrow_only,
@@ -390,10 +401,10 @@ fn apply_result(
     Ok(())
 }
 
-/// Joins two states: requests and refusals by union, a request superseded
-/// on either side is superseded, and of two different results of one
-/// request the lesser entry hash stands, the other is without effect. Two
-/// copies of one request that disagree never count here.
+/// Joins two states: requests, refusals and revoked secrets by union, a
+/// request superseded on either side is superseded, and of two different
+/// results of one request the lesser entry hash stands, the other is without
+/// effect. Two copies of one request that disagree never count here.
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
         merged
@@ -409,6 +420,7 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
             .or_insert_with(|| Arc::clone(request));
     }
     merged.refused.extend(right.refused.iter().copied());
+    merged.revoked.extend(right.revoked.iter().copied());
     for (request, answer) in &right.results {
         match merged.results.get(request).copied() {
             Some(held) if held.entry == answer.entry => {}
@@ -460,7 +472,7 @@ pub(super) fn folded_owner_work(
                 (
                     *hash,
                     FoldedWorkRequest {
-                        request: folded.request,
+                        request: folded.request.clone(),
                         counts,
                     },
                 )
@@ -473,6 +485,7 @@ pub(super) fn folded_owner_work(
             .map(|(at, heads)| (*at, heads.live.clone()))
             .collect(),
         refused: work.refused.clone(),
+        revoked: work.revoked.clone(),
     }
 }
 

@@ -97,6 +97,12 @@ pub enum AgentVerb {
     VaultAffectWellnessPolicyConfigure,
     VaultAffectWellnessDerive,
     VaultAffectWellnessGet,
+    VaultCluster,
+    VaultClusterProposal,
+    VaultClusterPropose,
+    VaultClusterMerge,
+    VaultClusterSplit,
+    VaultClusterResolveProposal,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -112,6 +118,9 @@ pub enum AgentVerb {
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
+    VaultAssetsIngest,
+    VaultAssetsResolve,
+    VaultSearchVector,
     VaultImagesView,
     VaultReceiptsGet,
     SelfAdmissionStatus,
@@ -991,6 +1000,12 @@ impl AgentVerb {
         Self::VaultAffectWellnessPolicyConfigure,
         Self::VaultAffectWellnessDerive,
         Self::VaultAffectWellnessGet,
+        Self::VaultCluster,
+        Self::VaultClusterProposal,
+        Self::VaultClusterPropose,
+        Self::VaultClusterMerge,
+        Self::VaultClusterSplit,
+        Self::VaultClusterResolveProposal,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1006,6 +1021,9 @@ impl AgentVerb {
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
+        Self::VaultAssetsIngest,
+        Self::VaultAssetsResolve,
+        Self::VaultSearchVector,
         Self::VaultImagesView,
         Self::VaultReceiptsGet,
         Self::SelfAdmissionStatus,
@@ -1888,6 +1906,12 @@ impl AgentVerb {
             Self::VaultAffectWellnessPolicyConfigure => "vault.affect.wellness.policy.configure",
             Self::VaultAffectWellnessDerive => "vault.affect.wellness.derive",
             Self::VaultAffectWellnessGet => "vault.affect.wellness.get",
+            Self::VaultCluster => "vault.cluster",
+            Self::VaultClusterProposal => "vault.cluster.proposal",
+            Self::VaultClusterPropose => "vault.cluster.propose",
+            Self::VaultClusterMerge => "vault.cluster.merge",
+            Self::VaultClusterSplit => "vault.cluster.split",
+            Self::VaultClusterResolveProposal => "vault.cluster.resolve_proposal",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -1903,6 +1927,9 @@ impl AgentVerb {
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
+            Self::VaultAssetsIngest => "vault.assets.ingest",
+            Self::VaultAssetsResolve => "vault.assets.resolve",
+            Self::VaultSearchVector => "vault.search.vector",
             Self::VaultImagesView => "vault.images.view",
             Self::VaultReceiptsGet => "vault.receipts.get",
             Self::SelfAdmissionStatus => "self.admission.status",
@@ -2803,6 +2830,12 @@ impl AgentVerb {
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
                 | Self::VaultAffectWellnessGet
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -2818,6 +2851,9 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
+                | Self::VaultAssetsIngest
+                | Self::VaultAssetsResolve
+                | Self::VaultSearchVector
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::SelfAdmissionStatus
@@ -3724,6 +3760,12 @@ impl AgentVerb {
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
                 | Self::VaultAffectWellnessGet
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3739,6 +3781,9 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
+                | Self::VaultAssetsIngest
+                | Self::VaultAssetsResolve
+                | Self::VaultSearchVector
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::SelfAdmissionStatus
@@ -4612,10 +4657,14 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
+                | Self::VaultAssetsResolve
+                | Self::VaultSearchVector
                 | Self::ExecuteCode
                 | Self::VaultCommit
                 | Self::VaultCalendarPassportsRead
@@ -4731,6 +4780,10 @@ impl AgentVerb {
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
                 | Self::VaultAffectWellnessGet
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -4742,6 +4795,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::VaultReceipts
+                | Self::VaultAssetsIngest
                 | Self::VaultImagesView
                 | Self::VaultReceiptsGet
                 | Self::SelfAdmissionStatus
@@ -5550,8 +5604,13 @@ impl AgentVerb {
                 | Self::VaultAffectCopingUpdate
                 | Self::VaultAffectWellnessPolicyConfigure
                 | Self::VaultAffectWellnessDerive
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
+                | Self::VaultAssetsIngest
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
                 | Self::VaultCampaignComplianceInstall
@@ -6029,6 +6088,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultClusterPropose
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -6158,6 +6218,12 @@ impl AgentVerb {
             Self::VaultAffectWellnessPolicyConfigure => &["spec"],
             Self::VaultAffectWellnessDerive => &["spec"],
             Self::VaultAffectWellnessGet => &["spec"],
+            Self::VaultCluster => &["spec"],
+            Self::VaultClusterProposal => &["spec"],
+            Self::VaultClusterPropose => &["spec"],
+            Self::VaultClusterMerge => &["spec"],
+            Self::VaultClusterSplit => &["spec"],
+            Self::VaultClusterResolveProposal => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6173,6 +6239,9 @@ impl AgentVerb {
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultAssetsIngest => &["spec"],
+            Self::VaultAssetsResolve => &["spec"],
+            Self::VaultSearchVector => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::SelfAdmissionStatus => &["spec"],
@@ -7053,6 +7122,12 @@ impl AgentVerb {
             Self::VaultAffectWellnessPolicyConfigure => &["spec"],
             Self::VaultAffectWellnessDerive => &["spec"],
             Self::VaultAffectWellnessGet => &["spec"],
+            Self::VaultCluster => &["spec"],
+            Self::VaultClusterProposal => &["spec"],
+            Self::VaultClusterPropose => &["spec"],
+            Self::VaultClusterMerge => &["spec"],
+            Self::VaultClusterSplit => &["spec"],
+            Self::VaultClusterResolveProposal => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -7068,6 +7143,9 @@ impl AgentVerb {
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
+            Self::VaultAssetsIngest => &["spec"],
+            Self::VaultAssetsResolve => &["spec"],
+            Self::VaultSearchVector => &["spec"],
             Self::VaultImagesView => &["spec"],
             Self::VaultReceiptsGet => &["spec"],
             Self::SelfAdmissionStatus => &["spec"],
@@ -8129,6 +8207,24 @@ impl AgentVerb {
             Self::VaultAffectWellnessGet => {
                 "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."
             }
+            Self::VaultCluster => {
+                "Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."
+            }
+            Self::VaultClusterProposal => {
+                "Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."
+            }
+            Self::VaultClusterPropose => {
+                "Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."
+            }
+            Self::VaultClusterMerge => {
+                "Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."
+            }
+            Self::VaultClusterSplit => {
+                "Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."
+            }
+            Self::VaultClusterResolveProposal => {
+                "Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."
+            }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
             }
@@ -8173,6 +8269,15 @@ impl AgentVerb {
             }
             Self::VaultReceipts => {
                 "Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds."
+            }
+            Self::VaultAssetsIngest => {
+                "Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate."
+            }
+            Self::VaultAssetsResolve => {
+                "Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs."
+            }
+            Self::VaultSearchVector => {
+                "Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt."
             }
             Self::VaultImagesView => {
                 "The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull."

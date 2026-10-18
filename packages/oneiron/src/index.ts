@@ -511,6 +511,19 @@ export class Oneiron {
       /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
       mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
     },
+    /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
+    cluster: Object.assign((input: Facade.ClusterRequest): Facade.ScopedReadResult<Facade.ClusterProposal> => this.#call(() => this.#client.vaultCluster(input) as Facade.ScopedReadResult<Facade.ClusterProposal>), {
+      /** Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable. */
+      proposal: (input: Facade.ClusterProposalRequest): Facade.ScopedReadResult<Facade.ClusterProposalView> => this.#call(() => this.#client.vaultClusterProposal(input) as Facade.ScopedReadResult<Facade.ClusterProposalView>),
+      /** Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant. */
+      propose: (input: Facade.ClusterProposeRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterPropose(input) as Facade.ClusterTopologyReceipt),
+      /** Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt. */
+      merge: (input: Facade.ClusterMergeRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterMerge(input) as Facade.ClusterTopologyReceipt),
+      /** Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue. */
+      split: (input: Facade.ClusterSplitRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterSplit(input) as Facade.ClusterTopologyReceipt),
+      /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
+      resolve_proposal: (input: Facade.ClusterResolveRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterResolveProposal(input) as Facade.ClusterTopologyReceipt),
+    }),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
       /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
@@ -529,6 +542,22 @@ export class Oneiron {
       /** Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly. */
       context: (input: Facade.CallReceiptRequest): Facade.ContextEmitReceipt | null => this.#call(() => this.#client.vaultReceiptsContext(input) as Facade.ContextEmitReceipt | null),
     }),
+    assets: {
+      /** Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate. */
+      ingest: (input: Facade.AssetIngestRequest): Facade.AssetIngestReceipt => this.#call(() => this.#client.vaultAssetsIngest(input) as Facade.AssetIngestReceipt),
+      /** Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs. */
+      resolve: (input: Facade.AssetResolveRequest): Facade.ScopedReadResult<Facade.AssetResolved> => this.#call(() => this.#client.vaultAssetsResolve(input) as Facade.ScopedReadResult<Facade.AssetResolved>),
+    },
+    search: {
+      /** Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt. */
+      vector: (input: Facade.VectorSearchRequest): Facade.ScopedReadResult<Facade.VectorSearchHit[]> => this.#call(() => this.#client.vaultSearchVector(input) as Facade.ScopedReadResult<Facade.VectorSearchHit[]>),
+      /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
+      hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
+      /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
+      temporal: (input: Facade.TemporalSearchRequest): Facade.ScopedReadResult<Facade.TemporalSearchResult> => this.#call(() => this.#client.vaultSearchTemporal(input) as Facade.ScopedReadResult<Facade.TemporalSearchResult>),
+      /** BM25 text search over the engine index; surfaceable claims only. */
+      bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
+    },
     images: {
       /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
       view: (request: Facade.ImageViewRequest): Facade.PulledImage => this.#call(() => {  const result = JSON.parse(this.#client.vaultImagesView(keyedJson(request))) as Facade.PulledImage; return result }),
@@ -1896,14 +1925,6 @@ export class Oneiron {
       resolve: (input: Facade.ResolveRecordRefRequest): Facade.ScopedReadResult<Facade.RecordRefPreview> => this.#call(() => this.#client.vaultRefsResolve(input) as Facade.ScopedReadResult<Facade.RecordRefPreview>),
       /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
       links: (input: Facade.RecordLinksRequest): Facade.RecordLinks => this.#call(() => this.#client.vaultRefsLinks(input) as Facade.RecordLinks),
-    },
-    search: {
-      /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
-      hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
-      /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
-      temporal: (input: Facade.TemporalSearchRequest): Facade.ScopedReadResult<Facade.TemporalSearchResult> => this.#call(() => this.#client.vaultSearchTemporal(input) as Facade.ScopedReadResult<Facade.TemporalSearchResult>),
-      /** BM25 text search over the engine index; surfaceable claims only. */
-      bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
     },
     /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
     neighbors: (input: Facade.NeighborsRequest): Facade.ScopedReadResult<Facade.NeighborHit[]> => this.#call(() => this.#client.vaultNeighbors(input) as Facade.ScopedReadResult<Facade.NeighborHit[]>),

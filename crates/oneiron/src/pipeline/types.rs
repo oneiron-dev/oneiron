@@ -284,6 +284,7 @@ pub(super) struct ClaimStatusGateCache {
 }
 
 pub(crate) struct PipelineOutput {
+    pub(crate) embedding_matches: HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// A dense list answered: the text index's or a declared space's.
     pub(crate) vector_completed: bool,
     pub(crate) revisions: HashMap<EntityId, crate::vault::RevisionRef>,

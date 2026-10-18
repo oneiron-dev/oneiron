@@ -123,6 +123,12 @@ vaultAffectWellnessPolicyGet(input: unknown): unknown
 vaultAffectWellnessPolicyConfigure(input: unknown): unknown
 vaultAffectWellnessDerive(input: unknown): unknown
 vaultAffectWellnessGet(input: unknown): unknown
+vaultCluster(input: unknown): unknown
+vaultClusterProposal(input: unknown): unknown
+vaultClusterPropose(input: unknown): unknown
+vaultClusterMerge(input: unknown): unknown
+vaultClusterSplit(input: unknown): unknown
+vaultClusterResolveProposal(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
 vaultRetrievalRun(input: unknown): unknown
@@ -138,6 +144,9 @@ vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
+vaultAssetsIngest(input: unknown): unknown
+vaultAssetsResolve(input: unknown): unknown
+vaultSearchVector(input: unknown): unknown
 vaultImagesView(requestJson: string): string
 vaultReceiptsGet(input: unknown): unknown
 selfAdmissionStatus(input: unknown): unknown

@@ -23,16 +23,23 @@
 //! passphrase, code or carry list, which only the target receives. A bundle
 //! publication ([`OwnerWorkBody::PublishBundle`]) asks one install that holds
 //! every world's key to publish the vault's sealed bundle to the home its
-//! act targets. Each later kind (custody control) adds one [`OwnerWorkBody`]
-//! variant with its [`OwnerWorkKind`], the [`OwnerActKind`] its act carries
-//! and the wire map it states under `work`; the request and result envelopes
-//! stay as they are.
+//! act targets. A custody change ([`OwnerWorkBody::Custody`]) asks for one
+//! change to one portable secret's custody, by its id: ids, digests and a
+//! generation only, its recipients inline (`custody`). Each kind is one
+//! [`OwnerWorkBody`] variant with its [`OwnerWorkKind`], the [`OwnerActKind`]
+//! its act carries and the wire map it states under `work`; the request and
+//! result envelopes stay as they are.
+
+mod custody;
 
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
 
+pub use self::custody::{
+    CUSTODY_RECIPIENTS_MAX, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange, CustodyRecipientPermit,
+};
 use super::*;
 
 pub const OP_KIND_OWNER_WORK_REQUEST: &str = "owner_work_request";
@@ -57,6 +64,8 @@ pub enum OwnerWorkKind {
     Root,
     /// A publication of the vault's sealed bundle to one home.
     PublishBundle,
+    /// A change to one portable secret's custody.
+    Custody,
 }
 
 impl OwnerWorkKind {
@@ -67,6 +76,7 @@ impl OwnerWorkKind {
             Self::WorldKey => "world_key",
             Self::Root => "root",
             Self::PublishBundle => "publish_bundle",
+            Self::Custody => "custody",
         }
     }
 
@@ -77,6 +87,7 @@ impl OwnerWorkKind {
             "world_key" => Some(Self::WorldKey),
             "root" => Some(Self::Root),
             "publish_bundle" => Some(Self::PublishBundle),
+            "custody" => Some(Self::Custody),
             _ => None,
         }
     }
@@ -87,6 +98,7 @@ impl OwnerWorkKind {
         match self {
             Self::WorldKey | Self::PublishBundle => OwnerActKind::WorldKeyRequest,
             Self::Root => OwnerActKind::RootRequest,
+            Self::Custody => OwnerActKind::CustodyTransition,
         }
     }
 }
@@ -209,9 +221,10 @@ impl RootChange {
 }
 
 /// The work one request asks for. Closed: each kind is one variant, with the
-/// fields its own wire map states.
+/// fields its own wire map states. `Clone`, not `Copy`: a custody change
+/// carries its recipients inline (CALLS CUSTODY_SHARED_BODY).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OwnerWorkBody {
@@ -230,6 +243,20 @@ pub enum OwnerWorkBody {
     /// ([`BUNDLE_PUBLISH_REVISION_CONTEXT`]), for audit only: the executor
     /// seals to the policy current when it publishes. Ids only.
     PublishBundle { home: EntityId },
+    /// A change to one portable secret's custody. The act's target is the
+    /// secret's custody record id, and its `seen` is the revision of that
+    /// secret's live custody requests the change follows
+    /// ([`CUSTODY_WORK_REVISION_CONTEXT`]). An active change names the
+    /// `holder` that executes it, the `generation` it approves, the digest of
+    /// its encrypted `input` (none for a rewrap) and the `recipients` the
+    /// owner permits; a revoke names none of them and its carrier executes it.
+    Custody {
+        change: CustodyChange,
+        generation: u32,
+        input: Option<[u8; 32]>,
+        holder: Option<EntityId>,
+        recipients: Vec<CustodyRecipientPermit>,
+    },
 }
 
 impl OwnerWorkBody {
@@ -239,6 +266,7 @@ impl OwnerWorkBody {
             Self::WorldKey { .. } => OwnerWorkKind::WorldKey,
             Self::Root { .. } => OwnerWorkKind::Root,
             Self::PublishBundle { .. } => OwnerWorkKind::PublishBundle,
+            Self::Custody { .. } => OwnerWorkKind::Custody,
         }
     }
 }
@@ -247,7 +275,7 @@ impl OwnerWorkBody {
 /// machine of the vault, in any role, that carried the owner's act. It need
 /// not hold anything the work needs; `executor` does.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
 pub struct OwnerWorkRequest {
     pub carrier: EntityId,
@@ -284,6 +312,18 @@ impl OwnerWorkRequest {
             && home != self.act.target
         {
             return Err(invalid_authority());
+        }
+        // A custody change has its change's shape, and names its holder, or
+        // for a revoke its carrier, as executor.
+        if let OwnerWorkBody::Custody {
+            change,
+            input,
+            holder,
+            recipients,
+            ..
+        } = &self.work
+        {
+            custody::validate_custody(self, *change, *input, *holder, recipients)?;
         }
         Ok(())
     }
@@ -411,9 +451,9 @@ impl OwnerWorkResult {
 /// Canonical field order: kind, carrier, act, executor, work; a world key
 /// work map is kind, then mode; a root work map is kind, change, root, then
 /// machine, each field the change does not state nil; a publication work map
-/// is kind, then home.
+/// is kind, then home; a custody work map is `custody`'s.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
-    let work = match request.work {
+    let work = match &request.work {
         OwnerWorkBody::WorldKey { mode } => Value::Map(vec![
             (
                 Value::from(OP_KEY_KIND),
@@ -447,6 +487,13 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             ),
             (Value::from("home"), Value::from(home.to_hex())),
         ]),
+        OwnerWorkBody::Custody {
+            change,
+            generation,
+            input,
+            holder,
+            recipients,
+        } => custody::custody_work_value(*change, *generation, *input, *holder, recipients),
     };
     Value::Map(vec![
         (
@@ -511,6 +558,7 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
                 home: decode_canonical_id(required(work, "home")?)?,
             }
         }
+        OwnerWorkKind::Custody => custody::decode_custody_work(work)?,
     };
     let request = OwnerWorkRequest {
         carrier: decode_canonical_id(required(entries, "carrier")?)?,

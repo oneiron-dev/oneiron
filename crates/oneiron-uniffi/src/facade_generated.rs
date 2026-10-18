@@ -467,6 +467,36 @@ export_facade! {
     let output = client.vault_affect_wellness_get(&input)?;
     crate::codec::lift_record("vault.affect.wellness.get", &output)
 };
+"vault.cluster" => fn vault_cluster(&self, input: ClusterRequest) -> ScopedReadResultClusterProposal = |client| {
+    let input: oneiron::memory::clustering::ClusterRequest = crate::codec::lower_record("vault.cluster", input)?;
+    let output = client.vault_cluster(&input)?;
+    crate::codec::lift_record("vault.cluster", &output)
+};
+"vault.cluster.proposal" => fn vault_cluster_proposal(&self, input: ClusterProposalRequest) -> ScopedReadResultClusterProposalView = |client| {
+    let input: oneiron::memory::clustering::ClusterProposalRequest = crate::codec::lower_record("vault.cluster.proposal", input)?;
+    let output = client.vault_cluster_proposal(&input)?;
+    crate::codec::lift_record("vault.cluster.proposal", &output)
+};
+"vault.cluster.propose" => fn vault_cluster_propose(&self, input: ClusterProposeRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterProposeRequest = crate::codec::lower_record("vault.cluster.propose", input)?;
+    let output = client.vault_cluster_propose(&input)?;
+    crate::codec::lift_record("vault.cluster.propose", &output)
+};
+"vault.cluster.merge" => fn vault_cluster_merge(&self, input: ClusterMergeRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterMergeRequest = crate::codec::lower_record("vault.cluster.merge", input)?;
+    let output = client.vault_cluster_merge(&input)?;
+    crate::codec::lift_record("vault.cluster.merge", &output)
+};
+"vault.cluster.split" => fn vault_cluster_split(&self, input: ClusterSplitRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterSplitRequest = crate::codec::lower_record("vault.cluster.split", input)?;
+    let output = client.vault_cluster_split(&input)?;
+    crate::codec::lift_record("vault.cluster.split", &output)
+};
+"vault.cluster.resolve_proposal" => fn vault_cluster_resolve_proposal(&self, input: ClusterResolveRequest) -> ClusterTopologyReceipt = |client| {
+    let input: oneiron::memory::clustering::ClusterResolveRequest = crate::codec::lower_record("vault.cluster.resolve_proposal", input)?;
+    let output = client.vault_cluster_resolve_proposal(&input)?;
+    crate::codec::lift_record("vault.cluster.resolve_proposal", &output)
+};
 "vault.retrieval.recall" => fn vault_retrieval_recall(&self, input: RecallRequest) -> MemoryPack = |client| {
     let input: oneiron::task_verb::sdk::RecallRequest = crate::codec::lower_record("vault.retrieval.recall", input)?;
     let output = client.vault_retrieval_recall(&input)?;
@@ -540,6 +570,21 @@ export_facade! {
     let limit: usize = limit.lower()?;
     let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
     Lift::lift(output)
+};
+"vault.assets.ingest" => fn vault_assets_ingest(&self, input: AssetIngestRequest) -> AssetIngestReceipt = |client| {
+    let input: oneiron::memory::AssetIngestRequest = crate::codec::lower_record("vault.assets.ingest", input)?;
+    let output = client.vault_assets_ingest(&input)?;
+    crate::codec::lift_record("vault.assets.ingest", &output)
+};
+"vault.assets.resolve" => fn vault_assets_resolve(&self, input: AssetResolveRequest) -> ScopedReadResultAssetResolved = |client| {
+    let input: oneiron::memory::AssetResolveRequest = crate::codec::lower_record("vault.assets.resolve", input)?;
+    let output = client.vault_assets_resolve(&input)?;
+    crate::codec::lift_record("vault.assets.resolve", &output)
+};
+"vault.search.vector" => fn vault_search_vector(&self, input: VectorSearchRequest) -> ScopedReadResultVectorSearchHitList = |client| {
+    let input: oneiron::memory::VectorSearchRequest = crate::codec::lower_record("vault.search.vector", input)?;
+    let output = client.vault_search_vector(&input)?;
+    crate::codec::lift_record("vault.search.vector", &output)
 };
 "vault.images.view" => fn vault_images_view(&self, input: ImageViewRequest) -> PulledImage = |client| {
     let input: oneiron::memory::ImageViewRequest = crate::codec::lower_record("vault.images.view", input)?;

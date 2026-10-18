@@ -513,6 +513,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.cluster",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.proposal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterProposalRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterProposeRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterMergeRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterSplitRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.resolve_proposal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterResolveRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -589,6 +625,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::VaultReceiptsRequest,
                 >(),
+            ),
+            (
+                "vault.assets.ingest",
+                crate::code_run::vault_read::request_schema::<crate::memory::AssetIngestRequest>(),
+            ),
+            (
+                "vault.assets.resolve",
+                crate::code_run::vault_read::request_schema::<crate::memory::AssetResolveRequest>(),
+            ),
+            (
+                "vault.search.vector",
+                crate::code_run::vault_read::request_schema::<crate::memory::VectorSearchRequest>(),
             ),
             (
                 "vault.images.view",
@@ -4960,6 +5008,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.affect.wellness.policy.configure",
     "vault.affect.wellness.derive",
     "vault.affect.wellness.get",
+    "vault.cluster",
+    "vault.cluster.proposal",
+    "vault.cluster.propose",
+    "vault.cluster.merge",
+    "vault.cluster.split",
+    "vault.cluster.resolve_proposal",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -4972,6 +5026,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.assets.ingest",
+    "vault.assets.resolve",
+    "vault.search.vector",
     "self.admission.status",
     "self.admission.receipts",
     "vault.campaign.compliance.install",
@@ -5599,6 +5656,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.affect.wellness.get" => crate::code_run::vault_read::request_schema::<
             crate::memory::wellness_doors::WellnessProjection,
         >(),
+        "vault.cluster" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>,
+        >(),
+        "vault.cluster.proposal" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>,
+        >(),
+        "vault.cluster.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.merge" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.split" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.resolve_proposal" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
         >(),
@@ -5635,6 +5710,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.assets.ingest" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::AssetIngestReceipt>()
+        }
+        "vault.assets.resolve" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::AssetResolved>,
+        >(),
+        "vault.search.vector" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>,
+        >(),
         "self.admission.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::admission::AdmissionReceipt>,
         >(),
@@ -7769,6 +7853,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.cluster" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.proposal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.resolve_proposal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.retrieval.recall" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7868,6 +7994,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.assets.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.assets.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.search.vector" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13511,6 +13658,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::wellness_doors::WellnessPersonRequest =
                 decode(value.clone())?;
         }
+        "vault.cluster" => {
+            let _input: crate::memory::clustering::ClusterRequest = decode(value.clone())?;
+        }
+        "vault.cluster.proposal" => {
+            let _input: crate::memory::clustering::ClusterProposalRequest = decode(value.clone())?;
+        }
+        "vault.cluster.propose" => {
+            let _input: crate::memory::clustering::ClusterProposeRequest = decode(value.clone())?;
+        }
+        "vault.cluster.merge" => {
+            let _input: crate::memory::clustering::ClusterMergeRequest = decode(value.clone())?;
+        }
+        "vault.cluster.split" => {
+            let _input: crate::memory::clustering::ClusterSplitRequest = decode(value.clone())?;
+        }
+        "vault.cluster.resolve_proposal" => {
+            let _input: crate::memory::clustering::ClusterResolveRequest = decode(value.clone())?;
+        }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
         }
@@ -13561,6 +13726,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
                     .limit
                     .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
             )?;
+        }
+        "vault.assets.ingest" => {
+            let _input: crate::memory::AssetIngestRequest = decode(value.clone())?;
+        }
+        "vault.assets.resolve" => {
+            let _input: crate::memory::AssetResolveRequest = decode(value.clone())?;
+        }
+        "vault.search.vector" => {
+            let input: crate::memory::VectorSearchRequest = decode(value.clone())?;
+            input.validate()?;
         }
         "vault.images.view" => {
             let _input: crate::memory::ImageViewRequest = decode(value.clone())?;
@@ -16437,6 +16612,14 @@ pub fn invoke(
             encode(vault_affect_wellness_derive(memory, decode(value)?)?)
         }
         "vault.affect.wellness.get" => encode(vault_affect_wellness_get(memory, decode(value)?)?),
+        "vault.cluster" => encode(vault_cluster(memory, decode(value)?)?),
+        "vault.cluster.proposal" => encode(vault_cluster_proposal(memory, decode(value)?)?),
+        "vault.cluster.propose" => encode(vault_cluster_propose(memory, decode(value)?)?),
+        "vault.cluster.merge" => encode(vault_cluster_merge(memory, decode(value)?)?),
+        "vault.cluster.split" => encode(vault_cluster_split(memory, decode(value)?)?),
+        "vault.cluster.resolve_proposal" => {
+            encode(vault_cluster_resolve_proposal(memory, decode(value)?)?)
+        }
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -16456,6 +16639,9 @@ pub fn invoke(
         "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
         "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
+        "vault.assets.ingest" => encode(vault_assets_ingest(memory, decode(value)?)?),
+        "vault.assets.resolve" => encode(vault_assets_resolve(memory, decode(value)?)?),
+        "vault.search.vector" => encode(vault_search_vector(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
         "self.admission.status" => encode(self_admission_status(memory, decode(value)?)?),
@@ -18854,6 +19040,70 @@ pub fn vault_affect_wellness_get(
 ) -> MemoryResult<crate::memory::wellness_doors::WellnessProjection> {
     memory.wellness_get_as_owner(&memory.embedded_owner("vault.affect.wellness.get")?, &input)
 }
+pub fn vault_cluster(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>> {
+    memory.cluster(&input)
+}
+pub fn vault_cluster_proposal(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterProposalRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>> {
+    memory.cluster_proposal(&input)
+}
+pub fn vault_cluster_propose(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterProposeRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.propose")?)
+        } else {
+            None
+        };
+        memory.cluster_propose(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_merge(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterMergeRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.merge")?)
+        } else {
+            None
+        };
+        memory.cluster_merge(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_split(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterSplitRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.split")?)
+        } else {
+            None
+        };
+        memory.cluster_split(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_resolve_proposal(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterResolveRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.resolve_proposal")?)
+        } else {
+            None
+        };
+        memory.cluster_resolve_proposal(owner.as_ref(), &input)?
+    })
+}
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RecallRequest,
@@ -18989,6 +19239,25 @@ pub fn vault_receipts(
             .unwrap_or(crate::task_verb::sdk::VAULT_RECEIPTS_LIMIT_DEFAULT),
         &input.kinds,
     )
+}
+pub fn vault_assets_ingest(
+    memory: &Memory<'_>,
+    input: crate::memory::AssetIngestRequest,
+) -> MemoryResult<crate::memory::AssetIngestReceipt> {
+    memory.ingest_asset(&input)
+}
+pub fn vault_assets_resolve(
+    memory: &Memory<'_>,
+    input: crate::memory::AssetResolveRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::AssetResolved>> {
+    memory.resolve_asset_form(&input)
+}
+pub fn vault_search_vector(
+    memory: &Memory<'_>,
+    input: crate::memory::VectorSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::VectorSearchHit>>> {
+    input.validate()?;
+    memory.query_vector(&input)
 }
 pub fn vault_images_view(
     memory: &Memory<'_>,

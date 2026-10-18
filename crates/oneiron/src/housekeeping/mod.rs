@@ -94,8 +94,8 @@ pub enum HostOnlyReason {
     /// Each dispatch needs an authenticated actor, grants and a window from
     /// the host; a timer is not that authority.
     NeedsAuthenticatedDispatch,
-    /// The expiry digest is routed on the asker's behalf through a channel
-    /// and recovery choices only the host knows.
+    /// The host supplies per-asker native routes and drives consult settlement
+    /// on each admitted housekeeping pass; expiry itself needs no actor.
     NeedsHostDigestRoute,
     /// Only an authenticated owner may prune their holds.
     NeedsAuthenticatedOwner,

@@ -760,6 +760,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_cluster(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_proposal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.proposal", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_propose(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.propose", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_merge(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.merge", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_split(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.split", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cluster_resolve_proposal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cluster.resolve_proposal", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_retrieval_recall(
         &self,
         input: serde_json::Value,
@@ -893,6 +938,27 @@ impl NativeClient {
             .into_iter()
             .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
             .collect()
+    }
+    #[napi]
+    pub fn vault_assets_ingest(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.assets.ingest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_assets_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.assets.resolve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_search_vector(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.vector", js_json(input))
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_images_view(&self, request_json: String) -> napi::Result<String> {

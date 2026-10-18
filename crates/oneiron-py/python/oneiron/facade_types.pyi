@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 868 facade rows, 2995 declarations.
-Inputs: 816 of 868 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 784 of 868 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 877 facade rows, 3024 declarations.
+Inputs: 825 of 877 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 793 of 877 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -1970,6 +1970,15 @@ class RecallRequest(TypedDict):
     media: NotRequired[ContextPackMediaQuery | None]
     query_affect: NotRequired[QueryAffect | None]
     telemetry: NotRequired[RecallTelemetry | None]
+InputKind = Literal["text", "image", "audio"]
+class EmbeddingMatchEvidence(TypedDict):
+    space: str
+    embedding_kind: InputKind
+    query_kind: InputKind
+    score: float
+    floor: float
+    strong: float
+    matched: bool
 class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
@@ -1984,6 +1993,8 @@ class CitedMessage(TypedDict):
     value_text: str
     record: NotRequired[RecordRef | None]
 class MemoryItem(TypedDict):
+    asset_ref: NotRequired[str | None]
+    embedding_matches: NotRequired[list[EmbeddingMatchEvidence]]
     short_id: str
     source_revision_ref: NotRequired[str | None]
     kind: str
@@ -2406,6 +2417,87 @@ class WellnessProjection(TypedDict):
     coping: CopingAggregate
     source_refs: list[str]
     receipt_ref: NotRequired[str | None]
+class ClusterClaimInput(TypedDict):
+    claim_ref: str
+    embedding: list[float]
+class ClusterRequest(TypedDict):
+    claims: list[ClusterClaimInput]
+    cohesion_threshold: NotRequired[float | None]
+class ClusterPartition(TypedDict):
+    subject_ref: str
+    predicate_root: str
+    world_ref: NotRequired[str | None]
+    facet_ref: NotRequired[str | None]
+class ClusterCohort(TypedDict):
+    cohort_id: list[int]
+    partition: ClusterPartition
+    member_refs: list[str]
+    cohesion: float
+class ClusterProposal(TypedDict):
+    cohorts: list[ClusterCohort]
+class ClusterProposalRequest(TypedDict):
+    proposal_ref: str
+class ClusterEvidence(TypedDict):
+    refs: list[str]
+    rationale: str
+ClusterSurvivorship = Literal["read_through"]
+class ClusterMerge(TypedDict):
+    sources: list[str]
+    survivor: str
+    evidence: ClusterEvidence
+    survivorship_plan: NotRequired[ClusterSurvivorship]
+class ClusterReassignmentTargetHead(TypedDict):
+    kind: Literal["head"]
+    entity_ref: str
+class ClusterReassignmentTargetResidue(TypedDict):
+    kind: Literal["residue"]
+ClusterReassignmentTarget = ClusterReassignmentTargetHead | ClusterReassignmentTargetResidue
+class ClusterReassignment(TypedDict):
+    item: str
+    target: ClusterReassignmentTarget
+class ClusterSplit(TypedDict):
+    entity: str
+    heads: list[str]
+    reassignment_map: list[ClusterReassignment]
+    evidence: ClusterEvidence
+class ClusterOperationMerge(ClusterMerge):
+    kind: Literal["merge"]
+class ClusterOperationSplit(ClusterSplit):
+    kind: Literal["split"]
+ClusterOperation = ClusterOperationMerge | ClusterOperationSplit
+ClusterTopologyOutcome = Literal["applied", "proposed", "approved_untouched", "approved_amended", "rejected"]
+class ClusterProposalView(TypedDict):
+    proposal_ref: str
+    operation: ClusterOperation
+    seen: list[int]
+    resolution: NotRequired[ClusterTopologyOutcome | None]
+    moot: bool
+class ClusterProposeRequest(TypedDict):
+    operation: ClusterOperation
+    grant_ref: NotRequired[str | None]
+class ClusterTopologyReceipt(TypedDict):
+    receipt_ref: str
+    proposal_ref: NotRequired[str | None]
+    outcome: ClusterTopologyOutcome
+class ClusterMergeRequest(TypedDict):
+    merge: ClusterMerge
+    grant_ref: NotRequired[str | None]
+class ClusterSplitRequest(TypedDict):
+    split: ClusterSplit
+    grant_ref: NotRequired[str | None]
+class ClusterRulingApprove(TypedDict):
+    verdict: Literal["approve"]
+class ClusterRulingAmendThenApprove(TypedDict):
+    verdict: Literal["amend_then_approve"]
+    operation: ClusterOperation
+class ClusterRulingReject(TypedDict):
+    verdict: Literal["reject"]
+ClusterRuling = ClusterRulingApprove | ClusterRulingAmendThenApprove | ClusterRulingReject
+class ClusterResolveRequest(TypedDict):
+    proposal_ref: str
+    seen: list[int]
+    ruling: ClusterRuling
+    grant_ref: NotRequired[str | None]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
@@ -2682,6 +2774,46 @@ class MemoryReceipt(TypedDict):
     claim_ref: NotRequired[str | None]
     claim: NotRequired[RecordRef | None]
     fields: NotRequired[dict[str, str]]
+class AssetIngestRequest(TypedDict):
+    asset_ref: NotRequired[str | None]
+    embedding_kind: InputKind
+    mime_type: str
+    bytes_b64: str
+    text: NotRequired[str | None]
+    occurred_at: int
+class AssetIngestReceipt(TypedDict):
+    asset_ref: str
+    asset_text_ref: NotRequired[str | None]
+    embedding_kind: InputKind
+    mime_type: str
+    blake3: str
+    byte_size: int
+class AssetResolveRequest(TypedDict):
+    asset_ref: str
+    image_input: NotRequired[bool]
+    audio_input: NotRequired[bool]
+    room_bytes: NotRequired[int | None]
+ServedAssetForm = Literal["image", "audio", "thumbnail", "asset_text", "ask"]
+class AssetResolved(TypedDict):
+    asset_ref: str
+    form: ServedAssetForm
+    mime_type: NotRequired[str | None]
+    bytes_b64: NotRequired[str | None]
+    text: NotRequired[str | None]
+    asset_text_ref: NotRequired[str | None]
+    handle: NotRequired[str | None]
+    receipt_refs: list[str]
+class VectorSearchRequest(TypedDict):
+    space: NotRequired[str | None]
+    query_kind: NotRequired[InputKind | None]
+    query: list[float]
+    kinds: NotRequired[list[InputKind]]
+    limit: int
+class VectorSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    embedding_matches: list[EmbeddingMatchEvidence]
 class PixelRegion(TypedDict):
     x: int
     y: int
@@ -6744,7 +6876,6 @@ class CourtesyDeleteAnswerRequest(TypedDict):
     delete: NotRequired[list[str]]
     hold: NotRequired[list[str]]
     reply_to: NotRequired[str | None]
-InputKind = Literal["text", "image", "audio"]
 class EvidenceFloors(TypedDict):
     floor: float
     strong: float
