@@ -281,6 +281,8 @@ side_tables! {
     CAMPAIGN_COMPLIANCE_NOTICE: VaultMeta b"campaign:compliance:notice:v1:" Raw;
     /// One staged compliance-pack amendment proposal awaiting an owner stamp. Key: ().
     CAMPAIGN_COMPLIANCE_PENDING: VaultMeta b"campaign:compliance:pending:v1" Named;
+    /// Caller-bound compliance amendment, owner decision or verification receipt. Key: id16.
+    CAMPAIGN_COMPLIANCE_RECEIPT: VaultMeta b"campaign:compliance:receipt:v1:" Named;
     /// Per-saved-query baseline (definition version + scope digest) a campaign enrollment detection
     /// re-derives against. Key: id16.
     CAMPAIGN_ENROLLMENT_BASELINE: VaultMeta b"campaign:enrollment_baseline:v1:" LegacyJson;

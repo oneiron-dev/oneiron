@@ -943,6 +943,12 @@ fn mcp_agent_verb_input(
         "vault.kv.delete" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.search" => a.spec.clone().ok_or_else(invalid),
         "vault.kv.namespaces" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.compliance.install" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.compliance.amend" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.compliance.approve" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.compliance.reject" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.compliance.verify" => a.spec.clone().ok_or_else(invalid),
+        "vault.campaign.compliance.result" => a.spec.clone().ok_or_else(invalid),
         "vault.campaign.enroll" => a.spec.clone().ok_or_else(invalid),
         "vault.campaign.stage.evidence" => a.spec.clone().ok_or_else(invalid),
         "vault.campaign.unsubscribe" => a.spec.clone().ok_or_else(invalid),
@@ -2004,6 +2010,24 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.kv.namespaces" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.compliance.install" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.compliance.amend" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.compliance.approve" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.compliance.reject" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.compliance.verify" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.campaign.compliance.result" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.campaign.enroll" => {
@@ -5304,6 +5328,122 @@ async fn execute_agent_verb_row(
             let output = oneiron::task_verb::sdk::vault_kv_namespaces(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(output.len());
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.compliance.install" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.campaign.compliance.install", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::campaign::compliance::ComplianceAmendRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_campaign_compliance_install(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    memory.invocation(),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.compliance.amend" => {
+            let input: oneiron::campaign::compliance::ComplianceAmendRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_compliance_amend(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.compliance.approve" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.campaign.compliance.approve", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::campaign::compliance::ComplianceApprovalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_campaign_compliance_approve(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    memory.invocation(),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.compliance.reject" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.campaign.compliance.reject", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::campaign::compliance::ComplianceApprovalRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_campaign_compliance_reject(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    memory.invocation(),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.compliance.verify" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.campaign.compliance.verify", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::campaign::compliance::ComplianceVerifyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_campaign_compliance_verify(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    memory.invocation(),
+                    input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.campaign.compliance.result" => {
+            let input: oneiron::campaign::compliance::ComplianceResultRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_campaign_compliance_result(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
         "vault.campaign.enroll" => {

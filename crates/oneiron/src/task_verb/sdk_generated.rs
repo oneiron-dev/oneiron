@@ -475,6 +475,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
             ),
             (
+                "vault.campaign.compliance.install",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceAmendRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.amend",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceAmendRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceApprovalRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.reject",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceApprovalRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.verify",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceVerifyRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.compliance.result",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::compliance::ComplianceResultRequest,
+                >(),
+            ),
+            (
                 "vault.campaign.enroll",
                 crate::code_run::vault_read::request_schema::<
                     crate::campaign::surface::CampaignEnrollRequest,
@@ -3949,6 +3985,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.scope.position",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.campaign.compliance.install",
+    "vault.campaign.compliance.amend",
+    "vault.campaign.compliance.approve",
+    "vault.campaign.compliance.reject",
+    "vault.campaign.compliance.verify",
+    "vault.campaign.compliance.result",
     "vault.campaign.enroll",
     "vault.campaign.stage.evidence",
     "vault.campaign.unsubscribe",
@@ -4363,6 +4405,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.campaign.compliance.install" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.amend" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.approve" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.reject" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.verify" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceReceipt,
+        >(),
+        "vault.campaign.compliance.result" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::compliance::ComplianceResult,
+        >(),
         "vault.campaign.enroll" => crate::code_run::vault_read::request_schema::<
             crate::campaign::surface::CampaignEnrollmentReceipt,
         >(),
@@ -5989,6 +6049,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.install" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.amend" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.reject" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.verify" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.compliance.result" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -10503,6 +10605,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
         }
+        "vault.campaign.compliance.install" => {
+            let _input: crate::campaign::compliance::ComplianceAmendRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.amend" => {
+            let _input: crate::campaign::compliance::ComplianceAmendRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.approve" => {
+            let _input: crate::campaign::compliance::ComplianceApprovalRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.reject" => {
+            let _input: crate::campaign::compliance::ComplianceApprovalRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.verify" => {
+            let _input: crate::campaign::compliance::ComplianceVerifyRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.compliance.result" => {
+            let _input: crate::campaign::compliance::ComplianceResultRequest =
+                decode(value.clone())?;
+        }
         "vault.campaign.enroll" => {
             let _input: crate::campaign::surface::CampaignEnrollRequest = decode(value.clone())?;
         }
@@ -12821,6 +12947,24 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.campaign.compliance.install" => {
+            encode(vault_campaign_compliance_install(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.amend" => {
+            encode(vault_campaign_compliance_amend(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.approve" => {
+            encode(vault_campaign_compliance_approve(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.reject" => {
+            encode(vault_campaign_compliance_reject(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.verify" => {
+            encode(vault_campaign_compliance_verify(memory, decode(value)?)?)
+        }
+        "vault.campaign.compliance.result" => {
+            encode(vault_campaign_compliance_result(memory, decode(value)?)?)
+        }
         "vault.campaign.enroll" => encode(vault_campaign_enroll(memory, decode(value)?)?),
         "vault.campaign.stage.evidence" => {
             encode(vault_campaign_stage_evidence(memory, decode(value)?)?)
@@ -14920,6 +15064,54 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_campaign_compliance_install(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceAmendRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_install_as(
+        &memory.embedded_owner("vault.campaign.compliance.install")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_amend(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceAmendRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_amend(&input)
+}
+pub fn vault_campaign_compliance_approve(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceApprovalRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_approve_as(
+        &memory.embedded_owner("vault.campaign.compliance.approve")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_reject(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceApprovalRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_reject_as(
+        &memory.embedded_owner("vault.campaign.compliance.reject")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_verify(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceVerifyRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceReceipt> {
+    memory.compliance_verify_as(
+        &memory.embedded_owner("vault.campaign.compliance.verify")?,
+        &input,
+    )
+}
+pub fn vault_campaign_compliance_result(
+    memory: &Memory<'_>,
+    input: crate::campaign::compliance::ComplianceResultRequest,
+) -> MemoryResult<crate::campaign::compliance::ComplianceResult> {
+    memory.compliance_result(&input)
 }
 pub fn vault_campaign_enroll(
     memory: &Memory<'_>,

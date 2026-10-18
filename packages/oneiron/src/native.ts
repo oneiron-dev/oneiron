@@ -119,6 +119,12 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultCampaignComplianceInstall(input: unknown): unknown
+vaultCampaignComplianceAmend(input: unknown): unknown
+vaultCampaignComplianceApprove(input: unknown): unknown
+vaultCampaignComplianceReject(input: unknown): unknown
+vaultCampaignComplianceVerify(input: unknown): unknown
+vaultCampaignComplianceResult(input: unknown): unknown
 vaultCampaignEnroll(input: unknown): unknown
 vaultCampaignStageEvidence(input: unknown): unknown
 vaultCampaignUnsubscribe(input: unknown): unknown

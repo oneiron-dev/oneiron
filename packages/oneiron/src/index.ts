@@ -453,6 +453,20 @@ export class Oneiron {
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
     campaign: {
+      compliance: {
+        /** The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval. */
+        install: (input: Facade.ComplianceAmendRequest): Facade.ComplianceReceipt => this.#call(() => this.#client.vaultCampaignComplianceInstall(input) as Facade.ComplianceReceipt),
+        /** Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp. */
+        amend: (input: Facade.ComplianceAmendRequest): Facade.ComplianceReceipt => this.#call(() => this.#client.vaultCampaignComplianceAmend(input) as Facade.ComplianceReceipt),
+        /** The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt. */
+        approve: (input: Facade.ComplianceApprovalRequest): Facade.ComplianceReceipt => this.#call(() => this.#client.vaultCampaignComplianceApprove(input) as Facade.ComplianceReceipt),
+        /** The owner rejects the exact pending compliance proposal hash without changing the effective rules. */
+        reject: (input: Facade.ComplianceApprovalRequest): Facade.ComplianceReceipt => this.#call(() => this.#client.vaultCampaignComplianceReject(input) as Facade.ComplianceReceipt),
+        /** The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy. */
+        verify: (input: Facade.ComplianceVerifyRequest): Facade.ComplianceReceipt => this.#call(() => this.#client.vaultCampaignComplianceVerify(input) as Facade.ComplianceReceipt),
+        /** Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot. */
+        result: (input: Facade.ComplianceResultRequest): Facade.ComplianceResult => this.#call(() => this.#client.vaultCampaignComplianceResult(input) as Facade.ComplianceResult),
+      },
       /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
       enroll: (input: Facade.CampaignEnrollRequest): Facade.CampaignEnrollmentReceipt => this.#call(() => this.#client.vaultCampaignEnroll(input) as Facade.CampaignEnrollmentReceipt),
       stage: {

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 732 code-mode rows (711 host rows, 21 run rows), 2566 declarations.
-// Replies: 648 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 738 code-mode rows (717 host rows, 21 run rows), 2586 declarations.
+// Replies: 654 fully typed, 80 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 97; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -479,6 +479,26 @@ declare namespace Sdk {
   type KeyValueDeleteReceipt = { existed: boolean; receipt_refs: string[] };
   type KeyValueSearch = { namespace_prefix?: string[]; filter?: Record<string, unknown> | null; limit?: number; offset?: number };
   type KeyValueNamespaces = { prefix?: string[]; suffix?: string[]; max_depth?: number | null; limit?: number; offset?: number };
+  type UnknownJurisdictionDefault = "strict_pole";
+  type ComplianceExemptionEvidence = "legal_form" | "publication_context";
+  type ConditionalExemptionEvidence = { jurisdiction: string; evidence: ComplianceExemptionEvidence };
+  type ComplianceRuleKind = "consent_class" | "sender_id" | "physical_address" | "optout_mechanism" | "optout_deadline" | "content_marking" | "records" | "source_hygiene";
+  type B2bExemption = "yes" | "no" | "conditional";
+  type ComplianceSource = { citation: string; url: string };
+  type ComplianceRuleRow = { jurisdiction: string; channel: string; rule_kind: ComplianceRuleKind; requirement: string; b2b_exemption: B2bExemption; source: ComplianceSource; verified_at: number; version: number; penalty_note: string };
+  type CompliancePack = { pack_id: string; pack_version: number; min_engine_version: string; verified_at_max_age_secs: number; unknown_jurisdiction_default: UnknownJurisdictionDefault; strict_pole_jurisdiction: string; jurisdiction_confidence_floor_millis: number; prohibited_list_provenance_classes: string[]; conditional_exemption_evidence: ConditionalExemptionEvidence[]; warning: string; rows: ComplianceRuleRow[] };
+  type ComplianceAmendRequest = { prior_version: number; pack: CompliancePack };
+  type ComplianceOperation = "install" | "amend" | "approve" | "reject" | "verify";
+  type ComplianceDisposition = "applied" | "pending_owner_stamp" | "rejected";
+  type ComplianceAmendmentClass = "Tightening" | "MetadataRefresh" | "LooseningOrAmbiguous";
+  type ComplianceOwnerStamp = { owner_ref: string; proposal_hash: string; recorded_at: number };
+  type ComplianceReceipt = { receipt_ref: string; operation: ComplianceOperation; disposition: ComplianceDisposition; prior_version: number; effective_version: number; proposed_version: number; class?: ComplianceAmendmentClass | null; proposal_hash: string; actor_ref: string; owner_stamp?: ComplianceOwnerStamp | null; notice?: string | null; reason_codes: string[]; recorded_at: number };
+  type ComplianceApprovalRequest = { prior_version: number; proposal_hash: string };
+  type ComplianceRowVerification = { jurisdiction: string; channel: string; rule_kind: ComplianceRuleKind; expected_row_version: number; source: ComplianceSource; verified_at: number };
+  type ComplianceVerifyRequest = { prior_version: number; rows: ComplianceRowVerification[] };
+  type ComplianceResultRequest = { receipt_ref?: string | null };
+  type CompliancePendingProposal = { pack: CompliancePack; proposal_hash: string };
+  type ComplianceResult = { active: CompliancePack; pending?: CompliancePendingProposal | null; notices: string[]; receipts: ComplianceReceipt[] };
   type CampaignMemberChannelSpec = { channel: string; basis_evidence: string; sender_ref: string };
   type CampaignEnrollRequest = { campaign_ref: string; person_ref: string; channels: CampaignMemberChannelSpec[]; evidence_refs: string[] };
   type CampaignEnrollmentState = "enrolled";
@@ -3146,6 +3166,20 @@ declare const vault: Sdk.VaultHost & {
     };
   };
   campaign: {
+    compliance: {
+      /** Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp. */
+      amend(input: Sdk.ComplianceAmendRequest): Promise<Sdk.ComplianceReceipt | StoredResult>;
+      /** The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt. */
+      approve(input: Sdk.ComplianceApprovalRequest): Promise<Sdk.ComplianceReceipt | StoredResult>;
+      /** The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval. */
+      install(input: Sdk.ComplianceAmendRequest): Promise<Sdk.ComplianceReceipt | StoredResult>;
+      /** The owner rejects the exact pending compliance proposal hash without changing the effective rules. */
+      reject(input: Sdk.ComplianceApprovalRequest): Promise<Sdk.ComplianceReceipt | StoredResult>;
+      /** Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot. */
+      result(input: Sdk.ComplianceResultRequest): Promise<Sdk.ComplianceResult | StoredResult>;
+      /** The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy. */
+      verify(input: Sdk.ComplianceVerifyRequest): Promise<Sdk.ComplianceReceipt | StoredResult>;
+    };
     /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
     enroll(input: Sdk.CampaignEnrollRequest): Promise<Sdk.CampaignEnrollmentReceipt | StoredResult>;
     program: {

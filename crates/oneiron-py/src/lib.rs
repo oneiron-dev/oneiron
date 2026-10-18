@@ -995,6 +995,90 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_campaign_compliance_install(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.compliance.install")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.compliance.install", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_compliance_amend(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.compliance.amend")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.compliance.amend", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_compliance_approve(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.compliance.approve")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.compliance.approve", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_compliance_reject(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.compliance.reject")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.compliance.reject", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_compliance_verify(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.compliance.verify")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.compliance.verify", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_campaign_compliance_result(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.campaign.compliance.result")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.campaign.compliance.result", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_campaign_enroll(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.campaign.enroll")?;
         let output = py
