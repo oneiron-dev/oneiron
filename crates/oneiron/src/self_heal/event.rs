@@ -52,7 +52,8 @@ pub(super) const MAX_REF_LEN: usize = 256;
 /// runs' blocked receipts use the escaper now; a diagnostic carries no detail.
 pub(super) const MAX_UNTRUSTED_DETAIL_LEN: usize = 4096;
 
-/// Most evidence refs one event may cite.
+/// Most DIAGNOSTIC refs one repair proposal or dev-runner corpus names. An
+/// event's own evidence refs are not counted: it cites every one.
 pub(super) const MAX_EVIDENCE_REFS: usize = 64;
 
 /// Longest accepted detector id / observation kind token.

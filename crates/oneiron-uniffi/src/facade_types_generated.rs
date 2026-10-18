@@ -19047,6 +19047,8 @@ pub struct DeckExportView {
     pub noop: bool,
     #[serde(rename = "changed_parts")]
     pub changed_parts: Vec<String>,
+    #[serde(rename = "effects")]
+    pub effects: Vec<String>,
     #[serde(rename = "record", default, skip_serializing_if = "Option::is_none")]
     pub record: Option<OfficeBodyExportRecord>,
     #[serde(rename = "proposed", default, skip_serializing_if = "Option::is_none")]

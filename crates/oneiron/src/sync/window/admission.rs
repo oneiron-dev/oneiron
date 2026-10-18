@@ -111,7 +111,7 @@ fn validate_window_update(
             )),
             ENTITY_TYPE_SECRET_CUSTODY => Some(crate::secret_custody::reject_secret_custody_byte()),
             // A destroyed world's pad arriving late never rejoins a window;
-            // a live world's pad replicates with the base rows.
+            // a live world's pad replicates with its world's rows.
             ENTITY_TYPE_WORLD_KEY_PAD => vault.and_then(|vault| late_pad(vault, blob)),
             _ => None,
         };
