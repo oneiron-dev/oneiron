@@ -1023,6 +1023,8 @@ class Oneiron:
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
+        def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
@@ -1805,6 +1807,13 @@ class Oneiron:
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultWorkflowsVerbs:
+        def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
+            """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""
+        def get(self, spec: Facade.WorkflowRequest) -> Facade.WorkflowView:
+            """The owner reads one saved workflow, its steps, revision and fork lineage."""
+        def update(self, spec: Facade.WorkflowUpdateRequest) -> Facade.WorkflowView:
+            """The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""

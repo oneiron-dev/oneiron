@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 541 code-mode rows (520 host rows, 21 run rows), 1916 declarations.
-// Replies: 476 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 544 code-mode rows (523 host rows, 21 run rows), 1920 declarations.
+// Replies: 479 fully typed, 61 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 93; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1154,6 +1154,10 @@ declare namespace Sdk {
   type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
   type AgentDefinitionRequest = { agent_def_ref: EntityId };
   type AgentDefinitionUpdateRequest = { agent_def_ref: EntityId; expected_version: string; definition: AgentDefinitionSpec };
+  type WorkflowSaveRequest = { workflow_ref: EntityId; name: string; steps: EntityId[] };
+  type WorkflowView = { workflow_ref: EntityId; name: string; steps: EntityId[]; revision: number; forked_from?: EntityId | null };
+  type WorkflowRequest = { workflow_ref: EntityId };
+  type WorkflowUpdateRequest = { workflow_ref: EntityId; expected_revision: number; name: string; steps: EntityId[] };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -3273,6 +3277,14 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
+  workflows: {
+    /** The owner reads one saved workflow, its steps, revision and fork lineage. */
+    get(input: Sdk.WorkflowRequest): Promise<Sdk.WorkflowView | StoredResult>;
+    /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
+    save(input: Sdk.WorkflowSaveRequest): Promise<Sdk.WorkflowView | StoredResult>;
+    /** The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps. */
+    update(input: Sdk.WorkflowUpdateRequest): Promise<Sdk.WorkflowView | StoredResult>;
+  };
   workspace: {
     /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
     establish(input: Sdk.WorkspacePresetRequest): Promise<Sdk.WorkspacePresetReceipt | StoredResult>;

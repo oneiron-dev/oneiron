@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 484 facade rows, 1827 declarations.
-Inputs: 435 of 484 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 430 of 484 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 487 facade rows, 1831 declarations.
+Inputs: 438 of 487 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 433 of 487 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 88; unread shapes: 0.
 """
 
@@ -5538,6 +5538,23 @@ class AgentDefinitionUpdateRequest(TypedDict):
     agent_def_ref: EntityId
     expected_version: str
     definition: AgentDefinitionSpec
+class WorkflowSaveRequest(TypedDict):
+    workflow_ref: EntityId
+    name: str
+    steps: list[EntityId]
+class WorkflowView(TypedDict):
+    workflow_ref: EntityId
+    name: str
+    steps: list[EntityId]
+    revision: int
+    forked_from: NotRequired[EntityId | None]
+class WorkflowRequest(TypedDict):
+    workflow_ref: EntityId
+class WorkflowUpdateRequest(TypedDict):
+    workflow_ref: EntityId
+    expected_revision: int
+    name: str
+    steps: list[EntityId]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str

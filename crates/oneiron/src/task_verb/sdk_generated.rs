@@ -1531,6 +1531,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.workflows.save",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowSaveRequest,
+                >(),
+            ),
+            (
+                "vault.workflows.get",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRequest>(
+                ),
+            ),
+            (
+                "vault.workflows.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkflowUpdateRequest,
+                >(),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -2890,6 +2907,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.create",
     "vault.agents.get",
     "vault.agents.update",
+    "vault.workflows.save",
+    "vault.workflows.get",
+    "vault.workflows.update",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3213,6 +3233,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.agents.update" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDefinitionView,
         >(),
+        "vault.workflows.save" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
+        }
+        "vault.workflows.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
+        }
+        "vault.workflows.update" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
+        }
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
         >(),
@@ -5355,6 +5384,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.agents.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.save" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workflows.update" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7747,6 +7797,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::AgentDefinitionUpdateRequest =
                 decode(value.clone())?;
         }
+        "vault.workflows.save" => {
+            let _input: crate::task_verb::sdk::WorkflowSaveRequest = decode(value.clone())?;
+        }
+        "vault.workflows.get" => {
+            let _input: crate::task_verb::sdk::WorkflowRequest = decode(value.clone())?;
+        }
+        "vault.workflows.update" => {
+            let _input: crate::task_verb::sdk::WorkflowUpdateRequest = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -9038,6 +9097,9 @@ pub fn invoke(
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
         "vault.agents.update" => encode(vault_agents_update(memory, decode(value)?)?),
+        "vault.workflows.save" => encode(vault_workflows_save(memory, decode(value)?)?),
+        "vault.workflows.get" => encode(vault_workflows_get(memory, decode(value)?)?),
+        "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -11870,6 +11932,36 @@ pub fn vault_agents_update(
     crate::task_verb::sdk::update_agent_definition_as(
         memory.vault(),
         &memory.embedded_owner("vault.agents.update")?,
+        input,
+    )
+}
+pub fn vault_workflows_save(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowSaveRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowView> {
+    crate::task_verb::sdk::save_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.save")?,
+        input,
+    )
+}
+pub fn vault_workflows_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowView> {
+    crate::task_verb::sdk::read_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.get")?,
+        input,
+    )
+}
+pub fn vault_workflows_update(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkflowUpdateRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkflowView> {
+    crate::task_verb::sdk::update_workflow_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workflows.update")?,
         input,
     )
 }

@@ -288,6 +288,9 @@ both bindings and their export-census tests in one change.
 - `vault.agents.create`
 - `vault.agents.get`
 - `vault.agents.update`
+- `vault.workflows.save`
+- `vault.workflows.get`
+- `vault.workflows.update`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`

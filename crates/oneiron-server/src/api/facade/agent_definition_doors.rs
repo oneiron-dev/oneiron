@@ -1,10 +1,12 @@
-//! Custom definitions and workspace onboarding, with the caller's own proof.
+//! Custom definitions, saved workflows and workspace onboarding, with the
+//! caller's own proof.
 use std::sync::Arc;
 
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
-    AgentDefinitionView, WorkspaceMemberOnboardRequest, WorkspacePresetReceipt,
-    WorkspacePresetRequest, WorkspaceRosterRequest,
+    AgentDefinitionView, WorkflowRequest, WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView,
+    WorkspaceMemberOnboardRequest, WorkspacePresetReceipt, WorkspacePresetRequest,
+    WorkspaceRosterRequest,
 };
 use oneiron::workspace_roster::{MemberOnboardingOutcome, WorkspaceRosterEntry};
 
@@ -57,6 +59,63 @@ pub(crate) async fn vault_agents_get(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::read_agent_definition_as(server.vault(), &owner, input),
         |saved| Some(vec![saved.agent_def_ref]),
+    )
+    .await
+}
+
+/// A saved workflow names itself and the definitions its steps compose.
+fn workflow_rows(saved: &WorkflowView) -> Option<Vec<oneiron::EntityId>> {
+    Some(
+        std::iter::once(saved.workflow_ref)
+            .chain(saved.steps.iter().copied())
+            .collect(),
+    )
+}
+
+pub(crate) async fn vault_workflows_save(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowSaveRequest,
+) -> MaybeListed<WorkflowView> {
+    const VERB: &str = "vault.workflows.save";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::save_workflow_as(server.vault(), &owner, input),
+        workflow_rows,
+    )
+    .await
+}
+
+pub(crate) async fn vault_workflows_update(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowUpdateRequest,
+) -> MaybeListed<WorkflowView> {
+    const VERB: &str = "vault.workflows.update";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::update_workflow_as(server.vault(), &owner, input),
+        workflow_rows,
+    )
+    .await
+}
+
+pub(crate) async fn vault_workflows_get(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowRequest,
+) -> MaybeListed<WorkflowView> {
+    const VERB: &str = "vault.workflows.get";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::read_workflow_as(server.vault(), &owner, input),
+        workflow_rows,
     )
     .await
 }

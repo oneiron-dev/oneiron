@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 484 facade rows, 1752 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 448.
+// UniFFI census: 487 facade rows, 1756 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 451.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -16796,6 +16796,59 @@ pub struct AgentDefinitionUpdateRequest {
     pub expected_version: String,
     #[serde(rename = "definition")]
     pub definition: AgentDefinitionSpec,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowSaveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowSaveRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<String>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WorkflowView {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<String>,
+    #[serde(rename = "revision")]
+    pub revision: u64,
+    #[serde(
+        rename = "forked_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub forked_from: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_workflows::WorkflowUpdateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowUpdateRequest {
+    #[serde(rename = "workflow_ref")]
+    pub workflow_ref: String,
+    #[serde(rename = "expected_revision")]
+    pub expected_revision: u64,
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "steps")]
+    pub steps: Vec<String>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.

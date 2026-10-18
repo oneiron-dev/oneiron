@@ -312,6 +312,9 @@ vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
 vaultAgentsUpdate(input: unknown): unknown
+vaultWorkflowsSave(input: unknown): unknown
+vaultWorkflowsGet(input: unknown): unknown
+vaultWorkflowsUpdate(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown
