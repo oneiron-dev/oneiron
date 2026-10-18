@@ -1768,6 +1768,18 @@ pub struct MessagePersonRequest {
     pub text: String,
     #[serde(rename = "mention", default, skip_serializing_if = "Option::is_none")]
     pub mention: Option<WireMentionProvenance>,
+    #[serde(
+        rename = "from_project",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub from_project: Option<String>,
+    #[serde(
+        rename = "to_project",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub to_project: Option<String>,
 }
 
 /// `oneiron::memory::witness::types::WitnessReceipt`.
