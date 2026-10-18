@@ -50636,7 +50636,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 56,
+      "re-export": 57,
       "struct": 36
      }
     },
@@ -51036,6 +51036,29 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "FeedbackPreviewRequest",
+      "FeedbackSendSubjectRequest",
+      "FeedbackSubjectPreview",
+      "FeedbackSubjectSent",
+      "ReportDisclosureRequest",
+      "ReportOutboundRequest",
+      "ReportOutboundView",
+      "ReportPayloadView",
+      "ReportRouteReceipt",
+      "ReportRouteRequest",
+      "ReportSignatureView"
+     ],
+     "path": "src/task_verb/sdk_feedback.rs",
+     "purpose": "Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload…",
+     "surface": {
+      "fn": 7,
+      "struct": 11
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
@@ -51043,7 +51066,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 696
+      "fn": 701
      }
     },
     {
@@ -58185,7 +58208,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 170,
+     "files": 171,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58355,7 +58378,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3560,
+   "source_files": 3561,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66885,7 +66908,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 660
+      "fn": 665
      }
     },
     {
@@ -67934,7 +67957,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 661
+      "fn": 666
      }
     },
     {
@@ -71204,6 +71227,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/feedback_doors.rs",
+     "purpose": "The host doors of subject-bound feedback (OF-420/537): the owner's report disclosure, route and outbound…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/fold_doors.rs",
      "purpose": "Public run-bound folds, through the caller's existing live-run action door",
      "surface": {
@@ -71247,7 +71280,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 121
+      "crate-vis": 122
      }
     },
     {
@@ -77363,13 +77396,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/owner/feedback.rs",
      "purpose": "Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -78966,7 +78999,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 383,
+     "files": 384,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79388,7 +79421,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 721,
+   "source_files": 722,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80376,7 +80409,12 @@
       "FederationGrantRole",
       "FederationPactScope",
       "FederationPactStatus",
+      "FeedbackCategory",
+      "FeedbackPreviewRequest",
       "FeedbackProposal",
+      "FeedbackSendSubjectRequest",
+      "FeedbackSubjectPreview",
+      "FeedbackSubjectSent",
       "FieldGeometry",
       "FieldMeta",
       "FieldValue",
@@ -81147,10 +81185,20 @@
       "ReplyStripsRequest",
       "RepoProposalStatus",
       "ReportDisclosure",
+      "ReportDisclosureChoice",
+      "ReportDisclosureRequest",
+      "ReportIssue",
       "ReportKind",
+      "ReportOutboundRequest",
+      "ReportOutboundView",
+      "ReportPayloadView",
       "ReportReceipt",
       "ReportRequest",
+      "ReportReview",
       "ReportRoute",
+      "ReportRouteReceipt",
+      "ReportRouteRequest",
+      "ReportSignatureView",
       "ReportStatus",
       "RequiredParty",
       "RescopeConnect",
@@ -81963,8 +82011,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 607,
-      "struct": 1770
+      "enum": 609,
+      "struct": 1783
      }
     },
     {
