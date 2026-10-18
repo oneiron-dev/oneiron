@@ -241,6 +241,7 @@ fn decode_claim_vad_value(value: &Value) -> Option<Vad> {
 pub(super) fn affect_access_factor(
     policy: &AffectRetrievalPolicy,
     derived: ClaimRetrievability,
+    aging: crate::claim::AccessFactorPolicy,
     learned_at: u64,
     now: u64,
     arousal: Option<f32>,
@@ -253,7 +254,6 @@ pub(super) fn affect_access_factor(
     if policy.arousal_stretch > 0.0
         && let Some(arousal) = arousal.filter(|arousal| *arousal > 0.0)
     {
-        let aging = derived.aging_class.policy();
         let age_secs = now.saturating_sub(learned_at) as f64;
         let floor = f64::from(aging.floor);
         let plain = 2.0_f64.powf(-age_secs / aging.half_life_secs).max(floor);

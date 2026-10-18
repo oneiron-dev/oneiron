@@ -273,7 +273,7 @@ pub(crate) use self::job::{
 };
 
 use self::dials::invalid;
-use self::tier::tier_verdict_in_txn;
+pub(crate) use self::tier::tier_verdict_in_txn;
 
 #[cfg(test)]
 mod tests;
@@ -302,3 +302,5 @@ use crate::skill_convert::PROVENANCE_BIRTH_KEY;
 use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
+
+pub(crate) use gate::skill_edit_goal_in_txn;

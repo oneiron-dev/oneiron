@@ -46,6 +46,7 @@
 //!   supersession/retraction/demotion doors.
 //! * `expression_preference` — the typed expression-preference write surface.
 
+mod aging_profiles;
 mod core_types;
 mod decay;
 mod deferred;
@@ -82,6 +83,7 @@ mod supersession_provenance;
 pub(crate) mod transition;
 mod write_target;
 
+pub use aging_profiles::ClaimAgingProfiles;
 pub use core_types::*;
 pub use decay::*;
 pub(crate) use deferred::claim_has_deferred_action_in_txn;
