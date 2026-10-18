@@ -409,7 +409,7 @@ export type QueueTaskBrief = { schema: number; type_ref: TypeRef; objective: str
 /** `oneiron::task_verb::verb_kind::TaskTtl` */
 export type TaskTtl = { deadline_at: number }
 /** `oneiron::task_verb::sdk::TaskCreateRequest` */
-export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null }
+export type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null }
 /** `oneiron::task_verb::route_receipts::TaskCreateReceipt` */
 export type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null }
 /** `oneiron::task_verb::sdk::TaskWaveRequest` */

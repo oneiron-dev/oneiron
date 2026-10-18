@@ -3892,6 +3892,10 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/brief")?.clone(),
             );
             properties.insert("ttl".to_owned(), schema.pointer("/properties/ttl")?.clone());
+            properties.insert(
+                "parent_ref".to_owned(),
+                schema.pointer("/properties/parent_ref")?.clone(),
+            );
             &["spec"]
         }
         "tasks.wave" => {
@@ -10393,6 +10397,12 @@ pub fn tasks_create(
             "/spec/notes",
             "/spec/instructions",
         ],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "tasks.create",
+        &input,
+        &["/parent_ref"],
     )?;
     let landed = memory.tasks_create(&crate::task_verb::sdk::task_create_spec(memory, input)?)?;
     crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
