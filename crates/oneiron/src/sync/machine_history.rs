@@ -3,10 +3,11 @@
 //! A receiver may hold a target's handoff packet without its ancestors: sync
 //! windows partition by learned_at month, so packet N can land while N-1 sits
 //! in a month this machine has not fetched. The target's history then does
-//! not resolve. Either a row it gates is refused (`RemoteMachineHistoryPending`)
-//! or the own-receive exchange stays `Pending`, and either one writes an owed
-//! record for the target in the transaction that saw it. Only those two do:
-//! no other pending dependency and no wrong chain owes a fetch.
+//! not resolve. A row it gates is refused (`RemoteMachineHistoryPending`), the
+//! own-receive exchange stays `Pending`, or an opened machine's thin touch
+//! caches a row that needs it (FIX 4385), and each one writes an owed record
+//! for the target in the transaction that saw it. Only those do: no other
+//! pending dependency and no wrong chain owes a fetch.
 //!
 //! The connection's upkeep fetches each owed target's whole history from the
 //! home ([`crate::sync::client::fetch_owed_machine_history`]), runs the
@@ -14,14 +15,20 @@
 //! ([`release`]). The record clears once the history resolves under the
 //! target's pin and the exchange waits on nothing. No pin is set here: the
 //! exchange derives every pin itself (FIX 3821).
+//!
+//! A debt no fetch settles retires instead ([`retires`], FIX 4384). Each
+//! place that takes a debt on asks first, so a home, which runs no upkeep,
+//! keeps no such record either; the upkeep asks again each round.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::claim::history_store::MachineHistoryKind;
 use crate::claim::{ClaimSubject, PinExchangeOutcome};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
@@ -139,10 +146,117 @@ fn resolves(
         && crate::claim::history_projection::machine_history_rows(&vault.store, txn, target).is_ok()
 }
 
+/// The vault a signed control of `target` in `blob` names: a handoff
+/// packet's or a birth's. `None` for any other row, and for a transition,
+/// which names none.
+fn named_vault(blob: &[u8], target: EntityId) -> Option<[u8; 32]> {
+    let header = EntityMetadataHeader::parse(blob)?;
+    if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return None;
+    }
+    let body =
+        crate::claim::decode_claim_body(blob.get(ENTITY_METADATA_HEADER_LEN..)?, true).ok()?;
+    let Value::Binary(bytes) = &body.value else {
+        return None;
+    };
+    match crate::claim::history_store::machine_history_kind(&body.predicate)? {
+        MachineHistoryKind::Handoff => {
+            let packet = crate::claim::ClaimHistoryHandoff::decode(bytes).ok()?;
+            (matches!(packet.births.as_slice(), [birth] if birth.id == target)
+                && crate::claim::history_projection::verify_handoff_signature(&packet))
+            .then_some(packet.vault_id)
+        }
+        MachineHistoryKind::Birth => {
+            let birth = crate::claim::SignedClaimBirth::decode(bytes).ok()?;
+            (birth.target == target).then_some(birth.vault_id)
+        }
+        MachineHistoryKind::Transition => None,
+    }
+}
+
+/// Whether `target`'s history is proven another vault's: this vault's id is
+/// folded, and each signed control of `target` in view that names a vault,
+/// `blob` (the row in hand) and every resident one, names another, at least
+/// one of them. The exchange adopts only this vault's packets, so no fetch
+/// settles such a history.
+fn foreign_history(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+    blob: &[u8],
+) -> Result<bool> {
+    let mut named: Vec<[u8; 32]> = named_vault(blob, target).into_iter().collect();
+    for id in
+        crate::claim::history_store::machine_history_ids_for_target(&vault.store, txn, target)?
+    {
+        if let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)? {
+            named.extend(named_vault(&raw, target));
+        }
+    }
+    if named.is_empty() {
+        return Ok(false);
+    }
+    let Some(own) = vault.authority_fold_readonly_in_txn(txn)?.vault_id else {
+        return Ok(false);
+    };
+    Ok(named.iter().all(|vault_id| *vault_id != own))
+}
+
+/// Whether a debt for `target` retires rather than stays owed (FIX 4384,
+/// CALLS "FIX 4384 machine-history debt retirement"), given the exchange's
+/// `outcome` and `blob`, the row in hand: the history does not resolve and
+/// the exchange ended `Conflict` (a signed fork, or a pin off the tip's
+/// chain) or `Refused` (a chain that does not verify), or the history is
+/// proven another vault's ([`foreign_history`]). No fetch settles either:
+/// the home serves the same signed rows, and the exchange adopts only this
+/// vault's. An incomplete history of this vault stays owed, and so does one
+/// the home refused or holds incomplete itself. No time retires a debt.
+fn retires(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    target: EntityId,
+    outcome: PinExchangeOutcome,
+    blob: &[u8],
+) -> Result<bool> {
+    match outcome {
+        PinExchangeOutcome::Conflict(_) | PinExchangeOutcome::Refused(_) => {
+            Ok(!resolves(vault, txn, target, outcome))
+        }
+        PinExchangeOutcome::Pending(_) => foreign_history(vault, txn, target, blob),
+        PinExchangeOutcome::NotMachineHistory
+        | PinExchangeOutcome::Unchanged(_)
+        | PinExchangeOutcome::Adopted(_) => Ok(false),
+    }
+}
+
+/// Takes on a debt for `target` from `blob`, a row of `window_key`, `held`
+/// there when a refusal holds it. The exchange runs first: a debt that
+/// retires is dropped and not taken on ([`retires`]), and a row no refusal
+/// holds owes nothing once its history resolves.
+fn admit_debt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    target: EntityId,
+    window_key: &str,
+    blob: &[u8],
+    held: bool,
+) -> Result<()> {
+    let outcome = vault.advance_own_machine_history_in_txn(wtxn, target)?;
+    if retires(vault, wtxn, target, outcome, blob)? {
+        OWED.delete(&vault.store, wtxn, &HexId(target))?;
+        return Ok(());
+    }
+    if !held && resolves(vault, wtxn, target, outcome) {
+        return Ok(());
+    }
+    owe_in_txn(vault, wtxn, target, window_key, None, held)
+}
+
 /// A row of `window_key` refused because its machine history is not here
 /// (`RemoteMachineHistoryPending`) owes its target a fetch, in the parent
-/// transaction that keeps its quarantine. A refused control's target is its
-/// subject; any other refused row is the target itself.
+/// transaction that keeps its quarantine, unless the debt retires (FIX
+/// 4384). A refused control's target is its subject; any other refused row
+/// is the target itself.
 pub(in crate::sync) fn owe_refused_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -154,23 +268,55 @@ pub(in crate::sync) fn owe_refused_in_txn(
     let Some(id) = id.filter(|_| err.kind() == ErrorKind::RemoteMachineHistoryPending) else {
         return Ok(());
     };
-    owe_in_txn(
-        vault,
-        wtxn,
-        control_target(blob).unwrap_or(id),
-        window_key,
-        None,
-        true,
+    let target = control_target(blob).unwrap_or(id);
+    admit_debt_in_txn(vault, wtxn, target, window_key, blob, true)
+}
+
+/// Whether `blob`, the row at `id`, is a CLAIM with a machine history to
+/// resolve: its body needs one, or the target index names it.
+fn needs_history(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId, blob: &[u8]) -> Result<bool> {
+    let Some(body) = EntityMetadataHeader::parse(blob)
+        .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
+        .and_then(|_| blob.get(ENTITY_METADATA_HEADER_LEN..))
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+    else {
+        return Ok(false);
+    };
+    Ok(
+        crate::authority::machine_claim_needs_history(&vault.store, txn, &body)?
+            || crate::claim::history_store::machine_history_indexed(&vault.store, txn, id)?,
     )
+}
+
+/// A row an opened machine's thin touch caches read-only for `window_key`
+/// owes its machine history a fetch when this vault lacks it (FIX 4385), in
+/// the transaction that caches it: nothing is refused in the thin cache, so
+/// no refusal owes it. The target is a control's subject, or the row at `id`
+/// itself when it needs a history. The existing home fetch lands only the
+/// history; the cached row stays read-only and no promotion is forged.
+pub(in crate::sync) fn owe_touched_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: EntityId,
+    blob: &[u8],
+) -> Result<()> {
+    let target = match control_target(blob) {
+        Some(target) => target,
+        None if needs_history(vault, wtxn, id, blob)? => id,
+        None => return Ok(()),
+    };
+    admit_debt_in_txn(vault, wtxn, target, window_key, blob, false)
 }
 
 /// What the history owed here makes of a row `window_key` landed, in the
 /// savepoint that landed it, given the exchange's `outcome` for it. An
 /// exchange still `Pending` owes its target a fetch (FIX 4293). An owed
-/// target no held row waits on clears once its history resolves. Any other
-/// row of an owed target, and any authority row while a target is owed,
-/// marks it landed and wakes the upkeep, which runs the exchange again and
-/// drains what it holds.
+/// target no held row waits on clears once its history resolves, and a debt
+/// that retires is dropped or never taken on (FIX 4384). Any other row of an
+/// owed target, and any authority row while a target is owed, marks it
+/// landed and wakes the upkeep, which runs the exchange again and drains
+/// what it holds.
 pub(in crate::sync) fn note_landed_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -187,7 +333,14 @@ pub(in crate::sync) fn note_landed_in_txn(
         return Ok(());
     };
     let key = HexId(target);
-    let status = match OWED.get(&vault.store, wtxn, &key)? {
+    let record = OWED.get(&vault.store, wtxn, &key)?;
+    if (record.is_some() || matches!(outcome, PinExchangeOutcome::Pending(_)))
+        && retires(vault, wtxn, target, outcome, blob)?
+    {
+        OWED.delete(&vault.store, wtxn, &key)?;
+        return Ok(());
+    }
+    let status = match record {
         Some(record) if !record.held && resolves(vault, wtxn, target, outcome) => {
             OWED.delete(&vault.store, wtxn, &key)?;
             return Ok(());
@@ -249,8 +402,9 @@ pub(in crate::sync) fn note_home(
 /// landed (`true` beside it when a round landed some, or a landing an import
 /// marked) or its history resolves now, drains the windows its refused rows
 /// wait in, each window once. A record clears once its target's history
-/// resolves under its pin and the exchange waits on nothing; otherwise it
-/// stays, with its cursor. Returns the targets still owed.
+/// resolves under its pin and the exchange waits on nothing, or once its
+/// debt retires ([`retires`]); otherwise it stays, with its cursor. Returns
+/// the targets still owed.
 pub(in crate::sync) fn release(
     manager: &WindowManager,
     targets: &[(EntityId, bool)],
@@ -278,7 +432,8 @@ pub(in crate::sync) fn release(
 
 /// The exchange for an owed `target`, first: a pin it adopts is what a held
 /// row needs to land. Returns the windows a refused row of it waits in and
-/// whether they are tried again, or `None` once the target is not owed.
+/// whether they are tried again, or `None` once the target is not owed or
+/// its debt retires, before the home is asked.
 fn advance(vault: &Vault, target: EntityId) -> Result<Option<(BTreeSet<String>, bool)>> {
     vault.with_write_txn_grouped(|txn| {
         let key = HexId(target);
@@ -286,6 +441,10 @@ fn advance(vault: &Vault, target: EntityId) -> Result<Option<(BTreeSet<String>, 
             return Ok(None);
         };
         let outcome = vault.advance_own_machine_history_in_txn(txn, target)?;
+        if retires(vault, txn, target, outcome, &[])? {
+            OWED.delete(&vault.store, txn, &key)?;
+            return Ok(None);
+        }
         let marked = record.status == OwedStatus::Landed;
         if marked {
             record.status = OwedStatus::Owed;
@@ -306,7 +465,8 @@ fn advance(vault: &Vault, target: EntityId) -> Result<Option<(BTreeSet<String>, 
 /// too: the exchange runs again, and the record clears once the history
 /// resolves and the exchange waits on nothing, but a held row's windows must
 /// have been `drained` first; a record that resolves before they were waits
-/// for the next round, marked. `true` when it is cleared.
+/// for the next round, marked. A debt that retires is dropped. `true` when
+/// it is cleared.
 fn settle(vault: &Vault, target: EntityId, drained: &BTreeSet<String>) -> Result<bool> {
     vault.with_write_txn_grouped(|txn| {
         let key = HexId(target);
@@ -314,6 +474,10 @@ fn settle(vault: &Vault, target: EntityId, drained: &BTreeSet<String>) -> Result
             return Ok(true);
         };
         let outcome = vault.advance_own_machine_history_in_txn(txn, target)?;
+        if retires(vault, txn, target, outcome, &[])? {
+            OWED.delete(&vault.store, txn, &key)?;
+            return Ok(true);
+        }
         if !resolves(vault, txn, target, outcome) {
             return Ok(false);
         }

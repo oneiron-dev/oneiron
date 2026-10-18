@@ -1,15 +1,17 @@
 //! The machine-claim history this machine is owed, from the home (FIX 3820).
-//! A machine that holds a handoff packet without its ancestors asks the home
-//! for the target's whole history by target (`residence.machine-history`), a
-//! page at a time on one connection per round, and resumes where the last
-//! round's paging stopped. Each row lands through the explicit replay door
-//! under this machine's own tier, never into the thin read caches and never
-//! by a forged promotion, and that door checks it as window ingest would.
-//! Only a machine-history control of the asked target is taken. Nothing the
-//! home asserts is trusted beyond the signed bytes, and no pin comes from
-//! them: the own-receive exchange derives its pin itself (FIX 3821). The
-//! round then runs the exchange again and drains the windows holding the
-//! target's rows ([`crate::sync::machine_history`]).
+//! A machine that holds a handoff packet without its ancestors, or has
+//! thin-touched a machine claim whose history it lacks (FIX 4385), asks the
+//! home for the target's whole history by target
+//! (`residence.machine-history`), a page at a time on one connection per
+//! round, and resumes where the last round's paging stopped. Each row lands
+//! through the explicit replay door under this machine's own tier, never
+//! into the thin read caches and never by a forged promotion, and that door
+//! checks it as window ingest would. Only a machine-history control of the
+//! asked target is taken. Nothing the home asserts is trusted beyond the
+//! signed bytes, and no pin comes from them: the own-receive exchange derives
+//! its pin itself (FIX 3821). The round then runs the exchange again and
+//! drains the windows holding the target's rows
+//! ([`crate::sync::machine_history`]).
 //!
 //! A home that may not read a target's world is not asked for it (FIX 922
 //! item 11).
@@ -64,10 +66,11 @@ fn storage(error: crate::Error) -> TransportError {
 
 /// One round over every target this machine owes a history (FIX 3820). It
 /// first runs the exchange again for each, which settles a target whose rows
-/// landed meanwhile; then it fetches what is still owed from the home, on one
-/// connection, and releases the targets it fetched, those it landed rows for
-/// with their held rows tried again. Own residence only: a federation peer
-/// does not answer it. Returns how many rows landed.
+/// landed meanwhile and retires a debt no fetch settles (FIX 4384); then it
+/// fetches what is still owed from the home, on one connection, and releases
+/// the targets it fetched, those it landed rows for with their held rows
+/// tried again. Own residence only: a federation peer does not answer it.
+/// Returns how many rows landed.
 pub(crate) async fn fetch_owed_machine_history(
     manager: &Arc<WindowManager>,
     config: &SyncClientConfig,
