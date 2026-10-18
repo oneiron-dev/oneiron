@@ -246,9 +246,9 @@ pub fn execute_shared_act(
 /// rows its receipt names by ref aside (DEC-0005): those a held erase's
 /// handle listed, and none past the receipt's for any other act, whose
 /// effect reads the act, the roster and the grants its receipt names.
-/// `None` for an export-first removal: its receipt counts and digests every
-/// record the removed Owner could read, which no list names, as a
-/// whole-vault export's does not.
+/// An export-first removal's first execution lists every record its
+/// export counted and digested (FIX 3412); `None` for its re-delivery,
+/// whose archive the first execution built.
 pub fn execute_shared_act_listing(
     vault: &Vault,
     executor: &AuthenticatedOwner,
@@ -256,9 +256,19 @@ pub fn execute_shared_act_listing(
     input: SharedActRequest,
 ) -> (MemoryResult<SharedActExecuted>, Option<Vec<EntityId>>) {
     let producers = ProducerRows::default();
-    let answer = execute_shared_act_into(vault, executor, slips, input, &producers);
+    let mut export_listed = false;
+    let answer = execute_shared_act_into(
+        vault,
+        executor,
+        slips,
+        input,
+        &producers,
+        &mut export_listed,
+    );
+    // A first execution lists the records its export counted (FIX 3412);
+    // a re-delivery's archive was built before, and no list names it.
     let listed = match &answer {
-        Ok(executed) if executed.receipt.export.is_some() => None,
+        Ok(executed) if executed.receipt.export.is_some() && !export_listed => None,
         _ => Some(producers.take()),
     };
     (answer, listed)
@@ -270,6 +280,7 @@ fn execute_shared_act_into(
     slips: Option<&HostSlipIssuer>,
     input: SharedActRequest,
     producers: &ProducerRows,
+    export_listed: &mut bool,
 ) -> MemoryResult<SharedActExecuted> {
     let erase = vault
         .pending_authority_act(&input.act_id)?
@@ -286,9 +297,12 @@ fn execute_shared_act_into(
             delivery: None,
         });
     }
-    Ok(vault
-        .execute_completed_shared_act(executor, &input.act_id, slips)?
-        .into())
+    let execution = vault.execute_completed_shared_act(executor, &input.act_id, slips)?;
+    if let Some(records) = &execution.export_records {
+        producers.list(records.iter().copied());
+        *export_listed = true;
+    }
+    Ok(execution.into())
 }
 
 /// `vault.shared.receipt`: a receipt its reader was told about.
