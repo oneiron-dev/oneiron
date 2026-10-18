@@ -714,6 +714,12 @@ class Oneiron:
         def task_types(self) -> "Oneiron._VaultTaskTypesVerbs":
             return Oneiron._VaultTaskTypesVerbs(self._client)
         @property
+        def tasks(self) -> "Oneiron._VaultTasksVerbs":
+            return Oneiron._VaultTasksVerbs(self._client)
+        @property
+        def runs(self) -> "Oneiron._VaultRunsVerbs":
+            return Oneiron._VaultRunsVerbs(self._client)
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
@@ -812,9 +818,6 @@ class Oneiron:
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs":
             return Oneiron._VaultNotesVerbs(self._client)
-        @property
-        def tasks(self) -> "Oneiron._VaultTasksVerbs":
-            return Oneiron._VaultTasksVerbs(self._client)
     class _VaultPeopleVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2300,6 +2303,45 @@ class Oneiron:
         def get(self, spec):
             """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
             return json.loads(_translate(lambda: self._client.vault_task_types_get(json.dumps(spec))))
+    class _VaultTasksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def cancel_force(self, spec):
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_cancel_force(json.dumps(spec))))
+        @property
+        def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
+            return Oneiron._VaultTasksLinearVerbs(self._client)
+    class _VaultTasksLinearVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs":
+            return Oneiron._VaultTasksLinearMappingVerbs(self._client)
+        def provenance(self, spec):
+            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_provenance(json.dumps(spec))))
+    class _VaultTasksLinearMappingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping(json.dumps(spec))))
+        def edit(self, spec):
+            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
+            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping_edit(json.dumps(spec))))
+    class _VaultRunsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def branches(self) -> "Oneiron._VaultRunsBranchesVerbs":
+            return Oneiron._VaultRunsBranchesVerbs(self._client)
+    class _VaultRunsBranchesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
+            return json.loads(_translate(lambda: self._client.vault_runs_branches_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2909,30 +2951,6 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
-    class _VaultTasksVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def linear(self) -> "Oneiron._VaultTasksLinearVerbs":
-            return Oneiron._VaultTasksLinearVerbs(self._client)
-    class _VaultTasksLinearVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        @property
-        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs":
-            return Oneiron._VaultTasksLinearMappingVerbs(self._client)
-        def provenance(self, spec):
-            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_linear_provenance(json.dumps(spec))))
-    class _VaultTasksLinearMappingVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def __call__(self, spec):
-            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping(json.dumps(spec))))
-        def edit(self, spec):
-            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
-            return json.loads(_translate(lambda: self._client.vault_tasks_linear_mapping_edit(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

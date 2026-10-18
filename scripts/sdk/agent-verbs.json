@@ -5098,6 +5098,36 @@
       "openapi": true
     },
     {
+      "name": "vault.tasks.cancel_force",
+      "description": "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts.",
+      "input": "crate::task_verb::run_doors::CancelForceRequest",
+      "output": "crate::task_verb::run_doors::CancelForceReceipt",
+      "call": "crate::task_verb::run_doors::cancel_force_as(memory.vault(), &memory.embedded_owner(\"vault.tasks.cancel_force\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.runs.branches.get",
+      "description": "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts.",
+      "input": "crate::task_verb::run_doors::RunBranchesRequest",
+      "output": "crate::task_verb::run_doors::RunBranchesView",
+      "call": "crate::task_verb::run_doors::read_branches_as(memory.vault(), &memory.embedded_owner(\"vault.runs.branches.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workspace.establish",
       "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
       "input": "crate::task_verb::sdk::WorkspacePresetRequest",

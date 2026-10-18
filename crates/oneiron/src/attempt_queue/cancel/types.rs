@@ -66,7 +66,7 @@ pub const ATTEMPT_RUNTIME_ACTOR: &str = "runtime";
 /// Typed provenance, never a bare "cancelling" boolean: a landing forced by a
 /// budget ceiling and a landing a peer asked for produce the same state but
 /// call for different successor work, and the receipt has to say which.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum LandingTrigger {
@@ -99,7 +99,7 @@ impl LandingTrigger {
 /// ownership, and passes the resolved verdict here. Fail closed: an adapter
 /// that cannot establish standing passes [`Self::None`] and the attempt is
 /// left untouched.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CancelStanding {
@@ -136,7 +136,7 @@ impl CancelStanding {
 }
 
 /// Grounds on which a hard, unrefusable `cancel.force` was authorized.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ForceCancelGrounds {
@@ -238,7 +238,7 @@ impl ForceCancelAuthority {
 ///
 /// A landing that cannot say where to pick up is a kill with extra steps, so
 /// the handoff door refuses to mint a successor without one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttemptResumePoint {
     /// Worker-authored cursor: the smallest thing a successor needs to continue.
     pub marker: String,
@@ -269,7 +269,7 @@ impl AttemptResumePoint {
 
 /// Durable LANDING record: why the attempt is landing, who asked, and what the
 /// worker reported when it accepted.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttemptLanding {
     pub trigger: LandingTrigger,
     /// The actor whose request was accepted, or the runtime for a warning.
@@ -282,7 +282,7 @@ pub struct AttemptLanding {
 }
 
 /// Whether a terminal cancellation was a designed landing or a hard stop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum CancelMode {
@@ -307,7 +307,7 @@ impl CancelMode {
 ///
 /// `actor` is copied from the landing lease owner or from
 /// [`ForceCancelAuthority`], never from free request text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttemptCancellation {
     pub mode: CancelMode,
     /// Set exactly on [`CancelMode::Forced`].
@@ -335,7 +335,7 @@ impl AttemptCancellation {
 }
 
 /// What one [`AttemptCancelReceipt`] records.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum AttemptCancelReceiptKind {
@@ -398,7 +398,7 @@ impl AttemptCancelReceiptKind {
 /// its required/forbidden shape and both the write door and `decode_record`
 /// enforce it (`validate::validate_cancel_receipt_fields`), so a persisted row
 /// can never contradict its own kind.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttemptCancelReceipt {
     pub sequence: u64,
     pub at: u64,
@@ -435,7 +435,9 @@ pub struct AttemptCancelReceipt {
 }
 
 /// Two-rung cancel pressure counters carried on the row.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct AttemptCancelPressure {
     /// Soft requests recorded against this attempt, ever.
     #[serde(default)]
@@ -467,7 +469,9 @@ impl AttemptCancelPressure {
 /// [`Self::ordinary_limit_units`] and therefore never contains the reserve at
 /// all. "Normal execution cannot spend it" is a property of what the ordinary
 /// meter was built with, not a rule the meter has to remember.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct AttemptLandingReserve {
     /// Total budget units dialed for the attempt.
     #[serde(default)]
@@ -563,7 +567,7 @@ const fn reserve_units_for(limit_units: u64, reserve_percent: u64) -> u64 {
 ///
 /// One additive field rather than six: the protocol is a single coherent
 /// sub-record, and rows written before it decode as [`Self::default`].
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AttemptCancelState {
     /// Present exactly while the row is landing, and preserved afterwards on a
     /// row that landed, so a terminal receipt can still name its trigger.
