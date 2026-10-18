@@ -3075,6 +3075,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/authority/owner_work.rs",
+     "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
+     "surface": {
+      "crate-vis": 15
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -55527,8 +55537,60 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 17,
+      "re-export": 18,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkReceipt",
+      "OwnerWorkStatus",
+      "OwnerWorkUnassigned"
+     ],
+     "path": "src/world_keys/owner_work/mod.rs",
+     "purpose": "The owner's work an install records for another to do, and what the named install did with it (owner work…",
+     "surface": {
+      "crate-vis": 3,
+      "enum": 2,
+      "fn": 1,
+      "re-export": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkDrain"
+     ],
+     "path": "src/world_keys/owner_work/pickup.rs",
+     "purpose": "The executor's pickup: every owner work request naming this install, each rechecked and done in a writer…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_work/record.rs",
+     "purpose": "Recording one owner work request in the act's own transaction, and the one rule that names its executor",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/owner_work/result.rs",
+     "purpose": "The executor's signed result for one request, and the receipt door that reads where a request stands",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
      }
     },
     {
@@ -56667,7 +56729,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 157,
+     "files": 158,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58109,7 +58171,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 23,
+     "files": 27,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -58125,7 +58187,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3546,
+   "source_files": 3551,
    "test_files": 902
   },
   "oneiron-android": {
@@ -58309,7 +58371,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "The AUTHORITY_LOG wire layer: pinned constants, key material and signature transcripts, the op vocabulary…",
      "surface": {
-      "re-export": 20
+      "re-export": 21
      }
     },
     {
@@ -58361,6 +58423,27 @@
       "const": 1,
       "crate-vis": 3,
       "fn": 3,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "OwnerWorkBody",
+      "OwnerWorkKind",
+      "OwnerWorkOutcome",
+      "OwnerWorkRefusal",
+      "OwnerWorkRequest",
+      "OwnerWorkResult"
+     ],
+     "path": "src/authority/owner_work.rs",
+     "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
+     "surface": {
+      "const": 2,
+      "crate-vis": 6,
+      "enum": 4,
+      "fn": 10,
       "struct": 2
      }
     },
@@ -58626,7 +58709,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 21,
+     "files": 22,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58656,7 +58739,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 30,
+   "source_files": 31,
    "test_files": 1
   },
   "oneiron-bench": {
@@ -77617,7 +77700,7 @@
      "path": "src/server/housekeeping.rs",
      "purpose": "The host's half of the engine's housekeeping",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 13
      }
     },
     {
@@ -77743,6 +77826,16 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/server/owner_work_drain.rs",
+     "purpose": "The served holder's owner work pickup",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -79004,7 +79097,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 37,
+     "files": 38,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -79076,7 +79169,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 715,
+   "source_files": 716,
    "test_files": 182
   },
   "oneiron-spawn": {
