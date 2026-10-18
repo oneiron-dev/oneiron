@@ -540,6 +540,7 @@ struct FileServeConfig {
     failure_signal_training: Option<bool>,
     hosted_kms_key_ref: Option<String>,
     maximum_tier: Option<bool>,
+    device_class: Option<oneiron::authority::MachineDeviceClass>,
 }
 
 impl From<FileServeConfig> for PartialServeConfig {
@@ -604,6 +605,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref,
             maximum_tier: value.maximum_tier,
+            device_class: value.device_class,
         }
     }
 }
@@ -679,6 +681,8 @@ struct PartialServeConfig {
     hosted_kms_key_ref: Option<String>,
     /// `maximum_tier` is file-only: `oneiron init --maximum-tier` writes it.
     maximum_tier: Option<bool>,
+    /// `device_class` is file-only, as `maximum_tier` is.
+    device_class: Option<oneiron::authority::MachineDeviceClass>,
 }
 
 impl fmt::Debug for PartialServeConfig {
@@ -756,6 +760,7 @@ impl fmt::Debug for PartialServeConfig {
                 &redacted_secret(&self.hosted_kms_key_ref),
             )
             .field("maximum_tier", &self.maximum_tier)
+            .field("device_class", &self.device_class)
             .finish()
     }
 }
@@ -952,6 +957,9 @@ impl PartialServeConfig {
         if let Some(value) = self.maximum_tier {
             resolved.maximum_tier = value;
         }
+        if let Some(value) = self.device_class {
+            resolved.device_class = value;
+        }
         Ok(())
     }
 }
@@ -1030,6 +1038,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             failure_signal_training: value.failure_signal_training,
             hosted_kms_key_ref: value.hosted_kms_key_ref.clone(),
             maximum_tier: None,
+            device_class: None,
         }
     }
 }
