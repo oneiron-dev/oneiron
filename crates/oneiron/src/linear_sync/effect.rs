@@ -289,6 +289,42 @@ impl Vault {
         }
         Ok(())
     }
+
+    /// Keeps the recorded outbound door's admission on a direct-mode push's
+    /// row (OF-427 C9). That door admits both actors inside its own
+    /// admission, where [`linear_effect_writer_in_txn`] never sees the
+    /// decision, so its `gate_ref` arrives from the dispatch result. The row
+    /// names the writer the door bound, as the stored operation binding
+    /// proves; a TASK whose writer moved since keeps no gate ref.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub fn note_linear_outbound_gate(
+        &self,
+        request: &LinearEffectRequest,
+        gate_ref: &str,
+    ) -> LinearSyncResult<()> {
+        let mut key = EFFECT_AUTH_KEY.to_vec();
+        key.extend_from_slice(&request.operation_id);
+        self.try_with_write_txn_grouped::<_, _, LinearSyncError>(|txn| {
+            let state = linear_effect_state_in_txn(self, txn, request.task_ref)?;
+            let Some(writer) = state.writer else {
+                return Ok(());
+            };
+            let digest = binding(request, writer.actor_ref)?;
+            let bound = self
+                .store
+                .vault_meta
+                .get(txn, &key)?
+                .is_some_and(|raw| raw.as_ref() == digest.as_slice());
+            if bound {
+                super::mirror_event::note_outbound_admitted_in(
+                    self, txn, request, writer, gate_ref,
+                )?;
+            }
+            Ok(())
+        })
+    }
 }
 
 #[cfg(test)]

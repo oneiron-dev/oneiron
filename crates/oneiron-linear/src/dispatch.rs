@@ -202,6 +202,10 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
             return Err(invalid("Linear outbound dispatch did not deliver"));
         }
+        // The door's own admission is the push row's gate ref (OF-427 C9).
+        if let Some(gate_ref) = result.gate_decision_id.as_deref() {
+            self.vault.note_linear_outbound_gate(&effect, gate_ref)?;
+        }
         self.journal
             .read_committed(&operation_id, call)
             .map_err(oneiron::LinearSyncError::from)?
