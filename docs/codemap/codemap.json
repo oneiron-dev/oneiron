@@ -45844,7 +45844,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 17
      }
     },
@@ -51315,7 +51315,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 723
+      "fn": 727
      }
     },
     {
@@ -51879,7 +51879,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "SkillCapabilityView",
@@ -51887,6 +51887,8 @@
       "SkillConvertReceipt",
       "SkillConvertRequest",
       "SkillForkLineage",
+      "SkillGovernanceSetRequest",
+      "SkillGovernanceView",
       "SkillHashRuleRequest",
       "SkillLibraryCall",
       "SkillLibraryDependency",
@@ -51899,6 +51901,12 @@
       "SkillLibraryRestoreRequest",
       "SkillLibraryScan",
       "SkillLibraryView",
+      "SkillOptimizeAxisView",
+      "SkillOptimizeResultRequest",
+      "SkillOptimizeResultView",
+      "SkillOptimizeStartReceipt",
+      "SkillOptimizeStartRequest",
+      "SkillOptimizeVerdictView",
       "SkillRestoreAdmission",
       "SkillSourceEvidence",
       "SkillStaleView"
@@ -51907,8 +51915,8 @@
      "purpose": "Owner-bound library doors over the existing conversion, lifecycle and admission engines",
      "surface": {
       "enum": 3,
-      "fn": 10,
-      "struct": 17
+      "fn": 16,
+      "struct": 25
      }
     },
     {
@@ -58642,7 +58650,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 195,
+   "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3578,
    "test_files": 902
@@ -67174,7 +67182,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 687
+      "fn": 691
      }
     },
     {
@@ -68223,7 +68231,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 688
+      "fn": 692
      }
     },
     {
@@ -71886,7 +71894,7 @@
      "path": "src/api/facade/skill_doors.rs",
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 12
      }
     },
     {
@@ -81949,6 +81957,8 @@
       "SkillConvertRequest",
       "SkillForkLineage",
       "SkillForkRequest",
+      "SkillGovernanceSetRequest",
+      "SkillGovernanceView",
       "SkillHashRuleRequest",
       "SkillHubConfigured",
       "SkillHubKind",
@@ -81967,6 +81977,12 @@
       "SkillLibraryRestoreRequest",
       "SkillLibraryScan",
       "SkillLibraryView",
+      "SkillOptimizeAxisView",
+      "SkillOptimizeResultRequest",
+      "SkillOptimizeResultView",
+      "SkillOptimizeStartReceipt",
+      "SkillOptimizeStartRequest",
+      "SkillOptimizeVerdictView",
       "SkillPackCreditRequest",
       "SkillPackOutcomeProjection",
       "SkillPackOutcomeRequest",
@@ -82386,7 +82402,7 @@
      "purpose": "—",
      "surface": {
       "enum": 626,
-      "struct": 1834
+      "struct": 1842
      }
     },
     {
