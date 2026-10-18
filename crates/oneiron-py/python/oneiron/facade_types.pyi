@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 712 facade rows, 2556 declarations.
-Inputs: 660 of 712 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 637 of 712 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 719 facade rows, 2572 declarations.
+Inputs: 667 of 719 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 644 of 719 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -1941,6 +1941,103 @@ class AffectClaimConsolidation(TypedDict):
     active_state_ref: NotRequired[str | None]
     created_state_ref: NotRequired[str | None]
     superseded_state_refs: list[str]
+CopingStrategy = Literal["SitSel", "SitMod", "AttDep", "CogChg", "ResMod", "ERFlex"]
+class CopingOutcomeRecordRequest(TypedDict):
+    affected_person_ref: str
+    baseline_turn_ref: str
+    later_turn_ref: str
+    strategy: CopingStrategy
+    confidence: float
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+class CopingVadDelta(TypedDict):
+    valence: float
+    arousal: float
+    dominance: float
+MadeByInputRole = Literal["input", "prompt"]
+class MadeByInput(TypedDict):
+    row: str
+    role: MadeByInputRole
+MadeByClass = Literal["stated", "concluded"]
+MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
+class MadeByTriggerTask(TypedDict):
+    task: str
+class MadeByTriggerAsk(TypedDict):
+    ask: str
+class MadeByTriggerRun(TypedDict):
+    run: str
+class MadeByTriggerSkill(TypedDict):
+    skill: str
+MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
+class MadeBy(TypedDict):
+    inputs: list[MadeByInput]
+    process: MadeByProcess
+    at: int
+    trigger: NotRequired[MadeByTrigger | None]
+class CopingOutcomeView(TypedDict):
+    claim_ref: str
+    affected_person_ref: str
+    strategy_ref: str
+    strategy: CopingStrategy
+    vad_delta: CopingVadDelta
+    confidence: float
+    successful: bool
+    observed_n: int
+    scope: ClaimScope
+    approval: str
+    source: NotRequired[str | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    evidence_refs: list[str]
+    made_by: NotRequired[MadeBy | None]
+class CopingOutcomeReceipt(TypedDict):
+    outcome: CopingOutcomeView
+    superseded_claim_refs: list[str]
+    receipt_ref: str
+class CopingOutcomeUpdateRequest(TypedDict):
+    prior_claim_ref: str
+    baseline_turn_ref: str
+    later_turn_ref: str
+    confidence: float
+class CopingAggregateRequest(TypedDict):
+    affected_person_ref: str
+    scope: NotRequired[ClaimScope | None]
+class CopingAggregate(TypedDict):
+    affected_person_ref: str
+    outcomes: list[CopingOutcomeView]
+    observed_n: int
+class StateWindow(TypedDict):
+    window_secs: int
+    expected_goal_completions: int
+    expected_engaged_days: int
+class ActionModeRule(TypedDict):
+    mode: str
+    min_index: float
+    max_index: float
+class ActionModePolicy(TypedDict):
+    window: StateWindow
+    rules: list[ActionModeRule]
+class WellnessPolicyConfigureRequest(TypedDict):
+    policy: NotRequired[ActionModePolicy | None]
+class WellnessPersonRequest(TypedDict):
+    affected_person_ref: str
+class ModeGateInputs(TypedDict):
+    affect: float
+    goal_velocity: float
+    engagement: float
+class StateIndex(TypedDict):
+    value: float
+    inputs: NotRequired[ModeGateInputs | None]
+    claim: NotRequired[str | None]
+    observed_at: NotRequired[int | None]
+class WellnessProjection(TypedDict):
+    affected_person_ref: str
+    policy: NotRequired[ActionModePolicy | None]
+    state_index: StateIndex
+    mode: NotRequired[ActionModeRule | None]
+    coping: CopingAggregate
+    source_refs: list[str]
+    receipt_ref: NotRequired[str | None]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]
@@ -2186,26 +2283,6 @@ class ExportChannel(TypedDict):
 class ScopedExportRequest(TypedDict):
     selector: RecordSelector
     channel: ExportChannel
-MadeByInputRole = Literal["input", "prompt"]
-class MadeByInput(TypedDict):
-    row: str
-    role: MadeByInputRole
-MadeByClass = Literal["stated", "concluded"]
-MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
-class MadeByTriggerTask(TypedDict):
-    task: str
-class MadeByTriggerAsk(TypedDict):
-    ask: str
-class MadeByTriggerRun(TypedDict):
-    run: str
-class MadeByTriggerSkill(TypedDict):
-    skill: str
-MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
-class MadeBy(TypedDict):
-    inputs: list[MadeByInput]
-    process: MadeByProcess
-    at: int
-    trigger: NotRequired[MadeByTrigger | None]
 WithheldRole = Literal["input", "prompt", "trigger"]
 class WithheldRef(TypedDict):
     handle: str

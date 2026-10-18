@@ -1162,6 +1162,111 @@
       "openapi": true
     },
     {
+      "name": "vault.affect.coping.record",
+      "description": "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded.",
+      "input": "crate::memory::coping_doors::CopingOutcomeRecordRequest",
+      "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+      "call": "memory.coping_outcome_record_as_owner(&memory.embedded_owner(\"vault.affect.coping.record\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.update",
+      "description": "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs.",
+      "input": "crate::memory::coping_doors::CopingOutcomeUpdateRequest",
+      "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+      "call": "memory.coping_outcome_update_as_owner(&memory.embedded_owner(\"vault.affect.coping.update\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.aggregate",
+      "description": "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs.",
+      "input": "crate::memory::coping_doors::CopingAggregateRequest",
+      "output": "crate::memory::coping_doors::CopingAggregate",
+      "call": "memory.coping_aggregate_as_owner(&memory.embedded_owner(\"vault.affect.coping.aggregate\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.policy.get",
+      "description": "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+      "call": "memory.wellness_policy_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.get\")?)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.policy.configure",
+      "description": "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine.",
+      "input": "crate::memory::wellness_doors::WellnessPolicyConfigureRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+      "call": "memory.wellness_policy_configure_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.configure\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.derive",
+      "description": "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs.",
+      "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+      "output": "crate::memory::wellness_doors::WellnessProjection",
+      "call": "memory.wellness_derive_as_owner(&memory.embedded_owner(\"vault.affect.wellness.derive\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.get",
+      "description": "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims.",
+      "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+      "output": "crate::memory::wellness_doors::WellnessProjection",
+      "call": "memory.wellness_get_as_owner(&memory.embedded_owner(\"vault.affect.wellness.get\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.retrieval.recall",
       "description": "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle.",
       "input": "crate::task_verb::sdk::RecallRequest",

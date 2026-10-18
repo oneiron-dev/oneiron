@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 712 facade rows, 2513 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 668.
+// UniFFI census: 719 facade rows, 2529 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 675.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -5366,6 +5366,315 @@ pub struct AffectClaimConsolidation {
     pub superseded_state_refs: Vec<String>,
 }
 
+/// `oneiron::affect::coping::CopingStrategy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CopingStrategy {
+    #[serde(rename = "SitSel")]
+    SitSel,
+    #[serde(rename = "SitMod")]
+    SitMod,
+    #[serde(rename = "AttDep")]
+    AttDep,
+    #[serde(rename = "CogChg")]
+    CogChg,
+    #[serde(rename = "ResMod")]
+    ResMod,
+    #[serde(rename = "ERFlex")]
+    ERFlex,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeRecordRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CopingOutcomeRecordRequest {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "baseline_turn_ref")]
+    pub baseline_turn_ref: String,
+    #[serde(rename = "later_turn_ref")]
+    pub later_turn_ref: String,
+    #[serde(rename = "strategy")]
+    pub strategy: CopingStrategy,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "scope")]
+    pub scope: ClaimScope,
+    #[serde(
+        rename = "sensitivity",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub sensitivity: Option<u8>,
+}
+
+/// `oneiron::memory::coping_doors::CopingVadDelta`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingVadDelta {
+    #[serde(rename = "valence")]
+    pub valence: f64,
+    #[serde(rename = "arousal")]
+    pub arousal: f64,
+    #[serde(rename = "dominance")]
+    pub dominance: f64,
+}
+
+/// `oneiron::provenance::made_by::MadeByInputRole`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MadeByInputRole {
+    #[serde(rename = "input")]
+    Input,
+    #[serde(rename = "prompt")]
+    Prompt,
+}
+
+/// `oneiron::provenance::made_by::MadeByInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MadeByInput {
+    #[serde(rename = "row")]
+    pub row: String,
+    #[serde(rename = "role")]
+    pub role: MadeByInputRole,
+}
+
+/// `oneiron::provenance::made_by::MadeByClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MadeByClass {
+    #[serde(rename = "stated")]
+    Stated,
+    #[serde(rename = "concluded")]
+    Concluded,
+}
+
+/// `oneiron::provenance::made_by::MadeByProcess`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MadeByProcess {
+    #[serde(rename = "actor")]
+    pub actor: String,
+    #[serde(rename = "class")]
+    pub class: MadeByClass,
+    #[serde(rename = "identity")]
+    pub identity: String,
+    #[serde(rename = "version")]
+    pub version: String,
+    #[serde(rename = "params_hash")]
+    pub params_hash: String,
+}
+
+/// `oneiron::provenance::made_by::MadeByTrigger`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum MadeByTrigger {
+    #[serde(rename = "task")]
+    Task(String),
+    #[serde(rename = "ask")]
+    Ask(String),
+    #[serde(rename = "run")]
+    Run(String),
+    #[serde(rename = "skill")]
+    Skill(String),
+}
+
+/// `oneiron::provenance::made_by::MadeBy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MadeBy {
+    #[serde(rename = "inputs")]
+    pub inputs: Vec<MadeByInput>,
+    #[serde(rename = "process")]
+    pub process: MadeByProcess,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<MadeByTrigger>,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingOutcomeView {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "strategy_ref")]
+    pub strategy_ref: String,
+    #[serde(rename = "strategy")]
+    pub strategy: CopingStrategy,
+    #[serde(rename = "vad_delta")]
+    pub vad_delta: CopingVadDelta,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "successful")]
+    pub successful: bool,
+    #[serde(rename = "observed_n")]
+    pub observed_n: u64,
+    #[serde(rename = "scope")]
+    pub scope: ClaimScope,
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "source", default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(
+        rename = "valid_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub valid_from: Option<u64>,
+    #[serde(rename = "valid_to", default, skip_serializing_if = "Option::is_none")]
+    pub valid_to: Option<u64>,
+    #[serde(rename = "evidence_refs")]
+    pub evidence_refs: Vec<String>,
+    #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<MadeBy>,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingOutcomeReceipt {
+    #[serde(rename = "outcome")]
+    pub outcome: CopingOutcomeView,
+    #[serde(rename = "superseded_claim_refs")]
+    pub superseded_claim_refs: Vec<String>,
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+}
+
+/// `oneiron::memory::coping_doors::CopingOutcomeUpdateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CopingOutcomeUpdateRequest {
+    #[serde(rename = "prior_claim_ref")]
+    pub prior_claim_ref: String,
+    #[serde(rename = "baseline_turn_ref")]
+    pub baseline_turn_ref: String,
+    #[serde(rename = "later_turn_ref")]
+    pub later_turn_ref: String,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+}
+
+/// `oneiron::memory::coping_doors::CopingAggregateRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CopingAggregateRequest {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "scope", default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ClaimScope>,
+}
+
+/// `oneiron::memory::coping_doors::CopingAggregate`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CopingAggregate {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "outcomes")]
+    pub outcomes: Vec<CopingOutcomeView>,
+    #[serde(rename = "observed_n")]
+    pub observed_n: u64,
+}
+
+/// `oneiron::affect::state_inputs::StateWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct StateWindow {
+    #[serde(rename = "window_secs")]
+    pub window_secs: u64,
+    #[serde(rename = "expected_goal_completions")]
+    pub expected_goal_completions: u32,
+    #[serde(rename = "expected_engaged_days")]
+    pub expected_engaged_days: u32,
+}
+
+/// `oneiron::dreamer_runner::maintenance::action_mode::ActionModeRule`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModeRule {
+    #[serde(rename = "mode")]
+    pub mode: String,
+    #[serde(rename = "min_index")]
+    pub min_index: f64,
+    #[serde(rename = "max_index")]
+    pub max_index: f64,
+}
+
+/// `oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ActionModePolicy {
+    #[serde(rename = "window")]
+    pub window: StateWindow,
+    #[serde(rename = "rules")]
+    pub rules: Vec<ActionModeRule>,
+}
+
+/// `oneiron::memory::wellness_doors::WellnessPolicyConfigureRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WellnessPolicyConfigureRequest {
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ActionModePolicy>,
+}
+
+/// `oneiron::memory::wellness_doors::WellnessPersonRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct WellnessPersonRequest {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+}
+
+/// `oneiron::affect::state_index::ModeGateInputs`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ModeGateInputs {
+    #[serde(rename = "affect")]
+    pub affect: f64,
+    #[serde(rename = "goal_velocity")]
+    pub goal_velocity: f64,
+    #[serde(rename = "engagement")]
+    pub engagement: f64,
+}
+
+/// `oneiron::affect::state_index::StateIndex`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct StateIndex {
+    #[serde(rename = "value")]
+    pub value: f64,
+    #[serde(rename = "inputs", default, skip_serializing_if = "Option::is_none")]
+    pub inputs: Option<ModeGateInputs>,
+    #[serde(rename = "claim", default, skip_serializing_if = "Option::is_none")]
+    pub claim: Option<String>,
+    #[serde(
+        rename = "observed_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub observed_at: Option<u64>,
+}
+
+/// `oneiron::memory::wellness_doors::WellnessProjection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WellnessProjection {
+    #[serde(rename = "affected_person_ref")]
+    pub affected_person_ref: String,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<ActionModePolicy>,
+    #[serde(rename = "state_index")]
+    pub state_index: StateIndex,
+    #[serde(rename = "mode", default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<ActionModeRule>,
+    #[serde(rename = "coping")]
+    pub coping: CopingAggregate,
+    #[serde(rename = "source_refs")]
+    pub source_refs: Vec<String>,
+    #[serde(
+        rename = "receipt_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub receipt_ref: Option<String>,
+}
+
 /// `oneiron::memory::recall::call_mode::RecallEffort`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum RecallEffort {
@@ -6493,77 +6802,6 @@ pub struct ScopedExportRequest {
     pub selector: RecordSelector,
     #[serde(rename = "channel")]
     pub channel: ExportChannel,
-}
-
-/// `oneiron::provenance::made_by::MadeByInputRole`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum MadeByInputRole {
-    #[serde(rename = "input")]
-    Input,
-    #[serde(rename = "prompt")]
-    Prompt,
-}
-
-/// `oneiron::provenance::made_by::MadeByInput`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct MadeByInput {
-    #[serde(rename = "row")]
-    pub row: String,
-    #[serde(rename = "role")]
-    pub role: MadeByInputRole,
-}
-
-/// `oneiron::provenance::made_by::MadeByClass`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum MadeByClass {
-    #[serde(rename = "stated")]
-    Stated,
-    #[serde(rename = "concluded")]
-    Concluded,
-}
-
-/// `oneiron::provenance::made_by::MadeByProcess`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct MadeByProcess {
-    #[serde(rename = "actor")]
-    pub actor: String,
-    #[serde(rename = "class")]
-    pub class: MadeByClass,
-    #[serde(rename = "identity")]
-    pub identity: String,
-    #[serde(rename = "version")]
-    pub version: String,
-    #[serde(rename = "params_hash")]
-    pub params_hash: String,
-}
-
-/// `oneiron::provenance::made_by::MadeByTrigger`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum MadeByTrigger {
-    #[serde(rename = "task")]
-    Task(String),
-    #[serde(rename = "ask")]
-    Ask(String),
-    #[serde(rename = "run")]
-    Run(String),
-    #[serde(rename = "skill")]
-    Skill(String),
-}
-
-/// `oneiron::provenance::made_by::MadeBy`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct MadeBy {
-    #[serde(rename = "inputs")]
-    pub inputs: Vec<MadeByInput>,
-    #[serde(rename = "process")]
-    pub process: MadeByProcess,
-    #[serde(rename = "at")]
-    pub at: u64,
-    #[serde(rename = "trigger", default, skip_serializing_if = "Option::is_none")]
-    pub trigger: Option<MadeByTrigger>,
 }
 
 /// `oneiron::provenance::birth::WithheldRole`.
