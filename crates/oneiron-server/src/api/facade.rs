@@ -77,6 +77,7 @@ mod model_step_doors;
 mod note_doors;
 mod off_record_doors;
 mod origin_doors;
+mod owner_binding;
 mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;

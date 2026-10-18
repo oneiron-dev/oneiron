@@ -1416,9 +1416,15 @@ async fn vault_export(
                 .export_with_host_action_listing(&input, &action, auth.locality())?
         }
         (None, None, Some(owner)) => {
-            server
-                .vault
-                .export_with_authenticated_owner_listing(&input, &owner, auth.locality())?
+            // Its receipt records the owner's act, with where
+            // he spoke from (audit only).
+            let surface = super::owner_binding::act_surface(auth);
+            server.vault.export_with_authenticated_owner_listing(
+                &input,
+                &owner,
+                surface,
+                auth.locality(),
+            )?
         }
         (None, None, None) => {
             return Err(FacadeApiError::forbidden(
