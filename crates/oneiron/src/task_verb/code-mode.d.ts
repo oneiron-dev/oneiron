@@ -1257,7 +1257,7 @@ declare namespace Sdk {
   type OracleReceipt = { profile: string; powerpoint_version: string; macos_version: string; font_versions: string[]; steps: StepOutcome[]; clean: boolean };
   type DeckGateView = { profile: string; projector: string; open: boolean; receipt?: OracleReceipt | null };
   type DeckOracleRequest = { receipt: OracleReceipt };
-  type DeckPreviewRequest = { artifact_ref: string; slides: number[] };
+  type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | null; slides: number[] };
   type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string };
   type DeckPreview = { frontier: number[]; profile: string; projector: string; export_key: string; renderer: string; provisional: boolean; slides: DeckPreviewSlide[] };
   type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null };
@@ -1603,7 +1603,7 @@ declare const vault: Sdk.VaultHost & {
         merge(input: Sdk.DeckForkMergeRequest): Promise<Sdk.LandingReceipt | StoredResult>;
         /** Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened. */
         oracle(input: Sdk.DeckOracleRequest): Promise<Sdk.DeckGateView | StoredResult>;
-        /** The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed. */
+        /** The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed. */
         preview(input: Sdk.DeckPreviewRequest): Promise<Sdk.DeckPreview | StoredResult>;
         /** A deck fork's merge preflight against the live head: the three-way diff with its conflicts, the stale units, and the head a merge names. */
         review(input: Sdk.OfficeBodyForkRequest): Promise<Sdk.DeckReviewView | StoredResult>;
