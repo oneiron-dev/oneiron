@@ -19,7 +19,9 @@ use crate::ooxml::{
 };
 use crate::retained_opc::{self, Limits, Package};
 use crate::xlfn::{storage_form, ui_form};
-pub use crate::xlsx_shift::{SheetFate, XlsxAxis, XlsxAxisEdit, retarget_sheets, shift_axis};
+pub use crate::xlsx_shift::{
+    SheetFate, XlsxAxis, XlsxAxisEdit, drop_tables, retarget_sheets, shift_axis,
+};
 use crate::xlsx_shift::{drop_table_columns, shift_formula};
 use crate::xlsx_styles::write_formats;
 pub use crate::xlsx_styles::{
@@ -1376,6 +1378,16 @@ impl Book {
                 .cloned()
                 .unwrap_or(SheetFate::Keep)
         };
+        // A formula's sheet prefixes follow the layout, and its references
+        // to a deleted sheet's tables read `#REF!`.
+        let order = self.order.clone();
+        let retarget = |text: &str| -> Option<String> {
+            let moved = retarget_sheets(text, &order, &fate);
+            if gone_tables.is_empty() {
+                return moved;
+            }
+            drop_tables(moved.as_deref().unwrap_or(text), &gone_tables).or(moved)
+        };
         // A new `<sheet>` names its part with the prefix the others use.
         let rel_attr = entries.iter().find_map(|node| {
             let id = node.attr_ns(REL, "id")?;
@@ -1503,7 +1515,7 @@ impl Book {
                 }
                 kept_names += 1;
                 if !name.empty
-                    && let Some(text) = retarget_sheets(&name.text, &self.order, &fate)
+                    && let Some(text) = retarget(&name.text)
                 {
                     name_edits.push((name.content.clone(), escape_text(&text).into_bytes()));
                 }
@@ -1566,9 +1578,8 @@ impl Book {
                 })
                 .map(str::to_owned)
                 .collect();
-            let order = self.order.clone();
             for part in parts {
-                self.rewrite_formulas(&part, &|text: &str| retarget_sheets(text, &order, &fate))?;
+                self.rewrite_formulas(&part, &retarget)?;
             }
             self.move_pivot_sources(&|source: &Node| {
                 if let Some(sheet) = source.attr("sheet") {
