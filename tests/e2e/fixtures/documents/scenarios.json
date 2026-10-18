@@ -1,0 +1,672 @@
+{
+  "version": 1,
+  "area": "documents",
+  "oracle": "Independently authored content and canon invariants, never recorded engine output. Labels identify public setup results; they are not wire ids or cursor bytes. Unavailable DTOs are intentionally not fabricated.",
+  "sourcePins": [
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0032-agentic-notes-v1.md",
+      "sha256": "50407d6e7537ef40f38f4642d19ecb06eb89f1fe80b53fba24e8d73e95f2e92b"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/agents/oneiron-arch-0026-dreamer-v2.md",
+      "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/retrieval/oneiron-arch-0004-retrieval-graph.md",
+      "sha256": "b214b7c1dd31851c0feae51a9c79a3e913ff7aab3f7ddd5021f46b36be7ae740"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/core/oneiron-arch-0002-structural-entities.md",
+      "sha256": "13e02238b5844f7ff37b6f37e17f3e57b1f998856277491664f7a6bb7bb1ce54"
+    },
+    {
+      "path": "/Users/olety/Desktop/temp/vibe-build-20261017/e2e-rulings.md",
+      "sha256": "e1e02bfb1592280b869b9963bf6c8d5c8a9880d018438dbbdae27bcda87d90df"
+    },
+    {
+      "path": "/Users/olety/Desktop/code/oneiron-docs/generated/oneiron/backend/oneiron-arch-0006a-conversations-api-core.md",
+      "sha256": "bfddf7ec0234e2b327f2dc73ad2189215cc8ecf4ba367de3856d4af8ed128593"
+    }
+  ],
+  "assumptionsAndConstants": {
+    "engineDefaultsChanged": false,
+    "wholeTextDiffBudgetMs": 1000,
+    "wholeTextDiffBudgetMeaning": "per-call fixture input, not an engine default or performance threshold",
+    "wallClockSleeps": false,
+    "fixtureProviderWireShapes": "Blocked where the named public door or provider output DTO is absent; no generic job input or model request echo."
+  },
+  "scenarios": [
+    {
+      "id": "DOCUMENTS-01",
+      "name": "Note kinds and cheap write should work",
+      "surface": "HTTP",
+      "setup": "Scripted LLM paused at request barrier, six governed note kinds.",
+      "steps": [
+        "write scratchpad/observation/handoff/research/reflection/diary",
+        "read immediately",
+        "release classifier",
+        "inspect derived claims"
+      ],
+      "expect": "Storage does not wait for model judgment; classification is asynchronous and note kinds retain governed defaults.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#forks-proposals",
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#write-gate",
+        "/registry/oneiron/#OF-002",
+        "/registry/oneiron/#OF-073"
+      ],
+      "rows": [
+        "OF-002",
+        "OF-073"
+      ],
+      "inputs": {
+        "notes": [
+          {
+            "kind": "scratchpad",
+            "markdown": "Working notebook: use the north entrance after seal.\n"
+          },
+          {
+            "kind": "observation",
+            "markdown": "The observatory north entrance is open on Tuesday.\n"
+          },
+          {
+            "kind": "handoff",
+            "markdown": "Handoff: bring the brass key to the north entrance.\n"
+          },
+          {
+            "kind": "research",
+            "markdown": "Research finding: the north entrance has a brass lock.\n"
+          },
+          {
+            "kind": "reflection",
+            "markdown": "Reflection: checking the north entrance prevented a delay.\n"
+          },
+          {
+            "kind": "diary",
+            "markdown": "Private reflection: I felt calmer after checking the entrance.\n"
+          }
+        ],
+        "privateReadReason": "Check the authored documents fixture and its governed defaults.",
+        "classifierBarrier": "documents-classifier-response"
+      },
+      "expected": {
+        "kindDefaults": {
+          "scratchpad": {
+            "extraction": "after_seal",
+            "context": "owner_only",
+            "retention": "session_sealed"
+          },
+          "observation": {
+            "extraction": "allowed",
+            "context": "relationship_scoped",
+            "retention": "durable"
+          },
+          "handoff": {
+            "extraction": "after_seal",
+            "context": "relationship_scoped",
+            "retention": "archive_after_days",
+            "archive_after_days": 60
+          },
+          "research": {
+            "extraction": "after_seal",
+            "context": "vault_readable",
+            "retention": "durable"
+          },
+          "reflection": {
+            "extraction": "after_seal",
+            "context": "owner_only",
+            "retention": "durable"
+          },
+          "diary": {
+            "extraction": "private_strategy_only",
+            "context": "owner_only",
+            "retention": "durable"
+          }
+        },
+        "readBeforeClassifierRelease": "all six authored markdown bodies",
+        "ordinaryExtractionBeforeSeal": [
+          "observation"
+        ],
+        "ordinaryExtractionAfterSeal": [
+          "scratchpad",
+          "observation",
+          "handoff",
+          "research",
+          "reflection"
+        ],
+        "ordinaryExtractionNever": [
+          "diary"
+        ],
+        "claimEvidenceRequired": [
+          "note entity",
+          "document",
+          "indexed frontier",
+          "stable cursor span",
+          "quote SHA-256"
+        ],
+        "classifierFact": "The observatory north entrance is open on Tuesday."
+      },
+      "requiredDoors": [
+        "typed NOTE live text read",
+        "reasoned private-note read",
+        "typed note-classification trigger/result",
+        "typed note claim evidence read"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-02",
+      "name": "Concurrent anchored edits should work",
+      "surface": "TypeScript SDK",
+      "setup": "Two writers with automatic grant on one note.",
+      "steps": [
+        "replace a stable span while another inserts before it",
+        "append to section",
+        "read live text and history"
+      ],
+      "expect": "Stable anchors follow edits, both changes survive, and each operation names its actor.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+        "/registry/oneiron/#OF-472",
+        "/registry/oneiron/#OF-473",
+        "/registry/oneiron/#OF-233"
+      ],
+      "rows": [
+        "OF-472",
+        "OF-473",
+        "OF-233"
+      ],
+      "inputs": {
+        "actors": [
+          "writer-human",
+          "writer-agent"
+        ],
+        "automaticGrantForBoth": true,
+        "markdown": "# Log\nTarget: blue.\n\n## Actions\n- baseline\n",
+        "spanText": "blue",
+        "section": "Actions",
+        "humanInsertion": "Human preface.\n",
+        "replacement": "green",
+        "append": "- agent item\n",
+        "interleaving": [
+          "both read the same stable anchors",
+          "human inserts before the span",
+          "agent replaces using old anchors",
+          "agent appends to original section anchor"
+        ]
+      },
+      "expected": {
+        "liveText": "Human preface.\n# Log\nTarget: green.\n\n## Actions\n- baseline\n- agent item\n",
+        "operationActors": {
+          "insert_after": "writer-human",
+          "replace_span": "writer-agent",
+          "append_to_section": "writer-agent"
+        },
+        "sameDocumentForBothWriters": true
+      },
+      "requiredDoors": [
+        "typed NOTE stable cursor/version read",
+        "typed NOTE operation history",
+        "public automatic note grant setup"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-03",
+      "name": "Whole-text update preserves concurrent work should work",
+      "surface": "HTTP",
+      "setup": "Shared note and concurrent human edit.",
+      "steps": [
+        "submit whole new text from agent",
+        "overlap human insertion",
+        "read live result",
+        "submit declared rewrite while human present"
+      ],
+      "expect": "Whole text diffs into attributed ops; disruptive rewrite opens a fork, never clobbers live text.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+        "/registry/oneiron/#OF-473",
+        "/registry/oneiron/#OF-478"
+      ],
+      "rows": [
+        "OF-473",
+        "OF-478"
+      ],
+      "inputs": {
+        "markdown": "# Log\nTarget: blue.\n\n## Actions\n- baseline\n",
+        "agentWholeText": "# Log\nTarget: green.\n\n## Actions\n- baseline\n",
+        "diffBudgetMs": 1000,
+        "humanInsertion": "Human preface.\n",
+        "declaredRewrite": "# Rewritten\nA separate proposed account.\n",
+        "interleaving": [
+          "agent reads base version",
+          "human inserts on live head",
+          "agent submits whole_text with the old base",
+          "human keeps its live editor subscribed",
+          "agent submits rewrite"
+        ]
+      },
+      "expected": {
+        "liveAfterWholeText": "Human preface.\n# Log\nTarget: green.\n\n## Actions\n- baseline\n",
+        "liveAfterDeclaredRewrite": "Human preface.\n# Log\nTarget: green.\n\n## Actions\n- baseline\n",
+        "rewriteOutcome": "rewrite_fork",
+        "rewriteForkText": "# Rewritten\nA separate proposed account.\n",
+        "rewrittenLiveWithoutSwitch": false,
+        "actorsNamedForEveryOp": true,
+        "diffTimeoutDropsOutput": false
+      },
+      "requiredDoors": [
+        "typed NOTE base-version read",
+        "typed NOTE live read",
+        "typed NOTE operation history",
+        "typed live editor binding",
+        "typed NOTE rewrite-fork inspection"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-04",
+      "name": "Proposal merge switch and rejection should work",
+      "surface": "HTTP",
+      "setup": "Two-file proposal forks plus a concurrent head edit.",
+      "steps": [
+        "accept first proposal by merge",
+        "accept another by explicit switch",
+        "reject third",
+        "inspect version tree"
+      ],
+      "expect": "Merge preserves concurrent head ops; switch explicitly moves head; rejection does not erase original history; one proposal verdict covers its set.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#forks-proposals",
+        "/registry/oneiron/#OF-474",
+        "/registry/oneiron/#OF-211",
+        "/registry/oneiron/#OF-062"
+      ],
+      "rows": [
+        "OF-474",
+        "OF-211",
+        "OF-062"
+      ],
+      "inputs": {
+        "notes": {
+          "first": "# First\nStatus: blue.\n",
+          "second": "# Second\nStatus: draft.\n"
+        },
+        "proposals": [
+          {
+            "label": "merge-set",
+            "members": [
+              "first",
+              "second"
+            ],
+            "verdict": "merge",
+            "forkTexts": {
+              "first": "# First\nStatus: green.\n",
+              "second": "# Second\nStatus: ready.\n"
+            }
+          },
+          {
+            "label": "switch-set",
+            "members": [
+              "first",
+              "second"
+            ],
+            "verdict": "switch",
+            "forkTexts": {
+              "first": "# First rewrite\nExplicit replacement A.\n",
+              "second": "# Second rewrite\nExplicit replacement B.\n"
+            }
+          },
+          {
+            "label": "reject-set",
+            "members": [
+              "first",
+              "second"
+            ],
+            "verdict": "reject",
+            "forkTexts": {
+              "first": "REJECTED A\n",
+              "second": "REJECTED B\n"
+            }
+          }
+        ],
+        "concurrentHeadAppend": "Human head work.\n"
+      },
+      "expected": {
+        "afterMerge": {
+          "first": "# First\nStatus: green.\nHuman head work.\n",
+          "second": "# Second\nStatus: ready.\nHuman head work.\n"
+        },
+        "afterSwitch": {
+          "first": "# First rewrite\nExplicit replacement A.\n",
+          "second": "# Second rewrite\nExplicit replacement B.\n"
+        },
+        "afterReject": "same live heads and texts as afterSwitch",
+        "oneVerdictPerSet": true,
+        "membersPerSet": 2,
+        "originalHistoryRetained": true,
+        "forkParentAndFrontierRetained": true,
+        "headMovesReceipted": true,
+        "reviewExplainerNamesForks": true
+      },
+      "requiredDoors": [
+        "typed NOTE fork_at with proposal membership",
+        "typed NOTE proposal-set merge/switch/reject",
+        "typed NOTE version tree and head-move receipts"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-05",
+      "name": "Live indexed and pinned reads should work",
+      "surface": "HTTP",
+      "setup": "One note already indexed and a citation to its original text.",
+      "steps": [
+        "edit live head",
+        "read live and indexed before idle indexing",
+        "await new indexed frontier",
+        "resolve old citation"
+      ],
+      "expect": "Live, indexed and pinned are separate reads; search quotes the indexed version and a citation keeps its pinned version.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#pins",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#rrf-pipeline",
+        "/oneiron/retrieval/oneiron-arch-0004-retrieval-graph/#read-frontier",
+        "/registry/oneiron/#OF-476",
+        "/registry/oneiron/#OF-472"
+      ],
+      "rows": [
+        "OF-476",
+        "OF-472"
+      ],
+      "inputs": {
+        "kind": "observation",
+        "original": "The observatory beacon is amber.\n",
+        "edited": "The observatory beacon is violet.\n",
+        "searchQuery": "observatory beacon",
+        "citationQuote": "The observatory beacon is amber.",
+        "indexBarrier": "documents-index-publication"
+      },
+      "expected": {
+        "beforeIndexPublication": {
+          "live": "The observatory beacon is violet.\n",
+          "indexed": "The observatory beacon is amber.\n",
+          "searchQuote": "The observatory beacon is amber."
+        },
+        "afterIndexPublication": {
+          "live": "The observatory beacon is violet.\n",
+          "indexed": "The observatory beacon is violet.\n",
+          "searchQuote": "The observatory beacon is violet."
+        },
+        "pinnedQuoteAfterBoth": "The observatory beacon is amber.",
+        "citationVersionChanges": false,
+        "idleDelayIsDeclaredPolicy": true,
+        "citationQuoteSha256": "8d0ba4020d4ac83e5d4ef80d2ad2e0d6ff85302f2f452e032edcbba070874e92"
+      },
+      "requiredDoors": [
+        "typed NOTE live/indexed/pinned reads",
+        "typed document pin and citation resolve",
+        "public indexed-frontier observation and publication barrier"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-06",
+      "name": "Citation pins and owner-opened history purge should work",
+      "surface": "HTTP",
+      "setup": "Two pins at different operations, owner and ordinary writer.",
+      "steps": [
+        "delete cited span",
+        "request history purge as writer then owner",
+        "resolve both citations",
+        "inspect purge receipt"
+      ],
+      "expect": "Only owner may erase history; purge respects oldest cited operation/deletion frontier; unmappable cursor keeps quote and reports drift.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#pins",
+        "/registry/oneiron/#OF-477"
+      ],
+      "rows": [
+        "OF-477"
+      ],
+      "inputs": {
+        "kind": "research",
+        "birthText": "Old cited sentence.\n",
+        "laterAppend": "Still present sentence.\n",
+        "oldQuote": "Old cited sentence.",
+        "laterQuote": "Still present sentence.",
+        "deleteSpan": "Old cited sentence.\n",
+        "actors": [
+          "owner",
+          "ordinary-writer"
+        ],
+        "ordinaryWriterHasAutomaticEditGrant": true
+      },
+      "expected": {
+        "writerPurge": "refused without destructive effects",
+        "ownerPurge": "explicit receipted history purge",
+        "purgeFloorConstraints": [
+          "not past oldest cited operation",
+          "not past frontier deleting cited text"
+        ],
+        "liveText": "Still present sentence.\n",
+        "oldPinnedQuote": "Old cited sentence.",
+        "laterPinnedQuote": "Still present sentence.",
+        "stillPresentCursorResolves": true,
+        "unmappableCitation": {
+          "retainsQuote": true,
+          "retainsQuoteHash": true,
+          "drifted": true
+        },
+        "deletionNecessarilyDrifts": false,
+        "sameCitationsResolveAfterRestart": true,
+        "oldQuoteSha256": "4d9116130662d9ca184a42f6347344af76de61d3cc6d8349c4678a7a6f0de4b8",
+        "laterQuoteSha256": "a333104f6457030e4a16b1b1d88a69ddc0c1e9ee479f3b4bff7dfcd26974a26d"
+      },
+      "requiredDoors": [
+        "typed NOTE citation pin/resolve",
+        "typed NOTE owner-only history purge",
+        "typed purge retained-boundary receipt"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-07",
+      "name": "Summary scope and keep memo should work",
+      "surface": "HTTP",
+      "setup": "Trunk, branch and sub-session, a keep memo and scripted summary.",
+      "steps": [
+        "request scoped summary",
+        "await Dreamer result",
+        "add human edit and one new fact",
+        "request patch then regeneration"
+      ],
+      "expect": "Covers name only read sources; keep memo guides updates; patch preserves human ops and full regeneration remains a fork until switch.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#forks-proposals",
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#summaries",
+        "/registry/oneiron/#OF-028"
+      ],
+      "rows": [
+        "OF-028"
+      ],
+      "inputs": {
+        "records": [
+          {
+            "label": "trunk-one",
+            "scope": "trunk",
+            "text": "The observatory opens on Tuesday."
+          },
+          {
+            "label": "trunk-two",
+            "scope": "trunk",
+            "text": "Bring the brass key."
+          },
+          {
+            "label": "branch-one",
+            "scope": "branch",
+            "text": "Alternative plan: use the south entrance."
+          },
+          {
+            "label": "sub-one",
+            "scope": "sub-session",
+            "text": "The maintenance visit is on Friday."
+          },
+          {
+            "label": "empty-trunk",
+            "scope": "trunk",
+            "text": ""
+          }
+        ],
+        "scopeIncludeForks": false,
+        "keepMemo": "Keep the opening day and key instruction. Preserve the human caution.",
+        "scriptedSummary": "The observatory opens on Tuesday. Bring the brass key.",
+        "humanAppend": " Human caution: check the lock first.",
+        "newFact": {
+          "label": "trunk-three",
+          "text": "The brass key is stored in the north cabinet."
+        },
+        "scriptedPatchedSummary": "The observatory opens on Tuesday. Bring the brass key from the north cabinet. Human caution: check the lock first.",
+        "scriptedRegeneration": "Tuesday visit: collect the brass key from the north cabinet. Human caution: check the lock first.",
+        "topology": {
+          "root": "empty-trunk",
+          "canonicalPath": [
+            "empty-trunk",
+            "trunk-one",
+            "trunk-two"
+          ],
+          "branchPath": [
+            "empty-trunk",
+            "branch-one"
+          ],
+          "subSession": {
+            "spawnedBy": "trunk-two",
+            "records": [
+              "sub-one"
+            ]
+          },
+          "afterNewFactCanonicalPath": [
+            "empty-trunk",
+            "trunk-one",
+            "trunk-two",
+            "trunk-three"
+          ]
+        }
+      },
+      "expected": {
+        "coversByScope": {
+          "canonical": [
+            "trunk-one",
+            "trunk-two"
+          ],
+          "branch": [
+            "branch-one"
+          ],
+          "sub_session": [
+            "sub-one"
+          ]
+        },
+        "coversAfterPatch": [
+          "trunk-one",
+          "trunk-two",
+          "trunk-three"
+        ],
+        "coversExclude": [
+          "empty-trunk",
+          "earlier summary reply",
+          "unread other scope"
+        ],
+        "humanOpPreservedByPatch": true,
+        "keepReadByPatchAndRegeneration": true,
+        "patchReceiptNames": "trunk-three",
+        "regeneration": "separate fork until explicit switch",
+        "liveChangesBeforeSwitch": false
+      },
+      "requiredDoors": [
+        "typed SUMMARY document keep/edit/read",
+        "typed SUMMARY anchored patch",
+        "typed SUMMARY regeneration fork and switch"
+      ]
+    },
+    {
+      "id": "DOCUMENTS-08",
+      "name": "Streaming message finalization should work",
+      "surface": "HTTP streaming",
+      "setup": "One atomic write and opt-in streamed message.",
+      "steps": [
+        "append chunks",
+        "finalize once",
+        "cancel another",
+        "terminate server during a third",
+        "restart and read messages"
+      ],
+      "expect": "Atomic write remains default; partial deltas are not durable edit ops; final, cancelled and crash-partial outcomes are explicit and auditably distinct.",
+      "source": [
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#writers",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/oneiron/core/oneiron-arch-0032-agentic-notes-v1/#birth-rule",
+        "/registry/oneiron/#OF-030",
+        "/registry/oneiron/#OF-136"
+      ],
+      "rows": [
+        "OF-030",
+        "OF-136"
+      ],
+      "inputs": {
+        "atomicText": "Atomic observatory message.",
+        "finalChunks": [
+          "The beacon ",
+          "is amber."
+        ],
+        "cancelledChunks": [
+          "Cancelled observatory ",
+          "reply."
+        ],
+        "cancelReason": "user_interrupted",
+        "crashCommittedPrefix": "Saved prefix.",
+        "crashEphemeralTail": " Unsaved tail.",
+        "continueText": " Continued safely.",
+        "crashBarrier": "documents-before-terminal",
+        "crashSetup": [
+          "publicly commit crashCommittedPrefix on the third message",
+          "open opt-in continuation stream on that same message",
+          "append crashEphemeralTail and observe public ACK plus the external barrier",
+          "kill only the owned server group; restart only this test vault"
+        ]
+      },
+      "expected": {
+        "defaultMode": {
+          "kind": "atomic"
+        },
+        "partialsAreDurableOps": false,
+        "documentExistsBeforeFirstLaterEdit": false,
+        "final": {
+          "text": "The beacon is amber.",
+          "finality": "final",
+          "incomplete": false,
+          "terminalReceipts": 1
+        },
+        "cancelled": {
+          "text": "Cancelled observatory reply.",
+          "finality": "cancelled",
+          "incomplete": true,
+          "reason": "user_interrupted"
+        },
+        "crash": {
+          "addressableMessageRetained": true,
+          "finality": "partial",
+          "incomplete": true,
+          "reason": "process_crash_recovery",
+          "ephemeral_text_lost": true,
+          "uncommittedTailRequiredToSurvive": false
+        },
+        "continueUsesSameSavedMessage": true,
+        "retryRetainsOldReply": true,
+        "ownerRulings": {
+          "G01": "typed HTTP and SDK call or wait",
+          "G03": "retain incomplete message with Continue and Retry"
+        }
+      },
+      "requiredDoors": [
+        "typed MESSAGE atomic commit and stream begin/append/flush/finalize/cancel HTTP and SDK calls",
+        "typed MESSAGE durability/op-history read"
+      ]
+    }
+  ]
+}
