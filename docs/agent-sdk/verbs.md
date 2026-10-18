@@ -437,6 +437,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_settle`
 - `vault.code.proposal_settlement`
 - `vault.code.oplog`
+- `execute_code`
 - `vault.code.model_heal_count`
 - `vault.code.waits.resolve`
 - `vault.code.waits.receipt`
@@ -771,3 +772,7 @@ both bindings and their export-census tests in one change.
 - `self.run.attach`
 - `self.folds.describe`
 - `self.history`
+- `vault.runs.review`
+- `vault.runs.settle`
+- `vault.runs.settlement`
+- `vault.revert_run`

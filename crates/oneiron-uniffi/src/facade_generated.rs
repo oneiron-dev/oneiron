@@ -3831,6 +3831,26 @@ export_facade! {
     let output = client.self_history(&input)?;
     crate::codec::lift_record("self.history", &output)
 };
+"vault.runs.review" => fn vault_runs_review(&self, input: RunReviewRequest) -> RunReview = |client| {
+    let input: oneiron::memory::run_review::RunReviewRequest = crate::codec::lower_record("vault.runs.review", input)?;
+    let output = client.vault_runs_review(&input)?;
+    crate::codec::lift_record("vault.runs.review", &output)
+};
+"vault.runs.settle" => fn vault_runs_settle(&self, input: RunSettleRequest) -> RunSettlement = |client| {
+    let input: oneiron::memory::run_review::RunSettleRequest = crate::codec::lower_record("vault.runs.settle", input)?;
+    let output = client.vault_runs_settle(&input)?;
+    crate::codec::lift_record("vault.runs.settle", &output)
+};
+"vault.runs.settlement" => fn vault_runs_settlement(&self, input: RunSettlementRequest) -> RunSettlement = |client| {
+    let input: oneiron::memory::run_review::RunSettlementRequest = crate::codec::lower_record("vault.runs.settlement", input)?;
+    let output = client.vault_runs_settlement(&input)?;
+    crate::codec::lift_record("vault.runs.settlement", &output)
+};
+"vault.revert_run" => fn vault_revert_run(&self, input: RevertRunRequest) -> RevertRunOutcome = |client| {
+    let input: oneiron::memory::run_review::RevertRunRequest = crate::codec::lower_record("vault.revert_run", input)?;
+    let output = client.vault_revert_run(&input)?;
+    crate::codec::lift_record("vault.revert_run", &output)
+};
 "self.browser.open" => fn self_browser_open(&self, input: LiveRunRequestOpenInput) -> ObservationPage = |client| {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BrowserOpenInput> = crate::codec::lower_record("self.browser.open", input)?;
     let output = client.self_browser_open(&input)?;

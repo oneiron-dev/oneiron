@@ -4231,6 +4231,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.runs.review",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::run_review::RunReviewRequest,
+                >(),
+            ),
+            (
+                "vault.runs.settle",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::run_review::RunSettleRequest,
+                >(),
+            ),
+            (
+                "vault.runs.settlement",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::run_review::RunSettlementRequest,
+                >(),
+            ),
+            (
+                "vault.revert_run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::run_review::RevertRunRequest,
+                >(),
+            ),
+            (
                 "self.browser.open",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BrowserOpenInput>,
@@ -4924,6 +4948,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.run.attach",
     "self.folds.describe",
     "self.history",
+    "vault.runs.review",
+    "vault.runs.settle",
+    "vault.runs.settlement",
+    "vault.revert_run",
     "self.browser.open",
     "self.browser.observe",
     "self.browser.find",
@@ -6243,6 +6271,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "self.history" => crate::code_run::vault_read::request_schema::<
             crate::engine_executor::history::FoldHistory,
+        >(),
+        "vault.runs.review" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::run_review::RunReview>()
+        }
+        "vault.runs.settle" => crate::code_run::vault_read::request_schema::<
+            crate::memory::run_review::RunSettlement,
+        >(),
+        "vault.runs.settlement" => crate::code_run::vault_read::request_schema::<
+            crate::memory::run_review::RunSettlement,
+        >(),
+        "vault.revert_run" => crate::code_run::vault_read::request_schema::<
+            crate::memory::run_review::RevertRunOutcome,
         >(),
         "self.browser.open" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BrowserObservationPage,
@@ -11735,6 +11775,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.runs.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.settle" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.settlement" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.revert_run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "self.browser.open" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14557,6 +14625,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.history" => {
             let _input: crate::code_run::fold_api::FoldHistoryRequest = decode(value.clone())?;
         }
+        "vault.runs.review" => {
+            let _input: crate::memory::run_review::RunReviewRequest = decode(value.clone())?;
+        }
+        "vault.runs.settle" => {
+            let _input: crate::memory::run_review::RunSettleRequest = decode(value.clone())?;
+        }
+        "vault.runs.settlement" => {
+            let _input: crate::memory::run_review::RunSettlementRequest = decode(value.clone())?;
+        }
+        "vault.revert_run" => {
+            let _input: crate::memory::run_review::RevertRunRequest = decode(value.clone())?;
+        }
         "self.browser.open" => {
             let _input: crate::task_verb::sdk::LiveRunRequest<
                 crate::task_verb::sdk::BrowserOpenInput,
@@ -16173,6 +16253,10 @@ pub fn invoke(
         "self.run.attach" => encode(self_run_attach(memory, decode(value)?)?),
         "self.folds.describe" => encode(self_folds_describe(memory, decode(value)?)?),
         "self.history" => encode(self_history(memory, decode(value)?)?),
+        "vault.runs.review" => encode(vault_runs_review(memory, decode(value)?)?),
+        "vault.runs.settle" => encode(vault_runs_settle(memory, decode(value)?)?),
+        "vault.runs.settlement" => encode(vault_runs_settlement(memory, decode(value)?)?),
+        "vault.revert_run" => encode(vault_revert_run(memory, decode(value)?)?),
         "self.browser.open" => encode(self_browser_open(memory, decode(value)?)?),
         "self.browser.observe" => encode(self_browser_observe(memory, decode(value)?)?),
         "self.browser.find" => encode(self_browser_find(memory, decode(value)?)?),
@@ -22947,6 +23031,30 @@ pub fn self_history(
     input: crate::code_run::fold_api::FoldHistoryRequest,
 ) -> MemoryResult<crate::engine_executor::history::FoldHistory> {
     crate::code_run::fold_api::host_required(memory, &input)
+}
+pub fn vault_runs_review(
+    memory: &Memory<'_>,
+    input: crate::memory::run_review::RunReviewRequest,
+) -> MemoryResult<crate::memory::run_review::RunReview> {
+    memory.review_run_as_owner(&memory.embedded_owner("vault.runs.review")?, &input)
+}
+pub fn vault_runs_settle(
+    memory: &Memory<'_>,
+    input: crate::memory::run_review::RunSettleRequest,
+) -> MemoryResult<crate::memory::run_review::RunSettlement> {
+    memory.settle_run_as_owner(&memory.embedded_owner("vault.runs.settle")?, &input)
+}
+pub fn vault_runs_settlement(
+    memory: &Memory<'_>,
+    input: crate::memory::run_review::RunSettlementRequest,
+) -> MemoryResult<crate::memory::run_review::RunSettlement> {
+    memory.run_settlement_as_owner(&memory.embedded_owner("vault.runs.settlement")?, &input)
+}
+pub fn vault_revert_run(
+    memory: &Memory<'_>,
+    input: crate::memory::run_review::RevertRunRequest,
+) -> MemoryResult<crate::memory::run_review::RevertRunOutcome> {
+    memory.revert_run_as_owner(&memory.embedded_owner("vault.revert_run")?, &input)
 }
 pub fn self_browser_open(
     memory: &Memory<'_>,

@@ -790,6 +790,10 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    VaultRunsReview,
+    VaultRunsSettle,
+    VaultRunsSettlement,
+    VaultRevertRun,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -1612,6 +1616,10 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::VaultRunsReview,
+        Self::VaultRunsSettle,
+        Self::VaultRunsSettlement,
+        Self::VaultRevertRun,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -2459,6 +2467,10 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::VaultRunsReview => "vault.runs.review",
+            Self::VaultRunsSettle => "vault.runs.settle",
+            Self::VaultRunsSettlement => "vault.runs.settlement",
+            Self::VaultRevertRun => "vault.revert_run",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -3260,6 +3272,10 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultRunsReview
+                | Self::VaultRunsSettle
+                | Self::VaultRunsSettlement
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -4109,6 +4125,10 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultRunsReview
+                | Self::VaultRunsSettle
+                | Self::VaultRunsSettlement
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5021,6 +5041,10 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultRunsReview
+                | Self::VaultRunsSettle
+                | Self::VaultRunsSettlement
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5524,6 +5548,8 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::VaultRunsSettle
+                | Self::VaultRevertRun
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -6375,6 +6401,10 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultRunsReview => &["spec"],
+            Self::VaultRunsSettle => &["spec"],
+            Self::VaultRunsSettlement => &["spec"],
+            Self::VaultRevertRun => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -7198,6 +7228,10 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultRunsReview => &["spec"],
+            Self::VaultRunsSettle => &["spec"],
+            Self::VaultRunsSettlement => &["spec"],
+            Self::VaultRevertRun => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -9503,6 +9537,18 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::VaultRunsReview => {
+                "The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer."
+            }
+            Self::VaultRunsSettle => {
+                "The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle."
+            }
+            Self::VaultRunsSettlement => {
+                "The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle."
+            }
+            Self::VaultRevertRun => {
+                "The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."

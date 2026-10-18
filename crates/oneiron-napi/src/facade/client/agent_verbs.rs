@@ -6985,6 +6985,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_runs_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_settle(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.settle", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_settlement(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.settlement", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_revert_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.revert_run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_browser_open(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.browser.open", input)

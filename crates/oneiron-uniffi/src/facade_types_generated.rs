@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 796 facade rows, 2743 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 752.
+// UniFFI census: 800 facade rows, 2761 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 756.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -42124,6 +42124,246 @@ pub struct FoldHistory {
     pub steps: Vec<FoldHistoryStep>,
     #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
     pub next: Option<u64>,
+}
+
+/// `oneiron::memory::run_review::RunReviewChange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+pub enum RunReviewChange {
+    #[serde(rename = "claim")]
+    Claim {
+        #[serde(rename = "claim_ref")]
+        claim_ref: String,
+    },
+    #[serde(rename = "edge")]
+    Edge {
+        #[serde(rename = "provenance_ref")]
+        provenance_ref: String,
+    },
+    #[serde(rename = "note")]
+    Note {
+        #[serde(rename = "note_ref")]
+        note_ref: String,
+        #[serde(rename = "fork_ref")]
+        fork_ref: String,
+    },
+    #[serde(rename = "topology")]
+    Topology {
+        #[serde(rename = "event_ref")]
+        event_ref: String,
+    },
+    #[serde(rename = "external_effect")]
+    ExternalEffect {
+        #[serde(rename = "receipt_ref")]
+        receipt_ref: String,
+    },
+    #[serde(rename = "delete")]
+    Delete {
+        #[serde(rename = "entity_ref")]
+        entity_ref: String,
+    },
+    #[serde(rename = "erase")]
+    Erase {
+        #[serde(rename = "entity_ref")]
+        entity_ref: String,
+    },
+}
+
+/// `oneiron::memory::run_review::RunReviewRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunReviewRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "changes")]
+    pub changes: Vec<RunReviewChange>,
+}
+
+/// `oneiron::memory::run_review::RunChangeVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunChangeVerdict {
+    #[serde(rename = "landed")]
+    Landed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "waiting")]
+    Waiting,
+    #[serde(rename = "let_go")]
+    LetGo,
+}
+
+/// `oneiron::memory::run_review::RunChangeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunChangeOutcome {
+    #[serde(rename = "change")]
+    pub change: String,
+    #[serde(rename = "verdict")]
+    pub verdict: RunChangeVerdict,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<String>,
+}
+
+/// `oneiron::memory::run_review::RunReviewExplainer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunReviewExplainer {
+    #[serde(rename = "text")]
+    pub text: String,
+    #[serde(rename = "read_refs")]
+    pub read_refs: Vec<String>,
+}
+
+/// `oneiron::memory::run_review::RunReview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunReview {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "review_id")]
+    pub review_id: String,
+    #[serde(rename = "changes")]
+    pub changes: Vec<RunChangeOutcome>,
+    #[serde(rename = "explainer")]
+    pub explainer: RunReviewExplainer,
+}
+
+/// `oneiron::memory::run_review::RunSettleDecision`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunSettleDecision {
+    #[serde(rename = "approve")]
+    Approve,
+    #[serde(rename = "reject")]
+    Reject,
+}
+
+/// `oneiron::memory::run_review::RunSettleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunSettleRequest {
+    #[serde(rename = "review")]
+    pub review: RunReviewRequest,
+    #[serde(rename = "review_id")]
+    pub review_id: String,
+    #[serde(rename = "decision")]
+    pub decision: RunSettleDecision,
+}
+
+/// `oneiron::memory::run_review::RunSettlementKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunSettlementKind {
+    #[serde(rename = "ProposalOutcome")]
+    ProposalOutcome,
+}
+
+/// `oneiron::memory::run_review::RunAnsweredBy`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum RunAnsweredBy {
+    Word {
+        #[serde(rename = "word_ref")]
+        word_ref: String,
+    },
+    Row {
+        #[serde(rename = "row")]
+        row: String,
+    },
+    Grant {
+        #[serde(rename = "grant")]
+        grant: String,
+    },
+}
+
+/// `oneiron::memory::run_review::RunSettlementReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunSettlementReason {
+    #[serde(rename = "owner_approved")]
+    OwnerApproved,
+    #[serde(rename = "owner_rejected")]
+    OwnerRejected,
+}
+
+/// `oneiron::memory::run_review::RunSettlement`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunSettlement {
+    #[serde(rename = "kind")]
+    pub kind: RunSettlementKind,
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "changes")]
+    pub changes: Vec<RunChangeOutcome>,
+    #[serde(rename = "verdict")]
+    pub verdict: RunChangeVerdict,
+    #[serde(rename = "answered_by")]
+    pub answered_by: RunAnsweredBy,
+    #[serde(rename = "reason")]
+    pub reason: RunSettlementReason,
+    #[serde(rename = "summary")]
+    pub summary: String,
+    #[serde(rename = "revert_handle")]
+    pub revert_handle: String,
+}
+
+/// `oneiron::memory::run_review::RunSettlementRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RunSettlementRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+}
+
+/// `oneiron::memory::run_review::RevertRunRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RevertRunRequest {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "changes", default, skip_serializing_if = "Option::is_none")]
+    pub changes: Option<Vec<String>>,
+}
+
+/// `oneiron::memory::run_review::RunCompensation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunCompensation {
+    #[serde(rename = "change")]
+    pub change: String,
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+}
+
+/// `oneiron::memory::run_review::RunNotUndoneReason`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RunNotUndoneReason {
+    #[serde(rename = "one_way")]
+    OneWay,
+    #[serde(rename = "backup_only")]
+    BackupOnly,
+    #[serde(rename = "dependent")]
+    Dependent,
+    #[serde(rename = "not_selected")]
+    NotSelected,
+    #[serde(rename = "not_landed")]
+    NotLanded,
+}
+
+/// `oneiron::memory::run_review::RunNotUndone`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RunNotUndone {
+    #[serde(rename = "change")]
+    pub change: String,
+    #[serde(rename = "reason")]
+    pub reason: RunNotUndoneReason,
+}
+
+/// `oneiron::memory::run_review::RevertRunOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RevertRunOutcome {
+    #[serde(rename = "run_id")]
+    pub run_id: String,
+    #[serde(rename = "compensated")]
+    pub compensated: Vec<RunCompensation>,
+    #[serde(rename = "not_undone")]
+    pub not_undone: Vec<RunNotUndone>,
 }
 
 /// `oneiron_browser::OpenInput`.

@@ -2395,6 +2395,18 @@ impl OneironClient {
                 "self.history" => remote_agent_verb_output::<
                     oneiron::engine_executor::history::FoldHistory,
                 >(client, verb, &input),
+                "vault.runs.review" => remote_agent_verb_output::<
+                    oneiron::memory::run_review::RunReview,
+                >(client, verb, &input),
+                "vault.runs.settle" => remote_agent_verb_output::<
+                    oneiron::memory::run_review::RunSettlement,
+                >(client, verb, &input),
+                "vault.runs.settlement" => remote_agent_verb_output::<
+                    oneiron::memory::run_review::RunSettlement,
+                >(client, verb, &input),
+                "vault.revert_run" => remote_agent_verb_output::<
+                    oneiron::memory::run_review::RevertRunOutcome,
+                >(client, verb, &input),
                 "self.browser.open" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserObservationPage,
                 >(client, verb, &input),
@@ -11947,6 +11959,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.history", value)
+    }
+    pub fn vault_runs_review(
+        &self,
+        input: &oneiron::memory::run_review::RunReviewRequest,
+    ) -> Result<oneiron::memory::run_review::RunReview, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.review", value)
+    }
+    pub fn vault_runs_settle(
+        &self,
+        input: &oneiron::memory::run_review::RunSettleRequest,
+    ) -> Result<oneiron::memory::run_review::RunSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.settle", value)
+    }
+    pub fn vault_runs_settlement(
+        &self,
+        input: &oneiron::memory::run_review::RunSettlementRequest,
+    ) -> Result<oneiron::memory::run_review::RunSettlement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.settlement", value)
+    }
+    pub fn vault_revert_run(
+        &self,
+        input: &oneiron::memory::run_review::RevertRunRequest,
+    ) -> Result<oneiron::memory::run_review::RevertRunOutcome, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.revert_run", value)
     }
     pub fn self_browser_open(
         &self,
