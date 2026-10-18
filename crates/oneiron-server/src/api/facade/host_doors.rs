@@ -1181,6 +1181,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.records.erase_sweep"
         | "vault.cleanup.run"
         | "vault.entities.mention"
         | "vault.legal_holds.place"

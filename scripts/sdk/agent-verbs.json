@@ -4191,6 +4191,21 @@
       "section": false
     },
     {
+      "name": "vault.records.erase_sweep",
+      "description": "Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep.",
+      "input": "crate::memory::erase_sweep::RecordEraseSweepRequest",
+      "output": "Option<crate::memory::erase_sweep::RecordEraseSweep>",
+      "call": "memory.record_erase_sweep_as(&memory.embedded_owner(\"vault.records.erase_sweep\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.research.create_child",
       "description": "The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave.",
       "input": "crate::task_verb::sdk::ResearchChildWire",

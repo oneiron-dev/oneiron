@@ -1382,6 +1382,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.records.erase_sweep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::erase_sweep::RecordEraseSweepRequest,
+                >(),
+            ),
+            (
                 "vault.research.create_child",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchChildWire,
@@ -4682,6 +4688,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "vault.records.erase_sweep",
     "vault.research.create_child",
     "vault.research.archive",
     "vault.research.archive.install",
@@ -5459,6 +5466,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordExecuted,
+        >(),
+        "vault.records.erase_sweep" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::erase_sweep::RecordEraseSweep>,
         >(),
         "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ResearchChildReceipt,
@@ -8264,6 +8274,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.records.erase_confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.records.erase_sweep" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12893,6 +12910,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.records.erase_confirm" => {
             let _input: crate::task_verb::sdk::RecordEraseConfirmRequest = decode(value.clone())?;
         }
+        "vault.records.erase_sweep" => {
+            let _input: crate::memory::erase_sweep::RecordEraseSweepRequest =
+                decode(value.clone())?;
+        }
         "vault.research.create_child" => {
             let _input: crate::task_verb::sdk::ResearchChildWire = decode(value.clone())?;
         }
@@ -15366,6 +15387,7 @@ pub fn invoke(
         "vault.records.erase_confirm" => {
             encode(vault_records_erase_confirm(memory, decode(value)?)?)
         }
+        "vault.records.erase_sweep" => encode(vault_records_erase_sweep(memory, decode(value)?)?),
         "vault.research.create_child" => {
             encode(vault_research_create_child(memory, decode(value)?)?)
         }
@@ -18726,6 +18748,12 @@ pub fn vault_records_erase_confirm(
     input: crate::task_verb::sdk::RecordEraseConfirmRequest,
 ) -> MemoryResult<crate::task_verb::sdk::RecordEraseOutcome> {
     crate::task_verb::sdk::confirm_record_erase_embedded(memory, input)
+}
+pub fn vault_records_erase_sweep(
+    memory: &Memory<'_>,
+    input: crate::memory::erase_sweep::RecordEraseSweepRequest,
+) -> MemoryResult<Option<crate::memory::erase_sweep::RecordEraseSweep>> {
+    memory.record_erase_sweep_as(&memory.embedded_owner("vault.records.erase_sweep")?, input)
 }
 pub fn vault_research_create_child(
     memory: &Memory<'_>,

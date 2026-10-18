@@ -850,6 +850,9 @@ impl OneironClient {
                 "vault.records.erase_confirm" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::RecordEraseOutcome,
                 >(client, verb, &input),
+                "vault.records.erase_sweep" => remote_agent_verb_output::<
+                    Option<oneiron::memory::erase_sweep::RecordEraseSweep>,
+                >(client, verb, &input),
                 "vault.research.create_child" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ResearchChildReceipt,
                 >(client, verb, &input),
@@ -5789,6 +5792,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.records.erase_confirm", value)
+    }
+    pub fn vault_records_erase_sweep(
+        &self,
+        input: &oneiron::memory::erase_sweep::RecordEraseSweepRequest,
+    ) -> Result<Option<oneiron::memory::erase_sweep::RecordEraseSweep>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.records.erase_sweep", value)
     }
     pub fn vault_research_create_child(
         &self,
