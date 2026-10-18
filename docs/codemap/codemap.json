@@ -2941,9 +2941,9 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -3045,7 +3045,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/authority/mod.rs",
@@ -8974,7 +8974,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/campaign/compliance/doors.rs",
@@ -21283,7 +21283,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "SieveLeaseCounter",
@@ -41101,7 +41101,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "RepoProposal",
@@ -41968,12 +41968,22 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 13,
       "re-export": 4,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/plain_resume.rs",
+     "purpose": "A plain call's resume target (ARCH-0080 §3 Ask): a call no credential came in on, which settlement runs…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -42003,7 +42013,7 @@
      "path": "src/runtime_hooks/verb/resume.rs",
      "purpose": "Settlement resumes a stopped call once (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -58855,7 +58865,7 @@
     "repo_mutation": {
      "files": 24,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "—"
     },
@@ -58902,7 +58912,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59308,9 +59318,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 196,
+   "over_bar": 197,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3619,
+   "source_files": 3620,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59483,7 +59493,7 @@
       "const": 5,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -75391,7 +75401,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 19,
       "re-export": 2
      }
