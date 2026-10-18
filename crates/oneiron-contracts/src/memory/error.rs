@@ -194,6 +194,12 @@ pub struct MemoryGateDenial {
     pub outcome: String,
     /// Stable `gate.*` reason codes.
     pub reason_codes: Vec<String>,
+    /// The ask this refusal raised or found, as its hex ref: a
+    /// `gate.deny.message_address` refusal for want of comm reach names the
+    /// parent's widen ask here, so no client parses it out of `message`
+    /// (FIX 1380). Absent on every other denial.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ask_ref: Option<String>,
 }
 
 /// Typed provenance and exception door for a refused policy-controlled act.
@@ -546,6 +552,7 @@ impl From<Error> for MemoryError {
                                 .iter()
                                 .map(|reason| (*reason).to_owned())
                                 .collect(),
+                            ask_ref: None,
                         })),
                         ..forbidden
                     },

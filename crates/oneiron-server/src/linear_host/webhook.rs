@@ -18,11 +18,9 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use hmac::{Hmac, Mac};
 use oneiron::linear_sync::LinearWebhookReceipt;
 use oneiron::{LinearSyncError, Vault};
 use oneiron_linear::normalize_issue_webhook;
-use sha2::Sha256;
 
 use crate::server::SyncServer;
 
@@ -98,7 +96,13 @@ fn deliver(
     let Some(expected) = signature.as_deref().and_then(decode_hex) else {
         return UNSIGNED;
     };
-    match signature_matches(vault, body, &expected) {
+    match crate::builtin_host::hmac_matches(
+        vault,
+        LINEAR_WEBHOOK_SECRET,
+        LINEAR_SECRET_EFFECTOR,
+        &[body],
+        &expected,
+    ) {
         Ok(true) => {}
         Ok(false) => return UNSIGNED,
         Err(error) => {
@@ -146,25 +150,6 @@ fn refused(error: &LinearSyncError) -> Reply {
             FAILED
         }
     }
-}
-
-/// Whether `expected` is the HMAC-SHA256 of `body` under the stored signing
-/// secret, read only through the credential door.
-fn signature_matches(vault: &Vault, body: &[u8], expected: &[u8]) -> oneiron::Result<bool> {
-    let mut matched = false;
-    vault.inject_secret_at_door(
-        LINEAR_WEBHOOK_SECRET,
-        LINEAR_SECRET_EFFECTOR,
-        &mut |value: &[u8]| {
-            let mut mac = Hmac::<Sha256>::new_from_slice(value.trim_ascii()).map_err(|_| {
-                oneiron::Error::InvalidConfig("the stored signing secret is unusable".to_owned())
-            })?;
-            mac.update(body);
-            matched = mac.verify_slice(expected).is_ok();
-            Ok(())
-        },
-    )?;
-    Ok(matched)
 }
 
 fn decode_hex(text: &str) -> Option<Vec<u8>> {

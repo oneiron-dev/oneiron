@@ -86,6 +86,11 @@ impl CommWidenView {
         }
     }
 
+    /// The widen ask's hex ref, for the refusal's typed denial (FIX 1380).
+    pub(crate) fn ask_ref(&self) -> Option<String> {
+        self.ask.map(|ask| ask.to_hex())
+    }
+
     /// The refusal's remedy.
     pub(crate) const fn suggestion(&self) -> &'static str {
         match self.outcome {

@@ -562,8 +562,11 @@ fn admit(
 
 /// Whether `expected` is the HMAC-SHA256 of `message` under the stored
 /// secret `name`. The value is read through the credential door for the
-/// declared `effector` and never leaves this closure.
-fn hmac_matches(
+/// declared `effector` and never leaves this closure. The compare is the
+/// MAC's own constant-time `verify_slice`. The one signed-webhook check:
+/// the built-in channels' webhooks here and the Linear webhook door
+/// (`linear_host::webhook`) both call it (FIX 4263).
+pub(crate) fn hmac_matches(
     vault: &Vault,
     name: &str,
     effector: &str,

@@ -309,6 +309,24 @@ pub fn describe_handle_status(
     Ok(super::TaskDescription::Status { receipt })
 }
 
+/// Whether `describe` over the raw request `input` reaches
+/// [`describe_handle_status`] (Rule 5, FIX 2166): the highway's status is a
+/// task-work producer, so the served doors await a task-work turn for this
+/// branch and bind it, and the engine never waits for one on the server's
+/// runtime. `self`, `vault`, a card key and a fold each answer first, as in
+/// the row's call. A request that does not decode takes no turn; the
+/// dispatch refuses it.
+#[must_use]
+pub fn describe_takes_task_work_turn(input: &serde_json::Value) -> bool {
+    DescribeRequest::deserialize(input).is_ok_and(|request| {
+        !request.self_target
+            && !request.vault
+            && request.key.is_none()
+            && request.fold.is_none()
+            && (request.handle.is_some() || request.after.is_some())
+    })
+}
+
 /// The rows one describe names by id: its task, else its handle's truth
 /// row (the tray row, the TASK or the ask group). A continuation of its
 /// answer is released only while they may leave.
