@@ -2272,6 +2272,21 @@ impl OneironClient {
                 "self.browser.batch" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserBatchOutput,
                 >(client, verb, &input),
+                "self.browser.library.find" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryFindOutput,
+                >(client, verb, &input),
+                "self.browser.library.propose" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryProposeOutput,
+                >(client, verb, &input),
+                "self.browser.library.retire" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryRetireOutput,
+                >(client, verb, &input),
+                "self.browser.library.retired" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryRetiredOutput,
+                >(client, verb, &input),
+                "self.browser.library.run" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::BrowserLibraryRunOutput,
+                >(client, verb, &input),
                 "self.browser.handover" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BrowserHandoverOutput,
                 >(client, verb, &input),
@@ -11290,6 +11305,76 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.browser.batch", value)
+    }
+    pub fn self_browser_library_find(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryFindInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryFindOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.find", value)
+    }
+    pub fn self_browser_library_propose(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryProposeInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryProposeOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.propose", value)
+    }
+    pub fn self_browser_library_retire(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryRetireInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryRetireOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.retire", value)
+    }
+    pub fn self_browser_library_retired(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryRetiredInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryRetiredOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.retired", value)
+    }
+    pub fn self_browser_library_run(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveRunRequest<
+            oneiron::task_verb::sdk::BrowserLibraryRunInput,
+        >,
+    ) -> Result<oneiron::task_verb::sdk::BrowserLibraryRunOutput, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.browser.library.run", value)
     }
     pub fn self_browser_handover(
         &self,

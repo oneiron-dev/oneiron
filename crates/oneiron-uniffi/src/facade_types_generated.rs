@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 737 facade rows, 2571 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 693.
+// UniFFI census: 742 facade rows, 2588 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 698.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -40545,6 +40545,187 @@ pub struct BatchOutput {
     pub until_ms: Option<u64>,
     #[serde(rename = "next", default, skip_serializing_if = "Option::is_none")]
     pub next: Option<String>,
+}
+
+/// `oneiron_browser::library::LibraryFindInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryFindInput {
+    #[serde(rename = "site", default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+    #[serde(rename = "subgoal", default, skip_serializing_if = "Option::is_none")]
+    pub subgoal: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryFindInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestLibraryFindInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: LibraryFindInput,
+}
+
+/// `oneiron_browser::library::LibraryFindOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LibraryFindOutput {
+    #[serde(rename = "site")]
+    pub site: String,
+    #[serde(rename = "workflows")]
+    pub workflows: Vec<LibraryCard>,
+}
+
+/// `oneiron_browser::library::ProposeInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ProposeInput {
+    #[serde(rename = "subgoal")]
+    pub subgoal: String,
+    #[serde(rename = "params", default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<Vec<String>>,
+    #[serde(rename = "steps")]
+    pub steps: Vec<BatchStep>,
+    #[serde(rename = "postcondition")]
+    pub postcondition: Vec<ExpectInput>,
+    #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<std::collections::HashMap<String, String>>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `ProposeInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestProposeInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: ProposeInput,
+}
+
+/// `oneiron_browser::library::WorkflowCheck`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum WorkflowCheck {
+    #[serde(rename = "solved")]
+    Solved,
+    #[serde(rename = "replay")]
+    Replay,
+}
+
+/// `oneiron_browser::library::ProposeOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProposeOutput {
+    #[serde(rename = "admitted")]
+    pub admitted: bool,
+    #[serde(rename = "workflow", default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<String>,
+    #[serde(
+        rename = "refused_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub refused_by: Option<WorkflowCheck>,
+    #[serde(rename = "unmet", default, skip_serializing_if = "Option::is_none")]
+    pub unmet: Option<Vec<u64>>,
+    #[serde(rename = "replay", default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<BatchOutput>,
+}
+
+/// `oneiron_browser::library::LibraryRetireInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryRetireInput {
+    #[serde(rename = "workflow")]
+    pub workflow: String,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRetireInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestLibraryRetireInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: LibraryRetireInput,
+}
+
+/// `oneiron_browser::library::LibraryRetireOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LibraryRetireOutput {
+    #[serde(rename = "retired")]
+    pub retired: LibraryCard,
+}
+
+/// `oneiron_browser::library::LibraryRetiredInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryRetiredInput {
+    #[serde(rename = "site", default, skip_serializing_if = "Option::is_none")]
+    pub site: Option<String>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRetiredInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestLibraryRetiredInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: LibraryRetiredInput,
+}
+
+/// `oneiron_browser::library::RetiredCard`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetiredCard {
+    #[serde(rename = "card")]
+    pub card: LibraryCard,
+    #[serde(rename = "retired_at")]
+    pub retired_at: u64,
+    #[serde(rename = "reason", default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// `oneiron_browser::library::LibraryRetiredOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LibraryRetiredOutput {
+    #[serde(rename = "site")]
+    pub site: String,
+    #[serde(rename = "retired")]
+    pub retired: Vec<RetiredCard>,
+}
+
+/// `oneiron_browser::library::LibraryRunInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LibraryRunInput {
+    #[serde(rename = "workflow")]
+    pub workflow: String,
+    #[serde(rename = "args", default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<std::collections::HashMap<String, String>>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `LibraryRunInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestLibraryRunInput {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: LibraryRunInput,
+}
+
+/// `oneiron_browser::library::LibraryRunOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LibraryRunOutput {
+    #[serde(rename = "workflow")]
+    pub workflow: String,
+    #[serde(rename = "status")]
+    pub status: SubgoalStatus,
+    #[serde(rename = "unmet", default, skip_serializing_if = "Option::is_none")]
+    pub unmet: Option<Vec<u64>>,
+    #[serde(rename = "batch")]
+    pub batch: BatchOutput,
 }
 
 /// `oneiron_browser::HandoverInput`.

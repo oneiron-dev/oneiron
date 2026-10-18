@@ -62,7 +62,7 @@ pub struct ProposeInput {
 }
 
 /// Which check refused a program.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowCheck {
     /// The solved run's page does not meet the postcondition.
@@ -71,7 +71,7 @@ pub enum WorkflowCheck {
     Replay,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct ProposeOutput {
     pub admitted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,7 +123,7 @@ pub struct LibraryCard {
     pub failures: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LibraryFindOutput {
     pub site: String,
     pub workflows: Vec<LibraryCard>,
@@ -140,7 +140,7 @@ pub struct LibraryRunInput {
 
 /// A library run: its batch, and the postcondition checks the page missed.
 /// A miss sets `NEEDS_AGENT`: the run goes back to the planner.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LibraryRunOutput {
     pub workflow: String,
     pub status: SubgoalStatus,
@@ -161,7 +161,7 @@ pub struct LibraryRetireInput {
 }
 
 /// The program a retire took out, as its card read then.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LibraryRetireOutput {
     pub retired: LibraryCard,
 }
@@ -177,7 +177,7 @@ pub struct LibraryRetiredInput {
 
 /// One retired program: the card it had when a retire took it out, when,
 /// and why.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct RetiredCard {
     pub card: LibraryCard,
     pub retired_at: u64,
@@ -186,7 +186,7 @@ pub struct RetiredCard {
 }
 
 /// A site's retired programs, the newest retire first.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 pub struct LibraryRetiredOutput {
     pub site: String,
     pub retired: Vec<RetiredCard>,

@@ -3678,9 +3678,30 @@ class Oneiron:
         def batch(self, spec):
             """Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."""
             return json.loads(_translate(lambda: self._client.self_browser_batch(json.dumps(spec))))
+        @property
+        def library(self) -> "Oneiron._SelfBrowserLibraryVerbs":
+            return Oneiron._SelfBrowserLibraryVerbs(self._client)
         def handover(self, spec):
             """Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."""
             return json.loads(_translate(lambda: self._client.self_browser_handover(json.dumps(spec))))
+    class _SelfBrowserLibraryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def find(self, spec):
+            """The replay library's programs for a site, or for the attached run's open page's site."""
+            return json.loads(_translate(lambda: self._client.self_browser_library_find(json.dumps(spec))))
+        def propose(self, spec):
+            """Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition."""
+            return json.loads(_translate(lambda: self._client.self_browser_library_propose(json.dumps(spec))))
+        def retire(self, spec):
+            """Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."""
+            return json.loads(_translate(lambda: self._client.self_browser_library_retire(json.dumps(spec))))
+        def retired(self, spec):
+            """The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."""
+            return json.loads(_translate(lambda: self._client.self_browser_library_retired(json.dumps(spec))))
+        def run(self, spec):
+            """Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner."""
+            return json.loads(_translate(lambda: self._client.self_browser_library_run(json.dumps(spec))))
     class _SelfAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

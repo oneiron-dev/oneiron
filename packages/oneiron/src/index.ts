@@ -2007,6 +2007,18 @@ export class Oneiron {
       zoom: (input: Facade.LiveRunRequest<Facade.ZoomInput>): Facade.ImageOutput => this.#call(() => this.#client.selfBrowserZoom(input) as Facade.ImageOutput),
       /** Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor. */
       batch: (input: Facade.LiveRunRequest<Facade.BatchInput>): Facade.BatchOutput => this.#call(() => this.#client.selfBrowserBatch(input) as Facade.BatchOutput),
+      library: {
+        /** The replay library's programs for a site, or for the attached run's open page's site. */
+        find: (input: Facade.LiveRunRequest<Facade.LibraryFindInput>): Facade.LibraryFindOutput => this.#call(() => this.#client.selfBrowserLibraryFind(input) as Facade.LibraryFindOutput),
+        /** Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition. */
+        propose: (input: Facade.LiveRunRequest<Facade.ProposeInput>): Facade.ProposeOutput => this.#call(() => this.#client.selfBrowserLibraryPropose(input) as Facade.ProposeOutput),
+        /** Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had. */
+        retire: (input: Facade.LiveRunRequest<Facade.LibraryRetireInput>): Facade.LibraryRetireOutput => this.#call(() => this.#client.selfBrowserLibraryRetire(input) as Facade.LibraryRetireOutput),
+        /** The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why. */
+        retired: (input: Facade.LiveRunRequest<Facade.LibraryRetiredInput>): Facade.LibraryRetiredOutput => this.#call(() => this.#client.selfBrowserLibraryRetired(input) as Facade.LibraryRetiredOutput),
+        /** Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner. */
+        run: (input: Facade.LiveRunRequest<Facade.LibraryRunInput>): Facade.LibraryRunOutput => this.#call(() => this.#client.selfBrowserLibraryRun(input) as Facade.LibraryRunOutput),
+      },
       /** Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record. */
       handover: (input: Facade.LiveRunRequest<Facade.HandoverInput>): Facade.HandoverOutput => this.#call(() => this.#client.selfBrowserHandover(input) as Facade.HandoverOutput),
     },

@@ -561,11 +561,6 @@ pub enum AgentVerb {
     ConnectorCall,
     ConnectorSchema,
     ConnectorCallStatus,
-    SelfBrowserLibraryFind,
-    SelfBrowserLibraryPropose,
-    SelfBrowserLibraryRetire,
-    SelfBrowserLibraryRetired,
-    SelfBrowserLibraryRun,
     SelfDesktopOpen,
     SelfDesktopObserve,
     SelfDesktopFind,
@@ -756,6 +751,11 @@ pub enum AgentVerb {
     SelfBrowserCrop,
     SelfBrowserZoom,
     SelfBrowserBatch,
+    SelfBrowserLibraryFind,
+    SelfBrowserLibraryPropose,
+    SelfBrowserLibraryRetire,
+    SelfBrowserLibraryRetired,
+    SelfBrowserLibraryRun,
     SelfBrowserHandover,
     VaultClaimsSupersede,
     SelfFold,
@@ -1329,11 +1329,6 @@ impl AgentVerb {
         Self::ConnectorCall,
         Self::ConnectorSchema,
         Self::ConnectorCallStatus,
-        Self::SelfBrowserLibraryFind,
-        Self::SelfBrowserLibraryPropose,
-        Self::SelfBrowserLibraryRetire,
-        Self::SelfBrowserLibraryRetired,
-        Self::SelfBrowserLibraryRun,
         Self::SelfDesktopOpen,
         Self::SelfDesktopObserve,
         Self::SelfDesktopFind,
@@ -1524,6 +1519,11 @@ impl AgentVerb {
         Self::SelfBrowserCrop,
         Self::SelfBrowserZoom,
         Self::SelfBrowserBatch,
+        Self::SelfBrowserLibraryFind,
+        Self::SelfBrowserLibraryPropose,
+        Self::SelfBrowserLibraryRetire,
+        Self::SelfBrowserLibraryRetired,
+        Self::SelfBrowserLibraryRun,
         Self::SelfBrowserHandover,
         Self::VaultClaimsSupersede,
         Self::SelfFold,
@@ -2112,11 +2112,6 @@ impl AgentVerb {
             Self::ConnectorCall => "connector.call",
             Self::ConnectorSchema => "connector.schema",
             Self::ConnectorCallStatus => "connector.call_status",
-            Self::SelfBrowserLibraryFind => "self.browser.library.find",
-            Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
-            Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
-            Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
-            Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfDesktopOpen => "self.desktop.open",
             Self::SelfDesktopObserve => "self.desktop.observe",
             Self::SelfDesktopFind => "self.desktop.find",
@@ -2311,6 +2306,11 @@ impl AgentVerb {
             Self::SelfBrowserCrop => "self.browser.crop",
             Self::SelfBrowserZoom => "self.browser.zoom",
             Self::SelfBrowserBatch => "self.browser.batch",
+            Self::SelfBrowserLibraryFind => "self.browser.library.find",
+            Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
+            Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
+            Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
+            Self::SelfBrowserLibraryRun => "self.browser.library.run",
             Self::SelfBrowserHandover => "self.browser.handover",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
@@ -3053,6 +3053,11 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRetired
+                | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
@@ -3068,12 +3073,7 @@ impl AgentVerb {
     pub const fn is_browser(self) -> bool {
         matches!(
             self,
-            Self::SelfBrowserLibraryFind
-                | Self::SelfBrowserLibraryPropose
-                | Self::SelfBrowserLibraryRetire
-                | Self::SelfBrowserLibraryRetired
-                | Self::SelfBrowserLibraryRun
-                | Self::SelfDesktopOpen
+            Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
                 | Self::SelfDesktopFind
                 | Self::SelfDesktopClick
@@ -3107,6 +3107,11 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRetired
+                | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
         )
     }
@@ -3843,6 +3848,11 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRetired
+                | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
@@ -4528,11 +4538,6 @@ impl AgentVerb {
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
                 | Self::ConnectorCallStatus
-                | Self::SelfBrowserLibraryFind
-                | Self::SelfBrowserLibraryPropose
-                | Self::SelfBrowserLibraryRetire
-                | Self::SelfBrowserLibraryRetired
-                | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
                 | Self::SelfDesktopFind
@@ -4695,6 +4700,11 @@ impl AgentVerb {
                 | Self::SelfBrowserCrop
                 | Self::SelfBrowserZoom
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryFind
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRetired
+                | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
@@ -5052,9 +5062,6 @@ impl AgentVerb {
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::ConnectorCall
-                | Self::SelfBrowserLibraryPropose
-                | Self::SelfBrowserLibraryRetire
-                | Self::SelfBrowserLibraryRun
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
                 | Self::SelfDesktopClickAt
@@ -5156,6 +5163,9 @@ impl AgentVerb {
                 | Self::SelfBrowserType
                 | Self::SelfBrowserSelect
                 | Self::SelfBrowserBatch
+                | Self::SelfBrowserLibraryPropose
+                | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRun
                 | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
@@ -5768,11 +5778,6 @@ impl AgentVerb {
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
             Self::ConnectorCallStatus => &["spec"],
-            Self::SelfBrowserLibraryFind => &["spec"],
-            Self::SelfBrowserLibraryPropose => &["spec"],
-            Self::SelfBrowserLibraryRetire => &["spec"],
-            Self::SelfBrowserLibraryRetired => &["spec"],
-            Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
             Self::SelfDesktopFind => &["spec"],
@@ -5963,6 +5968,11 @@ impl AgentVerb {
             Self::SelfBrowserCrop => &["spec"],
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
+            Self::SelfBrowserLibraryRetired => &["spec"],
+            Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
@@ -6537,11 +6547,6 @@ impl AgentVerb {
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
             Self::ConnectorCallStatus => &["spec"],
-            Self::SelfBrowserLibraryFind => &["spec"],
-            Self::SelfBrowserLibraryPropose => &["spec"],
-            Self::SelfBrowserLibraryRetire => &["spec"],
-            Self::SelfBrowserLibraryRetired => &["spec"],
-            Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
             Self::SelfDesktopFind => &["spec"],
@@ -6732,6 +6737,11 @@ impl AgentVerb {
             Self::SelfBrowserCrop => &["spec"],
             Self::SelfBrowserZoom => &["spec"],
             Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserLibraryFind => &["spec"],
+            Self::SelfBrowserLibraryPropose => &["spec"],
+            Self::SelfBrowserLibraryRetire => &["spec"],
+            Self::SelfBrowserLibraryRetired => &["spec"],
+            Self::SelfBrowserLibraryRun => &["spec"],
             Self::SelfBrowserHandover => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
@@ -8345,21 +8355,6 @@ impl AgentVerb {
             Self::ConnectorCallStatus => {
                 "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."
             }
-            Self::SelfBrowserLibraryFind => {
-                "The replay library's programs for a site, or for the open page's site."
-            }
-            Self::SelfBrowserLibraryPropose => {
-                "Offers a solved run's program to the replay library; it joins only once a no-model replay meets its postcondition."
-            }
-            Self::SelfBrowserLibraryRetire => {
-                "Takes a program out of the replay library for every later run, and returns the card it had."
-            }
-            Self::SelfBrowserLibraryRetired => {
-                "The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why."
-            }
-            Self::SelfBrowserLibraryRun => {
-                "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
-            }
             Self::SelfDesktopOpen => {
                 "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
             }
@@ -8909,6 +8904,21 @@ impl AgentVerb {
             Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
             Self::SelfBrowserBatch => {
                 "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
+            }
+            Self::SelfBrowserLibraryFind => {
+                "The replay library's programs for a site, or for the attached run's open page's site."
+            }
+            Self::SelfBrowserLibraryPropose => {
+                "Offers a solved run's program to the replay library of the attached run's browser session; it joins only once a no-model replay meets its postcondition."
+            }
+            Self::SelfBrowserLibraryRetire => {
+                "Takes a program out of the replay library of the attached run's browser session for every later run, and returns the card it had."
+            }
+            Self::SelfBrowserLibraryRetired => {
+                "The programs retires took out of the replay library for a site, or for the attached run's open page's site, the newest first, each with when and why."
+            }
+            Self::SelfBrowserLibraryRun => {
+                "Runs a replay library program live with its arguments in the attached run's browser session; a missed postcondition goes back to the planner."
             }
             Self::SelfBrowserHandover => {
                 "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."

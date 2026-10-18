@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 737 facade rows, 2614 declarations.
-Inputs: 685 of 737 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 662 of 737 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 742 facade rows, 2626 declarations.
+Inputs: 690 of 742 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 665 of 742 fully typed, 77 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -13332,6 +13332,47 @@ class BatchOutput(TypedDict):
     decisions: NotRequired[list[Any]]
     until_ms: NotRequired[int | None]
     next: NotRequired[str | None]
+class LibraryFindInput(TypedDict):
+    site: NotRequired[str | None]
+    subgoal: NotRequired[str | None]
+class LibraryFindOutput(TypedDict):
+    site: str
+    workflows: list[LibraryCard]
+class ProposeInput(TypedDict):
+    subgoal: str
+    params: NotRequired[list[str]]
+    steps: list[BatchStep]
+    postcondition: list[ExpectInput]
+    args: NotRequired[dict[str, str]]
+WorkflowCheck = Literal["solved", "replay"]
+class ProposeOutput(TypedDict):
+    admitted: bool
+    workflow: NotRequired[str | None]
+    refused_by: NotRequired[WorkflowCheck | None]
+    unmet: NotRequired[list[int]]
+    replay: NotRequired[BatchOutput | None]
+class LibraryRetireInput(TypedDict):
+    workflow: str
+    reason: NotRequired[str | None]
+class LibraryRetireOutput(TypedDict):
+    retired: LibraryCard
+class LibraryRetiredInput(TypedDict):
+    site: NotRequired[str | None]
+class RetiredCard(TypedDict):
+    card: LibraryCard
+    retired_at: int
+    reason: NotRequired[str | None]
+class LibraryRetiredOutput(TypedDict):
+    site: str
+    retired: list[RetiredCard]
+class LibraryRunInput(TypedDict):
+    workflow: str
+    args: NotRequired[dict[str, str]]
+class LibraryRunOutput(TypedDict):
+    workflow: str
+    status: SubgoalStatus
+    unmet: NotRequired[list[int]]
+    batch: BatchOutput
 class HandoverInput(TypedDict):
     reason: str
 class HandoverOutput(TypedDict):
