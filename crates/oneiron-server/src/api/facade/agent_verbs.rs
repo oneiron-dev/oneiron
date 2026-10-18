@@ -97,6 +97,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.packs.setup.answer", post(facade_route))
         .route("/vault.packs.setup.verify", post(facade_route))
         .route("/vault.authority.audit", post(facade_route))
+        .route("/vault.authority.history.export", post(facade_route))
+        .route("/vault.authority.history.import", post(facade_route))
         .route("/vault.mesh.path_receipts", post(facade_route))
         .route("/vault.inspection.resolve", post(facade_route))
         .route("/vault.shared.propose_delete", post(facade_route))

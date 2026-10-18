@@ -27,6 +27,7 @@
 pub(super) mod action_routes;
 mod agent_definition_doors;
 mod agent_verbs;
+mod authority_history_doors;
 mod booking_doors;
 mod budget_doors;
 mod call_context;

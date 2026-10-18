@@ -125,6 +125,8 @@ vaultPacksSetupGet(input: unknown): unknown
 vaultPacksSetupAnswer(input: unknown): unknown
 vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
+vaultAuthorityHistoryExport(input: unknown): unknown
+vaultAuthorityHistoryImport(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
