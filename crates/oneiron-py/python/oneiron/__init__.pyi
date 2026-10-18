@@ -1084,7 +1084,18 @@ class Oneiron:
             """An Admin with the add_member power takes back a pending invitation."""
     class _VaultFederationVerbs:
         @property
+        def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs": ...
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs": ...
+    class _VaultFederationCoreferenceVerbs:
+        def link(self, spec: Facade.CoreferenceLinkRequest) -> Facade.CoreferenceLinkReceipt:
+            """The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."""
+        def confirm(self, spec: Facade.CoreferencePairRequest) -> Facade.CoreferenceLinkReceipt:
+            """The owner atomically confirms cross-vault identity without changing either person or their claims."""
+        def share_consent(self, spec: Facade.CoreferenceShareConsentRequest) -> Facade.CoreferenceShareConsentReceipt:
+            """The owner consents to exporting an existing identity link into exactly one named federation pact."""
+        def unlink(self, spec: Facade.CoreferencePairRequest) -> Facade.CoreferenceUnlinkReceipt:
+            """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
     class _VaultFederationConnectVerbs:
         def identity(self, spec: Facade.EmptyRequest) -> Facade.ConnectIdentity:
             """The owner reads this vault identity and the host key used for reciprocal Connect consent."""

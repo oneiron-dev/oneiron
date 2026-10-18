@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 645 code-mode rows (624 host rows, 21 run rows), 2326 declarations.
-// Replies: 567 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 649 code-mode rows (628 host rows, 21 run rows), 2333 declarations.
+// Replies: 571 fully typed, 74 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -731,6 +731,13 @@ declare namespace Sdk {
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
   type SharedActPolicyChangeRequest = { change_id: string };
+  type CoreferenceStatus = "proposed" | "confirmed";
+  type CoreferenceLinkRequest = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus };
+  type CoreferenceLinkReceipt = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus; status_claim: EntityId };
+  type CoreferencePairRequest = { local_person: EntityId; other_person: EntityId };
+  type CoreferenceShareConsentRequest = { local_person: EntityId; other_person: EntityId; pact: string };
+  type CoreferenceShareConsentReceipt = { local_person: EntityId; other_person: EntityId; pact: string; consent_claim: EntityId };
+  type CoreferenceUnlinkReceipt = { local_person: EntityId; other_person: EntityId; unlinked: boolean; retracted_claims: EntityId[]; original_claims_retained: boolean };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -3179,6 +3186,16 @@ declare const vault: Sdk.VaultHost & {
         /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
         offer(input: Sdk.RescopeConnect): Promise<Sdk.RescopeOffer | StoredResult>;
       };
+    };
+    coreference: {
+      /** The owner atomically confirms cross-vault identity without changing either person or their claims. */
+      confirm(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceLinkReceipt | StoredResult>;
+      /** The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads. */
+      link(input: Sdk.CoreferenceLinkRequest): Promise<Sdk.CoreferenceLinkReceipt | StoredResult>;
+      /** The owner consents to exporting an existing identity link into exactly one named federation pact. */
+      share_consent(input: Sdk.CoreferenceShareConsentRequest): Promise<Sdk.CoreferenceShareConsentReceipt | StoredResult>;
+      /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
+      unlink(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceUnlinkReceipt | StoredResult>;
     };
   };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */

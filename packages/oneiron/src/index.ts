@@ -758,6 +758,16 @@ export class Oneiron {
       withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
     federation: {
+      coreference: {
+        /** The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads. */
+        link: (input: Facade.CoreferenceLinkRequest): Facade.CoreferenceLinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceLink(input) as Facade.CoreferenceLinkReceipt),
+        /** The owner atomically confirms cross-vault identity without changing either person or their claims. */
+        confirm: (input: Facade.CoreferencePairRequest): Facade.CoreferenceLinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceConfirm(input) as Facade.CoreferenceLinkReceipt),
+        /** The owner consents to exporting an existing identity link into exactly one named federation pact. */
+        share_consent: (input: Facade.CoreferenceShareConsentRequest): Facade.CoreferenceShareConsentReceipt => this.#call(() => this.#client.vaultFederationCoreferenceShareConsent(input) as Facade.CoreferenceShareConsentReceipt),
+        /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
+        unlink: (input: Facade.CoreferencePairRequest): Facade.CoreferenceUnlinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceUnlink(input) as Facade.CoreferenceUnlinkReceipt),
+      },
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),

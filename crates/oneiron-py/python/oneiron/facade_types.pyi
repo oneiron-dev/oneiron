@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 590 facade rows, 2241 declarations.
-Inputs: 539 of 590 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 522 of 590 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 594 facade rows, 2248 declarations.
+Inputs: 543 of 594 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 526 of 594 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -3659,6 +3659,34 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+CoreferenceStatus = Literal["proposed", "confirmed"]
+class CoreferenceLinkRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+class CoreferenceLinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    status: CoreferenceStatus
+    status_claim: EntityId
+class CoreferencePairRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+class CoreferenceShareConsentRequest(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+class CoreferenceShareConsentReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    pact: str
+    consent_claim: EntityId
+class CoreferenceUnlinkReceipt(TypedDict):
+    local_person: EntityId
+    other_person: EntityId
+    unlinked: bool
+    retracted_claims: list[EntityId]
+    original_claims_retained: bool
 class ConnectIdentity(TypedDict):
     vault: str
     host_key: str

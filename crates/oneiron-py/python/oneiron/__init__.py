@@ -1510,8 +1510,26 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs":
+            return Oneiron._VaultFederationCoreferenceVerbs(self._client)
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs":
             return Oneiron._VaultFederationConnectVerbs(self._client)
+    class _VaultFederationCoreferenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def link(self, spec):
+            """The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_link(json.dumps(spec))))
+        def confirm(self, spec):
+            """The owner atomically confirms cross-vault identity without changing either person or their claims."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_confirm(json.dumps(spec))))
+        def share_consent(self, spec):
+            """The owner consents to exporting an existing identity link into exactly one named federation pact."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_share_consent(json.dumps(spec))))
+        def unlink(self, spec):
+            """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_unlink(json.dumps(spec))))
     class _VaultFederationConnectVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

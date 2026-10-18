@@ -190,6 +190,10 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultFederationCoreferenceLink(input: unknown): unknown
+vaultFederationCoreferenceConfirm(input: unknown): unknown
+vaultFederationCoreferenceShareConsent(input: unknown): unknown
+vaultFederationCoreferenceUnlink(input: unknown): unknown
 vaultFederationConnectIdentity(input: unknown): unknown
 vaultFederationConnectGrantsMint(input: unknown): unknown
 vaultFederationConnectOffer(input: unknown): unknown
