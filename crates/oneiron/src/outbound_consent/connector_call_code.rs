@@ -276,10 +276,13 @@ impl Vault {
         memory: &Memory<'_>,
         outcome: ConnectorCallOutcome,
     ) -> ConnectorCallOutcome {
-        let ConnectorCallOutcome::Held {
-            call_ref, reasons, ..
-        } = &outcome
-        else {
+        let held = match &outcome {
+            ConnectorCallOutcome::Held {
+                call_ref, reasons, ..
+            } => Some((*call_ref, reasons.clone())),
+            _ => None,
+        };
+        let Some((call_ref, reasons)) = held else {
             return outcome;
         };
         let wait = self
@@ -289,7 +292,7 @@ impl Vault {
             .map_err(Error::from)
             .and_then(|txn| {
                 PENDING_CALLS
-                    .get(&self.store, &txn, call_ref)
+                    .get(&self.store, &txn, &call_ref)
                     .map(|row| row.and_then(|row| row.code_consent_wait))
             });
         let wait_id = match wait {
@@ -311,7 +314,7 @@ impl Vault {
                 message = %error.message,
                 "code consent ask not opened; the held-call ask stands in"
             );
-            if let Err(error) = self.queue_connector_call_owner_ask(call_ref, reasons) {
+            if let Err(error) = self.queue_connector_call_owner_ask(&call_ref, &reasons) {
                 tracing::warn!(
                     call_ref = %call_ref.to_hex(),
                     %error,

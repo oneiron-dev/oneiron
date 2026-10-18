@@ -296,8 +296,9 @@ impl CodeWaitReceiptLinks {
         handle.push(
             u8::from(self.word_ref.is_some()) | (u8::from(self.prior_receipt.is_some()) << 1),
         );
+        let word: &[u8; 16] = self.word_ref.as_ref().map_or(&[0; 16], EntityId::as_bytes);
         handle.extend_from_slice(self.wait_id.as_bytes());
-        handle.extend_from_slice(self.word_ref.as_ref().map_or(&[0; 16], EntityId::as_bytes));
+        handle.extend_from_slice(word);
         handle.extend_from_slice(&self.prior_receipt.map_or([0; 16], GateDecisionId::as_bytes));
         handle.extend_from_slice(&self.facts_digest);
         handle
