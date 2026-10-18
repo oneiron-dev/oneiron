@@ -1015,9 +1015,38 @@ export class Oneiron {
     evals: {
       /** The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup. */
       inventory: (input: Facade.EvalInventoryWire): Facade.EvalAuthoringInventory => this.#call(() => this.#client.vaultEvalsInventory(input) as Facade.EvalAuthoringInventory),
-      cohorts: {
+      /** Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only. */
+      cohorts: Object.assign((input: Facade.EvalSeatRequest): Facade.EvalCohortView[] => this.#call(() => this.#client.vaultEvalsCohorts(input) as Facade.EvalCohortView[]), {
         /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */
         setup: (input: Facade.EvalCohortSetup): Facade.EvalAuthoringReport => this.#call(() => this.#client.vaultEvalsCohortsSetup(input) as Facade.EvalAuthoringReport),
+        /** Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse. */
+        open: (input: Facade.EvalCohortOpenRequest): Facade.EvalRelease => this.#call(() => this.#client.vaultEvalsCohortsOpen(input) as Facade.EvalRelease),
+      }),
+      /** Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease. */
+      author_now: (input: Facade.EvalAuthorNowRequest): Facade.EvalAuthoringRef => this.#call(() => this.#client.vaultEvalsAuthorNow(input) as Facade.EvalAuthoringRef),
+      authoring: {
+        /** Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing. */
+        result: (input: Facade.EvalAuthoringRef): Facade.EvalAuthoringResult | null => this.#call(() => this.#client.vaultEvalsAuthoringResult(input) as Facade.EvalAuthoringResult | null),
+      },
+      /** Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels. */
+      families: Object.assign((input: Facade.EvalSeatRequest): Facade.EvalFamilyView[] => this.#call(() => this.#client.vaultEvalsFamilies(input) as Facade.EvalFamilyView[]), {
+        /** Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse. */
+        assign: (input: Facade.EvalFamilyAssignRequest): Facade.SourceFamily => this.#call(() => this.#client.vaultEvalsFamiliesAssign(input) as Facade.SourceFamily),
+      }),
+      /** Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training. */
+      cases: Object.assign((input: Facade.EvalCasesRequest): Facade.EvalCase[] => this.#call(() => this.#client.vaultEvalsCases(input) as Facade.EvalCase[]), {
+        /** Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented. */
+        record: (input: Facade.EvalCaseDraft): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsCasesRecord(input) as Facade.EvalCase),
+      }),
+      /** Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse. */
+      exposure: (input: Facade.EvalCohortRef): Facade.EvalExposureLedger => this.#call(() => this.#client.vaultEvalsExposure(input) as Facade.EvalExposureLedger),
+      /** Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys. */
+      sufficiency: (input: Facade.SufficiencyInput): Facade.SufficiencyCard => this.#call(() => this.#client.vaultEvalsSufficiency(input) as Facade.SufficiencyCard),
+      labels: {
+        /** Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session. */
+        blocked: (input: Facade.EvalBlockedLabelsRequest): Facade.EvalLabelAsk[] => this.#call(() => this.#client.vaultEvalsLabelsBlocked(input) as Facade.EvalLabelAsk[]),
+        /** Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses. */
+        pick: (input: Facade.EvalLabelPickRequest): Facade.EvalCase => this.#call(() => this.#client.vaultEvalsLabelsPick(input) as Facade.EvalCase),
       },
     },
     cleanup: {

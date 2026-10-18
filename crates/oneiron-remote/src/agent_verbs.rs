@@ -880,6 +880,42 @@ impl OneironClient {
                 "vault.evals.cohorts.setup" => remote_agent_verb_output::<
                     oneiron::skill_optimize::EvalAuthoringReport,
                 >(client, verb, &input),
+                "vault.evals.author_now" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::eval_doors::EvalAuthoringRef,
+                >(client, verb, &input),
+                "vault.evals.authoring.result" => remote_agent_verb_output::<
+                    Option<oneiron::skill_optimize::eval_doors::EvalAuthoringResult>,
+                >(client, verb, &input),
+                "vault.evals.families" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_optimize::eval_doors::EvalFamilyView>,
+                >(client, verb, &input),
+                "vault.evals.families.assign" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::SourceFamily,
+                >(client, verb, &input),
+                "vault.evals.cases" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_optimize::EvalCase>,
+                >(client, verb, &input),
+                "vault.evals.cases.record" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalCase,
+                >(client, verb, &input),
+                "vault.evals.cohorts" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_optimize::eval_doors::EvalCohortView>,
+                >(client, verb, &input),
+                "vault.evals.cohorts.open" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalRelease,
+                >(client, verb, &input),
+                "vault.evals.exposure" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::eval_doors::EvalExposureLedger,
+                >(client, verb, &input),
+                "vault.evals.sufficiency" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::SufficiencyCard,
+                >(client, verb, &input),
+                "vault.evals.labels.blocked" => remote_agent_verb_output::<
+                    Vec<oneiron::skill_optimize::EvalLabelAsk>,
+                >(client, verb, &input),
+                "vault.evals.labels.pick" => remote_agent_verb_output::<
+                    oneiron::skill_optimize::EvalCase,
+                >(client, verb, &input),
                 "vault.coach.training_offers" => remote_agent_verb_output::<
                     Vec<oneiron::skill_optimize::offer_doors::OfferView>,
                 >(client, verb, &input),
@@ -5909,6 +5945,150 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.evals.cohorts.setup", value)
+    }
+    pub fn vault_evals_author_now(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalAuthorNowRequest,
+    ) -> Result<oneiron::skill_optimize::eval_doors::EvalAuthoringRef, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.author_now", value)
+    }
+    pub fn vault_evals_authoring_result(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalAuthoringRef,
+    ) -> Result<Option<oneiron::skill_optimize::eval_doors::EvalAuthoringResult>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.authoring.result", value)
+    }
+    pub fn vault_evals_families(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalSeatRequest,
+    ) -> Result<Vec<oneiron::skill_optimize::eval_doors::EvalFamilyView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.families", value)
+    }
+    pub fn vault_evals_families_assign(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalFamilyAssignRequest,
+    ) -> Result<oneiron::skill_optimize::SourceFamily, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.families.assign", value)
+    }
+    pub fn vault_evals_cases(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalCasesRequest,
+    ) -> Result<Vec<oneiron::skill_optimize::EvalCase>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.cases", value)
+    }
+    pub fn vault_evals_cases_record(
+        &self,
+        input: &oneiron::skill_optimize::EvalCaseDraft,
+    ) -> Result<oneiron::skill_optimize::EvalCase, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.cases.record", value)
+    }
+    pub fn vault_evals_cohorts(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalSeatRequest,
+    ) -> Result<Vec<oneiron::skill_optimize::eval_doors::EvalCohortView>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.cohorts", value)
+    }
+    pub fn vault_evals_cohorts_open(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalCohortOpenRequest,
+    ) -> Result<oneiron::skill_optimize::EvalRelease, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.cohorts.open", value)
+    }
+    pub fn vault_evals_exposure(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalCohortRef,
+    ) -> Result<oneiron::skill_optimize::eval_doors::EvalExposureLedger, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.exposure", value)
+    }
+    pub fn vault_evals_sufficiency(
+        &self,
+        input: &oneiron::skill_optimize::SufficiencyInput,
+    ) -> Result<oneiron::skill_optimize::SufficiencyCard, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.sufficiency", value)
+    }
+    pub fn vault_evals_labels_blocked(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalBlockedLabelsRequest,
+    ) -> Result<Vec<oneiron::skill_optimize::EvalLabelAsk>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.labels.blocked", value)
+    }
+    pub fn vault_evals_labels_pick(
+        &self,
+        input: &oneiron::skill_optimize::eval_doors::EvalLabelPickRequest,
+    ) -> Result<oneiron::skill_optimize::EvalCase, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.evals.labels.pick", value)
     }
     pub fn vault_coach_training_offers(
         &self,

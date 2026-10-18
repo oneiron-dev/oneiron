@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 800 facade rows, 2796 declarations.
-Inputs: 748 of 800 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 719 of 800 fully typed, 81 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 812 facade rows, 2822 declarations.
+Inputs: 760 of 812 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 731 of 812 fully typed, 81 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -5556,6 +5556,172 @@ class EvalAuthoringReport(TypedDict):
     cohorts_retired: list[EntityId]
     cohorts_kept: int
     skipped: list[EvalAuthoringSkip]
+class EvalAuthorNowRequest(TypedDict):
+    ...
+class EvalAuthoringRef(TypedDict):
+    attempt: EntityId
+class EvalAuthoringResult(TypedDict):
+    attempt: EntityId
+    state: AttemptState
+    terminal: bool
+    last_error: NotRequired[str | None]
+class EvalSeatRequest(TypedDict):
+    seat: EvalSeat
+class SourceFamily(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    purpose: FamilyPurpose
+    roots: list[str]
+    assigned_at: int
+DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
+class EvalCaseLineage(TypedDict):
+    case: EntityId
+    kind: DerivationKind
+    receipts: list[str]
+    parents: list[EntityId]
+    stratum: NotRequired[str | None]
+    draw_probability: NotRequired[float | None]
+    source_at: int
+    recorded_at: int
+class EvalFamilyView(TypedDict):
+    family: SourceFamily
+    effective_purpose: FamilyPurpose
+    feeds_training: bool
+    rows: list[EvalCaseLineage]
+class EvalFamilyAssignRequest(TypedDict):
+    seat: EvalSeat
+    roots: list[str]
+    purpose: FamilyPurpose
+class EvalCasesRequest(TypedDict):
+    seat: EvalSeat
+    purpose: FamilyPurpose
+class EvalLabel(TypedDict):
+    kind: EvalLabelKind
+    value: str
+    reference: str
+    weight: float
+    at: int
+class EvalCase(TypedDict):
+    id: EntityId
+    family: EntityId
+    seat: EvalSeat
+    kind: DerivationKind
+    receipts: list[str]
+    parents: list[EntityId]
+    stratum: NotRequired[str | None]
+    draw_probability: NotRequired[float | None]
+    source_at: int
+    recorded_at: int
+    labels: list[EvalLabel]
+class EvalCaseDraft(TypedDict):
+    seat: EvalSeat
+    kind: DerivationKind
+    receipts: list[str]
+    parents: list[EntityId]
+    stratum: NotRequired[str | None]
+    draw_probability: NotRequired[float | None]
+    source_at: int
+class CohortRetirement(TypedDict):
+    reason: str
+    skill: EntityId
+    revision: str
+    attempt: EntityId
+    exposure: EvalExposureCounts
+EvalCohort = TypedDict("EvalCohort", {"id": EntityId, "seat": EvalSeat, "from": int, "until": int, "families": list[EntityId], "cases": list[EntityId], "membership_digest": str, "rubric_revision": str, "reference": bool, "cut_at": int, "retired_at": NotRequired[int | None], "retirement": NotRequired[CohortRetirement | None]})
+class EvalCutAuthorSkill(TypedDict):
+    kind: Literal["skill"]
+    attempt: EntityId
+    skill: EntityId
+    revision: str
+class EvalCutAuthorOwner(TypedDict):
+    kind: Literal["owner"]
+    person: EntityId
+EvalCutAuthor = EvalCutAuthorSkill | EvalCutAuthorOwner
+class AuditCase(TypedDict):
+    case: EntityId
+    family: EntityId
+    receipts: list[str]
+    parents: list[EntityId]
+    assigned_purpose: FamilyPurpose
+    effective_purpose: FamilyPurpose
+class AuditMethodPin(TypedDict):
+    name: str
+    revision: int
+    normalizer: str
+    shingle_size: int
+    threshold: float
+class NearCopyFlag(TypedDict):
+    member_case: EntityId
+    other_case: EntityId
+    score: float
+    intersection: int
+    union: int
+class CoverageGap(TypedDict):
+    case: EntityId
+    source: NotRequired[str | None]
+class AuditCoverage(TypedDict):
+    complete: bool
+    gaps: list[CoverageGap]
+class EvalCutAudit(TypedDict):
+    cohort: EntityId
+    seat: EvalSeat
+    cut_at: int
+    rubric_revision: str
+    membership_digest: str
+    author: EvalCutAuthor
+    inventory_digest: str
+    members: list[AuditCase]
+    compared: list[AuditCase]
+    method: AuditMethodPin
+    comparisons: int
+    flags: list[NearCopyFlag]
+    coverage: AuditCoverage
+class EvalCohortView(TypedDict):
+    cohort: EvalCohort
+    exposure: EvalExposureCounts
+    audit: NotRequired[EvalCutAudit | None]
+EvalExposureKind = Literal["candidate", "query", "promotion"]
+class EvalCohortOpenRequest(TypedDict):
+    cohort: EntityId
+    kind: EvalExposureKind
+    consumer: str
+    candidate_pin: NotRequired[str | None]
+class EvalExposure(TypedDict):
+    id: EntityId
+    cohort: EntityId
+    kind: EvalExposureKind
+    consumer: str
+    candidate_pin: NotRequired[str | None]
+    at: int
+class EvalRelease(TypedDict):
+    exposure: EvalExposure
+    cases: list[EvalCase]
+class EvalCohortRef(TypedDict):
+    cohort: EntityId
+class EvalExposureLedger(TypedDict):
+    cohort: EntityId
+    counts: EvalExposureCounts
+    servings: list[EvalExposure]
+class EvalBlockedLabelsRequest(TypedDict):
+    seat: NotRequired[EvalSeat | None]
+    decision: NotRequired[str | None]
+class EvalLabelAsk(TypedDict):
+    id: EntityId
+    seat: EvalSeat
+    case: EntityId
+    decision: str
+    responsible: EntityId
+    option_a: str
+    option_b: str
+    minutes: int
+    asked_at: int
+    delivered_at: NotRequired[int | None]
+    chosen: NotRequired[str | None]
+    answered_at: NotRequired[int | None]
+class EvalLabelPickRequest(TypedDict):
+    decision: str
+    case: EntityId
+    choose_b: bool
 class OfferListRequest(TypedDict):
     seat: NotRequired[EvalSeat | None]
     pending_only: NotRequired[bool]
@@ -5691,14 +5857,6 @@ class OfferCandidateRecord(TypedDict):
 class OfferPilotPrepare(TypedDict):
     candidate: EntityId
     cohort: EntityId
-EvalExposureKind = Literal["candidate", "query", "promotion"]
-class EvalExposure(TypedDict):
-    id: EntityId
-    cohort: EntityId
-    kind: EvalExposureKind
-    consumer: str
-    candidate_pin: NotRequired[str | None]
-    at: int
 class OfferPilotMeasurement(TypedDict):
     sufficiency: SufficiencyInput
     receipt_refs: list[str]
@@ -5718,28 +5876,6 @@ class OfferPilot(TypedDict):
     measurement: NotRequired[OfferPilotMeasurement | None]
     card: NotRequired[SufficiencyCard | None]
     completed_at: NotRequired[int | None]
-DerivationKind = Literal["receipt", "repair", "paraphrase", "summary", "translation", "synthetic", "rubric"]
-class EvalLabel(TypedDict):
-    kind: EvalLabelKind
-    value: str
-    reference: str
-    weight: float
-    at: int
-class EvalCase(TypedDict):
-    id: EntityId
-    family: EntityId
-    seat: EvalSeat
-    kind: DerivationKind
-    receipts: list[str]
-    parents: list[EntityId]
-    stratum: NotRequired[str | None]
-    draw_probability: NotRequired[float | None]
-    source_at: int
-    recorded_at: int
-    labels: list[EvalLabel]
-class EvalRelease(TypedDict):
-    exposure: EvalExposure
-    cases: list[EvalCase]
 class OfferPilotPrepared(TypedDict):
     pilot: OfferPilot
     release: EvalRelease

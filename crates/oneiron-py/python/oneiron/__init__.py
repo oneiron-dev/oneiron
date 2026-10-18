@@ -1974,12 +1974,72 @@ class Oneiron:
         @property
         def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs":
             return Oneiron._VaultEvalsCohortsVerbs(self._client)
+        def author_now(self, spec):
+            """Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease."""
+            return json.loads(_translate(lambda: self._client.vault_evals_author_now(json.dumps(spec))))
+        @property
+        def authoring(self) -> "Oneiron._VaultEvalsAuthoringVerbs":
+            return Oneiron._VaultEvalsAuthoringVerbs(self._client)
+        @property
+        def families(self) -> "Oneiron._VaultEvalsFamiliesVerbs":
+            return Oneiron._VaultEvalsFamiliesVerbs(self._client)
+        @property
+        def cases(self) -> "Oneiron._VaultEvalsCasesVerbs":
+            return Oneiron._VaultEvalsCasesVerbs(self._client)
+        def exposure(self, spec):
+            """Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse."""
+            return json.loads(_translate(lambda: self._client.vault_evals_exposure(json.dumps(spec))))
+        def sufficiency(self, spec):
+            """Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys."""
+            return json.loads(_translate(lambda: self._client.vault_evals_sufficiency(json.dumps(spec))))
+        @property
+        def labels(self) -> "Oneiron._VaultEvalsLabelsVerbs":
+            return Oneiron._VaultEvalsLabelsVerbs(self._client)
     class _VaultEvalsCohortsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def __call__(self, spec):
+            """Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only."""
+            return json.loads(_translate(lambda: self._client.vault_evals_cohorts(json.dumps(spec))))
         def setup(self, spec):
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
             return json.loads(_translate(lambda: self._client.vault_evals_cohorts_setup(json.dumps(spec))))
+        def open(self, spec):
+            """Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse."""
+            return json.loads(_translate(lambda: self._client.vault_evals_cohorts_open(json.dumps(spec))))
+    class _VaultEvalsAuthoringVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def result(self, spec):
+            """Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing."""
+            return json.loads(_translate(lambda: self._client.vault_evals_authoring_result(json.dumps(spec))))
+    class _VaultEvalsFamiliesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels."""
+            return json.loads(_translate(lambda: self._client.vault_evals_families(json.dumps(spec))))
+        def assign(self, spec):
+            """Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse."""
+            return json.loads(_translate(lambda: self._client.vault_evals_families_assign(json.dumps(spec))))
+    class _VaultEvalsCasesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training."""
+            return json.loads(_translate(lambda: self._client.vault_evals_cases(json.dumps(spec))))
+        def record(self, spec):
+            """Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented."""
+            return json.loads(_translate(lambda: self._client.vault_evals_cases_record(json.dumps(spec))))
+    class _VaultEvalsLabelsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def blocked(self, spec):
+            """Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session."""
+            return json.loads(_translate(lambda: self._client.vault_evals_labels_blocked(json.dumps(spec))))
+        def pick(self, spec):
+            """Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses."""
+            return json.loads(_translate(lambda: self._client.vault_evals_labels_pick(json.dumps(spec))))
     class _VaultCleanupVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
