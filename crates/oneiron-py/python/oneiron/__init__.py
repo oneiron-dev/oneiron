@@ -1832,9 +1832,9 @@ class Oneiron:
         def create_child(self, spec):
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
             return json.loads(_translate(lambda: self._client.vault_research_create_child(json.dumps(spec))))
-        def archive(self, spec):
-            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
-            return json.loads(_translate(lambda: self._client.vault_research_archive(json.dumps(spec))))
+        @property
+        def archive(self) -> "Oneiron._VaultResearchArchiveVerbs":
+            return Oneiron._VaultResearchArchiveVerbs(self._client)
         def bind(self, spec):
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
             return json.loads(_translate(lambda: self._client.vault_research_bind(json.dumps(spec))))
@@ -1883,6 +1883,30 @@ class Oneiron:
         def record_benchmark(self, spec):
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
             return json.loads(_translate(lambda: self._client.vault_research_record_benchmark(json.dumps(spec))))
+    class _VaultResearchArchiveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive(json.dumps(spec))))
+        def install(self, spec):
+            """Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_install(json.dumps(spec))))
+        def record(self, spec):
+            """Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_record(json.dumps(spec))))
+        def get(self, spec):
+            """Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_get(json.dumps(spec))))
+        def best(self, spec):
+            """Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_best(json.dumps(spec))))
+        def repropose(self, spec):
+            """Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_repropose(json.dumps(spec))))
+        def coverage(self, spec):
+            """Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive_coverage(json.dumps(spec))))
     class _VaultEvalsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

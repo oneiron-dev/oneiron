@@ -220,6 +220,12 @@ both bindings and their export-census tests in one change.
 - `vault.records.erase_confirm`
 - `vault.research.create_child`
 - `vault.research.archive`
+- `vault.research.archive.install`
+- `vault.research.archive.record`
+- `vault.research.archive.get`
+- `vault.research.archive.best`
+- `vault.research.archive.repropose`
+- `vault.research.archive.coverage`
 - `vault.evals.inventory`
 - `vault.evals.cohorts.setup`
 - `vault.research.bind`
