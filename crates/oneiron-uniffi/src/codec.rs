@@ -982,6 +982,7 @@ impl Lower<engine::RecallScope> for Option<RecallScope> {
                 world_ref: scope.world_ref,
                 facet: scope.facet,
                 kinds: scope.kinds,
+                ..Default::default()
             }),
         )
     }

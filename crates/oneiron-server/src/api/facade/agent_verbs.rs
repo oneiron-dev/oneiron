@@ -39,6 +39,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.claims.upsert", post(facade_route))
         .route("/vault.recall", post(facade_route))
         .route("/vault.export", post(facade_route))
+        .route("/vault.scope.ceiling", post(facade_route))
+        .route("/vault.export.scoped", post(facade_route))
         .route("/vault.receipts", post(facade_route))
         .route("/vault.images.view", post(facade_route))
         .route("/vault.receipts.get", post(facade_route))

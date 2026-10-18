@@ -639,6 +639,7 @@ fn document_item(view: &EntityView) -> MemoryItem {
         },
         world: None,
         facet: None,
+        project_ref: None,
         salience: None,
         reactions: Vec::new(),
         cited_messages: Vec::new(),

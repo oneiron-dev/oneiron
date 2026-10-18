@@ -292,17 +292,13 @@ impl CoreAuth {
         }
         Ok(())
     }
-    /// A door that reads only through the credential's lane, which honours a
-    /// facet narrowing on every row (owner ruling FACET-READ), admits one. Any
-    /// other narrowing, and any record or channel caveat, fails closed as in
-    /// [`Self::require_unrestricted_record_scope`].
+    /// Every record axis is enforced by the credential's own engine read lane.
+    /// A channel caveat still requires its dedicated channel-bound door.
     pub(crate) fn require_lane_record_scope(&self) -> Result<(), ApiError> {
-        let facets = self
-            .verified_slip()
-            .map_or(oneiron::federation::ScopeAxis::All, |proof| {
-                proof.scope().facets.clone()
-            });
-        self.require_record_scope_carried(oneiron::federation::ScopeAxis::All, facets)
+        if self.verified_slip().is_some_and(|proof| !proof.claims().channels.is_empty()) {
+            return Err(ApiError::forbidden_scope("record-scope"));
+        }
+        Ok(())
     }
     /// A write whose records are born at `worlds` and `facets` carries those
     /// two axes of the credential's record bounds and no other. The proof may

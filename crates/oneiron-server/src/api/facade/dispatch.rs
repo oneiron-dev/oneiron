@@ -796,18 +796,19 @@ async fn vault_claims_upsert(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_claim_position(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_born(
         server,
         call,
         actor,
         class,
         "vault.claims.upsert",
         value,
+        position,
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -907,6 +908,50 @@ async fn vault_export(
         value: facade_hooks_post(server, hooks, output).await?,
         rows: Some(rows),
     })
+}
+async fn vault_scope_ceiling(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    facade_scoped_credential(auth)?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.scope.ceiling",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_export_scoped(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    facade_scoped_export_credential(auth)?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.export.scoped",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
 }
 async fn vault_receipts(
     server: &Arc<SyncServer>,
@@ -6438,18 +6483,19 @@ async fn vault_commit(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_claim_position(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_born(
         server,
         call,
         actor,
         class,
         "vault.commit",
         value,
+        position,
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -7718,18 +7764,19 @@ async fn vault_claims_seed(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_claim_position(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(auth)?;
     let producers = oneiron::memory::ProducerRows::default();
-    let output = facade_invoke(
+    let output = facade_invoke_born(
         server,
         call,
         actor,
         class,
         "vault.claims.seed",
         value,
+        position,
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
@@ -8526,6 +8573,8 @@ pub(crate) async fn call_verb(
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
         "vault.recall" => vault_recall(server, call, input).await,
         "vault.export" => vault_export(server, call, input).await,
+        "vault.scope.ceiling" => vault_scope_ceiling(server, call, input).await,
+        "vault.export.scoped" => vault_export_scoped(server, call, input).await,
         "vault.receipts" => vault_receipts(server, call, input).await,
         "vault.images.view" => vault_images_view(server, call, input).await,
         "vault.receipts.get" => vault_receipts_get(server, call, input).await,

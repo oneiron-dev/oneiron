@@ -469,6 +469,12 @@ impl<'a> ContextPackBuilder<'a> {
         self
     }
 
+    /// Selects the project axis with the pipeline's ordinary project filter.
+    pub fn corpus(mut self, scope: crate::corpus::CorpusScope) -> Self {
+        self.pipeline = self.pipeline.corpus(scope);
+        self
+    }
+
     pub fn filter_project_id(mut self, project_id: impl Into<String>) -> Self {
         self.pipeline = self.pipeline.filter_project_id(project_id);
         self

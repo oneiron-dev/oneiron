@@ -168,9 +168,9 @@ export_facade! {
     let output = client.vault_witness(&turn)?;
     Lift::lift(output)
 };
-"vault.claims.upsert" => fn vault_claims_upsert(&self, claim: ClaimInput) -> CommitReceipt = |client| {
-    let claim: oneiron::memory::ClaimInput = claim.lower()?;
-    let output = client.vault_claims_upsert(&claim)?;
+"vault.claims.upsert" => fn vault_claims_upsert(&self, input: ScopedClaimInput) -> CommitReceipt = |client| {
+    let input: oneiron::memory::ScopedClaimInput = crate::codec::lower_record("vault.claims.upsert", input)?;
+    let output = client.vault_claims_upsert(&input)?;
     Lift::lift(output)
 };
 "vault.recall" => fn vault_recall(&self, query: String, effort: Effort, scope: Option<RecallScope>, limit: u32, format: Option<String>, as_of: Option<u64>, deadline_ms: Option<u64>, media: Option<RecallMedia>, query_affect: Option<QueryAffect>) -> MemoryPack = |client| {
@@ -185,6 +185,16 @@ export_facade! {
 "vault.export" => fn vault_export(&self, format: Option<String>) -> MemoryExport = |client| {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
+};
+"vault.scope.ceiling" => fn vault_scope_ceiling(&self) -> CredentialCeiling = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.scope.ceiling")?;
+    let output = client.vault_scope_ceiling(&input)?;
+    crate::codec::lift_record("vault.scope.ceiling", &output)
+};
+"vault.export.scoped" => fn vault_export_scoped(&self, input: ScopedExportRequest) -> ScopedExport = |client| {
+    let input: oneiron::memory::ScopedExportRequest = crate::codec::lower_record("vault.export.scoped", input)?;
+    let output = client.vault_export_scoped(&input)?;
+    crate::codec::lift_record("vault.export.scoped", &output)
 };
 "vault.receipts" => fn vault_receipts(&self, limit: u32, kinds: Option<Vec<String>>) -> Vec<FacadeReceipt> = |client| {
     let limit: usize = limit.lower()?;
@@ -1426,10 +1436,10 @@ export_facade! {
     let output = client.connector_call_status(&input)?;
     crate::codec::lift_record("connector.call_status", &output)
 };
-"vault.commit" => fn vault_commit(&self, claims: Vec<ClaimInput>) -> Vec<CommitOutcome> = |client| {
-    let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
+"vault.commit" => fn vault_commit(&self, input: ScopedCommitRequest) -> Vec<WireCommitOutcome> = |client| {
+    let input: oneiron::memory::ScopedCommitRequest = crate::codec::lower_record("vault.commit", input)?;
     let output = client.vault_commit(&input)?;
-    Lift::lift(output)
+    crate::codec::lift_record("vault.commit", &output)
 };
 "vault.remember" => fn vault_remember(&self, claim: ClaimInput) -> CommitReceipt = |client| {
     let input: oneiron::memory::ClaimInput = claim.lower()?;
@@ -1691,10 +1701,10 @@ export_facade! {
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
 };
-"vault.claims.seed" => fn vault_claims_seed(&self, claims: Vec<ClaimInput>) -> Vec<CommitOutcome> = |client| {
-    let input: oneiron::task_verb::sdk::CommitRequest = claims.lower()?;
+"vault.claims.seed" => fn vault_claims_seed(&self, input: ScopedCommitRequest) -> Vec<WireCommitOutcome> = |client| {
+    let input: oneiron::memory::ScopedCommitRequest = crate::codec::lower_record("vault.claims.seed", input)?;
     let output = client.vault_claims_seed(&input)?;
-    Lift::lift(output)
+    crate::codec::lift_record("vault.claims.seed", &output)
 };
 "vault.channel_identities.provision" => fn vault_channel_identities_provision(&self, input: ChannelIdentityProvisionRequest) -> ChannelIdentityLifecycleReceipt = |client| {
     let input: oneiron::memory::channel_doors::ChannelIdentityProvisionRequest = crate::codec::lower_record("vault.channel_identities.provision", input)?;

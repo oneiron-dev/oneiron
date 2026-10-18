@@ -36,6 +36,8 @@ pub struct ScopedReadActorKey {
     /// The proof's Scope as every read door checks it; see
     /// [`Self::authority_scope`].
     authority: Option<crate::federation::Scope>,
+    /// A host-bound channel on a channel-aware read door, never a grant.
+    pub(super) channel: Option<String>,
     /// Set only on the vault owner's own key; see [`Self::vault_owner`].
     owner: Option<EntityId>,
     /// Set only on a narrower credential of the owner's; see
@@ -346,6 +348,7 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            channel: None,
             owner: None,
             owner_exemption: None,
             room_turn: None,
@@ -380,6 +383,7 @@ impl ScopedReadActorKey {
             unscoped_rows_open: false,
             proof: None,
             authority: None,
+            channel: None,
             owner: Some(owner),
             owner_exemption: None,
             room_turn: None,

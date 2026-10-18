@@ -550,5 +550,6 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
         world_ref: scope.world_ref,
         facet: scope.facet,
         kinds: scope.kinds,
+        ..Default::default()
     })
 }

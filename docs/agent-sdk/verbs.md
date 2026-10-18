@@ -43,6 +43,8 @@ both bindings and their export-census tests in one change.
 - `vault.claims.upsert`
 - `vault.recall`
 - `vault.export`
+- `vault.scope.ceiling`
+- `vault.export.scoped`
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`

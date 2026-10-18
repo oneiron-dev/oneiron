@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 369 facade rows, 1446 declarations.
-Inputs: 326 of 369 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 326 of 369 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 74; unread shapes: 0.
+Census: 371 facade rows, 1465 declarations.
+Inputs: 328 of 371 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 328 of 371 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -1230,16 +1230,23 @@ class WitnessTurn(TypedDict):
     messages: list[WitnessMessage]
     occurred_at: int
     assertions: NotRequired[WitnessAssertions]
-class ClaimInput(TypedDict):
+AllRelationships = Literal["all"]
+ClaimRelationships = AllRelationships | list[str]
+class ClaimScope(TypedDict):
+    world_id: str
+    scope_facet_id: str
+    scope_relationship_id: ClaimRelationships
+    scope_project_id: str
+class ScopedClaimInput(TypedDict):
     id: NotRequired[str | None]
     predicate: str
     subject_ref: str
     value: Any
     confidence: float
     source: str
-    world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
-    scope: NotRequired[Any | None]
+    scope: ClaimScope
+    sensitivity: NotRequired[int | None]
+    evidence_turn_refs: NotRequired[list[str]]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
     occurred_at: NotRequired[int | None]
@@ -1253,8 +1260,23 @@ class CommitReceipt(TypedDict):
     claim: NotRequired[RecordRef | None]
     superseded: NotRequired[RecordRef | None]
 RecallEffort = Literal["light", "medium", "high", "xhigh", "max", "call"]
+class RecallWorldsAll(TypedDict):
+    kind: Literal["all"]
+class RecallWorldsBase(TypedDict):
+    kind: Literal["base"]
+class RecallWorldsWorld(TypedDict):
+    kind: Literal["world"]
+    world_ref: str
+    include_base: bool
+class RecallWorldsWorlds(TypedDict):
+    kind: Literal["worlds"]
+    world_refs: list[str]
+    include_base: bool
+RecallWorlds = RecallWorldsAll | RecallWorldsBase | RecallWorldsWorld | RecallWorldsWorlds
 class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
+    worlds: NotRequired[RecallWorlds | None]
+    project_refs: NotRequired[list[str]]
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
 MediaQueryKind = Literal["text", "image", "audio"]
@@ -1296,6 +1318,7 @@ class MemoryItem(TypedDict):
     provenance: MemoryProvenance
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
+    project_ref: NotRequired[str | None]
     salience: NotRequired[float | None]
     reactions: NotRequired[list[str]]
     cited_messages: NotRequired[list[CitedMessage]]
@@ -1364,6 +1387,107 @@ class MemoryExport(TypedDict):
     format: str
     archive: str
     digest: str
+class ScopeAxisBottom(TypedDict):
+    kind: Literal["bottom"]
+class ScopeAxisAll(TypedDict):
+    kind: Literal["all"]
+class ScopeAxisSome(TypedDict, Generic[T]):
+    kind: Literal["some"]
+    values: list[T]
+ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
+ScopeId = str
+Sensitivity = Literal["public", "private", "sensitive", "restricted"]
+class SensitivityCeilingBottom(TypedDict):
+    kind: Literal["bottom"]
+class SensitivityCeilingAtMost(TypedDict):
+    kind: Literal["at_most"]
+    value: Sensitivity
+SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAtMost
+class Scope(TypedDict):
+    worlds: NotRequired[ScopeAxis[ScopeId]]
+    facets: NotRequired[ScopeAxis[ScopeId]]
+    bands: NotRequired[ScopeAxis[int]]
+    audience: NotRequired[ScopeAxis[ScopeId]]
+    verbs: NotRequired[ScopeAxis[str]]
+    sensitivity: NotRequired[SensitivityCeiling]
+class CredentialCeiling(TypedDict):
+    kind: Literal["ceiling"]
+    scope: Scope
+class RecordSelector(TypedDict):
+    worlds: NotRequired[RecallWorlds | None]
+    facet_refs: NotRequired[list[str]]
+    kinds: NotRequired[list[str]]
+    project_refs: NotRequired[list[str]]
+class ScopeAxisInputBottom(TypedDict):
+    kind: Literal["bottom"]
+class ScopeAxisInputAll(TypedDict):
+    kind: Literal["all"]
+class ScopeAxisInputSome(TypedDict, Generic[T]):
+    kind: Literal["some"]
+    values: list[T]
+ScopeAxisInput = ScopeAxisInputBottom | ScopeAxisInputAll | ScopeAxisInputSome[T]
+ScopeSensitivityBand = Literal["public", "private", "sensitive", "restricted"]
+class ScopeSensitivityInputBottom(TypedDict):
+    kind: Literal["bottom"]
+class ScopeSensitivityInputAtMost(TypedDict):
+    kind: Literal["at_most"]
+    value: ScopeSensitivityBand
+ScopeSensitivityInput = ScopeSensitivityInputBottom | ScopeSensitivityInputAtMost
+class ChannelCeiling(TypedDict):
+    worlds: NotRequired[ScopeAxisInput[str]]
+    facets: NotRequired[ScopeAxisInput[str]]
+    bands: NotRequired[ScopeAxisInput[int]]
+    audience: NotRequired[ScopeAxisInput[str]]
+    verbs: NotRequired[ScopeAxisInput[str]]
+    sensitivity: NotRequired[ScopeSensitivityInput]
+class ExportChannel(TypedDict):
+    channel_ref: str
+    scope: ChannelCeiling
+class ScopedExportRequest(TypedDict):
+    selector: RecordSelector
+    channel: ExportChannel
+class RecordPosition(TypedDict):
+    kind: Literal["position"]
+    scope: Scope
+MadeByInputRole = Literal["input", "prompt"]
+class MadeByInput(TypedDict):
+    row: str
+    role: MadeByInputRole
+MadeByClass = Literal["stated", "concluded"]
+MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
+class MadeByTriggerTask(TypedDict):
+    task: str
+class MadeByTriggerAsk(TypedDict):
+    ask: str
+class MadeByTriggerRun(TypedDict):
+    run: str
+class MadeByTriggerSkill(TypedDict):
+    skill: str
+MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
+class MadeBy(TypedDict):
+    inputs: list[MadeByInput]
+    process: MadeByProcess
+    at: int
+    trigger: NotRequired[MadeByTrigger | None]
+WithheldRole = Literal["input", "prompt", "trigger"]
+class WithheldRef(TypedDict):
+    handle: str
+    role: WithheldRole
+class RowBirth(TypedDict):
+    made_by: MadeBy
+    content_hash: str
+    withheld: NotRequired[list[WithheldRef]]
+class ScopedExportRecord(TypedDict):
+    record: RecordRef
+    position: RecordPosition
+    bytes: list[int]
+    birth: NotRequired[RowBirth | None]
+class ScopedExport(TypedDict):
+    selector: RecordSelector
+    credential: CredentialCeiling
+    channel: ExportChannel
+    applied: Scope
+    records: list[ScopedExportRecord]
 class VaultReceiptsRequest(TypedDict):
     limit: NotRequired[int | None]
     kinds: NotRequired[list[str]]
@@ -1562,6 +1686,8 @@ class ClaimView(TypedDict):
     source: NotRequired[str | None]
     world_ref: NotRequired[str | None]
     scope: NotRequired[Any | None]
+    claim_scope: ClaimScope
+    made_by: NotRequired[MadeBy | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
     salience: NotRequired[float | None]
@@ -2466,6 +2592,7 @@ class EntityView(TypedDict):
     occurred_end: int
     learned_at: int
     body: NotRequired[Any | None]
+    made_by: NotRequired[MadeBy | None]
 class InspectionResolved(TypedDict):
     state: InspectionState
     handle: InspectionHandle
@@ -3977,29 +4104,6 @@ class LensDefaultRequest(TypedDict):
 class ScopedReadResult(TypedDict, Generic[T]):
     value: T
     narrowing: ScopedReadReceipt
-class ScopeAxisBottom(TypedDict):
-    kind: Literal["bottom"]
-class ScopeAxisAll(TypedDict):
-    kind: Literal["all"]
-class ScopeAxisSome(TypedDict, Generic[T]):
-    kind: Literal["some"]
-    values: list[T]
-ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
-ScopeId = str
-Sensitivity = Literal["public", "private", "sensitive", "restricted"]
-class SensitivityCeilingBottom(TypedDict):
-    kind: Literal["bottom"]
-class SensitivityCeilingAtMost(TypedDict):
-    kind: Literal["at_most"]
-    value: Sensitivity
-SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAtMost
-class Scope(TypedDict):
-    worlds: NotRequired[ScopeAxis[ScopeId]]
-    facets: NotRequired[ScopeAxis[ScopeId]]
-    bands: NotRequired[ScopeAxis[int]]
-    audience: NotRequired[ScopeAxis[ScopeId]]
-    verbs: NotRequired[ScopeAxis[str]]
-    sensitivity: NotRequired[SensitivityCeiling]
 class DisclosureOfferRequest(TypedDict):
     contact: str
     scope: Scope
@@ -4107,26 +4211,6 @@ class HooksReplayRequest(TypedDict):
 class ArtifactRefRequest(TypedDict):
     artifact_ref: str
 ArtifactKind = Literal["document", "sheet", "deck", "code", "canvas", "image", "file"]
-MadeByInputRole = Literal["input", "prompt"]
-class MadeByInput(TypedDict):
-    row: str
-    role: MadeByInputRole
-MadeByClass = Literal["stated", "concluded"]
-MadeByProcess = TypedDict("MadeByProcess", {"actor": str, "class": MadeByClass, "identity": str, "version": str, "params_hash": str})
-class MadeByTriggerTask(TypedDict):
-    task: str
-class MadeByTriggerAsk(TypedDict):
-    ask: str
-class MadeByTriggerRun(TypedDict):
-    run: str
-class MadeByTriggerSkill(TypedDict):
-    skill: str
-MadeByTrigger = MadeByTriggerTask | MadeByTriggerAsk | MadeByTriggerRun | MadeByTriggerSkill
-class MadeBy(TypedDict):
-    inputs: list[MadeByInput]
-    process: MadeByProcess
-    at: int
-    trigger: NotRequired[MadeByTrigger | None]
 class BornFromSourceTrigger(TypedDict):
     trigger: MadeByTrigger
 class BornFromSourceAgentRun(TypedDict):
@@ -5859,8 +5943,8 @@ class ConnectorCallStatusSettled(TypedDict):
     tool: str
     reply: ConnectorCallReply
 ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled
-class CommitRequest(TypedDict):
-    claims: list[ClaimInput]
+class ScopedCommitRequest(TypedDict):
+    claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
 class RecordRefusal(TypedDict):
     reason: RefusalReason
@@ -5875,6 +5959,21 @@ class CommitOutcomeRefused(TypedDict):
     refusal: RecordRefusal
     receipt_ref: NotRequired[str | None]
 CommitOutcome = CommitOutcomeLanded | CommitOutcomeRefused
+class ClaimInput(TypedDict):
+    id: NotRequired[str | None]
+    predicate: str
+    subject_ref: str
+    value: Any
+    confidence: float
+    source: str
+    world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[str | None]
+    scope: NotRequired[Any | None]
+    valid_from: NotRequired[int | None]
+    valid_to: NotRequired[int | None]
+    occurred_at: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    salience: NotRequired[float | None]
 class ClaimRefRequest(TypedDict):
     claim_ref: str
 class ForgetPredicateRequest(TypedDict):

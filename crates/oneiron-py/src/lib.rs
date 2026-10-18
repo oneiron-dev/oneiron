@@ -540,10 +540,10 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
-    fn vault_claims_upsert(&self, py: Python<'_>, claim_json: &str) -> PyResult<String> {
-        let claim_json: ClaimInput = decode(claim_json, "claim")?;
+    fn vault_claims_upsert(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.claims.upsert")?;
         let output = py
-            .detach(|| self.inner.vault_claims_upsert(&claim_json))
+            .detach(|| self.inner.agent_verb("vault.claims.upsert", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -600,6 +600,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.export")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.export", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_scope_ceiling(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.scope.ceiling")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.scope.ceiling", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_export_scoped(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.export.scoped")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.export.scoped", input))
             .map_err(raise)?;
         encode(&output)
     }

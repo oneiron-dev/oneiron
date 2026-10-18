@@ -342,8 +342,8 @@ export class Oneiron {
    */
     witness: (turn: WitnessTurn): WitnessReceipt => this.#call(() => this.#client.vaultWitness(turn)),
     claims: {
-      /** Upserts one claim. The consent gate, not this call, decides approval. */
-      upsert: (claim: ClaimInput): CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(claim)),
+      /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
+      upsert: (input: Facade.ScopedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(input) as Facade.CommitReceipt),
       /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
       /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */
@@ -353,7 +353,7 @@ export class Oneiron {
       /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
       admit: (input: Facade.AdmitImportedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsAdmit(input) as Facade.CommitReceipt),
       /** Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt. */
-      seed: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
+      seed: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultClaimsSeed(input) as Facade.CommitOutcome[]),
     },
     /**
    * Recalls a memory pack.
@@ -372,7 +372,14 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
-    export: (format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport),
+    export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
+      /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
+      scoped: (input: Facade.ScopedExportRequest): Facade.ScopedExport => this.#call(() => this.#client.vaultExportScoped(input) as Facade.ScopedExport),
+    }),
+    scope: {
+      /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
+      ceiling: (input: Facade.EmptyRequest = {}): Facade.CredentialCeiling => this.#call(() => this.#client.vaultScopeCeiling(input) as Facade.CredentialCeiling),
+    },
     /** Governance receipts, newest first: the gate decision ledger, or the receipts of the named kinds. */
     receipts: Object.assign((limit: number = 100, kinds?: string[]): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit, kinds)), {
       /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
@@ -1004,7 +1011,7 @@ export class Oneiron {
       },
     },
     /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
-    commit: (input: Facade.CommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
+    commit: (input: Facade.ScopedCommitRequest): Facade.CommitOutcome[] => this.#call(() => this.#client.vaultCommit(input) as Facade.CommitOutcome[]),
     /** Commits one claim through the gate, the same as vault.claims.upsert. */
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
