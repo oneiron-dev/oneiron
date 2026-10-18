@@ -1309,6 +1309,12 @@ impl OneironClient {
                 "vault.habits.checkin" => remote_agent_verb_output::<
                     oneiron::memory::EntityRefReceipt,
                 >(client, verb, &input),
+                "vault.productivity.create" => remote_agent_verb_output::<
+                    oneiron::memory::EntityRefReceipt,
+                >(client, verb, &input),
+                "vault.productivity.tree" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::memory::ProductivityTree>>,
+                >(client, verb, &input),
                 "vault.claims.admit" => {
                     remote_agent_verb_output::<oneiron::memory::CommitReceipt>(client, verb, &input)
                 }
@@ -6721,6 +6727,33 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.habits.checkin", value)
+    }
+    pub fn vault_productivity_create(
+        &self,
+        input: &oneiron::memory::ProductivityCreateRequest,
+    ) -> Result<oneiron::memory::EntityRefReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.productivity.create", value)
+    }
+    pub fn vault_productivity_tree(
+        &self,
+        input: &oneiron::memory::ProductivityTreeRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<Option<oneiron::memory::ProductivityTree>>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.productivity.tree", value)
     }
     pub fn vault_claims_admit(
         &self,

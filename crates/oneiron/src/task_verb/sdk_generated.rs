@@ -2356,6 +2356,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::HabitCheckinInput>(),
             ),
             (
+                "vault.productivity.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::ProductivityCreateRequest,
+                >(),
+            ),
+            (
+                "vault.productivity.tree",
+                crate::code_run::vault_read::request_schema::<crate::memory::ProductivityTreeRequest>(
+                ),
+            ),
+            (
                 "vault.claims.admit",
                 crate::code_run::vault_read::request_schema::<crate::memory::AdmitImportedClaimInput>(
                 ),
@@ -3025,6 +3036,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.search",
     "vault.calendar.freebusy",
     "vault.search.hybrid",
+    "vault.productivity.create",
+    "vault.productivity.tree",
     "vault.consolidation.promote",
     "vault.claims.vet",
     "vault.claims.vetting",
@@ -3424,6 +3437,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
+        >(),
+        "vault.productivity.create" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
+        "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
@@ -6490,6 +6509,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.productivity.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.productivity.tree" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.admit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8583,6 +8616,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.habits.checkin" => {
             let _input: crate::memory::HabitCheckinInput = decode(value.clone())?;
         }
+        "vault.productivity.create" => {
+            let _input: crate::memory::ProductivityCreateRequest = decode(value.clone())?;
+        }
+        "vault.productivity.tree" => {
+            let _input: crate::memory::ProductivityTreeRequest = decode(value.clone())?;
+        }
         "vault.claims.admit" => {
             let _input: crate::memory::AdmitImportedClaimInput = decode(value.clone())?;
         }
@@ -9573,6 +9612,8 @@ pub fn invoke(
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
         "vault.habits.checkin" => encode(vault_habits_checkin(memory, decode(value)?)?),
+        "vault.productivity.create" => encode(vault_productivity_create(memory, decode(value)?)?),
+        "vault.productivity.tree" => encode(vault_productivity_tree(memory, decode(value)?)?),
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
         "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
@@ -13524,6 +13565,24 @@ pub fn vault_habits_checkin(
         &["/habit_ref"],
     )?;
     memory.put_habit_checkin(&input)
+}
+pub fn vault_productivity_create(
+    memory: &Memory<'_>,
+    input: crate::memory::ProductivityCreateRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.productivity.create",
+        &input,
+        &["/parent_ref"],
+    )?;
+    memory.productivity_create(&input)
+}
+pub fn vault_productivity_tree(
+    memory: &Memory<'_>,
+    input: crate::memory::ProductivityTreeRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>> {
+    memory.productivity_tree(&input)
 }
 pub fn vault_claims_admit(
     memory: &Memory<'_>,

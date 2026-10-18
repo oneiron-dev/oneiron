@@ -1364,6 +1364,12 @@ export class Oneiron {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
     },
+    productivity: {
+      /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
+      create: (input: Facade.ProductivityCreateRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultProductivityCreate(input) as Facade.EntityRefReceipt),
+      /** The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters. */
+      tree: (input: Facade.ProductivityTreeRequest): Facade.ScopedReadResult<Facade.ProductivityTree | null> => this.#call(() => this.#client.vaultProductivityTree(input) as Facade.ScopedReadResult<Facade.ProductivityTree | null>),
+    },
     esign: {
       /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
       create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),

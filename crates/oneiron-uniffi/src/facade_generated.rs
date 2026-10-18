@@ -2071,6 +2071,16 @@ export_facade! {
     let output = client.vault_habits_checkin(&input)?;
     Lift::lift(output)
 };
+"vault.productivity.create" => fn vault_productivity_create(&self, input: ProductivityCreateRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::memory::ProductivityCreateRequest = crate::codec::lower_record("vault.productivity.create", input)?;
+    let output = client.vault_productivity_create(&input)?;
+    Lift::lift(output)
+};
+"vault.productivity.tree" => fn vault_productivity_tree(&self, input: ProductivityTreeRequest) -> ScopedReadResultOptionalProductivityTree = |client| {
+    let input: oneiron::memory::ProductivityTreeRequest = crate::codec::lower_record("vault.productivity.tree", input)?;
+    let output = client.vault_productivity_tree(&input)?;
+    crate::codec::lift_record("vault.productivity.tree", &output)
+};
 "vault.claims.admit" => fn vault_claims_admit(&self, input: AdmitImportedClaimInput) -> CommitReceipt = |client| {
     let input: oneiron::memory::AdmitImportedClaimInput = input.lower()?;
     let output = client.vault_claims_admit(&input)?;

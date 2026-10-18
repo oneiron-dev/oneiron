@@ -7247,6 +7247,36 @@
       }
     },
     {
+      "name": "vault.productivity.create",
+      "description": "Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write.",
+      "refs": [
+        "/parent_ref"
+      ],
+      "input": "crate::memory::ProductivityCreateRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.productivity_create(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.productivity.tree",
+      "description": "The role-labelled TASK tree under one root, read through the caller's lane, with each Habit's derived streak counters.",
+      "input": "crate::memory::ProductivityTreeRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>",
+      "call": "memory.productivity_tree(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "section": false,
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.claims.admit",
       "description": "Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides.",
       "refs": [

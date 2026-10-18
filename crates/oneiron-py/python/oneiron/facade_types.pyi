@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 502 facade rows, 1878 declarations.
-Inputs: 452 of 502 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 446 of 502 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 504 facade rows, 1884 declarations.
+Inputs: 454 of 504 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 448 of 504 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -7767,6 +7767,27 @@ class HabitCheckinInput(TypedDict):
     data: NotRequired[Any | None]
     occurred_at: int
     learned_at: NotRequired[int | None]
+ProductivityCreateRole = Literal["goal", "milestone", "habit"]
+class ProductivityCreateRequest(TypedDict):
+    role: ProductivityCreateRole
+    label: str
+    parent_ref: NotRequired[str | None]
+class ProductivityTreeRequest(TypedDict):
+    root_ref: str
+    max_depth: int
+ProductivityRole = Literal["task", "goal", "milestone", "habit", "habit_checkin"]
+class ProductivityNode(TypedDict):
+    task_ref: str
+    id_hex: str
+    parent_ref: NotRequired[str | None]
+    depth: int
+    role: ProductivityRole
+    label: NotRequired[str | None]
+    current_streak: NotRequired[int | None]
+    longest_streak: NotRequired[int | None]
+class ProductivityTree(TypedDict):
+    root_ref: str
+    nodes: list[ProductivityNode]
 class AdmitImportedClaimInput(TypedDict):
     source_id: str
     source_record_id: str
