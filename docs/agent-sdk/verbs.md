@@ -7,6 +7,11 @@ Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
 - `report`
+- `feedback.preview`
+- `feedback.send`
+- `vault.reports.disclosure`
+- `vault.reports.route`
+- `vault.reports.outbound`
 - `self.focus.scratchpad.recall`
 - `self.focus.scratchpad.append`
 - `self.focus.scratchpad.seal`
