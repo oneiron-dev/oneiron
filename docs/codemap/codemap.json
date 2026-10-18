@@ -16815,7 +16815,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 65,
+      "fn": 66,
       "struct": 1
      }
     },
@@ -33052,6 +33052,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/hyde_host.rs",
+     "purpose": "Stable authority key for a host expansion's pending work, without storing credentials",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -39753,9 +39763,36 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 1,
+      "fn": 3,
+      "mod": 1,
       "struct": 6,
-      "trait": 1
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HydeHostAnswer",
+      "HydeHostCandidate",
+      "HydeHostCompleteRequest",
+      "HydeHostConfig",
+      "HydeHostConfiguration",
+      "HydeHostConfigureRequest",
+      "HydeHostInput",
+      "HydeHostPendingRequest",
+      "HydeHostReceipt",
+      "HydeHostReceiptRequest",
+      "HydeHostStatus",
+      "HydeHostWork"
+     ],
+     "path": "src/query_expansion/host.rs",
+     "purpose": "Typed transport for a host that implements the HyDE expansion seam",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 9
      }
     },
     {
@@ -51518,7 +51555,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecallDoor"
@@ -52148,7 +52185,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 867
+      "fn": 872
      }
     },
     {
@@ -58987,7 +59024,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 196,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59176,10 +59213,10 @@
      "purpose": "PsychProfile snapshot record substrate"
     },
     "query_expansion": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
@@ -59668,7 +59705,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3641,
+   "source_files": 3643,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68212,7 +68249,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 836
+      "fn": 841
      }
     },
     {
@@ -69274,7 +69311,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 837
+      "fn": 842
      }
     },
     {
@@ -72737,7 +72774,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 141
+      "crate-vis": 142
      }
     },
     {
@@ -72758,6 +72795,16 @@
      "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
      "surface": {
       "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hyde_doors.rs",
+     "purpose": "Typed host configuration, work and completion receipts for HydeExpander",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -79740,6 +79787,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/recall_hyde.rs",
+     "purpose": "A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
@@ -80607,7 +80664,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 405,
+     "files": 406,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80964,7 +81021,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81036,7 +81093,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 751,
+   "source_files": 753,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82152,6 +82209,7 @@
       "EvidenceKind",
       "EvidenceRef",
       "EvidenceRow",
+      "EvidenceVerdict",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectInput",
@@ -82308,6 +82366,7 @@
       "GraphAskSelection",
       "GraphEdge",
       "GraphNode",
+      "GroundingContext",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
       "GuestDocumentContext",
@@ -82399,6 +82458,21 @@
       "HybridSearchHit",
       "HybridSearchRequest",
       "HybridTemporalQuery",
+      "HydeExpansion",
+      "HydeHostAnswer",
+      "HydeHostCandidate",
+      "HydeHostCompleteRequest",
+      "HydeHostConfig",
+      "HydeHostConfiguration",
+      "HydeHostConfigureRequest",
+      "HydeHostInput",
+      "HydeHostPendingRequest",
+      "HydeHostReceipt",
+      "HydeHostReceiptRequest",
+      "HydeHostStatus",
+      "HydeHostWork",
+      "HydeOptions",
+      "HydeRequest",
       "IdMarks",
       "IdentityActNow",
       "IdentityActNowRequest",
@@ -84090,8 +84164,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 698,
-      "struct": 2158
+      "enum": 702,
+      "struct": 2171
      }
     },
     {
