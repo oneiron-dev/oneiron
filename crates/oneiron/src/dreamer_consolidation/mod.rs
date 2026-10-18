@@ -72,6 +72,7 @@ mod weave_lens;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
 pub use executor::*;
 pub use gap::*;

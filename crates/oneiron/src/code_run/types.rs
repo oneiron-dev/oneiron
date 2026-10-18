@@ -573,7 +573,9 @@ pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
 ///
 /// The door binds `invocation`, the call's step's id, as the logical verb
 /// the row's verb hooks fire once for (ARCH-0080 §3). The outer `Err` is
-/// only a hook's stop (`Error::VerbHook`); every refusal is the inner one.
+/// a hook's stop (`Error::VerbHook`) or a model call no provider answered
+/// (`Error::ProviderUnavailable`, FIX 3194), which the run parks on; every
+/// refusal is the inner one.
 pub trait AgentVerbDoor: Send + Sync {
     fn call(
         &self,

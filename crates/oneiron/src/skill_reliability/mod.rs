@@ -34,7 +34,7 @@ pub use self::ledger::{
 };
 pub(crate) use self::ledger::{
     attributed_outcome_receipts, attributed_outcome_results, attributed_outcomes_weighted,
-    mark_displaced_outcome_in_txn,
+    mark_displaced_outcome_in_txn, record_skill_settled_loss,
 };
 pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
@@ -44,6 +44,7 @@ pub use self::projector::{
     SKILL_OUTCOME_AXIS, project_skill_reliability, project_skill_reliability_for,
     project_skill_reliability_for_executor,
 };
+pub(crate) use self::provenance::skill_reliability_sources;
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,

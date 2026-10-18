@@ -138,6 +138,13 @@ pub enum McpCodeExecutionError {
     RunBinding(String),
     #[error("execute_code run failed: {0}")]
     Run(String),
+    /// A model call no provider answered stopped the run (FIX 3194): its
+    /// step is kept, and the same `run_ref` enters it again from its next
+    /// step once `retry_after` seconds have passed.
+    #[error(
+        "execute_code run stopped: no provider answered a model call; call again with the same run_ref in {retry_after} s"
+    )]
+    ProviderUnavailable { retry_after: u64 },
 }
 
 impl McpCodeExecutionError {
@@ -150,6 +157,7 @@ impl McpCodeExecutionError {
             Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
+            Self::ProviderUnavailable { .. } => "model_unavailable",
         }
     }
 }
@@ -544,10 +552,13 @@ fn run_engine_native_code_mode(
         None,
         seat.as_ref(),
     )
-    .map_err(|error| match error {
-        EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
-        EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
-        EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
+    .map_err(|error| match error.provider_outage() {
+        Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
+        None => match error {
+            EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
+            EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
+            EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
+        },
     })
 }
 
@@ -571,6 +582,17 @@ impl EngineRunError {
             _ => None,
         }
     }
+
+    /// The seconds until a host door's model call that no provider answered
+    /// may be sent again, when that outage is why the run stopped (FIX 3194).
+    pub(crate) fn provider_outage(&self) -> Option<u64> {
+        match self {
+            Self::Run(oneiron::engine_executor::EngineExecutorError::Engine(
+                oneiron::Error::ProviderUnavailable { retry_after },
+            )) => Some(*retry_after),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for EngineRunError {
@@ -590,6 +612,33 @@ impl From<String> for EngineRunError {
     }
 }
 
+/// The meter one entry of a run that spends under a scope makes its model
+/// calls on (OF-533): a guard that scope bounds, opened by the entry's host so
+/// the run's other calls (its `ai.speech`, FIX 3194) spend on the same one,
+/// and the payer a room-paid scope bills (OF-531).
+pub(crate) struct ScopeMeter<'a> {
+    pub(crate) scope: &'a SpendScopeId,
+    pub(crate) guard: BudgetGuard,
+    pub(crate) payer: Option<PayerPerson>,
+}
+
+impl<'a> ScopeMeter<'a> {
+    /// Opens `scope`'s meter for one entry: its guard's limit is what the
+    /// scope may still spend.
+    pub(crate) fn open(vault: &Vault, scope: &'a SpendScopeId) -> Result<Self, EngineRunError> {
+        // A room-paid scope's calls bill its root payer (OF-531), else it holds.
+        let payer = scope_funding(vault, Some(scope), false).map_err(EngineRunError::Payer)?;
+        let guard = AgentDispatcher::new(vault)
+            .guard_for_scope(scope)
+            .map_err(|error| EngineRunError::Binding(error.to_string()))?;
+        Ok(Self {
+            scope,
+            guard,
+            payer,
+        })
+    }
+}
+
 /// One entry of an engine-native run through `bound`, the write door its
 /// host bound: `execute_code`'s credential-gated door, or a leased attempt's
 /// own dispatcher. A manifest-backed run runs on `seat`, the model seat its
@@ -597,9 +646,9 @@ impl From<String> for EngineRunError {
 /// model.
 ///
 /// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
-/// makes its model calls on a meter that scope bounds, and what they used is
-/// booked on the scope once the entry ends, whatever it answered. With none,
-/// the calls run on the provider's own meter.
+/// makes its model calls on the meter its host opened for the entry, and
+/// what that meter used is booked on the scope once the entry ends, whatever
+/// it answered. With none, the calls run on the provider's own meter.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn enter_engine_native_run(
     vault: &Vault,
@@ -608,11 +657,15 @@ pub(crate) fn enter_engine_native_run(
     config: &EngineExecutorConfig,
     compaction: Option<&mut RunCompaction>,
     reactor: &tokio::runtime::Runtime,
-    spend: Option<&SpendScopeId>,
+    spend: Option<ScopeMeter<'_>>,
     seat: Option<&ModelSeat>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let binding = |error: oneiron::Error| EngineRunError::Binding(error.to_string());
-    let Some(scope) = spend else {
+    let Some(ScopeMeter {
+        scope,
+        guard,
+        payer,
+    }) = spend
+    else {
         return enter_on(
             vault,
             provider,
@@ -624,10 +677,6 @@ pub(crate) fn enter_engine_native_run(
             seat,
         );
     };
-    // A room-paid scope's calls bill its root payer (OF-531), else it holds.
-    let payer = scope_funding(vault, Some(scope), false).map_err(EngineRunError::Payer)?;
-    let dispatcher = AgentDispatcher::new(vault);
-    let guard = dispatcher.guard_for_scope(scope).map_err(binding)?;
     // The backend a reader child's calls take, on this scope's guard.
     let backend = provider.reader_backend(guard.clone(), payer);
     let backend = backend.ok_or_else(|| {
@@ -643,9 +692,9 @@ pub(crate) fn enter_engine_native_run(
         reactor,
         seat,
     );
-    dispatcher
+    AgentDispatcher::new(vault)
         .record_guard_spend(scope, guard.read().used_units)
-        .map_err(binding)?;
+        .map_err(|error| EngineRunError::Binding(error.to_string()))?;
     entered
 }
 
