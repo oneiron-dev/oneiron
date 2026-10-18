@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 815 facade rows, 2799 generated types.
+// UniFFI census: 815 facade rows, 2802 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 771.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -44417,4 +44417,43 @@ pub struct LiveRunRequestSkillCallInput {
     pub live_run: String,
     #[serde(rename = "spec")]
     pub spec: SkillCallInput,
+}
+
+/// `oneiron_remote::lens_frames::LensFrameEventRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LensFrameEventRequest {
+    #[serde(rename = "event")]
+    pub event: GeneratedUiActionEvent,
+    #[serde(rename = "idempotencyKey")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron_remote::lens_frames::LensFrameEventReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum LensFrameEventReply {
+    Local {
+        #[serde(rename = "$state")]
+        state: std::collections::HashMap<String, SelfUiStateValue>,
+    },
+    Tool {
+        #[serde(rename = "outcome")]
+        outcome: crate::WireJson,
+        #[serde(rename = "readReceipt")]
+        read_receipt: ScopedReadReceipt,
+    },
+    Callback {
+        #[serde(rename = "queued")]
+        queued: bool,
+        #[serde(rename = "callbackId")]
+        callback_id: String,
+    },
+}
+
+/// `oneiron_remote::lens_frames::CloseLensFrameReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CloseLensFrameReply {
+    #[serde(rename = "closed")]
+    pub closed: bool,
 }
