@@ -830,6 +830,8 @@ class Oneiron:
     def tasks(self) -> "Oneiron._TasksVerbs": ...
     @property
     def reveal(self) -> "Oneiron._RevealVerbs": ...
+    @property
+    def host(self) -> "Oneiron._HostVerbs": ...
     def execute_code(self, spec: Facade.ForeignCodeRunRequest) -> Facade.ForeignCodeRunResult:
         """Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."""
     def can(self, request: TaskCanAskRequest) -> TaskAskPreflight: ...
@@ -1208,6 +1210,8 @@ class Oneiron:
         def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
         @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
+        @property
+        def hyde(self) -> "Oneiron._VaultRetrievalHydeVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
         def runs(self, spec: Facade.RetrievalRunsRequest) -> list[Facade.RetrievalRunEvidence]:
@@ -1234,6 +1238,17 @@ class Oneiron:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""
         def configure(self, spec: Facade.RetrievalWeightsConfigureRequest) -> Facade.RetrievalWeightsReceipt:
             """The owner sets independent retrieval priors against the current manifest hash; zero disables each prior without changing confidence or authority."""
+    class _VaultRetrievalHydeVerbs:
+        def configure(self, spec: Facade.HydeHostConfigureRequest) -> Facade.HydeHostConfiguration:
+            """The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work."""
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.HydeHostConfiguration:
+            """The owner reads the serving host HyDE binding, grounding and bounded retry options."""
+        def pending(self, spec: Facade.HydeHostPendingRequest) -> list[Facade.HydeHostWork]:
+            """Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing."""
+        def complete(self, spec: Facade.HydeHostCompleteRequest) -> Facade.HydeHostReceipt:
+            """Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded."""
+        def receipt(self, spec: Facade.HydeHostReceiptRequest) -> Facade.HydeHostReceipt | None:
+            """Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline."""
     class _VaultRetrievalOutcomesVerbs:
         def put(self, spec: Facade.RetrievalOutcome) -> list[Facade.RetrievalOutcomeRecord]:
             """The owner attaches an explicit observation to one local serving run; raw reward stays telemetry, never a gated training label."""
@@ -3085,6 +3100,16 @@ class Oneiron:
             """Where a reveal stands: pending, denied, expired or granted; the first granted answer carries the value, later ones the receipt."""
         def describe(self, spec: Facade.RevealDescribeRequest) -> Facade.RevealHandleCard:
             """What a secret handle names, where it was found and what a reveal of it would do now; never the value."""
+    class _HostVerbs:
+        def compact(self, spec: Facade.HostCompactRequest) -> Facade.HostCompactResult:
+            """Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."""
+        def wake(self, spec: Facade.HostWakeRequest) -> Facade.HostWakeResult:
+            """Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."""
+        @property
+        def budget(self) -> "Oneiron._HostBudgetVerbs": ...
+    class _HostBudgetVerbs:
+        def hit(self, spec: Facade.HostBudgetHitRequest) -> Facade.HostBudgetHitResult:
+            """Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."""
     class _AiVerbs:
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...

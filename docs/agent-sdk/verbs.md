@@ -74,6 +74,11 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.aging.configure`
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
+- `vault.retrieval.hyde.configure`
+- `vault.retrieval.hyde.get`
+- `vault.retrieval.hyde.pending`
+- `vault.retrieval.hyde.complete`
+- `vault.retrieval.hyde.receipt`
 - `vault.affect.annotations.put`
 - `vault.tagging.status`
 - `vault.tagging.tags`
@@ -430,6 +435,9 @@ both bindings and their export-census tests in one change.
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`
+- `host.compact`
+- `host.wake`
+- `host.budget.hit`
 - `vault.hooks.replay`
 - `vault.hooks.regen.due`
 - `vault.hooks.regen.get`

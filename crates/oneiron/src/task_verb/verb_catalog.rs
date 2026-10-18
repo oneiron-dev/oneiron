@@ -433,6 +433,9 @@ pub enum AgentVerb {
     VaultSharesCreate,
     VaultSharesRevoke,
     VaultSharesView,
+    HostCompact,
+    HostWake,
+    HostBudgetHit,
     VaultHooksReplay,
     VaultHooksRegenDue,
     VaultHooksRegenGet,
@@ -1297,6 +1300,9 @@ impl AgentVerb {
         Self::VaultSharesCreate,
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
+        Self::HostCompact,
+        Self::HostWake,
+        Self::HostBudgetHit,
         Self::VaultHooksReplay,
         Self::VaultHooksRegenDue,
         Self::VaultHooksRegenGet,
@@ -2178,6 +2184,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => "vault.shares.create",
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
+            Self::HostCompact => "host.compact",
+            Self::HostWake => "host.wake",
+            Self::HostBudgetHit => "host.budget.hit",
             Self::VaultHooksReplay => "vault.hooks.replay",
             Self::VaultHooksRegenDue => "vault.hooks.regen.due",
             Self::VaultHooksRegenGet => "vault.hooks.regen.get",
@@ -3049,6 +3058,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -3940,6 +3952,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -4909,6 +4924,9 @@ impl AgentVerb {
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultHooksRegenGet
@@ -5580,6 +5598,9 @@ impl AgentVerb {
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::HostCompact
+                | Self::HostWake
+                | Self::HostBudgetHit
                 | Self::VaultHooksRegenAdopt
                 | Self::VaultArtifactsPublish
                 | Self::VaultArtifactsRepoint
@@ -6295,6 +6316,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
+            Self::HostCompact => &["spec"],
+            Self::HostWake => &["spec"],
+            Self::HostBudgetHit => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -7160,6 +7184,9 @@ impl AgentVerb {
             Self::VaultSharesCreate => &["spec"],
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
+            Self::HostCompact => &["spec"],
+            Self::HostWake => &["spec"],
+            Self::HostBudgetHit => &["spec"],
             Self::VaultHooksReplay => &["spec"],
             Self::VaultHooksRegenDue => &["spec"],
             Self::VaultHooksRegenGet => &["spec"],
@@ -8852,6 +8879,15 @@ impl AgentVerb {
             }
             Self::VaultSharesRevoke => "",
             Self::VaultSharesView => "",
+            Self::HostCompact => {
+                "Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint."
+            }
+            Self::HostWake => {
+                "Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes."
+            }
+            Self::HostBudgetHit => {
+                "Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work."
+            }
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
             }

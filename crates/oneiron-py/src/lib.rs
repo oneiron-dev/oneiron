@@ -4097,6 +4097,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn host_compact(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "host.compact")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("host.compact", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn host_wake(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "host.wake")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("host.wake", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn host_budget_hit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "host.budget.hit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("host.budget.hit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_hooks_replay(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.hooks.replay")?;
         let output = py

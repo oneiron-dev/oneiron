@@ -517,10 +517,14 @@ impl Vault {
         caller: EntityId,
         observer: Option<Arc<dyn LineObserver>>,
     ) -> impl Future<Output = TaskWorkTurn> + Send + 'static {
-        let admitted = self.task_work.admit_in_line_observed(caller, observer.clone());
+        let admitted = self
+            .task_work
+            .admit_in_line_observed(caller, observer.clone());
         async move {
             let admitted = admitted.await;
-            if admitted.is_err() && let Some(observer) = observer {
+            if admitted.is_err()
+                && let Some(observer) = observer
+            {
                 observer.held();
             }
             TaskWorkTurn::after(caller, admitted)

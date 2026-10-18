@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 874 code-mode rows (851 host rows, 23 run rows), 2944 declarations.
-// Replies: 783 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 877 code-mode rows (854 host rows, 23 run rows), 2954 declarations.
+// Replies: 786 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1648,6 +1648,16 @@ declare namespace Sdk {
   type SharedBriefCitation = { claim_ref: string; stale: boolean; drifted: boolean; redacted: boolean; confidence?: number | null; lifecycle?: string | null; quote?: string | null };
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
+  type CompactionWindowMessage = { message_id: EntityId; turn_id: EntityId; content: string; turn: number; tokens: number };
+  type HostCompactRequest = { session_ref: EntityId; window: CompactionWindowMessage[]; keep_list: string[]; token_ceiling: number };
+  type HostCompactResult = { epoch: number; summary: EntityId; text: string; keep_list: string[]; first_turn: number; last_turn: number };
+  type HostWakeKind = "compaction" | "session_end" | "event" | "timer";
+  type HostWakeRequest = { wake_kind: HostWakeKind; queue_head: EntityId[] };
+  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean };
+  type BudgetExhaustionPolicy = { kind: "suspend" } | { kind: "continue_on_local" } | { kind: "overdraft"; cap: number };
+  type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
+  type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
+  type HostBudgetHitResult = { seat: string; policy: BudgetExhaustionPolicy; accounting: HostBudgetAccounting };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
   type HookRegenBindingRequest = { binding: EntityId };
   type HookContractStamp = { verb_table: string; sandbox: string };
@@ -3080,6 +3090,16 @@ declare const feedback: {
 };
 /** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
 declare function fetch(input: Sdk.WebFetchRequest): Promise<Sdk.FetchResult | StoredResult>;
+declare const host: {
+  budget: {
+    /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
+    hit(input: Sdk.HostBudgetHitRequest): Promise<Sdk.HostBudgetHitResult | StoredResult>;
+  };
+  /** Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint. */
+  compact(input: Sdk.HostCompactRequest): Promise<Sdk.HostCompactResult | StoredResult>;
+  /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
+  wake(input: Sdk.HostWakeRequest): Promise<Sdk.HostWakeResult | StoredResult>;
+};
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
 /** Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor. */

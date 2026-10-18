@@ -3691,6 +3691,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn host_compact(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("host.compact", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn host_wake(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("host.wake", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn host_budget_hit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("host.budget.hit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", input)

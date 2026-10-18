@@ -43,7 +43,10 @@ fn context(
         || !grant.confers_at(vault.store.clock.now_recorded_at())
         || input.world_ref == crate::claim::base_world_id()
         || LocalWorldId::try_from(input.world_ref).is_err()
-        || !grant.authority_scope.worlds.contains(&ScopeId(input.world_ref))
+        || !grant
+            .authority_scope
+            .worlds
+            .contains(&ScopeId(input.world_ref))
         || live_entity_row_in_txn(&vault.store, &txn, &input.world_ref)?.live_type()
             != Some(ENTITY_TYPE_WORLD)
     {
