@@ -2183,11 +2183,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interlocutor/tests.rs` | test | m | — | — | — |
 | `src/learning/cell.rs` | src | m | 2 struct · 1 enum · 20 fn · 2 const | LearningCell, LearningPredicate, TypeRef | One cell of measured state (ARCH-0003 #learning-qualifiers): the subject, the predicate and the applicable… |
 | `src/learning/coordination.rs` | src | m | 3 struct · 3 enum · 7 fn · 3 const | CoordinationCost, DuplicateLabeller, DuplicateWork, DuplicateWorkKind, ReuseDelay, TeamEvent | Coordination cost of a team (ARCH-0079 #coordination-cost, DLM-005): where its time went |
+| `src/learning/doors.rs` | src | m | 13 struct · 3 enum · 2 fn | LearningBetaValue, LearningCellKey, LearningCellView, LearningEvidenceView, LearningHeadView, LearningMeanValue, LearningPriorValue, LearningPriorView +8 | Owner reads of measured learning state and anchored outcome projection |
 | `src/learning/estimate.rs` | src | m | 5 struct · 3 enum · 17 fn · 1 const · 4 crate-vis | BetaView, Estimate, EstimateForm, EstimateLabels, EstimateValue, Prior, PriorOrigin, Window | The `estimate` value (ARCH-0003 #estimate): one measured answer, its own runs, the prior it started from and… |
 | `src/learning/evidence.rs` | src | m | 3 struct · 3 enum · 6 fn · 7 crate-vis | Anchor, CellRow, EvidenceRow, EvidenceSource, LearningEvidence, Observation | The anchored-evidence ledger: the only input the projector reads |
 | `src/learning/honesty.rs` | src | s | 1 struct · 2 fn · 2 const · 1 crate-vis | SealAssessment | The seal's anchored findings, never its raw confession, feed measured state |
 | `src/learning/judge.rs` | src | s | 2 struct · 1 enum · 5 fn · 1 crate-vis | DivergenceCase, JudgeConversion, TakeoverVerdict | Judge swaps as projections (ARCH-0079 #model-swaps, ARCH-0003 #learning) |
-| `src/learning/mod.rs` | src | s | 1 fn · 6 const · 10 mod · 9 re-export · 2 crate-vis | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
+| `src/learning/mod.rs` | src | s | 1 fn · 6 const · 11 mod · 9 re-export · 2 crate-vis | — | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… |
 | `src/learning/prior.rs` | src | s | 1 fn · 3 crate-vis | — | Priors: everything that is not a cell's own evidence enters with an origin and a weight in runs (ARCH-0003… |
 | `src/learning/project.rs` | src | m | 1 struct · 1 fn · 10 crate-vis | SettingFit | The one projector: anchored evidence, a prior and a window in, one superseding `learning.*` head per cell out |
 | `src/learning/read.rs` | src | s | 1 struct · 2 fn · 2 crate-vis | LearningRead | Reading measured state back, with the fixed backoff order (ARCH-0003 #learning-qualifiers) |
@@ -3382,7 +3383,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/skill_attribution/host.rs` | src | m | 2 fn · 2 crate-vis | — | OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed |
 | `src/skill_attribution/judge.rs` | src | m | 2 struct · 1 trait · 1 fn · 2 const · 5 crate-vis | AttributionDecisions, AttributionNotes, AttributionRules | Classification: the deterministic rule tier, the host's decisions for the model tier through the shared… |
 | `src/skill_attribution/judge_supersession.rs` | src | s | 1 struct · 2 fn · 6 crate-vis | DisplacedJudgeReceipt | Judge-revision provenance for routed receipts, and non-destructive displacement |
-| `src/skill_attribution/late_credit.rs` | src | s | 2 struct · 1 fn · 3 crate-vis | LateCreditReceipt, LateCreditShare | Late credit over the run's recorded, actually-used derived-from edges |
+| `src/skill_attribution/late_credit.rs` | src | s | 2 struct · 2 fn · 3 crate-vis | LateCreditReceipt, LateCreditShare | Late credit over the run's recorded, actually-used derived-from edges |
 | `src/skill_attribution/mod.rs` | src | s | 14 re-export · 10 crate-vis | — | ARCH-0035 attribution projector for the ARCH-0053 §4 skills loop |
 | `src/skill_attribution/pack_learning.rs` | src | s | 1 struct · 1 fn · 1 crate-vis | AnchoredPackOutcome | The manifest-to-learning bridge |
 | `src/skill_attribution/positive.rs` | src | s | 1 struct · 1 enum · 4 fn | PositiveFinding, PositiveSkillProposal | The positive lane (OF-379): a win that taught the skill something |
@@ -3938,7 +3939,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_explain.rs` | src | s | 6 struct | ExplainGateNotice, ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest, ExplainScoreEvidence | The wire shapes of `vault.explain.memory` and `vault.explain.gate` (OF-278): why a memory appeared in the… |
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
-| `src/task_verb/sdk_generated.rs` | src | XL | 587 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 589 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 17 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |
