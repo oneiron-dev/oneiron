@@ -1,9 +1,10 @@
 //! VoxCPM2's warm, host-owned rendering seam. The audio worker lives outside
 //! the cascade lock; this adapter only admits work and checks its replies.
 //! Nothing is refused for its size or for room (Rule 5): text past the
-//! serving policy's `max_text_bytes` goes as several renders, in order, and
+//! serving policy's `max_text_bytes` goes as several renders, in order,
 //! renders past its `max_queued_renders` wait in the adapter until earlier
-//! audio drains.
+//! audio drains, and a long reference clip is sent whole, asking past its
+//! `[limits]` row.
 //! A host must supply a queue connected to an already-loaded GPU process. Neither
 //! queue admission nor a host readiness claim alone proves a GPU is deployed.
 
@@ -15,6 +16,7 @@ use super::{GenerationEpoch, PcmFrame, TtsCommand, TtsSeamClient, VoiceCascadeSe
 use crate::{
     EntityId, Vault,
     error::{Error, Result},
+    limit_ask::EngineLimit,
     llm::ModelLocality,
     voice_identity::ref_bank::{VoiceRefFence, VoiceRegisterClip},
 };
@@ -354,10 +356,14 @@ impl<Q: VoxCpm2Queue> TtsSeamClient for VoxCpm2Adapter<Q> {
                 || !reference.audio.starts_with(b"RIFF")
                 || &reference.audio[8..12] != b"WAVE"
                 || reference.transcript.trim().is_empty()
-                || reference.audio.len() as u64 > self.limits.max_ref_bytes
             {
                 return Err(invalid("VoxCPM2 requires a WAV reference and transcript"));
             }
+            // Sent whole; past its `[limits]` row it asks whether all is well.
+            self.vault.measure_limit(
+                EngineLimit::VoiceReferenceBytes,
+                u64::try_from(reference.audio.len()).unwrap_or(u64::MAX),
+            );
             let target = RenderTarget {
                 voice_id: cloned.voice_id,
                 register: self.register.clone(),

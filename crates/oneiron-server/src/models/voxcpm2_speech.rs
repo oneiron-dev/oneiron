@@ -9,7 +9,9 @@
 //! The wire is the worker's own. `GET /ready` names the warm target a
 //! render must pin. `POST /render` sends a length-prefixed JSON header and
 //! then the clip's WAV, and the worker answers with a header for the same
-//! target and mono PCM16, which is handed back as a WAV.
+//! target and mono PCM16. Nothing is refused for its size (Rule 5): text
+//! past the worker's per-render `max_text_bytes` goes as several renders,
+//! in order, and their PCM is handed back as one WAV.
 use std::collections::BTreeMap;
 
 use oneiron::llm::media::wav::pcm16_wav;
@@ -17,15 +19,13 @@ use oneiron::llm::media::{
     AiOperation, MediaBackend, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaUsage,
     MediaVoice,
 };
+use oneiron::voice_cascade::speakable_pieces;
 use oneiron::voice_cascade::voxcpm2::WarmTarget;
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId};
 use serde_json::{Value as JsonValue, json};
 
 use super::http::{BytesReply, MediaSend, ProviderHttp};
 use super::rerank::transport;
-
-/// The longest reference transcript the worker takes, in characters.
-const MAX_TRANSCRIPT_CHARS: usize = 16_384;
 
 /// One VoxCPM2 worker's media client, serving the models the speech seat
 /// names on it.
@@ -91,69 +91,25 @@ impl VoxCpm2Speech {
         else {
             return Err(FatalLlmError::InvalidRequest.into());
         };
-        if media_type != "audio/wav"
-            || transcript.trim().is_empty()
-            || transcript.chars().count() > MAX_TRANSCRIPT_CHARS
-        {
+        if media_type != "audio/wav" || transcript.trim().is_empty() {
             return Err(FatalLlmError::InvalidRequest.into());
         }
         let warm = self.warm().await?;
-        let limits = warm.limits;
-        if text.len() as u64 > limits.max_text_bytes || audio.len() as u64 > limits.max_ref_bytes {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
         let target = json!({
             "voice_id": voice_id,
             "owner": owner,
             "register": register,
             "reference_revision": revision,
-            "limits": limits,
+            "limits": warm.limits,
             "warm": warm,
         });
-        let header = serde_json::to_vec(&json!({
-            "target": target,
-            "text": text,
-            "transcript": transcript,
-        }))
-        .map_err(|_| FatalLlmError::InvalidRequest)?;
-        if header.len() as u64 > limits.max_header_bytes {
-            return Err(FatalLlmError::InvalidRequest.into());
+        let max = usize::try_from(warm.limits.max_text_bytes).unwrap_or(usize::MAX);
+        let mut pcm = Vec::new();
+        for piece in speakable_pieces(&text, max) {
+            pcm.extend(self.render(&warm, &target, piece, &transcript, &audio).await?);
         }
-        let length = u32::try_from(header.len()).map_err(|_| FatalLlmError::InvalidRequest)?;
-        let mut body = Vec::with_capacity(4 + header.len() + audio.len());
-        body.extend_from_slice(&length.to_be_bytes());
-        body.extend_from_slice(&header);
-        body.extend_from_slice(&audio);
-        let reply = self
-            .http
-            .send_media("/render", MediaSend::Octets(body))
-            .await
-            .map_err(transport)?;
-        if !(200..300).contains(&reply.status) {
-            return Err(refused(&reply));
-        }
-        let received = reply.body;
-        if received.len() < 5
-            || received.len() as u64 > limits.max_pcm_bytes + limits.max_header_bytes + 4
-        {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        let n = u32::from_be_bytes([received[0], received[1], received[2], received[3]]) as usize;
-        if n == 0 || n as u64 > limits.max_header_bytes || received.len() <= n + 4 {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        let meta: JsonValue = serde_json::from_slice(&received[4..4 + n])
-            .map_err(|_| FatalLlmError::EmptyResponse)?;
-        // The audio must be for the very target this call pinned.
-        let pcm = &received[4 + n..];
-        if meta["target"] != target
-            || meta["sample_rate"].as_u64() != Some(u64::from(warm.sample_rate))
-            || meta["channels"].as_u64() != Some(1)
-            || !pcm.len().is_multiple_of(2)
-        {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        let wav = pcm16_wav(warm.sample_rate, 1, pcm).ok_or(FatalLlmError::EmptyResponse)?;
+        // A WAV's 32-bit lengths are the one bound on the joined audio.
+        let wav = pcm16_wav(warm.sample_rate, 1, &pcm).ok_or(FatalLlmError::EmptyResponse)?;
         Ok(MediaResponse {
             parts: vec![MediaPart::Audio {
                 media_type: "audio/wav".into(),
@@ -165,6 +121,61 @@ impl VoxCpm2Speech {
             },
             model: request.model,
         })
+    }
+
+    /// One render of `text`, within the worker's per-render bound, from the
+    /// whole reference clip: the mono PCM16 the worker answers for `target`.
+    async fn render(
+        &self,
+        warm: &WarmTarget,
+        target: &JsonValue,
+        text: &str,
+        transcript: &str,
+        audio: &[u8],
+    ) -> LlmResult<Vec<u8>> {
+        let limits = warm.limits;
+        let header = serde_json::to_vec(&json!({
+            "target": target,
+            "text": text,
+            "transcript": transcript,
+        }))
+        .map_err(|_| FatalLlmError::InvalidRequest)?;
+        // The worker's JSON header decoder bound, its wire's own.
+        if header.len() as u64 > limits.max_header_bytes {
+            return Err(FatalLlmError::InvalidRequest.into());
+        }
+        let length = u32::try_from(header.len()).map_err(|_| FatalLlmError::InvalidRequest)?;
+        let mut body = Vec::with_capacity(4 + header.len() + audio.len());
+        body.extend_from_slice(&length.to_be_bytes());
+        body.extend_from_slice(&header);
+        body.extend_from_slice(audio);
+        let reply = self
+            .http
+            .send_media("/render", MediaSend::Octets(body))
+            .await
+            .map_err(transport)?;
+        if !(200..300).contains(&reply.status) {
+            return Err(refused(&reply));
+        }
+        let mut received = reply.body;
+        if received.len() < 5 {
+            return Err(FatalLlmError::EmptyResponse.into());
+        }
+        let n = u32::from_be_bytes([received[0], received[1], received[2], received[3]]) as usize;
+        if n == 0 || n as u64 > limits.max_header_bytes || received.len() <= n + 4 {
+            return Err(FatalLlmError::EmptyResponse.into());
+        }
+        let meta: JsonValue = serde_json::from_slice(&received[4..4 + n])
+            .map_err(|_| FatalLlmError::EmptyResponse)?;
+        // The audio must be for the very target this call pinned.
+        if meta["target"] != *target
+            || meta["sample_rate"].as_u64() != Some(u64::from(warm.sample_rate))
+            || meta["channels"].as_u64() != Some(1)
+            || !(received.len() - 4 - n).is_multiple_of(2)
+        {
+            return Err(FatalLlmError::EmptyResponse.into());
+        }
+        Ok(received.split_off(4 + n))
     }
 }
 

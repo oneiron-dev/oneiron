@@ -8,9 +8,8 @@ use rmpv::Value;
 
 pub(crate) const KEY: &str = "voice_serving";
 const PRECEDENCE: &str = "nested_narrowing";
-const FIELDS: [&str; 8] = [
+const FIELDS: [&str; 7] = [
     "max_text_bytes",
-    "max_pcm_bytes",
     "max_ref_bytes",
     "max_queued_renders",
     "max_inflight_uploads",
@@ -23,7 +22,6 @@ const FIELDS: [&str; 8] = [
 #[serde(deny_unknown_fields)]
 pub struct VoiceServingLimits {
     pub max_text_bytes: u64,
-    pub max_pcm_bytes: u64,
     pub max_ref_bytes: u64,
     pub max_queued_renders: u64,
     pub max_inflight_uploads: u64,
@@ -34,7 +32,6 @@ pub struct VoiceServingLimits {
 impl VoiceServingLimits {
     const DEFAULT: Self = Self {
         max_text_bytes: 8 * 1024,
-        max_pcm_bytes: 2 * 1024 * 1024,
         max_ref_bytes: 16 * 1024 * 1024,
         max_queued_renders: 16,
         max_inflight_uploads: 2,
@@ -42,10 +39,9 @@ impl VoiceServingLimits {
         http_deadline_ms: 45_000,
         max_header_bytes: 32_768,
     };
-    fn values(self) -> [u64; 8] {
+    fn values(self) -> [u64; 7] {
         [
             self.max_text_bytes,
-            self.max_pcm_bytes,
             self.max_ref_bytes,
             self.max_queued_renders,
             self.max_inflight_uploads,
@@ -54,16 +50,15 @@ impl VoiceServingLimits {
             self.max_header_bytes,
         ]
     }
-    fn from_values(v: [u64; 8]) -> Self {
+    fn from_values(v: [u64; 7]) -> Self {
         Self {
             max_text_bytes: v[0],
-            max_pcm_bytes: v[1],
-            max_ref_bytes: v[2],
-            max_queued_renders: v[3],
-            max_inflight_uploads: v[4],
-            upload_read_deadline_ms: v[5],
-            http_deadline_ms: v[6],
-            max_header_bytes: v[7],
+            max_ref_bytes: v[1],
+            max_queued_renders: v[2],
+            max_inflight_uploads: v[3],
+            upload_read_deadline_ms: v[4],
+            http_deadline_ms: v[5],
+            max_header_bytes: v[6],
         }
     }
     /// Structural/wire checks only. Operational limits and deadlines are
@@ -71,17 +66,12 @@ impl VoiceServingLimits {
     pub(crate) fn valid(self) -> bool {
         self.values().iter().all(|n| *n > 0)
             && self.max_ref_bytes >= 12
-            && self.max_pcm_bytes.is_multiple_of(2)
             && self.max_header_bytes <= u64::from(u32::MAX) // 4-byte wire header
             && self.max_text_bytes <= usize::MAX as u64
-            && self.max_pcm_bytes <= usize::MAX as u64
             && self.max_ref_bytes <= usize::MAX as u64
             && self.max_queued_renders <= usize::MAX as u64
             && self.max_inflight_uploads <= usize::MAX as u64
             && self.max_ref_bytes.checked_add(self.max_header_bytes)
-                .and_then(|n| n.checked_add(4))
-                .is_some_and(|n| n <= usize::MAX as u64)
-            && self.max_pcm_bytes.checked_add(self.max_header_bytes)
                 .and_then(|n| n.checked_add(4))
                 .is_some_and(|n| n <= usize::MAX as u64)
             && self.upload_read_deadline_ms <= self.http_deadline_ms
@@ -113,7 +103,7 @@ impl VoiceServingLimits {
         if entries.len() != FIELDS.len() {
             return None;
         }
-        let mut values = [0; 8];
+        let mut values = [0; 7];
         for (key, value) in entries {
             let idx = FIELDS
                 .iter()

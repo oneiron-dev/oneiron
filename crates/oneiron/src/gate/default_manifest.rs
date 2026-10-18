@@ -734,10 +734,6 @@ pub(crate) fn default_policy_manifest() -> Result<Vec<u8>> {
                                     (Value::from("provider"), Value::from(provider)),
                                     (Value::from("scope"), Value::from("vault")),
                                     (Value::from("max_text_bytes"), Value::from(8_192_u64)),
-                                    (
-                                        Value::from("max_pcm_fragment_bytes"),
-                                        Value::from(2_097_152_u64),
-                                    ),
                                 ])
                             })
                             .collect(),
