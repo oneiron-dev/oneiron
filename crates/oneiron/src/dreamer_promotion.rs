@@ -386,6 +386,7 @@ fn promote_one(
         )
         .map_err(|error| format!("import audience read failed: {error}"))?;
     }
+    let prospective_queries = candidate.candidate.lexical_hints().to_vec();
     let claim_candidate = candidate
         .candidate
         .with_evidence(evidence_value)
@@ -542,15 +543,17 @@ fn promote_one(
             None => Ok(()),
         }
     };
+    let hints: Vec<&str> = prospective_queries.iter().map(String::as_str).collect();
     let write = if let Some(checker) = checker {
         vault
             .batch()
-            .claim_candidate(
+            .claim_candidate_with_lexical_hints(
                 &candidate.claim_id,
                 claim_candidate,
                 &envelope,
                 candidate.occurred,
                 candidate.learned_at,
+                &hints,
             )
             .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
     } else {
@@ -559,12 +562,13 @@ fn promote_one(
             read_prior(wtxn)?;
             vault
                 .batch_in()
-                .claim_candidate(
+                .claim_candidate_with_lexical_hints(
                     &candidate.claim_id,
                     claim_candidate,
                     &envelope,
                     candidate.occurred,
                     candidate.learned_at,
+                    &hints,
                 )
                 .apply_recording_gate_decisions(wtxn)?;
             finish_promotion(wtxn)

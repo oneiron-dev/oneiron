@@ -51,14 +51,8 @@ struct MergeResult {
 }
 
 pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]) -> Result<()> {
-    let Some(record) = AttemptQueue::new(vault).get(attempt)? else {
+    if AttemptQueue::new(vault).get(attempt)?.is_none() {
         return Err(invalid());
-    };
-    let payload = crate::dreamer_runner::decode_dreamer_attempt_payload(&record.payload)?;
-    if record.kind != DreamerConsolidationScope::Macro.attempt_kind()
-        || payload.parent_attempt.is_none()
-    {
-        return Ok(());
     }
     vault.with_write_txn_grouped(|txn| {
         let mut outputs = OUTPUT.get(&vault.store, txn, &attempt)?.unwrap_or_default();
@@ -67,6 +61,12 @@ pub(crate) fn record_outputs(vault: &Vault, attempt: AttemptId, ids: &[EntityId]
         outputs.dedup();
         OUTPUT.put(&vault.store, txn, &attempt, &outputs)
     })
+}
+
+/// Outputs already accepted by the promotion sink for this attempt.
+pub(crate) fn extraction_outputs(vault: &Vault, attempt: AttemptId) -> Result<Vec<EntityId>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(OUTPUT.get(&vault.store, &txn, &attempt)?.unwrap_or_default())
 }
 
 pub(crate) fn enqueue_in_txn(

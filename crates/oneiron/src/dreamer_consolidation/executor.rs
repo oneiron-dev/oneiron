@@ -526,6 +526,11 @@ fn merged_candidate(
         candidate = candidate.with_world(world);
     }
     candidate = candidate.with_scope(super::persistence::identity_scope(&conflict.identity)?);
+    let hints: Vec<&str> = members
+        .iter()
+        .flat_map(|member| member.candidate.lexical_hints().iter().map(String::as_str))
+        .collect();
+    candidate = candidate.with_lexical_hints(crate::claim::normalize_lexical_query_hints(&hints)?);
     let combined = combined
         .ok_or_else(|| invalid_consolidation("merge has no verified members"))?
         .restrict(meet);

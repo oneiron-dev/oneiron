@@ -53,6 +53,25 @@ impl<'a> HostSelfDispatcher<'a> {
         }
     }
 
+    /// The attached generated writer supersedes through its existing consent,
+    /// envelope and claim/edge gates. No source field comes from the request.
+    pub fn supersede_claim_from_host(
+        &self,
+        input: crate::code_run::MemorySupersedeInput,
+    ) -> MemoryResult<crate::code_run::MemoryWriteOutput> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        match self.dispatch_memory_supersede_claim(input.into_call()?)? {
+            SelfDispatchOutcome::MemoryWrite(written) => {
+                Ok(crate::code_run::MemoryWriteOutput { id: written.id })
+            }
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
     /// The host door's `self.leader.split`, under its admitted credential
     /// and hooks. TASK, project, actor and parent attempt come only from the
     /// run's acquired lease. The existing split signs and gates the write.

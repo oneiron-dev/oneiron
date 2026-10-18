@@ -415,6 +415,8 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.read`
 - `vault.consolidation.enqueue`
 - `vault.consolidation.status`
+- `vault.memory.signal_extraction`
+- `vault.memory.signal_extraction.result`
 - `vault.claims.seed`
 - `vault.channel_identities.provision`
 - `vault.channel_identities.bind`

@@ -41,7 +41,7 @@ pub struct DreamerAttemptRef {
 }
 
 /// Poll-model view of one Dreamer attempt (W2: long work returns attempt ids).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DreamerAttemptView {
     /// 32-hex attempt id.
     pub job_ref: String,

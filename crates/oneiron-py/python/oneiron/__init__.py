@@ -759,6 +759,9 @@ class Oneiron:
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
         @property
+        def memory(self) -> "Oneiron._VaultMemoryVerbs":
+            return Oneiron._VaultMemoryVerbs(self._client)
+        @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs":
             return Oneiron._VaultChannelIdentitiesVerbs(self._client)
         @property
@@ -869,6 +872,9 @@ class Oneiron:
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
+        def supersede(self, spec):
+            """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
+            return json.loads(_translate(lambda: self._client.vault_claims_supersede(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2300,6 +2306,21 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+    class _VaultMemoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs":
+            return Oneiron._VaultMemorySignalExtractionVerbs(self._client)
+    class _VaultMemorySignalExtractionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."""
+            return json.loads(_translate(lambda: self._client.vault_memory_signal_extraction(json.dumps(spec))))
+        def result(self, spec):
+            """Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."""
+            return json.loads(_translate(lambda: self._client.vault_memory_signal_extraction_result(json.dumps(spec))))
     class _VaultChannelIdentitiesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -61,11 +61,11 @@ struct MessagePin {
 /// was read at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct MessageSpan {
-    pub(super) message: EntityId,
-    pub(super) start: usize,
-    pub(super) end: usize,
-    pub(super) revision: [u8; 32],
-    pub(super) frontier: Option<Vec<u8>>,
+    pub(crate) message: EntityId,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) revision: [u8; 32],
+    pub(crate) frontier: Option<Vec<u8>>,
 }
 
 impl MessageSpan {
