@@ -562,6 +562,18 @@ impl<'a> DreamerRunnerStore<'a> {
         input: CompleteDreamerAttempt,
         judged: Option<crate::task_verb::RunnerDoneAnswer>,
     ) -> Result<CompleteDreamerAttemptOutcome> {
+        self.complete_sealed(input, judged, None)
+    }
+
+    /// [`Self::complete_judged`], sealing a TASK realization's `confession`
+    /// (OF-544) in the commit that closes its try. A refused seal leaves the
+    /// completion standing.
+    pub(crate) fn complete_sealed(
+        &self,
+        input: CompleteDreamerAttempt,
+        judged: Option<crate::task_verb::RunnerDoneAnswer>,
+        confession: Option<&crate::self_heal::audit::AttemptConfession>,
+    ) -> Result<CompleteDreamerAttemptOutcome> {
         use crate::task_verb::highway_runner::RunnerSettle;
         self.ensure_terminal_transition_target(input.id)?;
         let attempt_id = input.id;
@@ -584,6 +596,11 @@ impl<'a> DreamerRunnerStore<'a> {
                 },
             )?;
             self.cleanup_step_receipts_in_txn(wtxn, attempt_id)?;
+            if let Some(confession) = confession {
+                crate::dreamer_consolidation::seal_task_realize_confession_in_txn(
+                    self.vault, wtxn, confession, input.now,
+                )?;
+            }
             // A finished agent launch settles its spend lease (OF-532) in the
             // commit that finishes it: its parent pays what it spent and the
             // unused hold goes back. Settling twice is a no-op.
