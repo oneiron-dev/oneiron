@@ -10377,7 +10377,7 @@
      "path": "src/claim/mod.rs",
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "re-export": 11
      }
     },
@@ -46372,7 +46372,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 2,
       "fn": 7,
       "re-export": 3,
@@ -46436,6 +46436,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/machine_history.rs",
+     "purpose": "The machine-claim history this machine is owed, from the home (FIX 3820)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -46567,7 +46577,7 @@
      "path": "src/sync/connection/session.rs",
      "purpose": "Session types: WS aliases, pump budget, convergence session, resync markers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
@@ -46920,6 +46930,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/machine_history.rs",
+     "purpose": "Machine-claim history this machine is owed (FIX 3820, FIX 4293)",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -46951,7 +46971,7 @@
      "path": "src/sync/manager/live_mirror.rs",
      "purpose": "The live mirror: rows a local commit writes reach the window docs this manager has loaded",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -47295,7 +47315,7 @@
       "const": 2,
       "crate-vis": 11,
       "fn": 14,
-      "re-export": 12,
+      "re-export": 13,
       "struct": 2
      }
     },
@@ -47418,6 +47438,22 @@
      "purpose": "The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must…",
      "surface": {
       "const": 3,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MachineHistoryCursor",
+      "MachineHistoryPage"
+     ],
+     "path": "src/sync/residence/machine_history.rs",
+     "purpose": "A target's machine-claim history as the home serves it (FIX 3820), for a machine that holds a handoff packet…",
+     "surface": {
+      "const": 1,
+      "enum": 1,
       "fn": 3,
       "struct": 1
      }
@@ -47628,7 +47664,7 @@
      "path": "src/sync/selector/mod.rs",
      "purpose": "Grant-backed closed-subgraph sync selectors",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "re-export": 6
      }
     },
@@ -56341,7 +56377,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 176,
+     "files": 179,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56539,7 +56575,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3445,
+   "source_files": 3448,
    "test_files": 902
   },
   "oneiron-android": {
@@ -73648,6 +73684,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/livequery/residence/machine_history.rs",
+     "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -76818,7 +76864,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 23,
+     "files": 24,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -76995,7 +77041,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 677,
+   "source_files": 678,
    "test_files": 182
   },
   "oneiron-spawn": {
