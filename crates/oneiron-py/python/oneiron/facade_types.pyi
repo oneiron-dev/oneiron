@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 431 facade rows, 1648 declarations.
-Inputs: 383 of 431 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 381 of 431 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 434 facade rows, 1653 declarations.
+Inputs: 386 of 434 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 384 of 434 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -6412,6 +6412,23 @@ class QuestionAnswerArtifact(ArtifactAskRecord):
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class QuestionRefreshRequest(TypedDict):
     id: EntityId
+class DecisionBandReadRequest(TypedDict):
+    question: DecisionQuestion
+    reversibility: Reversibility
+    seed: DecisionBand
+BandMode = Literal["shadow", "enforce"]
+class LearnedBand(TypedDict):
+    band: DecisionBand
+    version: int
+    mode: BandMode
+class DecisionBandLearnRequest(TypedDict):
+    question: DecisionQuestion
+    reversibility: Reversibility
+    band: DecisionBand
+    version: int
+class DecisionBandEnforceRequest(TypedDict):
+    question: DecisionQuestion
+    reversibility: Reversibility
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer

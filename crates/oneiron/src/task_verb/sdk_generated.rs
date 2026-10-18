@@ -1682,6 +1682,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.decisions.bands.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::decision::DecisionBandReadRequest,
+                >(),
+            ),
+            (
+                "vault.decisions.bands.learn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::decision::DecisionBandLearnRequest,
+                >(),
+            ),
+            (
+                "vault.decisions.bands.enforce",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::decision::DecisionBandEnforceRequest,
+                >(),
+            ),
+            (
                 "vault.decisions.asks.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::receipt::DecisionAskAnswerRequest,
@@ -2509,6 +2527,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
+    "vault.decisions.bands.read",
+    "vault.decisions.bands.learn",
+    "vault.decisions.bands.enforce",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
@@ -2539,6 +2560,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.decisions.bands.read" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
+        }
+        "vault.decisions.bands.learn" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
+        }
+        "vault.decisions.bands.enforce" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
         _ => return None,
     })
@@ -4847,6 +4877,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.decisions.bands.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.bands.learn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.bands.enforce" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.decisions.asks.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6665,6 +6716,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.questions.refresh" => {
             let _input: crate::receipt::QuestionRefreshRequest = decode(value.clone())?;
         }
+        "vault.decisions.bands.read" => {
+            let _input: crate::llm::decision::DecisionBandReadRequest = decode(value.clone())?;
+        }
+        "vault.decisions.bands.learn" => {
+            let _input: crate::llm::decision::DecisionBandLearnRequest = decode(value.clone())?;
+        }
+        "vault.decisions.bands.enforce" => {
+            let _input: crate::llm::decision::DecisionBandEnforceRequest = decode(value.clone())?;
+        }
         "vault.decisions.asks.answer" => {
             let _input: crate::receipt::DecisionAskAnswerRequest = decode(value.clone())?;
         }
@@ -7685,6 +7745,13 @@ pub fn invoke(
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
+        "vault.decisions.bands.read" => encode(vault_decisions_bands_read(memory, decode(value)?)?),
+        "vault.decisions.bands.learn" => {
+            encode(vault_decisions_bands_learn(memory, decode(value)?)?)
+        }
+        "vault.decisions.bands.enforce" => {
+            encode(vault_decisions_bands_enforce(memory, decode(value)?)?)
+        }
         "vault.decisions.asks.answer" => {
             encode(vault_decisions_asks_answer(memory, decode(value)?)?)
         }
@@ -10674,6 +10741,24 @@ pub fn vault_questions_refresh(
     input: crate::receipt::QuestionRefreshRequest,
 ) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.refresh", &input)
+}
+pub fn vault_decisions_bands_read(
+    memory: &Memory<'_>,
+    input: crate::llm::decision::DecisionBandReadRequest,
+) -> MemoryResult<crate::llm::decision::LearnedBand> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.bands.read", &input)
+}
+pub fn vault_decisions_bands_learn(
+    memory: &Memory<'_>,
+    input: crate::llm::decision::DecisionBandLearnRequest,
+) -> MemoryResult<crate::llm::decision::LearnedBand> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.bands.learn", &input)
+}
+pub fn vault_decisions_bands_enforce(
+    memory: &Memory<'_>,
+    input: crate::llm::decision::DecisionBandEnforceRequest,
+) -> MemoryResult<crate::llm::decision::LearnedBand> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.bands.enforce", &input)
 }
 pub fn vault_decisions_asks_answer(
     memory: &Memory<'_>,

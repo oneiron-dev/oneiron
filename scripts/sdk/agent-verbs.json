@@ -5246,6 +5246,51 @@
       "section": false
     },
     {
+      "name": "vault.decisions.bands.read",
+      "description": "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero.",
+      "input": "crate::llm::decision::DecisionBandReadRequest",
+      "output": "crate::llm::decision::LearnedBand",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.decisions.bands.learn",
+      "description": "The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility.",
+      "input": "crate::llm::decision::DecisionBandLearnRequest",
+      "output": "crate::llm::decision::LearnedBand",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.learn\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.decisions.bands.enforce",
+      "description": "The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority.",
+      "input": "crate::llm::decision::DecisionBandEnforceRequest",
+      "output": "crate::llm::decision::LearnedBand",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.enforce\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.decisions.asks.answer",
       "input": "crate::receipt::DecisionAskAnswerRequest",
       "output": "crate::llm::decision::DecisionAsk",

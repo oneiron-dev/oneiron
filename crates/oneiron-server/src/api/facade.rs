@@ -42,6 +42,7 @@ mod courtesy_delete_doors;
 mod craft_candidate_doors;
 mod critic_review_doors;
 mod decision_ask_doors;
+mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;

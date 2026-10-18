@@ -326,6 +326,9 @@ both bindings and their export-census tests in one change.
 - `vault.questions.read`
 - `vault.questions.answers`
 - `vault.questions.refresh`
+- `vault.decisions.bands.read`
+- `vault.decisions.bands.learn`
+- `vault.decisions.bands.enforce`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
 - `self.decisions.asks`
