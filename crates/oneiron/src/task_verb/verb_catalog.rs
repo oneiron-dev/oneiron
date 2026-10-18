@@ -348,6 +348,8 @@ pub enum AgentVerb {
     VaultCodeProposalSubmit,
     VaultCodeOplog,
     VaultCodeModelHealCount,
+    VaultCodeWaitsResolve,
+    VaultCodeWaitsReceipt,
     VaultResultsStatus,
     VaultResultsRecover,
     VaultResultsRead,
@@ -1037,6 +1039,8 @@ impl AgentVerb {
         Self::VaultCodeProposalSubmit,
         Self::VaultCodeOplog,
         Self::VaultCodeModelHealCount,
+        Self::VaultCodeWaitsResolve,
+        Self::VaultCodeWaitsReceipt,
         Self::VaultResultsStatus,
         Self::VaultResultsRecover,
         Self::VaultResultsRead,
@@ -1741,6 +1745,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
             Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
+            Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
+            Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
             Self::VaultResultsStatus => "vault.results.status",
             Self::VaultResultsRecover => "vault.results.recover",
             Self::VaultResultsRead => "vault.results.read",
@@ -2433,6 +2439,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3144,6 +3152,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -3913,6 +3923,8 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeOplog
                 | Self::VaultCodeModelHealCount
+                | Self::VaultCodeWaitsResolve
+                | Self::VaultCodeWaitsReceipt
                 | Self::VaultResultsStatus
                 | Self::VaultResultsRecover
                 | Self::VaultResultsRead
@@ -4452,6 +4464,7 @@ impl AgentVerb {
                 | Self::VaultCodeSymbolsRenew
                 | Self::VaultCodeSymbolsRelease
                 | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -5031,6 +5044,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -5721,6 +5736,8 @@ impl AgentVerb {
             Self::VaultCodeProposalSubmit => &["spec"],
             Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
+            Self::VaultCodeWaitsResolve => &["spec"],
+            Self::VaultCodeWaitsReceipt => &["spec"],
             Self::VaultResultsStatus => &["spec"],
             Self::VaultResultsRecover => &["spec"],
             Self::VaultResultsRead => &["spec"],
@@ -7067,6 +7084,12 @@ impl AgentVerb {
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."
+            }
+            Self::VaultCodeWaitsResolve => {
+                "Answer one sealed code consent wait as the authenticated owner, on the word the owner gave on its ask. First answer wins; the held effect meets its own current gate once. No raw reply, grant or consumption is taken."
+            }
+            Self::VaultCodeWaitsReceipt => {
+                "Read one code consent wait as the authenticated owner: its held effect, answer, settlement and replay consumption receipts. Never answers, resumes or sends. Null for an unknown, unsealed or withheld wait."
             }
             Self::VaultResultsStatus => {
                 "The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."

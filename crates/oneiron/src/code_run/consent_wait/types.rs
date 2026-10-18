@@ -5,6 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::authority::InvocationSlipBinding;
+use crate::consent::CodeWaitReceiptLinks;
 use crate::entity_id::EntityId;
 use crate::runtime_hooks::verb::{VerbAskDoor, VerbAskInstrument};
 use crate::store::GateDecisionId;
@@ -83,6 +84,13 @@ impl CodeConsentSettleOutcome {
             Self::Refused => 2,
             Self::DeliveryUnknown => 3,
         }
+    }
+
+    /// The outcome a settlement receipt's tag names, if any.
+    pub(crate) fn from_tag(tag: u8) -> Option<Self> {
+        [Self::Delivered, Self::Refused, Self::DeliveryUnknown]
+            .into_iter()
+            .find(|outcome| outcome.tag() == tag)
     }
 }
 
@@ -402,6 +410,24 @@ pub struct CodeConsentWaitView {
     pub consumption_receipt: Option<String>,
     /// Why the settlement came out so.
     pub reasons: Vec<String>,
+    /// When the first answer was recorded, in unix ms.
+    pub answered_at_ms: Option<u64>,
+    /// When the wait settled, in unix ms.
+    pub settled_at_ms: Option<u64>,
+    /// The settlement receipt's links as the consent Gate ledger holds them:
+    /// the word, the answer act it follows and its facts digest. `None`
+    /// before it settled, or once an opted-in retention sweep dropped it.
+    pub settlement_links: Option<CodeWaitReceiptLinks>,
+    /// The consumption (1b): the parked step's checkpoint index, the path in
+    /// the run's record the reply was bound at, that result's handle, and
+    /// when, in unix ms.
+    pub consumed_step: Option<u64>,
+    pub resumed_path: Option<String>,
+    pub result_handle: Option<String>,
+    pub consumed_at_ms: Option<u64>,
+    /// The consumption receipt's links as the ledger holds them: the word
+    /// and the settlement it consumed.
+    pub consumption_links: Option<CodeWaitReceiptLinks>,
     /// This answer was not the first: the view is the first answer's.
     pub already_answered: bool,
 }

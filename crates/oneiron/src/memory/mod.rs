@@ -49,6 +49,7 @@ mod chat;
 mod claims;
 pub mod code_doors;
 pub mod code_run_doors;
+pub mod code_wait_doors;
 pub mod codebase_doors;
 mod conversation_list;
 mod credential_key;

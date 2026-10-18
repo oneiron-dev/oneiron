@@ -3282,6 +3282,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_waits_resolve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.waits.resolve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.waits.resolve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_waits_receipt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.waits.receipt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.waits.receipt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_results_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.results.status")?;
         let output = py

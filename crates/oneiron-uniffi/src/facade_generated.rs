@@ -1721,6 +1721,16 @@ export_facade! {
     let output = client.vault_code_model_heal_count(&input)?;
     crate::codec::lift_record("vault.code.model_heal_count", &output)
 };
+"vault.code.waits.resolve" => fn vault_code_waits_resolve(&self, input: CodeWaitResolveRequest) -> CodeWaitReceiptView = |client| {
+    let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest = crate::codec::lower_record("vault.code.waits.resolve", input)?;
+    let output = client.vault_code_waits_resolve(&input)?;
+    crate::codec::lift_record("vault.code.waits.resolve", &output)
+};
+"vault.code.waits.receipt" => fn vault_code_waits_receipt(&self, input: CodeWaitReceiptRequest) -> Option<CodeWaitReceiptView> = |client| {
+    let input: oneiron::memory::code_wait_doors::CodeWaitReceiptRequest = crate::codec::lower_record("vault.code.waits.receipt", input)?;
+    let output = client.vault_code_waits_receipt(&input)?;
+    crate::codec::lift_record("vault.code.waits.receipt", &output)
+};
 "vault.results.status" => fn vault_results_status(&self, input: ResultRunRequest) -> ResultRunStatus = |client| {
     let input: oneiron::memory::result_doors::ResultRunRequest = crate::codec::lower_record("vault.results.status", input)?;
     let output = client.vault_results_status(&input)?;

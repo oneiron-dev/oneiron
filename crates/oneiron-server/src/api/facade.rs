@@ -42,6 +42,7 @@ mod claim_settle_doors;
 mod cleanup_doors;
 mod code_doors;
 mod code_run_doors;
+mod code_wait_doors;
 mod codebase_doors;
 mod connector_call_doors;
 mod connector_pack_doors;

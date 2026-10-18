@@ -350,6 +350,8 @@ both bindings and their export-census tests in one change.
 - `vault.code.proposal_submit`
 - `vault.code.oplog`
 - `vault.code.model_heal_count`
+- `vault.code.waits.resolve`
+- `vault.code.waits.receipt`
 - `vault.results.status`
 - `vault.results.recover`
 - `vault.results.read`

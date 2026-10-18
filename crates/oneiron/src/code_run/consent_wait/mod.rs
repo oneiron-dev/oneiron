@@ -22,6 +22,7 @@
 
 mod binding;
 mod host;
+mod ledger;
 mod replay;
 mod settle;
 mod types;
