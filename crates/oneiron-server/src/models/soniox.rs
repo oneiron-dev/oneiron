@@ -23,7 +23,6 @@
 //! before the next socket says anything fails the hearing.
 use std::collections::{BTreeMap, VecDeque};
 use std::future::{Future, poll_fn};
-use std::ops::Range;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -45,10 +44,6 @@ use super::ModelRuntime;
 use super::catalog::engine_model_id;
 use crate::config::models::{LiveAsrOptions, ModelsConfig, ProviderConfig};
 
-/// The most bytes a live hearing queues: frames waiting for the socket, and
-/// audio waiting for a segment to open. Past it the socket is not keeping
-/// up, and the hearing fails.
-const QUEUE_LIMIT_BYTES: usize = 4 * 1024 * 1024;
 /// A segment that has sent nothing for this long sends a keepalive, so a
 /// silence gap does not end it.
 const KEEPALIVE_AFTER: Duration = Duration::from_secs(5);
@@ -175,28 +170,21 @@ pub(super) fn live_backend(provider: &ProviderConfig) -> anyhow::Result<Arc<dyn 
 }
 
 /// The Soniox client's transport: frames queue here, in order, and the
-/// live hearing sends them as the socket takes them.
+/// live hearing sends them as the socket takes them. A slow socket is waited
+/// on, never refused (Rule 5).
 #[derive(Default)]
 struct Outbox {
     frames: VecDeque<Message>,
-    bytes: usize,
 }
 
 impl Outbox {
     fn push(&mut self, frame: Message) -> oneiron::Result<()> {
-        let bytes = self.bytes.saturating_add(frame.len());
-        if bytes > QUEUE_LIMIT_BYTES {
-            return Err(invalid("the socket is not keeping up"));
-        }
-        self.bytes = bytes;
         self.frames.push_back(frame);
         Ok(())
     }
 
     fn pop(&mut self) -> Option<Message> {
-        let frame = self.frames.pop_front()?;
-        self.bytes -= frame.len();
-        Some(frame)
+        self.frames.pop_front()
     }
 }
 
@@ -222,11 +210,6 @@ struct Journal {
     sent: VecDeque<(u64, Held)>,
     /// Audio bytes the segment has sent.
     end: u64,
-    /// Audio bytes the journal holds.
-    bytes: usize,
-    /// The audio dropped past the limit that Soniox has not made final, as
-    /// a span of the segment's bytes: a replay misses it.
-    lost: Option<Range<u64>>,
     /// Bytes per sample frame (every channel), and per second.
     frame_bytes: u64,
     per_second: u64,
@@ -238,36 +221,18 @@ impl Journal {
         Self {
             sent: VecDeque::new(),
             end: 0,
-            bytes: 0,
-            lost: None,
             frame_bytes,
             per_second: u64::from(sample_rate) * frame_bytes,
         }
     }
 
-    /// A frame the socket took. Past [`QUEUE_LIMIT_BYTES`] the oldest audio
-    /// goes: a long silence Soniox never reported final.
+    /// A frame the socket took. Its audio stays until Soniox makes it final,
+    /// however long that takes: none is dropped by size (Rule 5).
     fn record(&mut self, frame: &Message) {
         match frame {
             Message::Binary(pcm) if !pcm.is_empty() => {
                 self.sent.push_back((self.end, Held::Audio(pcm.to_vec())));
                 self.end = self.end.saturating_add(pcm.len() as u64);
-                self.bytes = self.bytes.saturating_add(pcm.len());
-                while self.bytes > QUEUE_LIMIT_BYTES {
-                    let Some(at) = self
-                        .sent
-                        .iter()
-                        .position(|(_, held)| matches!(held, Held::Audio(_)))
-                    else {
-                        break;
-                    };
-                    if let Some((start, Held::Audio(pcm))) = self.sent.remove(at) {
-                        self.bytes -= pcm.len();
-                        let end = start.saturating_add(pcm.len() as u64);
-                        let start = self.lost.as_ref().map_or(start, |lost| lost.start);
-                        self.lost = Some(start..end);
-                    }
-                }
             }
             Message::Text(text) if text.as_str() == FINALIZE => {
                 self.sent.push_back((self.end, Held::Cut));
@@ -316,14 +281,7 @@ impl Journal {
     }
 
     /// Drops the audio before byte `upto`; cuts stay until their `<fin>`.
-    /// Lost audio Soniox made final is lost no more.
     fn confirm(&mut self, upto: u64) {
-        self.lost = self
-            .lost
-            .take()
-            .map(|lost| lost.start.max(upto)..lost.end)
-            .filter(|lost| !lost.is_empty());
-        let mut bytes = 0;
         self.sent.retain_mut(|(at, held)| {
             let Held::Audio(pcm) = held else {
                 return true;
@@ -338,32 +296,13 @@ impl Journal {
                 pcm.drain(..made_final);
                 *at = upto;
             }
-            bytes += pcm.len();
             true
         });
-        self.bytes = bytes;
     }
 
-    /// What the next segment hears again, in order, and its audio bytes.
-    /// Audio dropped past the limit is not among it: its span is logged.
-    fn replay(self) -> (VecDeque<Held>, usize) {
-        if let Some(lost) = &self.lost {
-            tracing::warn!(
-                from_ms = self.ms(lost.start),
-                to_ms = self.ms(lost.end),
-                bytes = lost.end - lost.start,
-                "live transcribe replay misses audio dropped past its queue limit"
-            );
-        }
-        (
-            self.sent.into_iter().map(|(_, held)| held).collect(),
-            self.bytes,
-        )
-    }
-
-    /// The segment's millisecond at byte `at`.
-    fn ms(&self, at: u64) -> u64 {
-        at.saturating_mul(1_000) / self.per_second.max(1)
+    /// What the next segment hears again, in order.
+    fn replay(self) -> VecDeque<Held> {
+        self.sent.into_iter().map(|(_, held)| held).collect()
     }
 }
 
@@ -542,7 +481,6 @@ pub(crate) struct SonioxLive {
     segment: Option<Segment>,
     opening: Option<Opening>,
     held: VecDeque<Held>,
-    held_bytes: usize,
     /// Final words a rolled-over segment heard for the utterance still open.
     carried: Vec<AsrToken>,
     /// The owner's audio ended: no segment opens after this one.
@@ -581,7 +519,6 @@ impl ModelRuntime {
             segment: None,
             opening: None,
             held: VecDeque::new(),
-            held_bytes: 0,
             carried: Vec::new(),
             ending: false,
             closed: false,
@@ -612,18 +549,6 @@ impl SonioxLive {
         self.segment.as_mut().filter(|segment| !segment.ending)
     }
 
-    fn hold(&mut self, held: Held) -> oneiron::Result<()> {
-        if let Held::Audio(pcm) = &held {
-            let bytes = self.held_bytes.saturating_add(pcm.len());
-            if bytes > QUEUE_LIMIT_BYTES {
-                return Err(invalid("a segment did not open in time"));
-            }
-            self.held_bytes = bytes;
-        }
-        self.held.push_back(held);
-        Ok(())
-    }
-
     /// The owner's microphone audio. Audio that would pass the segment's
     /// bound ends it, and waits for the next.
     pub(crate) fn accept_audio(&mut self, pcm: &[u8]) -> oneiron::Result<()> {
@@ -642,7 +567,9 @@ impl SonioxLive {
             segment.stream.inner_mut().end()?;
             segment.ending = true;
         }
-        self.hold(Held::Audio(pcm.to_vec()))
+        // Held however long the next segment takes to open (Rule 5).
+        self.held.push_back(Held::Audio(pcm.to_vec()));
+        Ok(())
     }
 
     /// The owner's cut: Soniox finalizes every word before it, and its
@@ -654,7 +581,10 @@ impl SonioxLive {
         }
         match self.live_segment() {
             Some(segment) => segment.stream.inner_mut().finalize(),
-            None => self.hold(Held::Cut),
+            None => {
+                self.held.push_back(Held::Cut);
+                Ok(())
+            }
         }
     }
 
@@ -666,7 +596,6 @@ impl SonioxLive {
         }
         self.ending = true;
         self.held.clear();
-        self.held_bytes = 0;
         // A segment still opening is dropped, and its lease cancelled.
         self.opening = None;
         match &mut self.segment {
@@ -750,23 +679,18 @@ impl SonioxLive {
         tracing::warn!(%error, "live transcribe socket dropped; reconnecting once");
         self.reconnected = true;
         segment.stream.cancel()?;
-        let (mut unsent, mut unsent_bytes) = segment.journal.replay();
+        let mut unsent = segment.journal.replay();
         let client = segment.stream.inner_mut();
         let (words, _) = client.dropped();
         while let Some(frame) = client.transport_mut().pop() {
             match frame {
                 Message::Binary(pcm) if !pcm.is_empty() => {
-                    unsent_bytes = unsent_bytes.saturating_add(pcm.len());
-                    unsent.push_back(Held::Audio(pcm.to_vec()));
+                    unsent.push_back(Held::Audio(pcm.to_vec()))
                 }
                 Message::Text(text) if text.as_str() == FINALIZE => unsent.push_back(Held::Cut),
                 // Its config, a keepalive, its end.
                 _ => {}
             }
-        }
-        self.held_bytes = self.held_bytes.saturating_add(unsent_bytes);
-        if self.held_bytes > QUEUE_LIMIT_BYTES {
-            return Err(invalid("the socket is not keeping up"));
         }
         unsent.append(&mut self.held);
         self.held = unsent;
@@ -781,17 +705,45 @@ impl SonioxLive {
         })
     }
 
-    /// What waited for this segment goes to it, in order.
+    /// What waited for this segment goes to it, in order. Audio past the
+    /// segment's bound goes up to it; the segment then ends, and the rest
+    /// waits for the next, so no held blob is too long for a lease.
     fn release(&mut self) -> oneiron::Result<()> {
+        let frame_bytes = u64::from(self.channels.max(1)) * 2;
+        let per_second = u64::from(self.sample_rate) * frame_bytes;
         let segment = self.segment.as_mut().ok_or_else(|| invalid("no segment"))?;
+        let mut took_audio = false;
         while let Some(held) = self.held.pop_front() {
-            match held {
-                Held::Audio(pcm) => {
-                    self.held_bytes = self.held_bytes.saturating_sub(pcm.len());
-                    segment.stream.accept_audio(&pcm)?;
+            let mut pcm = match held {
+                Held::Audio(pcm) => pcm,
+                Held::Cut => {
+                    segment.stream.inner_mut().finalize()?;
+                    continue;
                 }
-                Held::Cut => segment.stream.inner_mut().finalize()?,
+            };
+            // Whole sample frames within the lease, one millisecond short
+            // for its rounding up, as `accept_audio` leaves.
+            let fits = segment
+                .stream
+                .remaining_ms()
+                .saturating_sub(2)
+                .saturating_mul(per_second)
+                / 1_000;
+            let fits = usize::try_from(fits / frame_bytes * frame_bytes).unwrap_or(usize::MAX);
+            // A fresh lease that takes no audio at all refuses it as before.
+            if pcm.len() <= fits || (fits == 0 && !took_audio) {
+                segment.stream.accept_audio(&pcm)?;
+                took_audio = true;
+                continue;
             }
+            let rest = pcm.split_off(fits);
+            if !pcm.is_empty() {
+                segment.stream.accept_audio(&pcm)?;
+            }
+            self.held.push_front(Held::Audio(rest));
+            segment.stream.inner_mut().end()?;
+            segment.ending = true;
+            break;
         }
         Ok(())
     }
