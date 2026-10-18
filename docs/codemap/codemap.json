@@ -22417,7 +22417,7 @@
      "path": "src/engine_executor/types.rs",
      "purpose": "Public API surface of the engine-native executor: limits, config, errors, and code-mode step/outcome types",
      "surface": {
-      "const": 6,
+      "const": 5,
       "crate-vis": 3,
       "enum": 5,
       "fn": 8,
