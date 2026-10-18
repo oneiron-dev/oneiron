@@ -38165,7 +38165,7 @@
      "path": "src/policy_model/owner_rows/world_privacy_will/record.rs",
      "purpose": "The typed world-privacy request (FIX 4480): an agent's proposal of a tighten no Grant line names, or a…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 5,
       "struct": 1
@@ -38189,17 +38189,20 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
-      "WidenUnanimity"
+      "WidenUnanimity",
+      "WidenUnanimityOffRequest",
+      "WidenUnanimityOutcome"
      ],
      "path": "src/policy_model/owner_rows/world_privacy_will/unanimity.rs",
      "purpose": "\"Widen needs every owner\" (FIX 4480, the several-holders ruling): one per-vault policy row with a per-world…",
      "surface": {
       "crate-vis": 1,
-      "fn": 3,
-      "struct": 1
+      "enum": 1,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
