@@ -2656,6 +2656,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
             (
+                "vault.notes.history_purge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeRequest,
+                >(),
+            ),
+            (
+                "vault.notes.history_purge_execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+                >(),
+            ),
+            (
+                "vault.notes.history_purge_receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::NoteHistoryPurgeRequest,
+                >(),
+            ),
+            (
                 "vault.notes.editor.bind",
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
@@ -2963,6 +2981,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.delivery_window.evaluate",
     "vault.notes.read",
     "vault.notes.history",
+    "vault.notes.history_purge",
+    "vault.notes.history_purge_execute",
+    "vault.notes.history_purge_receipts",
     "vault.notes.editor.bind",
     "vault.notes.editor.close",
     "vault.tasks.linear.mapping",
@@ -3382,6 +3403,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>,
+        >(),
+        "vault.notes.history_purge" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::NoteHistoryPurgeOutcome,
+        >(),
+        "vault.notes.history_purge_execute" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::NoteHistoryPurgeReceipt,
+        >(),
+        "vault.notes.history_purge_receipts" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>,
         >(),
         "vault.notes.editor.bind" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteEditorBinding>>,
@@ -6751,6 +6781,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.history_purge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge_execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.history_purge_receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.editor.bind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8555,6 +8606,16 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.history" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
         }
+        "vault.notes.history_purge" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
+        }
+        "vault.notes.history_purge_execute" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest =
+                decode(value.clone())?;
+        }
+        "vault.notes.history_purge_receipts" => {
+            let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
+        }
         "vault.notes.editor.bind" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
         }
@@ -9451,6 +9512,13 @@ pub fn invoke(
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
+        "vault.notes.history_purge" => encode(vault_notes_history_purge(memory, decode(value)?)?),
+        "vault.notes.history_purge_execute" => {
+            encode(vault_notes_history_purge_execute(memory, decode(value)?)?)
+        }
+        "vault.notes.history_purge_receipts" => {
+            encode(vault_notes_history_purge_receipts(memory, decode(value)?)?)
+        }
         "vault.notes.editor.bind" => encode(vault_notes_editor_bind(memory, decode(value)?)?),
         "vault.notes.editor.close" => encode(vault_notes_editor_close(memory, decode(value)?)?),
         "vault.notes.edit" => encode(vault_notes_edit(memory, decode(value)?)?),
@@ -13798,6 +13866,36 @@ pub fn vault_notes_history(
     input: crate::note::NoteAccessRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>> {
     memory.note_history(&input)
+}
+pub fn vault_notes_history_purge(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> MemoryResult<crate::task_verb::sdk::NoteHistoryPurgeOutcome> {
+    crate::task_verb::sdk::purge_note_history_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge")?,
+        input,
+    )
+}
+pub fn vault_notes_history_purge_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+) -> MemoryResult<crate::task_verb::sdk::NoteHistoryPurgeReceipt> {
+    crate::task_verb::sdk::execute_note_history_purge_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge_execute")?,
+        input,
+    )
+}
+pub fn vault_notes_history_purge_receipts(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::NoteHistoryPurgeReceipt>> {
+    crate::task_verb::sdk::note_history_purge_receipts_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.notes.history_purge_receipts")?,
+        input,
+    )
 }
 pub fn vault_notes_editor_bind(
     memory: &Memory<'_>,

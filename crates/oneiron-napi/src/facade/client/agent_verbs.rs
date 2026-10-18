@@ -4459,6 +4459,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_notes_history_purge(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge_execute(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge_execute", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_notes_history_purge_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.notes.history_purge_receipts", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_notes_editor_bind(
         &self,
         input: serde_json::Value,

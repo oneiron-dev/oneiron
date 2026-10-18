@@ -55,6 +55,8 @@ mod expression_archive;
 mod expression_preference;
 mod history_handoff;
 mod history_pin_exchange;
+#[cfg(feature = "sync")]
+pub(crate) use history_pin_exchange::PinExchangeOutcome;
 pub(crate) mod history_projection;
 pub use history_projection::ResolvedMachineClaim;
 pub(crate) mod history_store;

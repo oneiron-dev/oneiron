@@ -475,6 +475,9 @@ both bindings and their export-census tests in one change.
 - `vault.notes.from_entity`
 - `vault.notes.read`
 - `vault.notes.history`
+- `vault.notes.history_purge`
+- `vault.notes.history_purge_execute`
+- `vault.notes.history_purge_receipts`
 - `vault.notes.editor.bind`
 - `vault.notes.editor.close`
 - `vault.notes.edit`

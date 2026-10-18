@@ -10849,6 +10849,78 @@ async fn vault_notes_history(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_history_purge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.notes.history_purge")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.notes.history_purge", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.notes.history_purge", value).await?;
+    let (output, listed) = super::host_doors::vault_notes_history_purge(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_notes_history_purge_execute(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.notes.history_purge_execute")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.notes.history_purge_execute", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.notes.history_purge_execute", value).await?;
+    let (output, listed) = super::host_doors::vault_notes_history_purge_execute(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_notes_history_purge_receipts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.notes.history_purge_receipts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.notes.history_purge_receipts", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.notes.history_purge_receipts", value).await?;
+    let (output, listed) = super::host_doors::vault_notes_history_purge_receipts(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_notes_editor_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12073,6 +12145,13 @@ pub(crate) async fn call_verb(
         "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,
         "vault.notes.read" => vault_notes_read(server, call, input).await,
         "vault.notes.history" => vault_notes_history(server, call, input).await,
+        "vault.notes.history_purge" => vault_notes_history_purge(server, call, input).await,
+        "vault.notes.history_purge_execute" => {
+            vault_notes_history_purge_execute(server, call, input).await
+        }
+        "vault.notes.history_purge_receipts" => {
+            vault_notes_history_purge_receipts(server, call, input).await
+        }
         "vault.notes.editor.bind" => vault_notes_editor_bind(server, call, input).await,
         "vault.notes.editor.close" => vault_notes_editor_close(server, call, input).await,
         "vault.notes.edit" => vault_notes_edit(server, call, input).await,

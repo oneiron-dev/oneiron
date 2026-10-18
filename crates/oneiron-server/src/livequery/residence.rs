@@ -4,6 +4,8 @@
 #[cfg(test)]
 pub(super) mod tests;
 
+mod machine_history;
+
 use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
@@ -305,6 +307,9 @@ pub(super) fn run(
             "residence.authority.append" => authority_append(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
+            "residence.machine-history" => {
+                machine_history::machine_history(server, auth, peer, request.params)
+            }
             _ => Err(AppError::bad_request(
                 "unknown residence RPC",
                 Some("method"),

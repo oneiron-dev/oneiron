@@ -1422,6 +1422,12 @@ export class Oneiron {
       read: (input: Facade.NoteReadRequest): Facade.ScopedReadResult<Facade.NoteReadView | null> => this.#call(() => this.#client.vaultNotesRead(input) as Facade.ScopedReadResult<Facade.NoteReadView | null>),
       /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
       history: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteHistoryView | null> => this.#call(() => this.#client.vaultNotesHistory(input) as Facade.ScopedReadResult<Facade.NoteHistoryView | null>),
+      /** The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action. */
+      history_purge: (input: Facade.NoteHistoryPurgeRequest): Facade.NoteHistoryPurgeOutcome => this.#call(() => this.#client.vaultNotesHistoryPurge(input) as Facade.NoteHistoryPurgeOutcome),
+      /** Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt. */
+      history_purge_execute: (input: Facade.NoteHistoryPurgeExecuteRequest): Facade.NoteHistoryPurgeReceipt => this.#call(() => this.#client.vaultNotesHistoryPurgeExecute(input) as Facade.NoteHistoryPurgeReceipt),
+      /** The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier. */
+      history_purge_receipts: (input: Facade.NoteHistoryPurgeRequest): Facade.NoteHistoryPurgeReceipt[] => this.#call(() => this.#client.vaultNotesHistoryPurgeReceipts(input) as Facade.NoteHistoryPurgeReceipt[]),
       editor: {
         /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
         bind: (input: Facade.NoteAccessRequest): Facade.ScopedReadResult<Facade.NoteEditorBinding | null> => this.#call(() => this.#client.vaultNotesEditorBind(input) as Facade.ScopedReadResult<Facade.NoteEditorBinding | null>),

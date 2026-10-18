@@ -1672,6 +1672,12 @@ class Oneiron:
             """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
         def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+        def history_purge(self, spec: Facade.NoteHistoryPurgeRequest) -> Facade.NoteHistoryPurgeOutcome:
+            """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
+        def history_purge_execute(self, spec: Facade.NoteHistoryPurgeExecuteRequest) -> Facade.NoteHistoryPurgeReceipt:
+            """Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."""
+        def history_purge_receipts(self, spec: Facade.NoteHistoryPurgeRequest) -> list[Facade.NoteHistoryPurgeReceipt]:
+            """The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."""
         @property
         def editor(self) -> "Oneiron._VaultNotesEditorVerbs": ...
         def edit(self, input: Facade.EditNoteRequest) -> Facade.NoteEditOutcome:

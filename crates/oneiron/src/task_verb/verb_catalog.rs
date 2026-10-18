@@ -513,6 +513,9 @@ pub enum AgentVerb {
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
+    VaultNotesHistoryPurge,
+    VaultNotesHistoryPurgeExecute,
+    VaultNotesHistoryPurgeReceipts,
     VaultNotesEditorBind,
     VaultNotesEditorClose,
     VaultNotesEdit,
@@ -1048,6 +1051,9 @@ impl AgentVerb {
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
+        Self::VaultNotesHistoryPurge,
+        Self::VaultNotesHistoryPurgeExecute,
+        Self::VaultNotesHistoryPurgeReceipts,
         Self::VaultNotesEditorBind,
         Self::VaultNotesEditorClose,
         Self::VaultNotesEdit,
@@ -1596,6 +1602,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
+            Self::VaultNotesHistoryPurge => "vault.notes.history_purge",
+            Self::VaultNotesHistoryPurgeExecute => "vault.notes.history_purge_execute",
+            Self::VaultNotesHistoryPurgeReceipts => "vault.notes.history_purge_receipts",
             Self::VaultNotesEditorBind => "vault.notes.editor.bind",
             Self::VaultNotesEditorClose => "vault.notes.editor.close",
             Self::VaultNotesEdit => "vault.notes.edit",
@@ -2090,6 +2099,9 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
@@ -2632,6 +2644,9 @@ impl AgentVerb {
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEditorBind
                 | Self::VaultNotesEditorClose
                 | Self::VaultNotesEdit
@@ -2720,6 +2735,7 @@ impl AgentVerb {
                 | Self::VaultWritesPending
                 | Self::VaultArtifactsBodyCommits
                 | Self::VaultClaimsSeed
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultTasksLinearProvenance
         )
     }
@@ -3241,6 +3257,9 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
+                | Self::VaultNotesHistoryPurgeReceipts
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesLifecycle
@@ -3575,6 +3594,8 @@ impl AgentVerb {
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
+                | Self::VaultNotesHistoryPurge
+                | Self::VaultNotesHistoryPurgeExecute
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
@@ -4131,6 +4152,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesHistoryPurge => &["spec"],
+            Self::VaultNotesHistoryPurgeExecute => &["spec"],
+            Self::VaultNotesHistoryPurgeReceipts => &["spec"],
             Self::VaultNotesEditorBind => &["spec"],
             Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
@@ -4667,6 +4691,9 @@ impl AgentVerb {
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
+            Self::VaultNotesHistoryPurge => &["spec"],
+            Self::VaultNotesHistoryPurgeExecute => &["spec"],
+            Self::VaultNotesHistoryPurgeReceipts => &["spec"],
             Self::VaultNotesEditorBind => &["spec"],
             Self::VaultNotesEditorClose => &["spec"],
             Self::VaultNotesEdit => &["spec"],
@@ -6125,6 +6152,15 @@ impl AgentVerb {
             }
             Self::VaultNotesHistory => {
                 "Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."
+            }
+            Self::VaultNotesHistoryPurge => {
+                "The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."
+            }
+            Self::VaultNotesHistoryPurgeExecute => {
+                "Executes the exact history erase this owner started after its veto window closes without objection; retries return its durable receipt."
+            }
+            Self::VaultNotesHistoryPurgeReceipts => {
+                "The owner reads a NOTE's durable history-purge receipts, including each requested and retained causal frontier."
             }
             Self::VaultNotesEditorBind => {
                 "Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."
