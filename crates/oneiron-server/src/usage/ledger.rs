@@ -98,42 +98,47 @@ impl UsageLedger {
         validate_dimension("vaultId", vault_id, MAX_DIMENSION_LEN)?;
         validate_dimension("run", run, MAX_DIMENSION_LEN)?;
         let mut rows = Vec::new();
-        self.vault.try_with_write_txn_grouped(|txn| -> Result<(), UsageError> {
-            self.vault.sync_state_visit_prefix_in_write_txn(
-                txn,
-                &usage_event_prefix(owner, vault_id),
-                |key, raw| -> Result<(), UsageError> {
-                    let stored = decode_entry(raw)?;
-                    let event = &stored.event;
-                    if event.owner != owner || event.vault_id != vault_id
-                        || usage_event_key(owner, vault_id, &event.idempotency_key) != key
-                    {
-                        return Err(oneiron::Error::CorruptedIndex("usage event scope").into());
-                    }
-                    let Some(call) = event.run.as_ref().filter(|call| call.run == run) else {
-                        return Ok(());
-                    };
-                    rows.push(RunRungSettlement {
-                        instance: call.instance.clone(),
-                        lease: call.lease.clone(),
-                        revision: call.revision,
-                        model: event.model.clone(),
-                        offer: call.offer.clone(),
-                        route: call.route.clone(),
-                        reserved_units: call.reserved_units,
-                        settled_units: call.settled_units,
-                        unit: call.unit.clone(),
-                        usage_reported: call.usage_reported,
-                        settlement_refused: call.settlement_refused,
-                        occurred_at: event.occurred_at.unwrap_or(stored.recorded_at),
-                        cost_amount: stored.cost.as_ref().map(|cost| cost.amount),
-                        currency: stored.cost.as_ref().map(|cost| cost.currency.clone()),
-                        price_table_snapshot: stored.cost.as_ref().map(|cost| cost.price_table_snapshot.clone()),
-                    });
-                    Ok(())
-                },
-            )
-        })?;
+        self.vault
+            .try_with_write_txn_grouped(|txn| -> Result<(), UsageError> {
+                self.vault.sync_state_visit_prefix_in_write_txn(
+                    txn,
+                    &usage_event_prefix(owner, vault_id),
+                    |key, raw| -> Result<(), UsageError> {
+                        let stored = decode_entry(raw)?;
+                        let event = &stored.event;
+                        if event.owner != owner
+                            || event.vault_id != vault_id
+                            || usage_event_key(owner, vault_id, &event.idempotency_key) != key
+                        {
+                            return Err(oneiron::Error::CorruptedIndex("usage event scope").into());
+                        }
+                        let Some(call) = event.run.as_ref().filter(|call| call.run == run) else {
+                            return Ok(());
+                        };
+                        rows.push(RunRungSettlement {
+                            instance: call.instance.clone(),
+                            lease: call.lease.clone(),
+                            revision: call.revision,
+                            model: event.model.clone(),
+                            offer: call.offer.clone(),
+                            route: call.route.clone(),
+                            reserved_units: call.reserved_units,
+                            settled_units: call.settled_units,
+                            unit: call.unit.clone(),
+                            usage_reported: call.usage_reported,
+                            settlement_refused: call.settlement_refused,
+                            occurred_at: event.occurred_at.unwrap_or(stored.recorded_at),
+                            cost_amount: stored.cost.as_ref().map(|cost| cost.amount),
+                            currency: stored.cost.as_ref().map(|cost| cost.currency.clone()),
+                            price_table_snapshot: stored
+                                .cost
+                                .as_ref()
+                                .map(|cost| cost.price_table_snapshot.clone()),
+                        });
+                        Ok(())
+                    },
+                )
+            })?;
         rows.sort_by(|a, b| (&a.instance, &a.lease).cmp(&(&b.instance, &b.lease)));
         Ok(rows)
     }

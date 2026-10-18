@@ -13,9 +13,19 @@ use crate::error::{Error, Result};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "format", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AnnotationLocator {
-    Xlsx { sheet: String, range: String },
-    Docx { para_path: String, char_start: u64, char_end: u64 },
-    Pptx { slide: u64, shape_id: String },
+    Xlsx {
+        sheet: String,
+        range: String,
+    },
+    Docx {
+        para_path: String,
+        char_start: u64,
+        char_end: u64,
+    },
+    Pptx {
+        slide: u64,
+        shape_id: String,
+    },
 }
 
 impl TryFrom<&AnnotationLocator> for Locator {
@@ -24,9 +34,11 @@ impl TryFrom<&AnnotationLocator> for Locator {
     fn try_from(locator: &AnnotationLocator) -> Result<Self> {
         match locator {
             AnnotationLocator::Xlsx { sheet, range } => Self::xlsx(sheet.clone(), range),
-            AnnotationLocator::Docx { para_path, char_start, char_end } => {
-                Self::docx(para_path.clone(), *char_start, *char_end)
-            }
+            AnnotationLocator::Docx {
+                para_path,
+                char_start,
+                char_end,
+            } => Self::docx(para_path.clone(), *char_start, *char_end),
             AnnotationLocator::Pptx { slide, shape_id } => Self::pptx(*slide, shape_id.clone()),
         }
     }
@@ -36,13 +48,21 @@ impl From<&Locator> for AnnotationLocator {
     fn from(locator: &Locator) -> Self {
         match locator {
             Locator::Xlsx { sheet, range } => Self::Xlsx {
-                sheet: sheet.clone(), range: range.to_a1(),
+                sheet: sheet.clone(),
+                range: range.to_a1(),
             },
-            Locator::Docx { para_path, char_start, char_end } => Self::Docx {
-                para_path: para_path.clone(), char_start: *char_start, char_end: *char_end,
+            Locator::Docx {
+                para_path,
+                char_start,
+                char_end,
+            } => Self::Docx {
+                para_path: para_path.clone(),
+                char_start: *char_start,
+                char_end: *char_end,
             },
             Locator::Pptx { slide, shape_id } => Self::Pptx {
-                slide: *slide, shape_id: shape_id.clone(),
+                slide: *slide,
+                shape_id: shape_id.clone(),
             },
         }
     }
@@ -191,7 +211,10 @@ pub struct AnnotationDriftView {
 
 impl From<DriftMarker> for AnnotationDriftView {
     fn from(drift: DriftMarker) -> Self {
-        Self { drifted_at_version: drift.drifted_at_version, pinned_version: drift.pinned_version }
+        Self {
+            drifted_at_version: drift.drifted_at_version,
+            pinned_version: drift.pinned_version,
+        }
     }
 }
 
@@ -207,8 +230,11 @@ pub struct AnnotationCommentView {
 impl From<AnnotationComment> for AnnotationCommentView {
     fn from(comment: AnnotationComment) -> Self {
         Self {
-            thread_id: comment.thread_id, author: comment.author, text: comment.text,
-            at: comment.at, claim_id: comment.claim_id,
+            thread_id: comment.thread_id,
+            author: comment.author,
+            text: comment.text,
+            at: comment.at,
+            claim_id: comment.claim_id,
         }
     }
 }
