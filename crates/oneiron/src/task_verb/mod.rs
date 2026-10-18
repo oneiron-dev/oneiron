@@ -285,6 +285,7 @@ mod sdk_disclosure;
 mod sdk_embedding_space;
 mod sdk_explain;
 mod sdk_fanout_launch;
+mod sdk_federation;
 mod sdk_guest_revoke;
 mod sdk_host;
 mod sdk_hub;

@@ -957,6 +957,16 @@ fn mcp_agent_verb_input(
         "vault.shared.erase_ask" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.erase_asks" => a.spec.clone().ok_or_else(invalid),
         "vault.shared.close_erase_ask" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.identity" => Ok(Value::Object(serde_json::Map::new())),
+        "vault.federation.connect.grants.mint" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.offer" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.accept" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.narrow" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.rescope.offer" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.rescope.accept" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.disconnect" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.export" => a.spec.clone().ok_or_else(invalid),
+        "vault.federation.connect.rejoin" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.revoke" => a.spec.clone().ok_or_else(invalid),
         "vault.guests.mint_slip" => a.spec.clone().ok_or_else(invalid),
         "vault.residence.mode" => a.spec.clone().ok_or_else(invalid),
@@ -1835,6 +1845,34 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.shared.close_erase_ask" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.identity" => {}
+        "vault.federation.connect.grants.mint" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.offer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.accept" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.narrow" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.rescope.offer" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.rescope.accept" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.disconnect" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.export" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.federation.connect.rejoin" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.guests.revoke" => {
@@ -4999,6 +5037,216 @@ async fn execute_agent_verb_row(
             let (output, listed) =
                 crate::api::facade::host_doors::vault_shared_close_erase_ask(server, auth, input)
                     .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.identity" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.identity", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_connect_identity(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.grants.mint" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.grants.mint", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::MintConnectGrant =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_connect_grants_mint(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.offer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.offer", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::OfferConnect =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_connect_offer(server, auth, input)
+                    .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.accept" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.accept", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AcceptConnect =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_accept(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.narrow" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.narrow", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::NarrowConnect =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_narrow(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.rescope.offer" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.connect.rescope.offer",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::RescopeConnect =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_connect_rescope_offer(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.rescope.accept" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input(
+                "vault.federation.connect.rescope.accept",
+                &input,
+            )
+            .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::AcceptRescopeConnect =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_connect_rescope_accept(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.disconnect" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.disconnect", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectPactRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_federation_connect_disconnect(
+                    server, auth, input,
+                )
+                .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.export" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.export", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectExportRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_export(
+                server, auth, input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.federation.connect.rejoin" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.federation.connect.rejoin", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::ConnectDelivery =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_rejoin(
+                server, auth, input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

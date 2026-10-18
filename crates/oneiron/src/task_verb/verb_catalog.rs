@@ -133,6 +133,16 @@ pub enum AgentVerb {
     VaultSharedEraseAsk,
     VaultSharedEraseAsks,
     VaultSharedCloseEraseAsk,
+    VaultFederationConnectIdentity,
+    VaultFederationConnectGrantsMint,
+    VaultFederationConnectOffer,
+    VaultFederationConnectAccept,
+    VaultFederationConnectNarrow,
+    VaultFederationConnectRescopeOffer,
+    VaultFederationConnectRescopeAccept,
+    VaultFederationConnectDisconnect,
+    VaultFederationConnectExport,
+    VaultFederationConnectRejoin,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultResidenceMode,
@@ -615,6 +625,16 @@ impl AgentVerb {
         Self::VaultSharedEraseAsk,
         Self::VaultSharedEraseAsks,
         Self::VaultSharedCloseEraseAsk,
+        Self::VaultFederationConnectIdentity,
+        Self::VaultFederationConnectGrantsMint,
+        Self::VaultFederationConnectOffer,
+        Self::VaultFederationConnectAccept,
+        Self::VaultFederationConnectNarrow,
+        Self::VaultFederationConnectRescopeOffer,
+        Self::VaultFederationConnectRescopeAccept,
+        Self::VaultFederationConnectDisconnect,
+        Self::VaultFederationConnectExport,
+        Self::VaultFederationConnectRejoin,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultResidenceMode,
@@ -1100,6 +1120,16 @@ impl AgentVerb {
             Self::VaultSharedEraseAsk => "vault.shared.erase_ask",
             Self::VaultSharedEraseAsks => "vault.shared.erase_asks",
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
+            Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
+            Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
+            Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
+            Self::VaultFederationConnectAccept => "vault.federation.connect.accept",
+            Self::VaultFederationConnectNarrow => "vault.federation.connect.narrow",
+            Self::VaultFederationConnectRescopeOffer => "vault.federation.connect.rescope.offer",
+            Self::VaultFederationConnectRescopeAccept => "vault.federation.connect.rescope.accept",
+            Self::VaultFederationConnectDisconnect => "vault.federation.connect.disconnect",
+            Self::VaultFederationConnectExport => "vault.federation.connect.export",
+            Self::VaultFederationConnectRejoin => "vault.federation.connect.rejoin",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultResidenceMode => "vault.residence.mode",
@@ -1589,6 +1619,16 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2078,6 +2118,16 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2608,6 +2658,16 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultFederationConnectIdentity
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectExport
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3021,6 +3081,14 @@ impl AgentVerb {
                 | Self::VaultSharedWithdrawObjection
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultFederationConnectGrantsMint
+                | Self::VaultFederationConnectOffer
+                | Self::VaultFederationConnectAccept
+                | Self::VaultFederationConnectNarrow
+                | Self::VaultFederationConnectRescopeOffer
+                | Self::VaultFederationConnectRescopeAccept
+                | Self::VaultFederationConnectDisconnect
+                | Self::VaultFederationConnectRejoin
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3394,6 +3462,16 @@ impl AgentVerb {
             Self::VaultSharedEraseAsk => &["spec"],
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -3877,6 +3955,16 @@ impl AgentVerb {
             Self::VaultSharedEraseAsk => &["spec"],
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
+            Self::VaultFederationConnectIdentity => &[],
+            Self::VaultFederationConnectGrantsMint => &["spec"],
+            Self::VaultFederationConnectOffer => &["spec"],
+            Self::VaultFederationConnectAccept => &["spec"],
+            Self::VaultFederationConnectNarrow => &["spec"],
+            Self::VaultFederationConnectRescopeOffer => &["spec"],
+            Self::VaultFederationConnectRescopeAccept => &["spec"],
+            Self::VaultFederationConnectDisconnect => &["spec"],
+            Self::VaultFederationConnectExport => &["spec"],
+            Self::VaultFederationConnectRejoin => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4602,6 +4690,36 @@ impl AgentVerb {
             }
             Self::VaultSharedCloseEraseAsk => {
                 "An Owner closes an open erase ask, as erased (naming its erase act) or declined."
+            }
+            Self::VaultFederationConnectIdentity => {
+                "The owner reads this vault identity and the host key used for reciprocal Connect consent."
+            }
+            Self::VaultFederationConnectGrantsMint => {
+                "The owner mints an inert Connect guest grant inside the named local-world ceiling."
+            }
+            Self::VaultFederationConnectOffer => {
+                "The owner asks the host to sign one disclosed Connect half without activating it."
+            }
+            Self::VaultFederationConnectAccept => {
+                "The owner accepts the peer host signed Connect half and receives the matching host counter-half."
+            }
+            Self::VaultFederationConnectNarrow => {
+                "The owner narrows the current outbound scope without breaking the reciprocal relationship."
+            }
+            Self::VaultFederationConnectRescopeOffer => {
+                "The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."
+            }
+            Self::VaultFederationConnectRescopeAccept => {
+                "The owner accepts the peer host signed re-scope and receives the matching signed counter-half."
+            }
+            Self::VaultFederationConnectDisconnect => {
+                "The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy."
+            }
+            Self::VaultFederationConnectExport => {
+                "The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."
+            }
+            Self::VaultFederationConnectRejoin => {
+                "The owner admits a peer host signed update through guest admission into the retained foreign-world vault."
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {

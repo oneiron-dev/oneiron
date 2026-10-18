@@ -131,6 +131,22 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.erase_ask", post(facade_route))
         .route("/vault.shared.erase_asks", post(facade_route))
         .route("/vault.shared.close_erase_ask", post(facade_route))
+        .route("/vault.federation.connect.identity", post(facade_route))
+        .route("/vault.federation.connect.grants.mint", post(facade_route))
+        .route("/vault.federation.connect.offer", post(facade_route))
+        .route("/vault.federation.connect.accept", post(facade_route))
+        .route("/vault.federation.connect.narrow", post(facade_route))
+        .route(
+            "/vault.federation.connect.rescope.offer",
+            post(facade_route),
+        )
+        .route(
+            "/vault.federation.connect.rescope.accept",
+            post(facade_route),
+        )
+        .route("/vault.federation.connect.disconnect", post(facade_route))
+        .route("/vault.federation.connect.export", post(facade_route))
+        .route("/vault.federation.connect.rejoin", post(facade_route))
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))

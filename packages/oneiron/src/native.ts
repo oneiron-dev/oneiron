@@ -159,6 +159,16 @@ vaultSharedMatured(input: unknown): unknown
 vaultSharedEraseAsk(input: unknown): unknown
 vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
+vaultFederationConnectIdentity(input: unknown): unknown
+vaultFederationConnectGrantsMint(input: unknown): unknown
+vaultFederationConnectOffer(input: unknown): unknown
+vaultFederationConnectAccept(input: unknown): unknown
+vaultFederationConnectNarrow(input: unknown): unknown
+vaultFederationConnectRescopeOffer(input: unknown): unknown
+vaultFederationConnectRescopeAccept(input: unknown): unknown
+vaultFederationConnectDisconnect(input: unknown): unknown
+vaultFederationConnectExport(input: unknown): unknown
+vaultFederationConnectRejoin(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown

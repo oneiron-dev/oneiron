@@ -18,6 +18,7 @@ rmp-serde = { workspace = true }
 rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = "=0.8.22"
 
 [dev-dependencies]
 oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts", features = ["test-support"] }

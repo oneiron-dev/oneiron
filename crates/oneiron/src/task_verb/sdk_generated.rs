@@ -654,6 +654,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.federation.connect.identity",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
+                ),
+            ),
+            (
+                "vault.federation.connect.grants.mint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::MintConnectGrant,
+                >(),
+            ),
+            (
+                "vault.federation.connect.offer",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OfferConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.accept",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AcceptConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.narrow",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::NarrowConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.rescope.offer",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RescopeConnect>(
+                ),
+            ),
+            (
+                "vault.federation.connect.rescope.accept",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AcceptRescopeConnect,
+                >(),
+            ),
+            (
+                "vault.federation.connect.disconnect",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectPactRequest,
+                >(),
+            ),
+            (
+                "vault.federation.connect.export",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ConnectExportRequest,
+                >(),
+            ),
+            (
+                "vault.federation.connect.rejoin",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>(
+                ),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -2527,6 +2581,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.federation.connect.identity",
+    "vault.federation.connect.grants.mint",
+    "vault.federation.connect.offer",
+    "vault.federation.connect.accept",
+    "vault.federation.connect.narrow",
+    "vault.federation.connect.rescope.offer",
+    "vault.federation.connect.rescope.accept",
+    "vault.federation.connect.disconnect",
+    "vault.federation.connect.export",
+    "vault.federation.connect.rejoin",
     "vault.off_record.start",
     "vault.off_record.status",
     "vault.off_record.witness",
@@ -2545,6 +2609,36 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.federation.connect.identity" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectIdentity>()
+        }
+        "vault.federation.connect.grants.mint" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectGrant>()
+        }
+        "vault.federation.connect.offer" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::Offer>()
+        }
+        "vault.federation.connect.accept" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectAccepted>()
+        }
+        "vault.federation.connect.narrow" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectPactReceipt,
+        >(),
+        "vault.federation.connect.rescope.offer" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RescopeOffer>()
+        }
+        "vault.federation.connect.rescope.accept" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectRescoped>()
+        }
+        "vault.federation.connect.disconnect" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ConnectDisconnected,
+        >(),
+        "vault.federation.connect.export" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectDelivery>()
+        }
+        "vault.federation.connect.rejoin" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectRejoined>()
+        }
         "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordSessionView,
         >(),
@@ -3567,6 +3661,70 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.close_erase_ask" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.identity" => &[],
+        "vault.federation.connect.grants.mint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.narrow" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.rescope.offer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.rescope.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.disconnect" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.connect.rejoin" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -6145,6 +6303,36 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.close_erase_ask" => {
             let _input: crate::task_verb::sdk::SharedEraseAskCloseRequest = decode(value.clone())?;
         }
+        "vault.federation.connect.identity" => {
+            let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
+        }
+        "vault.federation.connect.grants.mint" => {
+            let _input: crate::task_verb::sdk::MintConnectGrant = decode(value.clone())?;
+        }
+        "vault.federation.connect.offer" => {
+            let _input: crate::task_verb::sdk::OfferConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.accept" => {
+            let _input: crate::task_verb::sdk::AcceptConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.narrow" => {
+            let _input: crate::task_verb::sdk::NarrowConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.rescope.offer" => {
+            let _input: crate::task_verb::sdk::RescopeConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.rescope.accept" => {
+            let _input: crate::task_verb::sdk::AcceptRescopeConnect = decode(value.clone())?;
+        }
+        "vault.federation.connect.disconnect" => {
+            let _input: crate::task_verb::sdk::ConnectPactRequest = decode(value.clone())?;
+        }
+        "vault.federation.connect.export" => {
+            let _input: crate::task_verb::sdk::ConnectExportRequest = decode(value.clone())?;
+        }
+        "vault.federation.connect.rejoin" => {
+            let _input: crate::task_verb::sdk::ConnectDelivery = decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -7461,6 +7649,38 @@ pub fn invoke(
         "vault.shared.erase_asks" => encode(vault_shared_erase_asks(memory, decode(value)?)?),
         "vault.shared.close_erase_ask" => {
             encode(vault_shared_close_erase_ask(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.identity" => {
+            encode(vault_federation_connect_identity(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.grants.mint" => encode(vault_federation_connect_grants_mint(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.connect.offer" => {
+            encode(vault_federation_connect_offer(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.accept" => {
+            encode(vault_federation_connect_accept(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.narrow" => {
+            encode(vault_federation_connect_narrow(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.rescope.offer" => encode(vault_federation_connect_rescope_offer(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.connect.rescope.accept" => encode(
+            vault_federation_connect_rescope_accept(memory, decode(value)?)?,
+        ),
+        "vault.federation.connect.disconnect" => {
+            encode(vault_federation_connect_disconnect(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.export" => {
+            encode(vault_federation_connect_export(memory, decode(value)?)?)
+        }
+        "vault.federation.connect.rejoin" => {
+            encode(vault_federation_connect_rejoin(memory, decode(value)?)?)
         }
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
@@ -9262,6 +9482,74 @@ pub fn vault_shared_close_erase_ask(
         &memory.embedded_owner("vault.shared.close_erase_ask")?,
         input,
     )
+}
+pub fn vault_federation_connect_identity(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::EmptyRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectIdentity> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.identity", &input)
+}
+pub fn vault_federation_connect_grants_mint(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::MintConnectGrant,
+) -> MemoryResult<crate::task_verb::sdk::ConnectGrant> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.grants.mint", &input)
+}
+pub fn vault_federation_connect_offer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OfferConnect,
+) -> MemoryResult<crate::task_verb::sdk::Offer> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.offer", &input)
+}
+pub fn vault_federation_connect_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AcceptConnect,
+) -> MemoryResult<crate::task_verb::sdk::ConnectAccepted> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.accept", &input)
+}
+pub fn vault_federation_connect_narrow(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::NarrowConnect,
+) -> MemoryResult<crate::task_verb::sdk::ConnectPactReceipt> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.narrow", &input)
+}
+pub fn vault_federation_connect_rescope_offer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::RescopeConnect,
+) -> MemoryResult<crate::task_verb::sdk::RescopeOffer> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.rescope.offer",
+        &input,
+    )
+}
+pub fn vault_federation_connect_rescope_accept(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AcceptRescopeConnect,
+) -> MemoryResult<crate::task_verb::sdk::ConnectRescoped> {
+    crate::task_verb::sdk::connect_host_only(
+        memory,
+        "vault.federation.connect.rescope.accept",
+        &input,
+    )
+}
+pub fn vault_federation_connect_disconnect(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectPactRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectDisconnected> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.disconnect", &input)
+}
+pub fn vault_federation_connect_export(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectExportRequest,
+) -> MemoryResult<crate::task_verb::sdk::ConnectDelivery> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.export", &input)
+}
+pub fn vault_federation_connect_rejoin(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ConnectDelivery,
+) -> MemoryResult<crate::task_verb::sdk::ConnectRejoined> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.federation.connect.rejoin", &input)
 }
 pub fn vault_guests_revoke(
     memory: &Memory<'_>,
