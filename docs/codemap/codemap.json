@@ -663,7 +663,7 @@
      "purpose": "Saved ordered agent compositions",
      "surface": {
       "crate-vis": 1,
-      "fn": 7,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -49403,7 +49403,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 40,
+      "re-export": 41,
       "struct": 36
      }
     },
@@ -49714,7 +49714,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 537
+      "fn": 542
      }
     },
     {
@@ -50205,6 +50205,27 @@
       "enum": 1,
       "fn": 8,
       "struct": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkflowDispatchRequest",
+      "WorkflowRequest",
+      "WorkflowRunRequest",
+      "WorkflowRunView",
+      "WorkflowSaveRequest",
+      "WorkflowStepCapture",
+      "WorkflowStepRun",
+      "WorkflowUpdateRequest",
+      "WorkflowView"
+     ],
+     "path": "src/task_verb/sdk_workflows.rs",
+     "purpose": "Typed saved workflows: ordered AGENT_DEF compositions the owner keeps",
+     "surface": {
+      "fn": 5,
+      "struct": 9
      }
     },
     {
@@ -56422,7 +56443,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 152,
+     "files": 153,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56592,7 +56613,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3449,
+   "source_files": 3450,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65006,7 +65027,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 487
+      "fn": 492
      }
     },
     {
@@ -66055,7 +66076,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 488
+      "fn": 493
      }
     },
     {
@@ -68916,9 +68937,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/agent_definition_doors.rs",
-     "purpose": "Custom definitions and workspace onboarding, with the caller's own proof",
+     "purpose": "Custom definitions, saved workflows and workspace onboarding, with the caller's own proof",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 11
      }
     },
     {
@@ -78976,6 +78997,15 @@
       "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
+      "WorkflowDispatchRequest",
+      "WorkflowRequest",
+      "WorkflowRunRequest",
+      "WorkflowRunView",
+      "WorkflowSaveRequest",
+      "WorkflowStepCapture",
+      "WorkflowStepRun",
+      "WorkflowUpdateRequest",
+      "WorkflowView",
       "WorkspaceCompanionInput",
       "WorkspaceMemberOnboardRequest",
       "WorkspacePresetReceipt",
@@ -79013,7 +79043,7 @@
      "purpose": "—",
      "surface": {
       "enum": 467,
-      "struct": 1289
+      "struct": 1298
      }
     },
     {

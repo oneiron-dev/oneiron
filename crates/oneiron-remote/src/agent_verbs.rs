@@ -909,6 +909,21 @@ impl OneironClient {
                 "vault.agents.update" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AgentDefinitionView,
                 >(client, verb, &input),
+                "vault.workflows.save" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowView,
+                >(client, verb, &input),
+                "vault.workflows.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowView,
+                >(client, verb, &input),
+                "vault.workflows.update" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowView,
+                >(client, verb, &input),
+                "vault.workflows.dispatch" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowRunView,
+                >(client, verb, &input),
+                "vault.workflows.status" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::WorkflowRunView,
+                >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
                 >(client, verb, &input),
@@ -5058,6 +5073,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.agents.update", value)
+    }
+    pub fn vault_workflows_save(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowSaveRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.save", value)
+    }
+    pub fn vault_workflows_get(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.get", value)
+    }
+    pub fn vault_workflows_update(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowUpdateRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.update", value)
+    }
+    pub fn vault_workflows_dispatch(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowDispatchRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowRunView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.dispatch", value)
+    }
+    pub fn vault_workflows_status(
+        &self,
+        input: &oneiron::task_verb::sdk::WorkflowRunRequest,
+    ) -> Result<oneiron::task_verb::sdk::WorkflowRunView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.workflows.status", value)
     }
     pub fn vault_workspace_establish(
         &self,

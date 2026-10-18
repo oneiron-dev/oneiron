@@ -1113,6 +1113,18 @@ export class Oneiron {
       /** The agent's travelling AgentPack folder (files base64) and what stayed home. */
       export_pack: (request: Facade.AgentPackExportRequest): Facade.AgentPackExport => this.#call(() => {  const result = JSON.parse(this.#client.vaultAgentsExportPack(keyedJson(request))) as Facade.AgentPackExport; return result }),
     },
+    workflows: {
+      /** The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched. */
+      save: (input: Facade.WorkflowSaveRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsSave(input) as Facade.WorkflowView),
+      /** The owner reads one saved workflow, its steps, revision and fork lineage. */
+      get: (input: Facade.WorkflowRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsGet(input) as Facade.WorkflowView),
+      /** The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps. */
+      update: (input: Facade.WorkflowUpdateRequest): Facade.WorkflowView => this.#call(() => this.#client.vaultWorkflowsUpdate(input) as Facade.WorkflowView),
+      /** The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run. */
+      dispatch: (input: Facade.WorkflowDispatchRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsDispatch(input) as Facade.WorkflowRunView),
+      /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
+      status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
+    },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
       establish: (input: Facade.WorkspacePresetRequest): Facade.WorkspacePresetReceipt => this.#call(() => this.#client.vaultWorkspaceEstablish(input) as Facade.WorkspacePresetReceipt),
