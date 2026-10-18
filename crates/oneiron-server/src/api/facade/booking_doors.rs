@@ -14,8 +14,7 @@ use super::FacadeApiError;
 use super::host_doors::{Listed, internal, refused};
 use crate::api::booking::{
     booking_page_token, credential_transport_context, execute_booking_operation,
-    resolve_booking_page_listing,
-    resolve_public_booking_page, run_public_constraint_turn,
+    resolve_booking_page_listing, resolve_public_booking_page, run_public_constraint_turn,
 };
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -110,7 +109,13 @@ pub(crate) async fn vault_booking_book(
     request: BookingBookRequest,
 ) -> MemoryResult<BookingOperationResponse> {
     let BookingBookRequest::Book { page_token, input } = request;
-    booking_operation(server, auth, page_token, BookingOperationRequest::Book(input)).await
+    booking_operation(
+        server,
+        auth,
+        page_token,
+        BookingOperationRequest::Book(input),
+    )
+    .await
 }
 
 pub(crate) async fn vault_booking_reschedule(
@@ -134,5 +139,11 @@ pub(crate) async fn vault_booking_cancel(
     request: BookingCancelRequest,
 ) -> MemoryResult<BookingOperationResponse> {
     let BookingCancelRequest::Cancel { page_token, input } = request;
-    booking_operation(server, auth, page_token, BookingOperationRequest::Cancel(input)).await
+    booking_operation(
+        server,
+        auth,
+        page_token,
+        BookingOperationRequest::Cancel(input),
+    )
+    .await
 }
