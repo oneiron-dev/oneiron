@@ -1685,6 +1685,12 @@ pub struct ShapeReachFact {
     pub class: Option<String>,
     #[serde(rename = "audience", default, skip_serializing_if = "Option::is_none")]
     pub audience: Option<Vec<String>>,
+    #[serde(
+        rename = "audience_names",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub audience_names: Option<Vec<String>>,
     #[serde(rename = "verdict")]
     pub verdict: ShapeReachVerdict,
 }

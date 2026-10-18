@@ -209,7 +209,7 @@ export type ShapePlanSummary = { changes: number; needs_word: number; ceremonies
 /** `oneiron::vault_shape::reach::ShapeReachVerdict` */
 export type ShapeReachVerdict = "can" | "asks"
 /** `oneiron::vault_shape::reach::ShapeReachFact` */
-export type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; verdict: ShapeReachVerdict }
+export type ShapeReachFact = { actor: string; actor_name?: string | null; verb: string; channel: string; sender: string; identity: string; class?: string | null; audience?: string[]; audience_names?: string[]; verdict: ShapeReachVerdict }
 /** `oneiron::vault_shape::reach::ShapeReach` */
 export type ShapeReach = { facts: ShapeReachFact[] }
 /** `oneiron::vault_shape::reach::ShapePlanReach` */

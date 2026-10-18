@@ -514,7 +514,7 @@ class ShapePlanSummary(TypedDict):
     ceremonies: int
     no_door: int
 ShapeReachVerdict = Literal["can", "asks"]
-ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "audience_names": NotRequired[list[str]], "verdict": ShapeReachVerdict})
 class ShapeReach(TypedDict):
     facts: list[ShapeReachFact]
 class ShapePlanReach(TypedDict):

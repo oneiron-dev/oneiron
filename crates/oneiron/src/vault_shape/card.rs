@@ -40,7 +40,10 @@ impl Vault {
         for (row, _) in &live.rows {
             *counts.entry(row.target().kind().to_owned()).or_insert(0u32) += 1;
         }
-        let reach = reach_projection(&live.reach).visible(visible)?;
+        let txn = self.store.env.read_txn()?;
+        let reach = reach_projection(&live.reach)
+            .visible(visible)?
+            .named(&mut |reference| self.reach_name_in(&txn, reference))?;
         Ok(ShapeCard {
             seed_id: self.shape_seed()?.map(|stored| stored.id),
             counts,
