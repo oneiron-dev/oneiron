@@ -113,6 +113,8 @@ mod slip_renewal;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+// FIX 2222: who a host credential acts as at every door, through one resolver.
+pub(crate) mod host_action;
 // OF-489: the held socket runs every facade verb through the facade's one
 // generated dispatch, under the credential its connection bound, and claims
 // the invocation a call names as the HTTP facade does (FIX 2059).
@@ -197,7 +199,7 @@ use self::params::{
 };
 pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
-use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
+use self::scoped_auth::{check_api_auth, check_api_owner_act, scoped_read_for_legacy_api};
 pub(crate) use self::scoped_auth::{
     credential_memory, credential_read_key, mcp_credential_memory, scoped_read_for_core_auth,
 };

@@ -141,11 +141,19 @@ pub(super) fn mcp_proof_admits(
     auth: &crate::auth::CoreAuth,
 ) -> Result<(), McpGatewayError> {
     let proof = auth.verified_slip().ok_or_else(mcp_proof_error)?;
-    // Only the actual configured root may act through its host-registered
-    // actor. Every client is bound to the paired holder and verified class.
-    if !(auth.principal_ref().is_none() && auth.is_owner_grade())
-        && (auth.principal_ref() != Some(actor.gate_actor_ref.as_str())
-            || auth.actor_class() != Some(actor.gate_actor_class))
+    // The host's own root acts only as the owner its host action names, and
+    // only through that owner's registration; a hosted operator's root gets
+    // the typed refusal before any tool runs (FIX 2222). Every client is
+    // bound to the paired holder and verified class.
+    if let Some(action) = crate::api::host_action::host_action_of(server.vault(), auth) {
+        let owner = action
+            .map_err(|error| super::mcp_engine_error("host action failed", error))?
+            .actor();
+        if actor.actor_ref != owner.entity_ref() || actor.actor_class != owner.actor_class() {
+            return Err(mcp_proof_error());
+        }
+    } else if auth.principal_ref() != Some(actor.gate_actor_ref.as_str())
+        || auth.actor_class() != Some(actor.gate_actor_class)
     {
         return Err(mcp_proof_error());
     }
