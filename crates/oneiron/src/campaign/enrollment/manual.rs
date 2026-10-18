@@ -3,9 +3,9 @@
 //! the returned ordinary claim candidate through its existing write gate.
 
 use crate::campaign::claims::{
-    CampaignMemberChannel, CampaignMemberState, CampaignMemberValue,
-    PREDICATE_CAMPAIGN_MEMBER, counterparty_do_not_contact_in_txn,
-    encode_campaign_member_value, live_campaign_member_head_in_txn,
+    CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
+    counterparty_do_not_contact_in_txn, encode_campaign_member_value,
+    live_campaign_member_head_in_txn,
 };
 use crate::campaign::surface::{CampaignLifecycle, campaign_type_byte, owned_campaign_in_txn};
 use crate::claim::ClaimSubject;
@@ -24,30 +24,61 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
     value: &CampaignMemberValue,
     evidence: &[EntityId],
 ) -> Result<ClaimCandidate> {
-    let campaign = owned_campaign_in_txn(vault, txn, actor, value.campaign, campaign_type_byte(vault)?)?;
+    let campaign = owned_campaign_in_txn(
+        vault,
+        txn,
+        actor,
+        value.campaign,
+        campaign_type_byte(vault)?,
+    )?;
     if campaign.definition.lifecycle != CampaignLifecycle::Active {
-        return Err(Error::InvalidClaimBody("an archived campaign cannot enroll"));
+        return Err(Error::InvalidClaimBody(
+            "an archived campaign cannot enroll",
+        ));
     }
     if vault.get_entity_type_in_txn(txn, &person)? != Some(crate::registry::ENTITY_TYPE_PERSON) {
-        return Err(Error::InvalidClaimBody("campaign membership requires a PERSON"));
+        return Err(Error::InvalidClaimBody(
+            "campaign membership requires a PERSON",
+        ));
     }
     if evidence.is_empty() || value.channels.is_empty() {
-        return Err(Error::InvalidClaimBody("enrollment requires provenance and channel basis evidence"));
+        return Err(Error::InvalidClaimBody(
+            "enrollment requires provenance and channel basis evidence",
+        ));
     }
     if value.state != CampaignMemberState::Enrolled || value.derivation.is_some() {
-        return Err(Error::InvalidClaimBody("manual enrollment cannot supply machine derivation"));
+        return Err(Error::InvalidClaimBody(
+            "manual enrollment cannot supply machine derivation",
+        ));
     }
     if live_campaign_member_head_in_txn(&vault.store, txn, person, value.campaign)?.is_some() {
-        return Err(Error::ConcurrentWrite("campaign membership already has a live head"));
+        return Err(Error::ConcurrentWrite(
+            "campaign membership already has a live head",
+        ));
     }
     let mut channels = std::collections::BTreeSet::new();
-    for CampaignMemberChannel { channel, sender_ref, .. } in &value.channels {
+    for CampaignMemberChannel {
+        channel,
+        sender_ref,
+        ..
+    } in &value.channels
+    {
         if channel.is_empty() || !channels.insert(channel) {
-            return Err(Error::InvalidClaimBody("enrollment requires a nonempty unique channel set"));
+            return Err(Error::InvalidClaimBody(
+                "enrollment requires a nonempty unique channel set",
+            ));
         }
         require_channel_sender_in_txn(vault, txn, channel, *sender_ref)?;
-        if counterparty_do_not_contact_in_txn(&vault.store, txn, &person.to_hex(), Some(channel), "all")? {
-            return Err(Error::InvalidClaimBody("suppression forbids campaign enrollment on this channel"));
+        if counterparty_do_not_contact_in_txn(
+            &vault.store,
+            txn,
+            &person.to_hex(),
+            Some(channel),
+            "all",
+        )? {
+            return Err(Error::InvalidClaimBody(
+                "suppression forbids campaign enrollment on this channel",
+            ));
         }
     }
     Ok(ClaimCandidate::new(
@@ -55,7 +86,13 @@ pub(crate) fn manual_enrollment_candidate_in_txn(
         ClaimSubject::Entity(person),
         encode_campaign_member_value(value),
         1.0,
-    ).with_evidence(rmpv::Value::Array(evidence.iter().map(|id| rmpv::Value::from(id.to_hex())).collect())))
+    )
+    .with_evidence(rmpv::Value::Array(
+        evidence
+            .iter()
+            .map(|id| rmpv::Value::from(id.to_hex()))
+            .collect(),
+    )))
 }
 
 /// Shared sender guard for authored program steps and manual enrollment.
@@ -74,11 +111,12 @@ pub(super) fn require_channel_sender_in_txn(
         Ok(None) | Err(Error::InvalidEntityType(_)) => return Err(not_an_identity()),
         Err(error) => return Err(error),
     };
-    if crate::counterparty_contact::normalize_channel_class(identity.channel()) != crate::counterparty_contact::normalize_channel_class(channel) {
+    if crate::counterparty_contact::normalize_channel_class(identity.channel())
+        != crate::counterparty_contact::normalize_channel_class(channel)
+    {
         return Err(Error::InvalidClaimBody(
             "sender_ref is a channel identity of another channel",
         ));
     }
     Ok(())
 }
-

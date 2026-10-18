@@ -106,6 +106,7 @@ vaultRetrievalExport(input: unknown): unknown
 vaultRetrievalReplay(input: unknown): unknown
 vaultExport(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
 vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
@@ -153,6 +154,10 @@ vaultSkillsFork(input: unknown): unknown
 vaultSkillsRulesSet(input: unknown): unknown
 vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
+vaultSkillsOptimizeStart(input: unknown): unknown
+vaultSkillsOptimizeResult(input: unknown): unknown
+vaultSkillsGovernanceGet(input: unknown): unknown
+vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
@@ -566,6 +571,14 @@ vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
+calendarInvite(input: unknown): unknown
+calendarConnectorConfigure(input: unknown): unknown
+calendarConnectorGet(input: unknown): unknown
+calendarConnectorPull(input: unknown): unknown
+calendarConnectorWrite(input: unknown): unknown
+calendarConnectorKill(input: unknown): unknown
+calendarImipConfigure(input: unknown): unknown
+calendarImipGet(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown
 vaultCalendarOccurrences(input: unknown): unknown
@@ -667,6 +680,9 @@ vaultSummariesProposalsRead(input: unknown): unknown
 vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
+vaultNotesBlessBriefKind(input: unknown): unknown
+vaultNotesAuthorBrief(input: unknown): unknown
+vaultNotesFollowCitation(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown

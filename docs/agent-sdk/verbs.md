@@ -82,6 +82,7 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.replay`
 - `vault.export`
 - `self.credential.attenuate`
+- `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
@@ -129,6 +130,10 @@ both bindings and their export-census tests in one change.
 - `vault.skills.rules.set`
 - `vault.skills.code_auto_install.set`
 - `vault.skills.permissions.approve`
+- `vault.skills.optimize.start`
+- `vault.skills.optimize.result`
+- `vault.skills.governance.get`
+- `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
 - `vault.packs.hooks.qualify`
@@ -542,6 +547,14 @@ both bindings and their export-census tests in one change.
 - `vault.forget`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
+- `calendar.invite`
+- `calendar.connector.configure`
+- `calendar.connector.get`
+- `calendar.connector.pull`
+- `calendar.connector.write`
+- `calendar.connector.kill`
+- `calendar.imip.configure`
+- `calendar.imip.get`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
 - `vault.calendar.occurrences`
@@ -643,6 +656,9 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.merge`
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
+- `vault.notes.bless_brief_kind`
+- `vault.notes.author_brief`
+- `vault.notes.follow_citation`
 - `vault.notes.create`
 - `vault.notes.author_take`
 - `vault.notes.from_entity`

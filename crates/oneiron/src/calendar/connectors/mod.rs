@@ -59,6 +59,7 @@
 //! cursor, attempt payload, outbox row, receipt, error, or `Debug` — has a
 //! place to hold a credential.
 
+pub mod door;
 mod inbound;
 mod outbound;
 mod remote;
@@ -75,7 +76,7 @@ use super::google_internal;
 pub use self::inbound::run_calendar_connector_sync;
 pub use self::outbound::{
     CalendarRemoteObjectRow, CalendarWriteAction, CalendarWriteOutboxRow, CalendarWriteOutboxState,
-    write_calendar_event,
+    calendar_remote_uid_for_href, write_calendar_event,
 };
 pub use self::remote::{
     CalendarRemoteTransport, CalendarSyncOutcome, EchoDisposition, RemoteCalendarChange,

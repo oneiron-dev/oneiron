@@ -45,8 +45,12 @@ pub(crate) async fn vault_retrieval_aging_configure(
     };
     let server = Arc::clone(server);
     let (answer, mut rows) = off_runtime_listing(VERB, move |_| {
-        policy_manifest_doors::configure_claim_aging_profiles_as_owner(server.vault(), &owner, input)
-            .map_err(Into::into)
+        policy_manifest_doors::configure_claim_aging_profiles_as_owner(
+            server.vault(),
+            &owner,
+            input,
+        )
+        .map_err(Into::into)
     })
     .await;
     if let Ok(receipt) = &answer {
