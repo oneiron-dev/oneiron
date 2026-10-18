@@ -602,7 +602,8 @@ impl Memory<'_> {
     /// The one place a dial refusal leaves `self.message`, after any write it
     /// stopped has unwound. A run refused for reach raises the one widen ask
     /// to its parent (ARCH-0028 :611 "Widening is one signal to the parent,
-    /// approve-and-stop-asking"), and the refusal names it.
+    /// approve-and-stop-asking"), and the refusal names it: in its text, and
+    /// as its typed denial's `ask_ref` (FIX 1380).
     fn address_refused(&self, target: &PersonRow, refused: AddressRefused) -> MemoryError {
         let mut error = Self::address_refusal(target, refused.refusal);
         let (Some(child), Some(needed)) = (refused.child, refused.refusal.needed_reach()) else {
@@ -612,6 +613,9 @@ impl Memory<'_> {
             Ok(view) => {
                 error.message = format!("{}; {}", error.message, view.describe());
                 error.suggestions = vec![view.suggestion().to_owned()];
+                if let Some(denial) = error.gate_denial.as_deref_mut() {
+                    denial.ask_ref = view.ask_ref();
+                }
             }
             Err(raise) => {
                 error.message = format!(

@@ -177,6 +177,7 @@ pub(super) fn dispatch_item_effect(
                                     .collect()
                             })
                             .unwrap_or_default(),
+                        ask_ref: None,
                     }))
                 } else {
                     None

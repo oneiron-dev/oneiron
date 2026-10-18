@@ -303,6 +303,10 @@ vaultCodeSymbolsRelease(input: unknown): unknown
 vaultCodeProposalSubmit(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
+vaultResultsStatus(input: unknown): unknown
+vaultResultsRecover(input: unknown): unknown
+vaultResultsRead(input: unknown): unknown
+vaultResultsSlice(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown
@@ -329,6 +333,8 @@ vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown
 vaultWorkflowsDispatch(input: unknown): unknown
 vaultWorkflowsStatus(input: unknown): unknown
+vaultTaskTypesPin(input: unknown): unknown
+vaultTaskTypesGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown

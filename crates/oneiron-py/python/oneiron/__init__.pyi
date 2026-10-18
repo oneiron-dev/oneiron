@@ -602,9 +602,13 @@ class Oneiron:
         @property
         def code(self) -> "Oneiron._VaultCodeVerbs": ...
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
+        @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs": ...
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
@@ -1424,6 +1428,15 @@ class Oneiron:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+    class _VaultResultsVerbs:
+        def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+        def recover(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+        def read(self, spec: Facade.ResultOccurrenceRequest) -> Facade.ResultReadView:
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+        def slice(self, spec: Facade.ResultSliceRequest) -> Facade.ResultSliceView:
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""
@@ -1443,6 +1456,11 @@ class Oneiron:
             """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
         def status(self, spec: Facade.WorkflowRunRequest) -> Facade.WorkflowRunView:
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
+    class _VaultTaskTypesVerbs:
+        def pin(self, spec: Facade.TaskTypeTreePin) -> Facade.TaskTypeTreePinReceipt:
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+        def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""

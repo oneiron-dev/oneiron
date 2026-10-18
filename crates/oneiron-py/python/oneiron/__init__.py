@@ -696,11 +696,17 @@ class Oneiron:
         def code(self) -> "Oneiron._VaultCodeVerbs":
             return Oneiron._VaultCodeVerbs(self._client)
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs":
+            return Oneiron._VaultResultsVerbs(self._client)
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs":
             return Oneiron._VaultAgentsVerbs(self._client)
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
             return Oneiron._VaultWorkflowsVerbs(self._client)
+        @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs":
+            return Oneiron._VaultTaskTypesVerbs(self._client)
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
@@ -2141,6 +2147,21 @@ class Oneiron:
         def recover(self, spec):
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_recover(json.dumps(spec))))
+    class _VaultResultsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+            return json.loads(_translate(lambda: self._client.vault_results_status(json.dumps(spec))))
+        def recover(self, spec):
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+            return json.loads(_translate(lambda: self._client.vault_results_recover(json.dumps(spec))))
+        def read(self, spec):
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+            return json.loads(_translate(lambda: self._client.vault_results_read(json.dumps(spec))))
+        def slice(self, spec):
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
+            return json.loads(_translate(lambda: self._client.vault_results_slice(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2174,6 +2195,15 @@ class Oneiron:
         def status(self, spec):
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
             return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
+    class _VaultTaskTypesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pin(self, spec):
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_pin(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
