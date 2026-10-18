@@ -114,10 +114,12 @@ mod slip_renewal;
 // crate's closed `ErrorCode`.
 mod facade;
 // OF-489: the held socket runs every facade verb through the facade's one
-// generated dispatch, under the credential its connection bound.
+// generated dispatch, under the credential its connection bound, and claims
+// the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
-    FacadeApiError, FacadeCall, ai_speech_for_run, call_verb as facade_call_verb,
-    connector_call_as, self_use_as,
+    DoorClaim, FacadeApiError, FacadeCall, INVOCATION_CONFLICT, INVOCATION_IN_FLIGHT,
+    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_call_as,
+    invocation_body, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
