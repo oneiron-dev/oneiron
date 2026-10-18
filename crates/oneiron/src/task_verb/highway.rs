@@ -39,6 +39,7 @@ use super::highway_types::{
     AttemptHandle, TaskAccept, TaskCall, TaskCallReceipt, TaskLifecycleRecord, TaskPhase, TaskPost,
     TaskReport, TaskStatusQuery, TaskVia,
 };
+use super::task_actor::TaskActor;
 use super::terminal_state::TaskExecutionState;
 use super::wire_encode::encode_task_verb_body;
 
@@ -187,7 +188,7 @@ impl Memory<'_> {
             call: call.to_owned(),
             outcome: outcome.to_owned(),
             occurred_at: now,
-            actor: self.actor(),
+            actor: TaskActor::Actor(self.actor()),
             on_behalf_of: match via {
                 TaskVia::Wire => None,
                 TaskVia::Host(binding) => Some(attempt_hex(binding.parent())),

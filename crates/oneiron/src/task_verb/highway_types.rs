@@ -16,6 +16,7 @@ use crate::entity_id::EntityId;
 use super::ask_types::{TaskAskHandle, TaskAskSpec, TaskAskStatus};
 use super::brief::{BriefStamp, QueueTaskBrief, hex32};
 use super::route_receipts::TaskRouteOutcome;
+use super::task_actor::TaskActor;
 use super::terminal_state::TaskTerminalDisposition;
 use super::verb_kind::{TaskAssignee, TaskTtl};
 
@@ -397,7 +398,8 @@ pub struct TaskLifecycleRecord {
     pub call: String,
     pub outcome: String,
     pub occurred_at: u64,
-    pub actor: EntityId,
+    /// No one once the actor was erased (FIX 3520).
+    pub actor: TaskActor,
     /// The parent attempt of a host-bound call.
     pub on_behalf_of: Option<String>,
     /// The attempt, in hex.

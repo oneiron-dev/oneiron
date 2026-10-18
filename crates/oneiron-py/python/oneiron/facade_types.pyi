@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 706 facade rows, 2543 declarations.
+Census: 706 facade rows, 2544 declarations.
 Inputs: 654 of 706 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 631 of 706 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
@@ -1076,11 +1076,12 @@ class TaskOutcomeRejected(TypedDict):
     kind: Literal["rejected"]
     decision_ref: NotRequired[str | None]
 TaskOutcome = TaskOutcomeProposed | TaskOutcomeCreated | TaskOutcomeAccepted | TaskOutcomeHeldByOther | TaskOutcomeAskedUp | TaskOutcomeReported | TaskOutcomeSnapshot | TaskOutcomeUnchanged | TaskOutcomeStaleFence | TaskOutcomeWrongNode | TaskOutcomeRejected
+TaskActor = str
 class TaskLifecycleRecord(TypedDict):
     call: str
     outcome: str
     occurred_at: int
-    actor: EntityId
+    actor: TaskActor
     on_behalf_of: NotRequired[str | None]
     job_ref: NotRequired[str | None]
     trigger_ref: NotRequired[str | None]
