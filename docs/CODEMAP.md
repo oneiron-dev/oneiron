@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3390 | 902 | 194 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 3393 | 902 | 194 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 2 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs and… | 26 | 1 | 0 |
 | [oneiron-bench](codemap/oneiron-bench.md) | oneiron-bench — benchmark harness skeleton | 110 | 18 | 0 |
@@ -63,7 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `actor_claims` | dir | 13 | m | yes | ARCH-0053 §4/§9 `actor.*` claim ledger (SK-06, ONE-1739): what the system has learned ABOUT AN ACTOR… |
 | `affect` | dir | 9 | m | yes | — |
 | `agent_def` | dir | 20 | m | yes | AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334) |
-| `agent_dispatch` | dir | 43 | L | yes | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
+| `agent_dispatch` | dir | 44 | L | yes | `dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate |
 | `agent_inbox_lens` | file+dir | 5 | m | yes | Renderer-neutral inbox query |
 | `agent_run_status` | file | 1 | s | — | AgentRunStatus contract shared by Context Board and run-tree viewers |
 | `analyzer` | file | 1 | s | — | Multilingual analyzer subsystem |
@@ -80,7 +80,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `branch_store_oracle` | dir | 9 | m | — | BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725) |
 | `browser_library` | file | 1 | m | — | The replay library's store (OF-598; EIRI-ARCH-0002 "The replay library"): solved browser runs, filed per… |
 | `build_cache` | file+dir | 6 | m | — | Explicit account-scoped immutable build results |
-| `calendar` | dir | 60 | m | yes | Calendar module home (CAL-00) |
+| `calendar` | dir | 61 | m | yes | Calendar module home (CAL-00) |
 | `campaign` | file+dir | 46 | L | — | CRM pack engine-side registration home |
 | `channel_identity` | dir | 21 | L | yes | ChannelIdentity record substrate (OF-347 CID-1) |
 | `channel_identity_autonomy` | dir | 9 | m | yes | Authenticated ChannelIdentity autonomy, immutable bounds, and offer-only graduation |
@@ -125,7 +125,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `credential_door` | dir | 10 | m | — | Checkout receive-pack admission, catastrophe policy, and secret-shaped diff scanning |
 | `critic` | file+dir | 11 | m | — | Multi-critic review node primitives |
 | `deletion` | dir | 32 | L | yes | ARCH-0038 deletion/redaction contract types |
-| `delivery_window` | dir | 8 | s | — | Delivery-window policy claims and evaluator for OF-327 O3 |
+| `delivery_window` | dir | 8 | m | — | Delivery-window policy claims and evaluator for OF-327 O3 |
 | `disclosure` | dir | 11 | m | yes | Interlocutor-scoped disclosure clamp substrate (OF-365 ILD-2) |
 | `dispatch_byoa` | dir | 12 | L | — | Foreign-agent dispatch: the connector shapes, the egress seam, and the terminal exhaust capture for agents… |
 | `distance` | file | 1 | s | — | Cosine distance kernels, defined in `oneiron-retrieval` |
@@ -142,7 +142,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_settle` | dir | 12 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 16 | L | yes | — |
 | `engine_executor` | dir | 26 | XL | — | Engine-native JS code-mode executor |
-| `entity_doc` | dir | 20 | L | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
+| `entity_doc` | dir | 21 | L | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file | 1 | s | — | Entity ids, world ids and the presentation-id grammar |
 | `error` | file | 1 | s | — | The engine error type: `Error` with its flat bag variants and per-domain enums, and the stable `ErrorKind` |
 | `extraction_eval` | file | 1 | s | — | OF-360 extraction-quality evaluation |

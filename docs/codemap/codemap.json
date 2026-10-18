@@ -771,7 +771,7 @@
      "path": "src/agent_dispatch/continuation.rs",
      "purpose": "The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "struct": 2
      }
     },
@@ -1028,6 +1028,16 @@
      "purpose": "Room-bound launches (OF-531)",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/run_objectives.rs",
+     "purpose": "The objectives an agent run confesses against (OF-544), kept with its attempt from its first claim",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -8294,7 +8304,21 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 6,
+      "re-export": 1,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "TranscriptFileDropInput"
+     ],
+     "path": "src/calendar/transcript/door.rs",
+     "purpose": "Caller-bound file-drop ingestion over the calendar transcript landing",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -17702,7 +17726,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowApnsInterruptionLevel",
@@ -19258,6 +19282,7 @@
       "AgentHealthCounter",
       "AgentHealthMove",
       "AgentHealthOutcome",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthTone",
       "ConcernCardRequest",
@@ -19273,7 +19298,7 @@
       "enum": 6,
       "fn": 12,
       "re-export": 2,
-      "struct": 6
+      "struct": 7
      }
     },
     {
@@ -22457,6 +22482,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocActor"
+     ],
+     "path": "src/entity_doc/doc_actor.rs",
+     "purpose": "Whose act an entity-document row records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -22480,6 +22519,7 @@
       "ForkRecord",
       "ForkRequest",
       "ForkStatus",
+      "PendingDocForkErase",
       "ProposalBundle",
       "SettleVerb",
       "TextReceipt"
@@ -22487,8 +22527,9 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 16,
-      "enum": 3,
+      "const": 1,
+      "crate-vis": 19,
+      "enum": 4,
       "fn": 7,
       "struct": 4
      }
@@ -22548,9 +22589,9 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -22580,7 +22621,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -30394,7 +30435,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ChannelIdentityBindRequest",
@@ -30443,7 +30484,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeliveryWindowEvaluateRequest",
@@ -48686,7 +48727,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AgentCeilingInput",
@@ -48907,7 +48948,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 431
+      "fn": 432
      }
     },
     {
@@ -54170,7 +54211,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54289,7 +54330,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -54606,7 +54647,7 @@
     "delivery_window": {
      "files": 8,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "dir",
      "purpose": "Delivery-window policy claims and evaluator for OF-327 O3"
     },
@@ -54723,7 +54764,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55677,7 +55718,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3390,
+   "source_files": 3393,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64072,7 +64113,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 382
+      "fn": 383
      }
     },
     {
@@ -65120,7 +65161,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 383
+      "fn": 384
      }
     },
     {
@@ -67947,7 +67988,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade.rs",
@@ -68177,7 +68218,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/hub_doors.rs",
@@ -76081,6 +76122,7 @@
       "AgentHealthMove",
       "AgentHealthOutcome",
       "AgentHealthPadRead",
+      "AgentHealthPromptInject",
       "AgentHealthRunTree",
       "AgentHealthSignal",
       "AgentHealthTone",
@@ -77386,6 +77428,8 @@
       "ThrobberAtom",
       "ToggleControl",
       "TrackedHubRef",
+      "TranscriptFileDropInput",
+      "TranscriptIngestOutcome",
       "TravelChoice",
       "TurnAction",
       "TurnActionReceipt",
@@ -77474,8 +77518,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 402,
-      "struct": 1012
+      "enum": 403,
+      "struct": 1014
      }
     },
     {
