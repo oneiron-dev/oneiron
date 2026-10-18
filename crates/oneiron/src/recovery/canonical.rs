@@ -587,6 +587,7 @@ pub(crate) fn capture_canonical_window_within(
             "document_pins",
             "message_docs",
             "withdrawn_cutoffs",
+            "peer_origins",
         ]
         .contains(&name.as_str())
     }) {
