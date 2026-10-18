@@ -26,8 +26,8 @@
 pub mod affect;
 mod answer_boundary;
 mod archive_purge;
-mod asset_resolve;
 mod artifact_hosting_doors;
+mod asset_resolve;
 mod authorship;
 mod birth_position;
 mod booking;
@@ -82,6 +82,7 @@ pub mod result_doors;
 mod room_turn;
 mod scoped_export;
 mod search_hybrid;
+mod search_temporal;
 mod session_writes;
 mod shape_doors;
 mod signal_extraction;
@@ -207,6 +208,9 @@ pub use scoped_export::{
 };
 pub use search_hybrid::{
     HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+};
+pub use search_temporal::{
+    TemporalSearchHit, TemporalSearchRange, TemporalSearchRequest, TemporalSearchResult,
 };
 pub use skill_authoring::SkillAuthoringReceipt;
 pub(crate) use skill_authoring::{skill_author_in_txn, skill_author_proof_is_live_in_txn};

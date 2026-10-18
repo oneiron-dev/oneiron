@@ -7,9 +7,9 @@ use crate::memory::{MemoryError, MemoryResult};
 
 use super::support::normalized_ref;
 use super::{
-    ActionClass, ActionEnvelope, ActorBound, AudienceBound, AuthenticatedOwner,
-    ConsentReceipt, ConsentRegistry, ConsentRegistryQuery, DisclosureClass,
-    DisclosureEnvelope, EffectDigest, GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, AudienceBound, AuthenticatedOwner, ConsentReceipt,
+    ConsentRegistry, ConsentRegistryQuery, DisclosureClass, DisclosureEnvelope, EffectDigest,
+    GrantBound,
 };
 
 /// Approve the exact engine-emitted effect digest, never a caller's description.
@@ -137,7 +137,9 @@ pub fn create_standing_grant(
     owner: &AuthenticatedOwner,
     input: CreateStandingGrantRequest,
 ) -> MemoryResult<ConsentActReceipt> {
-    Ok(vault.create_standing_grant(owner, input.bound.into_bound()?)?.into())
+    Ok(vault
+        .create_standing_grant(owner, input.bound.into_bound()?)?
+        .into())
 }
 
 pub fn registry(
@@ -165,8 +167,7 @@ fn parse_digest(value: &str, field: &str) -> MemoryResult<EffectDigest> {
     }
     let mut bytes = [0_u8; 32];
     for (index, byte) in bytes.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16)
-            .map_err(|_| refused())?;
+        *byte = u8::from_str_radix(&value[index * 2..index * 2 + 2], 16).map_err(|_| refused())?;
     }
     Ok(EffectDigest::from_bytes(bytes))
 }

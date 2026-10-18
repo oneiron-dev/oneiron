@@ -133,6 +133,16 @@ export_facade! {
     let output = client.tasks_wave(&input)?;
     crate::codec::lift_record("tasks.wave", &output)
 };
+"vault.fanout.spawn" => fn vault_fanout_spawn(&self, input: LiveRunRequestFanoutBatchInput) -> FanoutBatchView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::FanoutBatchInput> = crate::codec::lower_record("vault.fanout.spawn", input)?;
+    let output = client.vault_fanout_spawn(&input)?;
+    crate::codec::lift_record("vault.fanout.spawn", &output)
+};
+"vault.fanout.slots" => fn vault_fanout_slots(&self, input: FanoutLaunchRequest) -> Option<FanoutBatchView> = |client| {
+    let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.slots", input)?;
+    let output = client.vault_fanout_slots(&input)?;
+    crate::codec::lift_record("vault.fanout.slots", &output)
+};
 "vault.fanout.launch" => fn vault_fanout_launch(&self, input: FanoutLaunchRequest) -> Option<FanoutLaunchView> = |client| {
     let input: oneiron::task_verb::sdk::FanoutLaunchRequest = crate::codec::lower_record("vault.fanout.launch", input)?;
     let output = client.vault_fanout_launch(&input)?;
@@ -2525,6 +2535,11 @@ export_facade! {
     let input: oneiron::memory::HybridSearchRequest = crate::codec::lower_record("vault.search.hybrid", input)?;
     let output = client.vault_search_hybrid(&input)?;
     crate::codec::lift_record("vault.search.hybrid", &output)
+};
+"vault.search.temporal" => fn vault_search_temporal(&self, input: TemporalSearchRequest) -> ScopedReadResultTemporalSearchResult = |client| {
+    let input: oneiron::memory::TemporalSearchRequest = crate::codec::lower_record("vault.search.temporal", input)?;
+    let output = client.vault_search_temporal(&input)?;
+    crate::codec::lift_record("vault.search.temporal", &output)
 };
 "vault.search.bm25" => fn vault_search_bm25(&self, query: String, limit: u32) -> LexicalHits = |client| {
     let input: oneiron::task_verb::sdk::QueryBm25Request = (query, limit).lower()?;

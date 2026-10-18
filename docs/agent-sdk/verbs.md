@@ -33,6 +33,8 @@ both bindings and their export-census tests in one change.
 - `describe`
 - `tasks.create`
 - `tasks.wave`
+- `vault.fanout.spawn`
+- `vault.fanout.slots`
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
@@ -511,6 +513,7 @@ both bindings and their export-census tests in one change.
 - `vault.refs.resolve`
 - `vault.refs.links`
 - `vault.search.hybrid`
+- `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`

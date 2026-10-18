@@ -193,6 +193,18 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_fanout_spawn(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.spawn", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_fanout_slots(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.fanout.slots", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_launch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.launch", input)
@@ -4481,6 +4493,15 @@ impl NativeClient {
     pub fn vault_search_hybrid(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.search.hybrid", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_search_temporal(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.search.temporal", input)
             .map_err(facade_error)
     }
     #[napi]

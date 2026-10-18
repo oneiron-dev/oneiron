@@ -127,7 +127,14 @@ pub enum ConsentGrant {
 
 /// Lifecycle state of a persisted standing grant.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]

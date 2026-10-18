@@ -83,6 +83,48 @@ pub(crate) async fn vault_claims_supersede(
     .await
 }
 
+/// Batched child admission through the same attachment guard as single spawn.
+pub(crate) async fn vault_fanout_spawn(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<oneiron::task_verb::sdk::FanoutBatchInput>,
+) -> super::host_doors::Listed<oneiron::task_verb::sdk::FanoutBatchView> {
+    let decisions_server = Arc::clone(server);
+    let locality = auth.locality();
+    let proof = match auth.verified_slip() {
+        Some(proof) => proof.clone(),
+        None => {
+            return super::host_doors::refused(MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "a batch requires the attached run's own verified credential",
+                &[],
+            ));
+        }
+    };
+    let principal = match facade_actor(server, auth) {
+        Ok((actor, _)) => actor,
+        Err(error) => return super::host_doors::refused(error.into_memory_error()),
+    };
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "vault.fanout.spawn",
+        move |dispatcher| {
+            let deadline = oneiron::retrieval_depth::RetrievalDeadline::after(
+                crate::decision_host::WAVE_FANOUT_BUDGET,
+            );
+            let host = decisions_server.decision_host();
+            let decisions = host.wave_fanout_decisions(principal, &deadline);
+            dispatcher.spawn_fanout_from_host(input.spec, &proof, locality, Some(&decisions))
+        },
+    )
+    .await;
+    super::host_doors::naming(answer, oneiron::task_verb::sdk::fanout_batch_rows)
+}
+
 /// Resolves exactly the attachment the caller presents, never a caller-named
 /// attempt or a replacement credential. The existing live-run guard serializes
 /// this call with executor entries and rechecks the lease and attachment.
