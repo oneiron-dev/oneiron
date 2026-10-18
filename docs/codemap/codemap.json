@@ -19278,9 +19278,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 27,
-      "crate-vis": 8,
-      "fn": 13,
+      "const": 28,
+      "crate-vis": 9,
+      "fn": 14,
       "trait": 1
      }
     },
@@ -43465,14 +43465,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
       "crate-vis": 10,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -43500,7 +43500,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 10,
+      "fn": 9,
       "struct": 10
      }
     },
@@ -43516,6 +43516,21 @@
      "surface": {
       "crate-vis": 1,
       "fn": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OfferTrainingHandoff",
+      "TrainingChoice"
+     ],
+     "path": "src/skill_optimize/offer_training.rs",
+     "purpose": "An approved training offer's run (OF-577; ARCH-0053 #training-offers: a train yes runs the OF-552 pack, then…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -49589,6 +49604,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/training_pack/authorize.rs",
+     "purpose": "The owner's authorization of one prepared run, and the host's record of why a run that waits on it cannot…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -49600,7 +49626,7 @@
      "purpose": "One long-running connector verb",
      "surface": {
       "crate-vis": 1,
-      "fn": 2,
+      "fn": 3,
       "struct": 2,
       "trait": 1,
       "type": 1
@@ -49634,7 +49660,7 @@
      "path": "src/training_pack/mod.rs",
      "purpose": "OF-382: a consented corpus, pinned training job, checked checkpoint and owner-approved role swap",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 6,
       "re-export": 3
      }
@@ -49657,7 +49683,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ArtifactPin",
@@ -49680,18 +49706,23 @@
       "SplitRow",
       "SplitSide",
       "SwapChoice",
+      "TrainingAuthorization",
+      "TrainingAuthorizationSource",
+      "TrainingDeclarationPin",
       "TrainingDispatch",
+      "TrainingHold",
       "TrainingPackDraft",
       "TrainingPlan",
       "TrainingResult",
       "TrainingRun",
-      "TrainingState"
+      "TrainingState",
+      "TrainingTeachersPin"
      ],
      "path": "src/training_pack/types.rs",
      "purpose": "Pins and receipts shared by the training pack and its host adapters",
      "surface": {
-      "enum": 5,
-      "struct": 21
+      "enum": 6,
+      "struct": 25
      }
     },
     {
@@ -54784,7 +54815,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 39,
+     "files": 40,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54945,7 +54976,7 @@
      "purpose": "—"
     },
     "training_pack": {
-     "files": 6,
+     "files": 7,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -55045,7 +55076,7 @@
    },
    "over_bar": 193,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3351,
+   "source_files": 3353,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66142,7 +66173,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -66294,6 +66325,16 @@
      "purpose": "The Coach's training offers (ARCH-0026 #dreamer, ARCH-0053 #training-offers, OF-420): each night it reads…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/training_pack.rs",
+     "purpose": "An owner-authorized training run on the host (OF-577, OF-552)",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -68562,6 +68603,16 @@
      "purpose": "`/v1/owner/proactivity`, `/v1/owner/stewardship` and `/v1/owner/representation` (OF-194): the owner's read…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/owner_routes/proactivity_routes/training_runs.rs",
+     "purpose": "`/v1/owner/coach/training-offers/{prepare,authorize,training}` (OF-577): the owner's setup of a Train…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -74648,14 +74699,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 319,
+     "files": 320,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -75063,7 +75114,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 636,
+   "source_files": 638,
    "test_files": 182
   },
   "oneiron-spawn": {
