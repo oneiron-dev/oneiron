@@ -273,9 +273,13 @@ declare function can(input: { read: ResultRef; child?: {} }): Promise<CanReadRep
 type CanReadReply =
   | { can: true; ref: string; bytes: number; kind: "text" | "binary"; taint: { state: "clean"; secret: null }; child?: { cutoff_unix_ms: number; meter: "scope" | "host"; spend_available_units?: number; window_tokens: number; memory_bytes: number } }
   | { can: false; reason: "unknown_handle" | "withheld_rows" | "tainted" | "outside_delegated_range" | "reader_task_settled" | "spawn_unbound" | "past_cutoff" | "unmetered" | "denied"; [detail: string]: unknown };
-/** Foreign tier only. Proposals are data; they never commit host writes. */
+/** Foreign tier only. Proposals are data; they never commit host writes.
+ * `file` takes one buffer or any iterable of buffers (a generator works), read
+ * lazily and streamed to the host as each piece is yielded: a proposed file is
+ * never held whole and has no size bound. A file whose chunks throw fails the
+ * step. */
 declare const propose: {
-  file(path: `/mnt/outputs/${string}` | `/mnt/workspace/${string}`, bytes: Uint8Array | number[]): void;
+  file(path: `/mnt/outputs/${string}` | `/mnt/workspace/${string}`, chunks: Uint8Array | number[] | Iterable<Uint8Array | number[]>): void;
   claim(input: { id: string; predicate: string; subject: unknown; value: unknown; confidence?: number; occurred?: { start: number; end: number }; learnedAt?: number }): void;
   delete(path: `/mnt/workspace/${string}`): void;
   rename(from: `/mnt/workspace/${string}`, to: `/mnt/workspace/${string}`): void;

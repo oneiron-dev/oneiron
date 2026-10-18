@@ -33,6 +33,10 @@ pub struct TrustTableRow {
     /// `state == Offered` only in that it survives the read: it is what
     /// [`OfferAnswer::GoAuto`](crate::edit_distance::graduation::OfferAnswer::GoAuto) may act on.
     pub offer_is_earned: bool,
+    /// When [`Self::offer_is_earned`]: what every actor can send now, and
+    /// with the standing grant going auto mints (ARCH-0070
+    /// `shape:reach-line`). It informs the tap and never blocks it.
+    pub offer_reach: Option<String>,
 }
 
 /// Every scope with ramp history, with the policy and offer state governing it.
@@ -60,9 +64,14 @@ pub fn trust_table(vault: &Vault) -> Result<Vec<TrustTableRow>> {
                 &stats.scope,
             )?,
             offer_is_earned,
+            offer_reach: None,
             scope: stats.scope.clone(),
             stats,
         });
+    }
+    drop(rtxn);
+    for row in rows.iter_mut().filter(|row| row.offer_is_earned) {
+        row.offer_reach = Some(vault.ramp_offer_reach(&row.scope)?.line);
     }
     rows.sort_by(|left, right| left.scope.cmp(&right.scope));
     Ok(rows)

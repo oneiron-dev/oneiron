@@ -84,8 +84,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     // Monotonic counters and floors, so no sequence or id is ever reused.
     &side_table::SYNC_M_U_SEQ_W,
     &side_table::SYNC_M_U_SEQ_E,
-    &side_table::SYNC_RESIDENCE_SEALED_NEXT,
-    &side_table::SYNC_RESIDENCE_SEALED_TAKEN,
     &side_table::SHORT_ID_COUNTER,
     &side_table::PORTS_ID_FLOOR,
     &side_table::PORTS_CLOCK_FLOOR,

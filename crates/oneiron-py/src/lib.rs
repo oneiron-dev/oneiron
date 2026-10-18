@@ -1996,6 +1996,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_rooms_invite(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.rooms.invite")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.rooms.invite", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_rooms_consent(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.rooms.consent")?;
         let output = py
@@ -2492,6 +2499,44 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.esign.create")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.esign.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_links_issue(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.links.issue")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.links.issue", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_send_for_signature(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.send_for_signature")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.esign.send_for_signature", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_remind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.remind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.remind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_esign_void(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.esign.void")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.esign.void", input))
             .map_err(raise)?;
         encode(&output)
     }

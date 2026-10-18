@@ -186,15 +186,22 @@ pub(super) fn upgrade(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
+    // OF-237: over an embedded engine's channel the whole carrier, hello and
+    // calls included, lives under the engine's stop, and its stop waits for
+    // it from before the upgrade registers.
+    let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
-            crate::api::call_receipt::on_connection(
-                connection,
-                serve(socket, server, conn_id, session_jti, caller),
+            crate::embedded::UpgradeHold::run(
+                hold,
+                crate::api::call_receipt::on_connection(
+                    connection,
+                    serve(socket, server, conn_id, session_jti, caller),
+                ),
             )
         })
         .into_response())
