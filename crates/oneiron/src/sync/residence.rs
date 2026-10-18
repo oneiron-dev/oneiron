@@ -13,6 +13,7 @@ mod bundle_turn;
 mod directives;
 mod discover;
 mod kit_fetch;
+mod machine_history;
 mod policy;
 mod prune;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
@@ -43,6 +44,9 @@ pub use discover::discover_local_window_keys;
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
     KitBundleFetch, kit_sealed_bundle_part,
+};
+pub use machine_history::{
+    MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
 };
 pub(crate) use policy::set_device_sync_preference_in_txn;
 pub use policy::{

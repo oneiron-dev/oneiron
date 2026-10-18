@@ -19,6 +19,7 @@ pub(in crate::sync) use document_admission::{
 mod edge;
 mod held_retire;
 mod machine_history;
+pub(in crate::sync) use machine_history::machine_history_controls;
 mod note_admission;
 mod peer_confidence;
 mod scope;
