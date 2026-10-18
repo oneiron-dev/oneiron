@@ -486,7 +486,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def execute(self, spec):
-            """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+            """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
             return json.loads(_translate(lambda: self._client.self_off_record_execute(json.dumps(spec))))
     class _SelfSecretsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -681,6 +681,12 @@ class Oneiron:
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs":
             return Oneiron._VaultEvalsVerbs(self._client)
+        @property
+        def cleanup(self) -> "Oneiron._VaultCleanupVerbs":
+            return Oneiron._VaultCleanupVerbs(self._client)
+        @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs":
+            return Oneiron._VaultEntitiesVerbs(self._client)
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
@@ -1528,8 +1534,26 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def coreference(self) -> "Oneiron._VaultFederationCoreferenceVerbs":
+            return Oneiron._VaultFederationCoreferenceVerbs(self._client)
+        @property
         def connect(self) -> "Oneiron._VaultFederationConnectVerbs":
             return Oneiron._VaultFederationConnectVerbs(self._client)
+    class _VaultFederationCoreferenceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def link(self, spec):
+            """The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_link(json.dumps(spec))))
+        def confirm(self, spec):
+            """The owner atomically confirms cross-vault identity without changing either person or their claims."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_confirm(json.dumps(spec))))
+        def share_consent(self, spec):
+            """The owner consents to exporting an existing identity link into exactly one named federation pact."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_share_consent(json.dumps(spec))))
+        def unlink(self, spec):
+            """The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."""
+            return json.loads(_translate(lambda: self._client.vault_federation_coreference_unlink(json.dumps(spec))))
     class _VaultFederationConnectVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1665,19 +1689,19 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def start(self, spec):
-            """The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."""
+            """The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_start(json.dumps(spec))))
         def status(self, spec):
-            """The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing."""
+            """The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows."""
             return json.loads(_translate(lambda: self._client.vault_off_record_status(json.dumps(spec))))
         def witness(self, spec):
-            """The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close."""
+            """The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close."""
             return json.loads(_translate(lambda: self._client.vault_off_record_witness(json.dumps(spec))))
         def discard(self, spec):
-            """The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
+            """The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
             return json.loads(_translate(lambda: self._client.vault_off_record_discard(json.dumps(spec))))
         def recall(self, spec):
-            """The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
+            """The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
             return json.loads(_translate(lambda: self._client.vault_off_record_recall(json.dumps(spec))))
         @property
         def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs":
@@ -1689,13 +1713,13 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def create(self, spec):
-            """The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+            """The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_notes_create(json.dumps(spec))))
     class _VaultOffRecordClaimsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def upsert(self, spec):
-            """The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
+            """The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
             return json.loads(_translate(lambda: self._client.vault_off_record_claims_upsert(json.dumps(spec))))
     class _VaultRecordsVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -1778,6 +1802,18 @@ class Oneiron:
         def setup(self, spec):
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
             return json.loads(_translate(lambda: self._client.vault_evals_cohorts_setup(json.dumps(spec))))
+    class _VaultCleanupVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def run(self, spec):
+            """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+            return json.loads(_translate(lambda: self._client.vault_cleanup_run(json.dumps(spec))))
+    class _VaultEntitiesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mention(self, spec):
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
+            return json.loads(_translate(lambda: self._client.vault_entities_mention(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2064,6 +2100,27 @@ class Oneiron:
     class _VaultArtifactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def publish_approval(self, spec):
+            """Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_publish_approval(json.dumps(spec))))
+        def publish(self, spec):
+            """Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_publish(json.dumps(spec))))
+        def repoint(self, spec):
+            """Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_repoint(json.dumps(spec))))
+        def pointer(self, spec):
+            """Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_pointer(json.dumps(spec))))
+        def unpublish(self, spec):
+            """Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_unpublish(json.dumps(spec))))
+        def link_token(self, spec):
+            """Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_link_token(json.dumps(spec))))
+        @property
+        def live_preview(self) -> "Oneiron._VaultArtifactsLivePreviewVerbs":
+            return Oneiron._VaultArtifactsLivePreviewVerbs(self._client)
         def view(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """One artifact's kind, head and versions, each with its made_by and born-from."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_view(json.dumps(request, allow_nan=False))))
@@ -2130,6 +2187,30 @@ class Oneiron:
         def read(self, input: dict[str, Any]) -> Any:
             """Reads one version of a blob artifact's bytes."""
             return json.loads(_translate(lambda: self._client.vault_artifacts_read(json.dumps(input, allow_nan=False))))
+    class _VaultArtifactsLivePreviewVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def register(self, spec):
+            """Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_register(json.dumps(spec))))
+        def read(self, spec):
+            """Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_read(json.dumps(spec))))
+        def close(self, spec):
+            """Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_close(json.dumps(spec))))
+        def invite(self, spec):
+            """Invites one named principal to a private live preview under the lease owner proof; no public audience is created."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_invite(json.dumps(spec))))
+        def revoke_invite(self, spec):
+            """Revokes one private preview invitation and its personal credentials, including active streams."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_revoke_invite(json.dumps(spec))))
+        def share(self, spec):
+            """Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_share(json.dumps(spec))))
+        def revoke_share(self, spec):
+            """Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials."""
+            return json.loads(_translate(lambda: self._client.vault_artifacts_live_preview_revoke_share(json.dumps(spec))))
     class _VaultArtifactsAnchorsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -64,6 +64,29 @@ pub trait CompactionBackend: Send + Sync {
     fn input_token_limit(&self, _summary_token_budget: u64) -> Option<u64> {
         None
     }
+    /// Called once per flight, off the step loop, before its passes. A
+    /// backend that writes as its agent (FIX 4465) freezes what the flight's
+    /// calls wear, or says, typed, why this flight cannot be written as its
+    /// agent: such a flight keeps its raw window. `session_bound` is a run
+    /// that lands through a room's route.
+    fn prepare_flight(
+        &self,
+        _session_bound: bool,
+    ) -> std::result::Result<(), crate::compaction::SelfCompactionUnavailable> {
+        Ok(())
+    }
+    /// [`Self::compact`], with the host's record of what ran the call when
+    /// this backend writes as its agent; `None` from every other backend.
+    fn compact_as_writer(
+        &self,
+        request: &CompactionRequest,
+        retry: Option<CompactionCheck>,
+    ) -> std::result::Result<
+        (CompactionProduct, Option<crate::compaction::CompactionExecution>),
+        CompactionRefusal,
+    > {
+        self.compact(request, retry).map(|product| (product, None))
+    }
 }
 
 /// One message-log row the host hands the backend.

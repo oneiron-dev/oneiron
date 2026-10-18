@@ -1411,6 +1411,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_federation_coreference_link(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.coreference.link", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_coreference_confirm(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.coreference.confirm", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_coreference_share_consent(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.coreference.share_consent", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_federation_coreference_unlink(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.federation.coreference.unlink", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_federation_connect_identity(
         &self,
         input: serde_json::Value,
@@ -1948,6 +1984,21 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.authority.handoff_alarms.acknowledge", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_cleanup_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cleanup.run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_entities_mention(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.entities.mention", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -2534,6 +2585,123 @@ impl NativeClient {
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_publish_approval(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.publish_approval", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_publish(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.publish", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_repoint(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.repoint", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_pointer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.pointer", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_unpublish(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.unpublish", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_link_token(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.link_token", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_register(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.register", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_close(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.close", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_invite(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.invite", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_revoke_invite(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.revoke_invite", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_share(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.share", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_live_preview_revoke_share(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.live_preview.revoke_share", input)
             .map_err(facade_error)
     }
     #[napi]

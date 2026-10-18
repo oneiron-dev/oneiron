@@ -162,6 +162,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.policy.propose", post(facade_route))
         .route("/vault.shared.policy.answer", post(facade_route))
         .route("/vault.shared.policy.change", post(facade_route))
+        .route("/vault.federation.coreference.link", post(facade_route))
+        .route("/vault.federation.coreference.confirm", post(facade_route))
+        .route(
+            "/vault.federation.coreference.share_consent",
+            post(facade_route),
+        )
+        .route("/vault.federation.coreference.unlink", post(facade_route))
         .route("/vault.federation.connect.identity", post(facade_route))
         .route("/vault.federation.connect.grants.mint", post(facade_route))
         .route("/vault.federation.connect.offer", post(facade_route))
@@ -241,6 +248,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.authority.handoff_alarms.acknowledge",
             post(facade_route),
         )
+        .route("/vault.cleanup.run", post(facade_route))
+        .route("/vault.entities.mention", post(facade_route))
         .route("/vault.legal_holds.place", post(facade_route))
         .route("/vault.legal_holds.widen", post(facade_route))
         .route("/vault.legal_holds.list", post(facade_route))
@@ -314,6 +323,25 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shares.revoke", post(facade_route))
         .route("/vault.shares.view", post(facade_route))
         .route("/vault.hooks.replay", post(facade_route))
+        .route("/vault.artifacts.publish_approval", post(facade_route))
+        .route("/vault.artifacts.publish", post(facade_route))
+        .route("/vault.artifacts.repoint", post(facade_route))
+        .route("/vault.artifacts.pointer", post(facade_route))
+        .route("/vault.artifacts.unpublish", post(facade_route))
+        .route("/vault.artifacts.link_token", post(facade_route))
+        .route("/vault.artifacts.live_preview.register", post(facade_route))
+        .route("/vault.artifacts.live_preview.read", post(facade_route))
+        .route("/vault.artifacts.live_preview.close", post(facade_route))
+        .route("/vault.artifacts.live_preview.invite", post(facade_route))
+        .route(
+            "/vault.artifacts.live_preview.revoke_invite",
+            post(facade_route),
+        )
+        .route("/vault.artifacts.live_preview.share", post(facade_route))
+        .route(
+            "/vault.artifacts.live_preview.revoke_share",
+            post(facade_route),
+        )
         .route("/vault.artifacts.view", post(facade_route))
         .route("/vault.artifacts.units", post(facade_route))
         .route("/vault.artifacts.anchors.pin", post(facade_route))

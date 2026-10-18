@@ -85,6 +85,13 @@ pub const MEMORY_PROFILE_KEYS: [&str; 8] = [
     "optional_memory",
 ];
 
+/// The `memory_profile.compaction_backend` value that makes an agent its own
+/// compaction writer (FIX 4465): each epoch and fold summary is written AS
+/// the agent, wearing its home, under its byline. It names WHO writes, never
+/// a model: the model and context come per wake from the purpose-default
+/// table's self-compaction row. Every other key keeps its backend unchanged.
+pub(crate) const SELF_COMPACTION_BACKEND: &str = "self";
+
 /// The pinned sub-map keys for a profile's `output_decay`, in encode order.
 pub(super) const OUTPUT_DECAY_KEYS: [&str; 2] = ["overview_after_turns", "stub_after_turns"];
 
@@ -498,6 +505,13 @@ impl MemoryProfile {
             verbatim_pins: Vec::new(),
             optional_memory: None,
         }
+    }
+
+    /// Whether this agent writes its own compaction: its profile names the
+    /// reserved `SELF_COMPACTION_BACKEND` key. Nothing else turns it on.
+    #[must_use]
+    pub fn writes_as_self(&self) -> bool {
+        self.compaction_backend.as_str() == SELF_COMPACTION_BACKEND
     }
 
     #[must_use]

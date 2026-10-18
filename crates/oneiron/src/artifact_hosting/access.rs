@@ -7,11 +7,11 @@ use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use rand_core::{OsRng, RngCore};
 
 /// Digest of a randomly minted URL capability. The secret itself is never persisted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactLinkCapability(pub(super) [u8; 32]);
 
 /// Authority attached to one live pointer, never to an unpinned snapshot.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ArtifactServeTier {
     #[default]
     Private,

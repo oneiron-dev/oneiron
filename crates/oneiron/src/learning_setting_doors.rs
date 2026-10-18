@@ -176,7 +176,7 @@ pub struct LearningSettingRowView {
     /// A spawn choice's value.
     pub choice: Option<LearningChoiceValue>,
     pub weight_runs: Option<f64>,
-    /// The owner who set it, 32 hex.
+    /// The owner who set it, 32 hex, or "erased" once that owner was erased.
     pub by: String,
     /// Unix seconds it was set.
     pub at: u64,
