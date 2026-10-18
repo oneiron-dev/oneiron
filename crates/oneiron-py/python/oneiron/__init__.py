@@ -633,6 +633,9 @@ class Oneiron:
         def research(self) -> "Oneiron._VaultResearchVerbs":
             return Oneiron._VaultResearchVerbs(self._client)
         @property
+        def evals(self) -> "Oneiron._VaultEvalsVerbs":
+            return Oneiron._VaultEvalsVerbs(self._client)
+        @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs":
             return Oneiron._VaultLegalHoldsVerbs(self._client)
         @property
@@ -759,6 +762,9 @@ class Oneiron:
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
         @property
+        def memory(self) -> "Oneiron._VaultMemoryVerbs":
+            return Oneiron._VaultMemoryVerbs(self._client)
+        @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs":
             return Oneiron._VaultChannelIdentitiesVerbs(self._client)
         @property
@@ -869,6 +875,9 @@ class Oneiron:
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
+        def supersede(self, spec):
+            """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
+            return json.loads(_translate(lambda: self._client.vault_claims_supersede(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1247,6 +1256,24 @@ class Oneiron:
         def close_erase_ask(self, spec):
             """An Owner closes an open erase ask, as erased (naming its erase act) or declined."""
             return json.loads(_translate(lambda: self._client.vault_shared_close_erase_ask(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultSharedPolicyVerbs":
+            return Oneiron._VaultSharedPolicyVerbs(self._client)
+    class _VaultSharedPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_get(json.dumps(spec))))
+        def propose(self, spec):
+            """A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_propose(json.dumps(spec))))
+        def answer(self, spec):
+            """A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_answer(json.dumps(spec))))
+        def change(self, spec):
+            """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
+            return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1399,6 +1426,12 @@ class Oneiron:
     class _VaultResearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def create_child(self, spec):
+            """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
+            return json.loads(_translate(lambda: self._client.vault_research_create_child(json.dumps(spec))))
+        def archive(self, spec):
+            """Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate."""
+            return json.loads(_translate(lambda: self._client.vault_research_archive(json.dumps(spec))))
         def bind(self, spec):
             """Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it."""
             return json.loads(_translate(lambda: self._client.vault_research_bind(json.dumps(spec))))
@@ -1447,6 +1480,21 @@ class Oneiron:
         def record_benchmark(self, spec):
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
             return json.loads(_translate(lambda: self._client.vault_research_record_benchmark(json.dumps(spec))))
+    class _VaultEvalsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def inventory(self, spec):
+            """The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup."""
+            return json.loads(_translate(lambda: self._client.vault_evals_inventory(json.dumps(spec))))
+        @property
+        def cohorts(self) -> "Oneiron._VaultEvalsCohortsVerbs":
+            return Oneiron._VaultEvalsCohortsVerbs(self._client)
+    class _VaultEvalsCohortsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def setup(self, spec):
+            """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+            return json.loads(_translate(lambda: self._client.vault_evals_cohorts_setup(json.dumps(spec))))
     class _VaultLegalHoldsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1862,6 +1910,12 @@ class Oneiron:
         @property
         def checkout(self) -> "Oneiron._VaultCodeCheckoutVerbs":
             return Oneiron._VaultCodeCheckoutVerbs(self._client)
+        @property
+        def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
+            return Oneiron._VaultCodeSnapshotsVerbs(self._client)
+        @property
+        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
+            return Oneiron._VaultCodeSymbolsVerbs(self._client)
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1886,6 +1940,24 @@ class Oneiron:
         def bind(self, spec):
             """Materialize an existing live owner checkout with lease-bound origin remotes and no upstream credential."""
             return json.loads(_translate(lambda: self._client.vault_code_checkout_bind(json.dumps(spec))))
+    class _VaultCodeSnapshotsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ingest(self, spec):
+            """Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_ingest(json.dumps(spec))))
+        def get(self, spec):
+            """Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_get(json.dumps(spec))))
+        def read(self, spec):
+            """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_snapshots_read(json.dumps(spec))))
+    class _VaultCodeSymbolsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def definitions(self, spec):
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2288,6 +2360,21 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+    class _VaultMemoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs":
+            return Oneiron._VaultMemorySignalExtractionVerbs(self._client)
+    class _VaultMemorySignalExtractionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."""
+            return json.loads(_translate(lambda: self._client.vault_memory_signal_extraction(json.dumps(spec))))
+        def result(self, spec):
+            """Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."""
+            return json.loads(_translate(lambda: self._client.vault_memory_signal_extraction_result(json.dumps(spec))))
     class _VaultChannelIdentitiesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2462,6 +2549,9 @@ class Oneiron:
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def steps(self) -> "Oneiron._AiStepsVerbs":
+            return Oneiron._AiStepsVerbs(self._client)
         def reply(self, spec):
             """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
             return json.loads(_translate(lambda: self._client.ai_reply(json.dumps(spec))))
@@ -2486,6 +2576,15 @@ class Oneiron:
         def verdict(self, spec):
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
+    class _AiStepsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def submit(self, spec):
+            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            return json.loads(_translate(lambda: self._client.ai_steps_submit(json.dumps(spec))))
+        def receipt(self, spec):
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

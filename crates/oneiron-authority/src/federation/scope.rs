@@ -136,7 +136,19 @@ impl<T: ScopeAtom> ScopeAxis<T> {
 }
 
 /// Content sensitivity. This is not criticality or a hardware assurance tier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Sensitivity {
     Public,
@@ -168,7 +180,9 @@ impl Sensitivity {
 }
 
 /// A channel's maximum sensitivity; bottom permits no content, even public.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -205,7 +219,9 @@ impl SensitivityCeiling {
 /// Canonical six-axis Scope. Missing axes deny; callers select `top()` explicitly.
 /// Kind bands contain type bytes, not ordinal storage ranges. Audience is project.
 /// Verb values are class names, not individual tool names.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(default, deny_unknown_fields)]
 pub struct Scope {
     pub worlds: ScopeAxis<ScopeId>,

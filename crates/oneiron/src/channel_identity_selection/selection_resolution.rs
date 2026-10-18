@@ -62,7 +62,9 @@ pub struct ChannelIdentitySelectionQuery<'a> {
 }
 
 /// The resolved presentation identity.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelIdentitySelectionDecision {
     pub identity_ref: EntityId,

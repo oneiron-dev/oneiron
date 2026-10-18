@@ -100,7 +100,7 @@ pub struct ConnectorToolGrant {
 }
 
 /// One tool row as the owner sees it before consenting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectorConsentRowView {
     pub tool: String,
     pub data_class: SlateDataClass,
@@ -113,7 +113,7 @@ pub struct ConnectorConsentRowView {
 }
 
 /// One catalog connector's consent view for one actor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConnectorConsentView {
     pub connector: String,
     pub actor: String,

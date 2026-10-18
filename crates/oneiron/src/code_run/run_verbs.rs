@@ -60,13 +60,27 @@ pub struct MemoryTimeRange {
 }
 
 /// `vault.claims.supersede`: closes `oldId` in favour of `newId`.
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct MemorySupersedeInput {
     pub new_id: String,
     pub old_id: String,
     #[schemars(range(max = "JS_SAFE_INTEGER"))]
     pub now: u64,
+}
+
+impl MemorySupersedeInput {
+    /// The same typed call on code mode and the credential-bound run door.
+    pub(crate) fn into_call(self) -> crate::Result<super::SelfMemorySupersedeClaimCall> {
+        if self.now > JS_SAFE_INTEGER {
+            return Err(crate::Error::InvalidClaimBody("invalid unix time"));
+        }
+        Ok(super::SelfMemorySupersedeClaimCall::new(
+            EntityId::from_hex(&self.new_id)?,
+            EntityId::from_hex(&self.old_id)?,
+            self.now,
+        ))
+    }
 }
 
 /// `vault.edges.put`: one typed edge through the run's edge gate.
@@ -414,7 +428,7 @@ pub struct MemorySearchHit {
 
 /// `vault.claims.put` and `vault.claims.supersede`'s output: the claim
 /// written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemoryWriteOutput {
     pub id: EntityId,
 }

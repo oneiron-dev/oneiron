@@ -284,6 +284,7 @@ mod sdk_diary;
 mod sdk_disclosure;
 mod sdk_embedding_space;
 mod sdk_explain;
+mod sdk_eval_cohort;
 mod sdk_fanout_launch;
 mod sdk_federation;
 mod sdk_guest_revoke;
@@ -304,6 +305,7 @@ mod sdk_self;
 mod sdk_share;
 mod sdk_shared;
 mod sdk_shared_members;
+mod sdk_shared_policy;
 mod sdk_workspace;
 pub mod verb_hook_boundary;
 

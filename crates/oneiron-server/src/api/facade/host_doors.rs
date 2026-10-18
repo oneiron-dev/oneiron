@@ -58,10 +58,14 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
+// The shared-act policy doors (DOOR-129) too.
+pub(crate) use super::shared_policy_doors::*;
 // The owner's legal-hold doors (OF-470) too.
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::extraction_doors::*;
+pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -105,6 +109,8 @@ pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
+// The owner's code snapshot doors (DOOR-118), likewise.
+pub(crate) use super::codebase_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
@@ -119,6 +125,7 @@ pub(crate) use super::core_write_doors::*;
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::campaign_split_doors::*;
+pub(crate) use super::research_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1017,7 +1024,9 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "ai.reply"
+        "ai.steps.submit"
+        | "ai.steps.receipt"
+        | "ai.reply"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.packs.put"
@@ -1085,6 +1094,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals.decline"
         | "vault.craft_candidates"
         | "vault.craft_candidates.answer"
+        | "vault.memory.signal_extraction"
+        | "vault.memory.signal_extraction.result"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
@@ -1143,11 +1154,18 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.local"
         | "vault.budgets.settlements"
         | "vault.research.evaluate_split"
+        | "vault.research.create_child"
+        | "vault.evals.inventory"
+        | "vault.evals.cohorts.setup"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
+        | "vault.code.snapshots.ingest"
+        | "vault.code.snapshots.get"
+        | "vault.code.snapshots.read"
+        | "vault.code.symbols.definitions"
         | "vault.off_record.start"
         | "vault.off_record.status"
         | "vault.off_record.witness"
@@ -1155,7 +1173,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.off_record.recall"
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
-        | "self.off_record.execute" => owner_proof(auth, server, verb).map(drop),
+        | "self.off_record.execute"
+        | "vault.shared.policy.get"
+        | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -1181,7 +1201,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_preview"
         | "vault.records.erase_confirm"
         | "vault.workspace.establish"
-        | "vault.workspace.members.onboard" => {
+        | "vault.workspace.members.onboard"
+        | "vault.shared.policy.propose"
+        | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

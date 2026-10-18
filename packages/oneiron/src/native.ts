@@ -159,6 +159,10 @@ vaultSharedMatured(input: unknown): unknown
 vaultSharedEraseAsk(input: unknown): unknown
 vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
+vaultSharedPolicyGet(input: unknown): unknown
+vaultSharedPolicyPropose(input: unknown): unknown
+vaultSharedPolicyAnswer(input: unknown): unknown
+vaultSharedPolicyChange(input: unknown): unknown
 vaultFederationConnectIdentity(input: unknown): unknown
 vaultFederationConnectGrantsMint(input: unknown): unknown
 vaultFederationConnectOffer(input: unknown): unknown
@@ -185,6 +189,10 @@ vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
+vaultResearchCreateChild(input: unknown): unknown
+vaultResearchArchive(input: unknown): unknown
+vaultEvalsInventory(input: unknown): unknown
+vaultEvalsCohortsSetup(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
@@ -276,6 +284,10 @@ vaultCodeOriginAuthorityGet(input: unknown): unknown
 vaultCodeOriginAuthoritySet(input: unknown): unknown
 vaultCodeOriginPublications(input: unknown): unknown
 vaultCodeCheckoutBind(input: unknown): unknown
+vaultCodeSnapshotsIngest(input: unknown): unknown
+vaultCodeSnapshotsGet(input: unknown): unknown
+vaultCodeSnapshotsRead(input: unknown): unknown
+vaultCodeSymbolsDefinitions(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
@@ -343,6 +355,8 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+aiStepsSubmit(input: unknown): unknown
+aiStepsReceipt(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
 aiOptions(input: unknown): unknown
@@ -435,6 +449,8 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultMemorySignalExtraction(input: unknown): unknown
+vaultMemorySignalExtractionResult(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown
 vaultChannelIdentitiesProvision(input: unknown): unknown
 vaultChannelIdentitiesBind(input: unknown): unknown
@@ -470,6 +486,7 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+vaultClaimsSupersede(input: unknown): unknown
 selfFold(input: unknown): unknown
 selfCompact(input: unknown): unknown
 selfUnfold(input: unknown): unknown

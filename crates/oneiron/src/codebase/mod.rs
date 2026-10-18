@@ -7,6 +7,9 @@ mod snapshot;
 mod store;
 pub(crate) use self::store::{archive_codebase_asset_id, archive_codebase_tables};
 
+// The ASSET a snapshot file's bytes are stored as, for a door that lists it.
+pub(crate) use self::store::codebase_asset_entity_id as snapshot_asset_entity_id;
+
 pub use self::ingest::{
     HostedMediaHashMatchDecision, HostedMediaHashMatchInput, HostedMediaHashMatchProvider,
     NoopHostedMediaHashMatchProvider, RepoIngestConfig, RepoIngestResult,

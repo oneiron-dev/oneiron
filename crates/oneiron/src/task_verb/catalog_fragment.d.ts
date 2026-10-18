@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 504 code-mode rows (483 host rows, 21 run rows), 1780 declarations.
-// Replies: 443 fully typed, 57 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 520 code-mode rows (499 host rows, 21 run rows), 1854 declarations.
+// Replies: 456 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -641,6 +641,14 @@ declare namespace Sdk {
   type EraseAskStatus = "open" | { erased: { by: string; act?: string | null } } | { declined: { by: string } };
   type SharedEraseAsk = { id: string; vault_id: string; kind: EraseAskKind; asker: string; record: string; asked_at: number; status: EraseAskStatus; closed_at?: number | null };
   type SharedEraseAskCloseRequest = { ask_id: string; erased: boolean; act_id?: string | null };
+  type SharedActPrecedence = "vault_only" | "holder_may_narrow";
+  type SharedActPolicy = { wait_secs: number; objector_roles: FederationGrantRole[]; initiator_roles: FederationGrantRole[]; policy_editor_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; max_act_name_bytes: number; max_payload_bytes: number; precedence: SharedActPrecedence };
+  type SharedActPoliciesView = { vault_id: string; shipped: Record<string, SharedActPolicy>; overrides: Record<string, SharedActPolicy>; effective: Record<string, SharedActPolicy>; policy_hash: string };
+  type SharedActPolicyProposeRequest = { vault_id: string; act: string; policy?: SharedActPolicy | null; expected_policy_hash: string };
+  type SharedActPolicyChangeState = "pending" | "applied" | "vetoed" | "stale";
+  type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
+  type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
+  type SharedActPolicyChangeRequest = { change_id: string };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -718,6 +726,9 @@ declare namespace Sdk {
   type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
   type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
+  type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
+  type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
+  type ResearchArchiveWire = { root: EntityId };
   type SearchAxis = { name: string; values: string[] };
   type MetricDirection = "higher" | "lower";
   type MetricRole = "primary" | "floor" | "cost";
@@ -731,18 +742,15 @@ declare namespace Sdk {
   type CampaignKnobs = { merge_crossover?: MergeCrossover };
   type CampaignConfig = { campaign_id: string; search_axes: SearchAxis[]; metric_set: MetricSet; splits: CampaignSplits; budget: BudgetLease; decide: DecideRules; knobs?: CampaignKnobs };
   type ResearchTarget = { skill: { skill: EntityId } } | { config: { subject: string } };
+  type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
   type EvalSeat = "companion" | "decision" | "extraction_tagger" | "embedder" | "router" | { named: string };
   type ResearchConfirmationSeat = { seat: EvalSeat; cohort: EntityId };
-  type CandidateRef = { config_ref: string; config_sha256: string };
   type PriorRung = "user" | "persona" | "global";
   type PriorSeed = { rung: PriorRung; alpha: number; beta: number; source_ref: string };
   type ResearchExecution = { experimenter: EntityId; scorer: EntityId; referee?: EntityId | null; experiment_units: number; measure_units: number; confirm_units: number };
-  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
-  type ResearchGoalPin = { goal_id: EntityId; revision: string; project?: [EntityId, EntityId] | null };
   type ResearchBinding = { root: AttemptId; run_id: string; config: CampaignConfig; config_sha256: string; target: ResearchTarget; goal?: ResearchGoalPin | null; holder?: string | null; policy_digest: string; confirmation?: ResearchConfirmationSeat | null; share?: string | null; prior_ladder: PriorSeed[]; execution?: ResearchExecution | null; bound_at: number };
-  type ForkKind = "variation" | "debug";
-  type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
   type ExperimentKind = "root" | "variation" | "debug" | "weave";
+  type CandidateRef = { config_ref: string; config_sha256: string };
   type Measurement = { dataset: CampaignDatasetRef; metric_set_id: string; metric_set_revision: string; scores: Record<string, number> };
   type SearchEvidence = { measurement: Measurement; confirmed_hits: number; attribution: number; hop_cost: number; expected_gain: number; estimator_version: string; knob_reliability?: number | null; receipt_refs: string[] };
   type HeldOutEvidence = { measurement: Measurement; receipt_refs: string[]; recorded_at: number };
@@ -751,6 +759,48 @@ declare namespace Sdk {
   type PruneReason = { dominated: { by: AttemptId } } | { floor_regression: { axis: string } } | "gain_below_floor" | { stopped: { by: EntityId } };
   type PruneReceipt = { reason: PruneReason; evidence_refs: string[]; at: number };
   type ExperimentNode = { attempt: AttemptId; kind: ExperimentKind; parents: AttemptId[]; candidate: CandidateRef; search?: SearchEvidence | null; held_out?: HeldOutEvidence | null; invalid?: InvalidReceipt | null; weave?: WeaveReceipt | null; pruned?: PruneReceipt | null; recorded_at: number };
+  type ResearchStep = { fork: { parent: AttemptId; stagnation: boolean } } | "paused_budget" | "stopped_plateau" | "escalate_plateau" | "stopped_oracle";
+  type BranchBelief = { alpha: number; beta: number; p_beat: number; information_gain: number };
+  type BranchSnapshot = { attempt: AttemptId; reward: number; expected_gain: number; estimator_version: string; belief?: BranchBelief | null };
+  type SelectionRanking = { kind: "dgm" } | { kind: "information_gain"; estimator_version: string };
+  type SelectionReceipt = { root: AttemptId; round: number; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number };
+  type ArchiveQualityMetric = { metric_id: string; revision: string };
+  type ArchiveOutputRef = { entity: EntityId; revision: string };
+  type ArchiveAxis = { name: string; bins: string[] };
+  type ArchiveDescriptor = { kind: "axes"; axes: ArchiveAxis[] } | { kind: "embedding_clusters"; model_revision: string; centers: number[][] };
+  type CampaignArchivePin = { campaign_id: string; task: EntityId; goal_ref: EntityId; goal_digest: string; quality_metric: ArchiveQualityMetric; proposal_receipt: EntityId; sample_outputs: ArchiveOutputRef[]; descriptor: ArchiveDescriptor };
+  type HeldOutCall = "promote" | "reject" | "escalate_tradeoff";
+  type ConfirmationReceipt = { cohort: EntityId; consumed_at: number; exposure?: EntityId | null };
+  type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged: boolean };
+  type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged";
+  type SufficiencyVerdict = "not_worse" | "worse" | { unknown: UnknownReason[] };
+  type SufficiencyCard = { input: SufficiencyInput; margin?: number | null; verdict: SufficiencyVerdict };
+  type PromotionDisposition = "promoted" | "lost_sealed" | "held_insufficient" | "held_gate";
+  type ResearchBudgetRead = { max_units: number; exploration_units: number; work_reserved: number; work_spent: number; exploration_reserved: number; exploration_spent: number };
+  type CampaignPromotionReceipt = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; parents: AttemptId[]; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; cohort: EntityId; exposures: EntityId[]; sufficiency: SufficiencyCard; sealed_won: boolean; sealed_digest: string; referee_pin: string; skill_proposal?: EntityId | null; disposition: PromotionDisposition; budget: ResearchBudgetRead; at: number };
+  type PromotionBasis = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; incumbent_pin: CandidateRef; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; incumbent_held_out: Measurement; candidate_held_out: Measurement; call: HeldOutCall; merge_crossover_enabled: boolean; decided_at: number; confirmation?: ConfirmationReceipt | null; promotion?: CampaignPromotionReceipt | null };
+  type ResearchArchive = { binding: ResearchBinding; experiments: ExperimentNode[]; rounds: SelectionReceipt[]; promotions: PromotionBasis[]; incumbent: EntityId };
+  type EvalInventoryWire = { at?: number | null };
+  type FamilyPurpose = "development" | "judge_audit" | "sealed_confirmation";
+  type EvalSourceGroup = { id: string; seat: EvalSeat; candidates: number; labelled: number; roots: number; fresh_roots: number; family?: EntityId | null; purpose?: FamilyPurpose | null; blocked?: string | null };
+  type EvalLabelKind = "world_outcome" | "owner_pick" | "adjudicated_audit" | "judge_verdict";
+  type CandidateLabel = { kind: EvalLabelKind; value: string; reference: string; at: number; held: boolean };
+  type EvalCandidate = { id: string; seat: EvalSeat; group: string; at: number; labels: CandidateLabel[]; case?: EntityId | null };
+  type PurposeCounts = { development: number; judge_audit: number; sealed_confirmation: number };
+  type EvalExposureCounts = { candidates: number; queries: number; promotions: number };
+  type CohortSummary = { id: EntityId; from: number; until: number; reference: boolean; retired: boolean; members: number; families: number; rubric_revision: string; exposure: EvalExposureCounts };
+  type UncutFamily = { family: EntityId; cases: number; first_at: number; last_at: number };
+  type SeatInventory = { seat: EvalSeat; families: PurposeCounts; cases: number; cohorts: CohortSummary[]; uncut: UncutFamily[] };
+  type EvalAuthoringInventory = { inventory_digest: string; built_at: number; from: number; groups: EvalSourceGroup[]; candidates: EvalCandidate[]; seats: SeatInventory[] };
+  type FamilyDecision = { group: string; purpose: FamilyPurpose };
+  type CaseDecision = { candidate: string; stratum?: string | null };
+  type CutDecision = { seat: EvalSeat; from: number; until: number; rubric_revision: string; reference: boolean };
+  type EvalCohortSetup = { inventory_at: number; inventory_digest: string; families?: FamilyDecision[]; cases?: CaseDecision[]; cuts: CutDecision[] };
+  type EvalAuthoringSkip = { item: string; reason: string };
+  type EvalAuthoringReport = { families_assigned: number; families_extended: number; cases_recorded: number; cases_reused: number; labels_added: number; cohorts_cut: EntityId[]; cuts_with_coverage_gaps: number; cohorts_retired: EntityId[]; cohorts_kept: number; skipped: EvalAuthoringSkip[] };
+  type ResearchBindWire = { root: EntityId; config: CampaignConfig; target: ResearchTarget; holder?: string | null; confirmation?: ResearchConfirmationSeat | null; share?: string | null; incumbent: CandidateRef; prior_ladder?: PriorSeed[]; execution?: ResearchExecution | null };
+  type ForkKind = "variation" | "debug";
+  type ResearchForkWire = { root: EntityId; parent: EntityId; child: EntityId; kind: ForkKind; candidate: CandidateRef };
   type ResearchWeaveWire = { root: EntityId; parents: EntityId[]; child: EntityId; common_ancestor: EntityId; validation_overlap: number; candidate: CandidateRef; claim: EntityId };
   type ResearchSearchWire = { root: EntityId; attempt: EntityId; evidence: SearchEvidence };
   type ResearchHeldOutWire = { root: EntityId; attempt: EntityId; measurement: Measurement; receipt_refs: string[] };
@@ -791,32 +841,11 @@ declare namespace Sdk {
   type ResearchPruneCause = { kind: "dominated"; by: EntityId } | { kind: "floor_regression"; axis: string } | { kind: "gain_below_floor" } | { kind: "stopped" };
   type ResearchPruneWire = { root: EntityId; attempt: EntityId; cause: ResearchPruneCause; evidence_refs: string[] };
   type ResearchSelectWire = { root: EntityId; goal_met?: boolean };
-  type ResearchStep = { fork: { parent: AttemptId; stagnation: boolean } } | "paused_budget" | "stopped_plateau" | "escalate_plateau" | "stopped_oracle";
-  type BranchBelief = { alpha: number; beta: number; p_beat: number; information_gain: number };
-  type BranchSnapshot = { attempt: AttemptId; reward: number; expected_gain: number; estimator_version: string; belief?: BranchBelief | null };
-  type SelectionRanking = { kind: "dgm" } | { kind: "information_gain"; estimator_version: string };
-  type SelectionReceipt = { root: AttemptId; round: number; step: ResearchStep; branches: BranchSnapshot[]; best_quality: number; best_gain: number; ranking: SelectionRanking; policy_digest: string; budget_available: boolean; oracle_goal_met: boolean; at: number };
-  type ArchiveQualityMetric = { metric_id: string; revision: string };
-  type ArchiveOutputRef = { entity: EntityId; revision: string };
-  type ArchiveAxis = { name: string; bins: string[] };
-  type ArchiveDescriptor = { kind: "axes"; axes: ArchiveAxis[] } | { kind: "embedding_clusters"; model_revision: string; centers: number[][] };
-  type CampaignArchivePin = { campaign_id: string; task: EntityId; goal_ref: EntityId; goal_digest: string; quality_metric: ArchiveQualityMetric; proposal_receipt: EntityId; sample_outputs: ArchiveOutputRef[]; descriptor: ArchiveDescriptor };
   type ResearchBasisWire = { root: EntityId; candidate: EntityId; archive?: CampaignArchivePin | null };
-  type HeldOutCall = "promote" | "reject" | "escalate_tradeoff";
-  type ConfirmationReceipt = { cohort: EntityId; consumed_at: number; exposure?: EntityId | null };
-  type SufficiencyInput = { families: number; floor_slices: Record<string, number>; min_families_per_slice: number; retest_noise?: number | null; owner_margin?: number | null; paired_interval?: [number, number] | null; detectable_effect?: number | null; set_changed: boolean; rubric_changed: boolean; canary_diverged: boolean };
-  type UnknownReason = "no_retest_noise" | "no_interval" | "interval_spans_margin" | { too_few_families: { slice: string; families: number } } | "set_changed" | "rubric_changed" | "canary_diverged";
-  type SufficiencyVerdict = "not_worse" | "worse" | { unknown: UnknownReason[] };
-  type SufficiencyCard = { input: SufficiencyInput; margin?: number | null; verdict: SufficiencyVerdict };
-  type PromotionDisposition = "promoted" | "lost_sealed" | "held_insufficient" | "held_gate";
-  type ResearchBudgetRead = { max_units: number; exploration_units: number; work_reserved: number; work_spent: number; exploration_reserved: number; exploration_spent: number };
-  type CampaignPromotionReceipt = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; parents: AttemptId[]; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; cohort: EntityId; exposures: EntityId[]; sufficiency: SufficiencyCard; sealed_won: boolean; sealed_digest: string; referee_pin: string; skill_proposal?: EntityId | null; disposition: PromotionDisposition; budget: ResearchBudgetRead; at: number };
-  type PromotionBasis = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; incumbent_pin: CandidateRef; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; incumbent_held_out: Measurement; candidate_held_out: Measurement; call: HeldOutCall; merge_crossover_enabled: boolean; decided_at: number; confirmation?: ConfirmationReceipt | null; promotion?: CampaignPromotionReceipt | null };
   type ResearchCandidateWire = { root: EntityId; candidate: EntityId };
   type EvalExposureKind = "candidate" | "query" | "promotion";
   type EvalExposure = { id: EntityId; cohort: EntityId; kind: EvalExposureKind; consumer: string; candidate_pin?: string | null; at: number };
   type DerivationKind = "receipt" | "repair" | "paraphrase" | "summary" | "translation" | "synthetic" | "rubric";
-  type EvalLabelKind = "world_outcome" | "owner_pick" | "adjudicated_audit" | "judge_verdict";
   type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number };
   type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[] };
   type EvalRelease = { exposure: EvalExposure; cases: EvalCase[] };
@@ -1047,6 +1076,16 @@ declare namespace Sdk {
   type OriginPublicationsView = { repo: string; publications: OriginPublicationView[] };
   type CheckoutDoorBindRequest = { repo: string; checkout: string; epoch: number; endpoint: string };
   type CheckoutDoorBinding = { repo: string; checkout: string; epoch: number; checkout_path: string; remote_url: string };
+  type CodeRepoPointer = { local_folder: string; commit: string };
+  type CodeSnapshotIngestRequest = { project_id: string; pointer: CodeRepoPointer };
+  type CodeSnapshotFile = { path: string; content_hash_blake3: string; size_bytes: number };
+  type CodeSnapshotView = { repo: EntityId; repo_ref: string; project_id: string; commit?: string | null; snapshot: string; scope_key: string; files: CodeSnapshotFile[] };
+  type CodeSnapshotRequest = { repo: EntityId; snapshot: string };
+  type CodeSnapshotReadRequest = { repo: EntityId; snapshot: string; path: string };
+  type CodeSnapshotPinnedFile = { repo: EntityId; snapshot: string; file: CodeSnapshotFile; content: string; text_sha256: string };
+  type CodeSnapshotDefinitionsRequest = { repo: EntityId; snapshot: string; name: string };
+  type CodeSnapshotDefinition = { symbol: EntityId; path: string; name: string; kind: string; fingerprint: string; start_line: number; end_line: number };
+  type CodeSnapshotDefinitionsView = { repo: EntityId; snapshot: string; definitions: CodeSnapshotDefinition[] };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
   type AgentSkillInput = { skill_id: string; min_version?: string | null };
@@ -1267,6 +1306,41 @@ declare namespace Sdk {
   type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string };
   type SkillForkRequest = { parent: string; id?: string | null; skill_id: string };
   type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown };
+  type CallPurpose = "extraction" | "consolidation" | "answer_gen" | "auto_check" | "tool_routing" | "voice" | "eval" | { other: { name: string } };
+  type DeterministicFallback = { name: string; config?: unknown | null };
+  type CallClass = { kind: "durable"; fallback: DeterministicFallback } | { kind: "best_effort" };
+  type ModelTierRef = string;
+  type TierPrecedence = { per_seat?: ModelTierRef | null; vault_policy?: ModelTierRef | null; purpose_default?: ModelTierRef | null; global_default: ModelTierRef; seat?: ModelTierRef | null };
+  type ResponseFormat = { format: "text" } | { format: "json"; schema: unknown };
+  type ModelLocality = "on_device" | "own_server" | "third_party";
+  type CallEnvelope = { scope?: ScopeScope; purpose: CallPurpose; class: CallClass; tier: TierPrecedence; response_format: ResponseFormat; locality: ModelLocality; seat_effort?: ReasoningEffort | null };
+  type LlmMessageRole = "system" | "user" | "assistant" | "tool";
+  type ImageContent = { source: "base64"; data: string } | { source: "url"; url: string };
+  type ContentPart = { kind: "text"; text: string } | { kind: "reasoning"; text: string; signature?: string | null } | { kind: "tool_call"; call_id: string; name: string; input: unknown } | { kind: "tool_result"; call_id: string; output: unknown; is_error?: boolean } | { kind: "image"; media_type: string; image: ImageContent } | { kind: "audio"; media_type: string; data: string };
+  type LlmMessage = { role: LlmMessageRole; content: ContentPart[] };
+  type LlmToolSpec = { name: string; description: string; input_schema: unknown };
+  type LlmRequest = { model: ModelId; envelope: CallEnvelope; messages: LlmMessage[]; tools?: LlmToolSpec[]; params?: Record<string, unknown>; provider_options?: Record<string, unknown> };
+  type ModelStepRetryPolicy = { max_attempts: number };
+  type ModelStepSubmit = { step_key: string; request: LlmRequest; retry?: ModelStepRetryPolicy };
+  type StepProgression = "started" | "response_received" | "logged" | "finished";
+  type LlmInputUsage = { total: number; cache_read: number; cache_write: number };
+  type LlmOutputUsage = { total: number; text: number; reasoning: number };
+  type LlmUsage = { input: LlmInputUsage; output: LlmOutputUsage; raw_provider: unknown };
+  type FinishReason = "stop" | "length" | "tool_calls" | "content_filtered" | "cancelled" | { other: { name: string } };
+  type LlmResponse = { message: LlmMessage; usage: LlmUsage; finish_reason: FinishReason };
+  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
+  type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
+  type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
+  type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure };
+  type ModelStepFailureClass = "retryable" | "fatal" | "budget_denied" | "schema_validation" | "fallback" | "finalize_refused" | "deadline_hard_cut" | "engine";
+  type SpentKind = "window" | "credit";
+  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut";
+  type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
+  type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
+  type ModelStepFailure = { class: ModelStepFailureClass; message: string; llm?: LlmError | null; validation_attempts?: number | null; validation_errors: string[]; spent_usage?: LlmUsage | null };
+  type ModelStepResult = { status: "finished"; response: LlmResponse; json?: unknown | null; memoized: boolean; fallback_source?: FatalLlmError | null; claim_ref: string } | { status: "failed"; failure: ModelStepFailure } | { status: "budget_denied"; trap_ref: string };
+  type ModelStepReceipt = { step_ref: string; step_hash: string; model: ModelId; retry: ModelStepRetryPolicy; progression?: StepProgression | null; result?: ModelStepResult | null };
+  type ModelStepReceiptRequest = { step_key: string };
   type AiReplyReader = { definition: string; task_family?: string | null };
   type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
   type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
@@ -1287,14 +1361,6 @@ declare namespace Sdk {
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
   type AiVideoTicket = { job: string; model: string; operation: AiOperation };
   type AiVideoJobRequest = { job: string };
-  type SpentKind = "window" | "credit";
-  type RetryableLlmError = { RateLimited: { retry_after?: number | null; resets_at?: number[] } } | { QuotaSpent: { kind: SpentKind; retry_after?: number | null; resets_at?: number[] } } | { KeptOnDevice: { retry_after?: number | null; resets_at?: number[] } } | "ServerError" | "Timeout" | "StreamCut";
-  type LlmCapability = "streaming" | "tool_calling" | "tool_results" | "image_input" | "json_response" | "reasoning" | "voice" | "assistant_prefill" | "audio_input";
-  type UnsupportedCapability = { capability: LlmCapability; model?: ModelId | null; reason?: string | null };
-  type LabelReadFailure = "EmittedText" | "NotEosStop" | "MissingLabels" | "Malformed";
-  type FatalLlmError = "InvalidRequest" | "Auth" | "ContentFiltered" | "EmptyResponse" | { Unsupported: UnsupportedCapability } | { LabelRead: LabelReadFailure };
-  type BudgetDenied = "Exhausted" | "LeaseInvalid" | "AdmissionDenied";
-  type LlmError = { Retryable: RetryableLlmError } | { Fatal: FatalLlmError } | { BudgetDenied: BudgetDenied };
   type AiVideoJob = { state: "queued" } | { state: "running"; progress?: number | null } | { state: "done"; answer: AiAnswer } | { state: "failed"; error: LlmError };
   type AiVideoCancelled = { job: string };
   type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
@@ -1637,6 +1703,14 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type SignalExtractionRequest = { turn_refs: string[] };
+  type SignalExtractionTicket = { job_refs: string[] };
+  type SignalExtractionResultRequest = { job_ref: string };
+  type SignalExtractionMessage = { message_ref: string; byte_range: [number, number]; revision: string };
+  type SignalExtractionSource = { source_ref: string; claim_ref?: string | null; byte_range?: [number, number] | null; content_hash: string; messages: SignalExtractionMessage[] };
+  type ProspectiveQueryHint = { hint_ref: string; target_ref: string; query: string; source: string };
+  type SignalExtractionClaim = { claim: ClaimView; sources: SignalExtractionSource[]; prospective_queries: ProspectiveQueryHint[] };
+  type SignalExtractionResult = { job: DreamerAttemptView; claims: SignalExtractionClaim[] };
   type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence";
   type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number };
   type ChannelIdentityFulfillment = "api" | "manual" | "review";
@@ -1808,6 +1882,12 @@ declare const ai: {
   reply(input: Sdk.AiReplyRequest): Promise<Sdk.AiReply | StoredResult>;
   /** Speech audio out of text, from the host's speech model. */
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
+  steps: {
+    /** Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease. */
+    receipt(input: Sdk.ModelStepReceiptRequest): Promise<Sdk.ModelStepReceipt | StoredResult>;
+    /** Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result. */
+    submit(input: Sdk.ModelStepSubmit): Promise<Sdk.ModelStepReceipt | StoredResult>;
+  };
   /** Text out of speech audio, from the host's transcription model. */
   transcribe(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt. */
@@ -2329,6 +2409,18 @@ declare const vault: Sdk.VaultHost & {
     proposal_view(input: Sdk.CodeProposalViewRequest): Promise<Sdk.CodeProposalView | null | StoredResult>;
     /** Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it. */
     repo_diff(input: Sdk.CodeRepoDiffRequest): Promise<Sdk.CodeRepoDiffView | null | StoredResult>;
+    snapshots: {
+      /** Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant. */
+      get(input: Sdk.CodeSnapshotRequest): Promise<Sdk.CodeSnapshotView | null | StoredResult>;
+      /** Import one committed Git tree, by an absolute folder on the serving host and a full 40-hex commit, as a custody-filtered snapshot. Owner only. It registers no repository, whitelist, membership or receipt. */
+      ingest(input: Sdk.CodeSnapshotIngestRequest): Promise<Sdk.CodeSnapshotView | StoredResult>;
+      /** Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only. */
+      read(input: Sdk.CodeSnapshotReadRequest): Promise<Sdk.CodeSnapshotPinnedFile | null | StoredResult>;
+    };
+    symbols: {
+      /** Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language. */
+      definitions(input: Sdk.CodeSnapshotDefinitionsRequest): Promise<Sdk.CodeSnapshotDefinitionsView | StoredResult>;
+    };
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
   commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
@@ -2473,6 +2565,14 @@ declare const vault: Sdk.VaultHost & {
     send_for_signature(input: Sdk.EsignDispatchRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
     /** Withdraws a drafted or pending signing document unsealed and tells its recipients why, through the outbound gate, as the caller. */
     void(input: Sdk.EsignVoidRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
+  };
+  evals: {
+    cohorts: {
+      /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */
+      setup(input: Sdk.EvalCohortSetup): Promise<Sdk.EvalAuthoringReport | StoredResult>;
+    };
+    /** The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup. */
+    inventory(input: Sdk.EvalInventoryWire): Promise<Sdk.EvalAuthoringInventory | StoredResult>;
   };
   explain: {
     /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
@@ -2624,6 +2724,13 @@ declare const vault: Sdk.VaultHost & {
     remove(input: Sdk.SharedMemberRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
     /** An Admin with the add_member power takes back a pending invitation. */
     withdraw_invitation(input: Sdk.SharedInvitationWithdrawRequest): Promise<Sdk.SharedActExecutionReceipt | StoredResult>;
+  };
+  memory: {
+    /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
+    signal_extraction: ((input: Sdk.SignalExtractionRequest) => Promise<Sdk.SignalExtractionTicket | StoredResult>) & {
+      /** Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them. */
+      result(input: Sdk.SignalExtractionResultRequest): Promise<Sdk.SignalExtractionResult | null | StoredResult>;
+    };
   };
   mesh: {
     /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
@@ -2793,8 +2900,12 @@ declare const vault: Sdk.VaultHost & {
   /** Commits one claim through the gate, the same as vault.claims.upsert. */
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
   research: {
+    /** Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate. */
+    archive(input: Sdk.ResearchArchiveWire): Promise<Sdk.ResearchArchive | StoredResult>;
     /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
     bind(input: Sdk.ResearchBindWire): Promise<Sdk.ResearchBinding | StoredResult>;
+    /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */
+    create_child(input: Sdk.ResearchChildWire): Promise<Sdk.ResearchChildReceipt | StoredResult>;
     /** The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored. */
     evaluate_split(input: Sdk.CampaignSplitWire): Promise<Sdk.CampaignSplitReport | StoredResult>;
     /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */
@@ -2939,6 +3050,16 @@ declare const vault: Sdk.VaultHost & {
     object(input: Sdk.SharedActRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** The reader's own outcome notices for a shared vault. */
     outcomes(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActOutcome[] | StoredResult>;
+    policy: {
+      /** A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row. */
+      answer(input: Sdk.SharedActPolicyAnswerRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
+      /** A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on. */
+      change(input: Sdk.SharedActPolicyChangeRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
+      /** A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds. */
+      get(input: Sdk.SharedVaultRequest): Promise<Sdk.SharedActPoliciesView | StoredResult>;
+      /** A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it. */
+      propose(input: Sdk.SharedActPolicyProposeRequest): Promise<Sdk.SharedActPolicyChange | StoredResult>;
+    };
     /** Starts a shared vault's delete_vault act, returned as a typed pending act. */
     propose_delete(input: Sdk.SharedVaultRequest): Promise<Sdk.PendingAuthorityAct | StoredResult>;
     /** Starts a shared vault's remove_owner act, with its export-first answer. */
