@@ -15099,12 +15099,34 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "ActionBoundRequest",
+      "ActionEnvelopeRequest",
+      "ApproveOnceRequest",
+      "ConsentActReceipt",
+      "CreateStandingGrantRequest",
+      "DisclosureBoundRequest",
+      "DisclosureEnvelopeRequest",
+      "RevokeGrantRequest",
+      "StandingGrantBound"
+     ],
+     "path": "src/consent/lifecycle.rs",
+     "purpose": "Typed public consent lifecycle calls",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/consent/mod.rs",
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants",
      "surface": {
       "crate-vis": 4,
-      "mod": 1,
+      "mod": 2,
       "re-export": 10
      }
     },
@@ -50441,7 +50463,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 636
+      "fn": 640
      }
     },
     {
@@ -56425,7 +56447,7 @@
      "purpose": "Connector-key registry records with effector budgets for OF-277 GOV-01"
     },
     "consent": {
-     "files": 21,
+     "files": 22,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57603,7 +57625,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3510,
+   "source_files": 3511,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66110,7 +66132,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 586
+      "fn": 590
      }
     },
     {
@@ -67159,7 +67181,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 587
+      "fn": 591
      }
     },
     {
@@ -70179,6 +70201,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/consent_doors.rs",
+     "purpose": "Consent lifecycle host doors, on the same owner proof as Gate policy",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/consolidation_doors.rs",
      "purpose": "Owner-bound generated-claim promotion, vetting and evidence reads",
      "surface": {
@@ -70382,7 +70414,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 112
+      "crate-vis": 113
      }
     },
     {
@@ -78002,7 +78034,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 372,
+     "files": 373,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78424,7 +78456,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 703,
+   "source_files": 704,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78622,6 +78654,8 @@
       "AcceptRescopeConnect",
       "AccessStatus",
       "ActExecution",
+      "ActionBoundRequest",
+      "ActionEnvelopeRequest",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -78711,6 +78745,7 @@
       "AnswerRecord",
       "AnswerSheetAtom",
       "AnsweringAuthority",
+      "ApproveOnceRequest",
       "ApproveScope",
       "ArchiveAxis",
       "ArchiveCampaignProgramRequest",
@@ -78795,6 +78830,8 @@
       "BundleVerdict",
       "BundledSkillPermissions",
       "ButtonControl",
+      "BypassExtent",
+      "BypassScope",
       "CalendarEventCreateRequest",
       "CalendarEventCreated",
       "CalendarEventView",
@@ -79013,10 +79050,18 @@
       "ConnectorSendTaskOutcome",
       "ConnectorToolResult",
       "ConnectorView",
+      "ConsentActReceipt",
       "ConsentAnswer",
       "ConsentDenial",
+      "ConsentDomain",
+      "ConsentGrantStatus",
       "ConsentNeed",
       "ConsentPart",
+      "ConsentRegistry",
+      "ConsentRegistryDelegation",
+      "ConsentRegistryQuery",
+      "ConsentRegistryRow",
+      "ConsentRevokeAction",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
       "ConsentStateMembershipConsent",
@@ -79071,6 +79116,7 @@
       "CreateCampaignProgramRequest",
       "CreateNoteFromEntityRequest",
       "CreateNoteRequest",
+      "CreateStandingGrantRequest",
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
       "CredentialCeiling",
@@ -79180,6 +79226,8 @@
       "DiaryReviewAnswer",
       "DiaryReviewState",
       "DiscardedProposal",
+      "DisclosureBoundRequest",
+      "DisclosureEnvelopeRequest",
       "DisclosureOfferRequest",
       "DisclosureOffered",
       "DocumentKind",
@@ -80152,6 +80200,7 @@
       "RevealWaitAnswer",
       "RevealWaitRequest",
       "Reversibility",
+      "RevokeGrantRequest",
       "RoleHolder",
       "RoleRank",
       "RoomClaimOutcome",
@@ -80477,6 +80526,7 @@
       "SpendSignal",
       "SpendState",
       "SpentKind",
+      "StandingGrantBound",
       "StateFamilyRef",
       "StatusDotAtom",
       "SteerReceipt",
@@ -80782,8 +80832,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 566,
-      "struct": 1594
+      "enum": 570,
+      "struct": 1608
      }
     },
     {
