@@ -171,11 +171,11 @@ async fn apply_edit(
 
 /// `POST /v1/owner/inbox/concern/apply-prompt-inject`: applies the Coach's
 /// `prompt_inject` on one card as the owner approves it: the ask they read,
-/// the Coach's proposal as the prompt, and optionally the checkpoint the
-/// failed run continues from. The failed attempt goes on as a new attempt
-/// from that checkpoint with the approved prompt; applying the same
-/// approval again returns the same successor. A refusal names its
-/// `continuation_*` code.
+/// the prompt (the Coach's proposal, or the owner's own edit of it), and
+/// optionally the checkpoint the failed run continues from. The failed
+/// attempt goes on as a new attempt from that checkpoint with the approved
+/// prompt; applying the same approval again returns the same successor. A
+/// refusal names its `continuation_*` code.
 async fn apply_prompt_inject(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
