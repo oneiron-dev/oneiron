@@ -364,6 +364,48 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_budgets_rsi_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.rsi.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_rsi(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.rsi", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_rsi_top_up(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.rsi.top_up", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_rsi_hold(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.rsi.hold", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_rsi_hold_resume(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.rsi.hold.resume", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_fanout_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.fanout.resume", input)
@@ -2242,6 +2284,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.research.refund_work", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_reserve_exploration(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.reserve_exploration", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_research_budget(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.research.budget", input)
             .map_err(facade_error)
     }
     #[napi]

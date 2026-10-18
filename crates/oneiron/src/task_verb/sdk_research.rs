@@ -18,12 +18,16 @@ use crate::autoreason_campaign::general::{CampaignConfig, Measurement};
 use crate::autoreason_campaign::research::{
     self, CampaignPromotionReceipt, CandidateRef, ConfirmationOutcome, ExperimentNode, ForkInput,
     ForkKind, PriorSeed, PromotionBasis, PruneReason, ResearchBindRequest, ResearchBinding,
-    ResearchConfirmationSeat, ResearchExecution, ResearchReservation, ResearchTarget,
-    SearchEvidence, SelectionBenchmark, SelectionReceipt, WeaveInput, WeaveWriter,
+    ResearchBudgetRead, ResearchConfirmationSeat, ResearchExecution, ResearchReservation,
+    ResearchReservationLine, ResearchTarget, SearchEvidence, SelectionBenchmark, SelectionReceipt,
+    WeaveInput, WeaveWriter,
 };
 use crate::autoreason_campaign::selection::OracleSignal;
 use crate::entity_id::EntityId;
-use crate::llm::RsiSpendPurpose;
+use crate::llm::{
+    RsiBudgetError, RsiBudgetRead, RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement,
+    RsiSpendPurpose,
+};
 use crate::memory::{Memory, MemoryResult};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 
@@ -195,6 +199,46 @@ pub struct ResearchWorkWire {
     pub units: u64,
     /// The node the work is for, if one.
     pub attempt: Option<EntityId>,
+}
+
+/// `vault.research.reserve_exploration`: exposure on its own line; it
+/// cannot debit token work, and token work cannot debit it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResearchExplorationWire {
+    pub root: EntityId,
+    pub units: u64,
+    /// The node the exploration is for, if one.
+    pub attempt: Option<EntityId>,
+}
+
+/// One campaign reservation on the RSI line, with the overdraft receipt a
+/// soft share stamped at reservation time, when it took one.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResearchReservationWire {
+    pub id: EntityId,
+    #[schemars(with = "serde_json::Value")]
+    pub line: ResearchReservationLine,
+    pub units: u64,
+    pub attempt: Option<EntityId>,
+    #[schemars(with = "serde_json::Value")]
+    pub settlement: Option<RsiSettlement>,
+    pub overdraft: Option<RsiOverdraftReceipt>,
+    pub reserved_at: u64,
+}
+
+/// `vault.research.budget`: the campaign's lease, every reservation it
+/// holds or held, and the vault RSI lines behind them. A suspended RSI
+/// line is the observable hold: pending attempts, candidates and partial
+/// outputs stay, and nothing here reads as a terminal failure.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ResearchBudgetView {
+    pub budget: ResearchBudgetRead,
+    pub reservations: Vec<ResearchReservationWire>,
+    /// The vault token line, absent until the owner configures it.
+    pub rsi_work: Option<RsiBudgetRead>,
+    /// The vault exposure line, absent until the owner configures it.
+    pub rsi_exploration: Option<RsiExplorationRead>,
 }
 
 /// `vault.research.settle_work`: a reservation's actual spend.
@@ -540,6 +584,74 @@ pub fn research_reserve_work(
         input.attempt.map(attempt).transpose()?,
         now(memory),
     )?)
+}
+
+/// `vault.research.reserve_exploration`: the reservation's id. Settle or
+/// refund it through `settle_work` / `refund_work`, which are line-aware.
+pub fn research_reserve_exploration(
+    memory: &Memory<'_>,
+    input: ResearchExplorationWire,
+) -> MemoryResult<EntityId> {
+    let root = attempt(input.root)?;
+    controller(memory, Some(root))?;
+    Ok(research::reserve_research_exploration(
+        memory.vault(),
+        root,
+        input.units,
+        input.attempt.map(attempt).transpose()?,
+        now(memory),
+    )?)
+}
+
+fn rsi_refusal(error: RsiBudgetError) -> crate::memory::MemoryError {
+    match error {
+        RsiBudgetError::Engine(error) => error.into(),
+        other => crate::Error::InvalidConfig(other.to_string()).into(),
+    }
+}
+
+/// `vault.research.budget`: lease, reservations and the RSI hold state.
+pub fn research_budget(
+    memory: &Memory<'_>,
+    input: ResearchArchiveWire,
+) -> MemoryResult<ResearchBudgetView> {
+    let root = attempt(input.root)?;
+    controller(memory, Some(root))?;
+    let vault = memory.vault();
+    let mut reservations = Vec::new();
+    for row in research::research_reservations(vault, root)? {
+        let overdraft = match vault.rsi_overdraft(row.id) {
+            Ok(receipt) => receipt,
+            Err(RsiBudgetError::Unconfigured) => None,
+            Err(error) => return Err(rsi_refusal(error)),
+        };
+        reservations.push(ResearchReservationWire {
+            id: row.id,
+            line: row.line,
+            units: row.units,
+            attempt: row
+                .attempt
+                .map(|id| EntityId::from_bytes(*id.as_bytes()))
+                .transpose()?,
+            settlement: row.settlement,
+            overdraft,
+            reserved_at: row.reserved_at,
+        });
+    }
+    let (rsi_work, rsi_exploration) = match vault.rsi_budget() {
+        Ok(work) => (
+            Some(work),
+            Some(vault.rsi_exploration().map_err(rsi_refusal)?),
+        ),
+        Err(RsiBudgetError::Unconfigured) => (None, None),
+        Err(error) => return Err(rsi_refusal(error)),
+    };
+    Ok(ResearchBudgetView {
+        budget: research::research_budget(vault, root)?,
+        reservations,
+        rsi_work,
+        rsi_exploration,
+    })
 }
 
 /// `vault.research.settle_work`.

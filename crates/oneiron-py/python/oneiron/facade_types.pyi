@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 717 facade rows, 2575 declarations.
-Inputs: 665 of 717 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 642 of 717 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 724 facade rows, 2589 declarations.
+Inputs: 672 of 724 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 649 of 724 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -1556,6 +1556,45 @@ class RunSettlementsView(TypedDict):
     run: str
     metering_enabled: bool
     settlements: list[RunRungSettlement]
+class RsiBudgetShare(TypedDict):
+    units: int
+    pinned: bool
+class RsiBudgetConfig(TypedDict):
+    limit: int
+    exploration_exposure_limit: int
+    shares: dict[str, RsiBudgetShare]
+class RsiWorkLineView(TypedDict):
+    unit: str
+    limit: int
+    spent: int
+    reserved: int
+class RsiShareView(TypedDict):
+    label: str
+    units: int
+    pinned: bool
+class RsiExposureLineView(TypedDict):
+    unit: str
+    limit: int
+    spent: int
+    reserved: int
+class RsiLineView(TypedDict):
+    work_line: RsiWorkLineView
+    shares: list[RsiShareView]
+    exposure_line: RsiExposureLineView
+    suspended: bool
+class RsiLineRequest(TypedDict):
+    ...
+class RsiTopUpTokens(TypedDict):
+    line: Literal["tokens"]
+    units: int
+class RsiTopUpExploration(TypedDict):
+    line: Literal["exploration"]
+    units: int
+class RsiTopUpShare(TypedDict):
+    line: Literal["share"]
+    share: str
+    units: int
+RsiTopUp = RsiTopUpTokens | RsiTopUpExploration | RsiTopUpShare
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId
@@ -5499,6 +5538,36 @@ class ResearchReservation(TypedDict):
 class ResearchRefundWire(TypedDict):
     root: EntityId
     reservation: EntityId
+class ResearchExplorationWire(TypedDict):
+    root: EntityId
+    units: int
+    attempt: NotRequired[EntityId | None]
+class RsiOverdraftReceipt(TypedDict):
+    share: str
+    units: int
+class ResearchReservationWire(TypedDict):
+    id: EntityId
+    line: ResearchReservationLine
+    units: int
+    attempt: NotRequired[EntityId | None]
+    settlement: NotRequired[RsiSettlement | None]
+    overdraft: NotRequired[RsiOverdraftReceipt | None]
+    reserved_at: int
+class RsiBudgetRead(TypedDict):
+    limit: int
+    spent: int
+    reserved: int
+    suspended: bool
+class RsiExplorationRead(TypedDict):
+    exposure_limit: int
+    spent_exposure: int
+    reserved_exposure: int
+    suspended: bool
+class ResearchBudgetView(TypedDict):
+    budget: ResearchBudgetRead
+    reservations: list[ResearchReservationWire]
+    rsi_work: NotRequired[RsiBudgetRead | None]
+    rsi_exploration: NotRequired[RsiExplorationRead | None]
 class ResearchBenchmarkWire(TypedDict):
     estimator_version: str
     benchmark: CampaignDatasetRef

@@ -253,6 +253,31 @@ export_facade! {
     let output = client.vault_budgets_settlements(&input)?;
     crate::codec::lift_record("vault.budgets.settlements", &output)
 };
+"vault.budgets.rsi.configure" => fn vault_budgets_rsi_configure(&self, input: RsiBudgetConfig) -> RsiLineView = |client| {
+    let input: oneiron::llm::RsiBudgetConfig = crate::codec::lower_record("vault.budgets.rsi.configure", input)?;
+    let output = client.vault_budgets_rsi_configure(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.configure", &output)
+};
+"vault.budgets.rsi" => fn vault_budgets_rsi(&self) -> RsiLineView = |client| {
+    let input: oneiron::llm::rsi_doors::RsiLineRequest = crate::codec::lower_empty("vault.budgets.rsi")?;
+    let output = client.vault_budgets_rsi(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi", &output)
+};
+"vault.budgets.rsi.top_up" => fn vault_budgets_rsi_top_up(&self, input: RsiTopUp) -> RsiLineView = |client| {
+    let input: oneiron::llm::RsiTopUp = crate::codec::lower_record("vault.budgets.rsi.top_up", input)?;
+    let output = client.vault_budgets_rsi_top_up(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.top_up", &output)
+};
+"vault.budgets.rsi.hold" => fn vault_budgets_rsi_hold(&self) -> RsiLineView = |client| {
+    let input: oneiron::llm::rsi_doors::RsiLineRequest = crate::codec::lower_empty("vault.budgets.rsi.hold")?;
+    let output = client.vault_budgets_rsi_hold(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.hold", &output)
+};
+"vault.budgets.rsi.hold.resume" => fn vault_budgets_rsi_hold_resume(&self) -> RsiLineView = |client| {
+    let input: oneiron::llm::rsi_doors::RsiLineRequest = crate::codec::lower_empty("vault.budgets.rsi.hold.resume")?;
+    let output = client.vault_budgets_rsi_hold_resume(&input)?;
+    crate::codec::lift_record("vault.budgets.rsi.hold.resume", &output)
+};
 "vault.fanout.resume" => fn vault_fanout_resume(&self, input: FanoutResumeRequest) -> FanoutLaunchView = |client| {
     let input: oneiron::task_verb::sdk::FanoutResumeRequest = crate::codec::lower_record("vault.fanout.resume", input)?;
     let output = client.vault_fanout_resume(&input)?;
@@ -1285,6 +1310,16 @@ export_facade! {
     let input: oneiron::task_verb::sdk::ResearchRefundWire = crate::codec::lower_record("vault.research.refund_work", input)?;
     let output = client.vault_research_refund_work(&input)?;
     crate::codec::lift_record("vault.research.refund_work", &output)
+};
+"vault.research.reserve_exploration" => fn vault_research_reserve_exploration(&self, input: ResearchExplorationWire) -> String = |client| {
+    let input: oneiron::task_verb::sdk::ResearchExplorationWire = crate::codec::lower_record("vault.research.reserve_exploration", input)?;
+    let output = client.vault_research_reserve_exploration(&input)?;
+    crate::codec::lift_record("vault.research.reserve_exploration", &output)
+};
+"vault.research.budget" => fn vault_research_budget(&self, input: ResearchArchiveWire) -> ResearchBudgetView = |client| {
+    let input: oneiron::task_verb::sdk::ResearchArchiveWire = crate::codec::lower_record("vault.research.budget", input)?;
+    let output = client.vault_research_budget(&input)?;
+    crate::codec::lift_record("vault.research.budget", &output)
 };
 "vault.research.record_benchmark" => fn vault_research_record_benchmark(&self, input: ResearchBenchmarkWire) -> SelectionBenchmark = |client| {
     let input: oneiron::task_verb::sdk::ResearchBenchmarkWire = crate::codec::lower_record("vault.research.record_benchmark", input)?;

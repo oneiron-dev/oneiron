@@ -659,6 +659,8 @@ class Oneiron:
             """The owner observes a device-local runner budget counter without creating it, including absence after an owner restore."""
         def settlements(self, spec: Facade.RunSettlementsRequest) -> Facade.RunSettlementsView:
             """The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced."""
+        @property
+        def rsi(self) -> "Oneiron._VaultBudgetsRsiVerbs": ...
     class _VaultBudgetsLeaseVerbs:
         def __call__(self, spec: Facade.SpendScopeRequest) -> Facade.SpendLeaseView:
             """The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it."""
@@ -671,6 +673,20 @@ class Oneiron:
             """The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume."""
         def resume(self, spec: Facade.BudgetHoldRequest) -> Facade.PartialResultHold:
             """The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion."""
+    class _VaultBudgetsRsiVerbs:
+        def __call__(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
+            """The owner reads both RSI lines, every soft and pinned share, and whether new loop work is held. A hold reads as suspended, never as a terminal failure."""
+        def configure(self, spec: Facade.RsiBudgetConfig) -> Facade.RsiLineView:
+            """The owner creates the vault RSI line once: its token limit, its independent exploration exposure limit, and its soft and owner-pinned shares. Reconfiguration cannot erase receipts or spend."""
+        def top_up(self, spec: Facade.RsiTopUp) -> Facade.RsiLineView:
+            """The owner raises one exact limiting RSI line by its units: the token limit, the exploration exposure limit, or one named share. A top-up never lowers a line and never resumes held work by itself."""
+        @property
+        def hold(self) -> "Oneiron._VaultBudgetsRsiHoldVerbs": ...
+    class _VaultBudgetsRsiHoldVerbs:
+        def __call__(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
+            """The owner holds new RSI loop work rather than killing it; admitted reservations can still settle, and pending attempts, candidates and partial outputs stay."""
+        def resume(self, spec: Facade.RsiLineRequest) -> Facade.RsiLineView:
+            """The owner releases the RSI hold on the same line and receipts, so the same pending try continues without a new experiment or a duplicate terminal receipt."""
     class _VaultClaimsVerbs:
         def upsert(self, spec: Facade.ScopedClaimInput) -> Facade.CommitReceipt:
             """Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance."""
@@ -1219,6 +1235,10 @@ class Oneiron:
             """Settles a work reservation at its actual spend."""
         def refund_work(self, spec: Facade.ResearchRefundWire) -> Facade.ResearchReservation:
             """Refunds a work reservation nothing was spent on."""
+        def reserve_exploration(self, spec: Facade.ResearchExplorationWire) -> Facade.EntityId:
+            """Reserves exploration exposure for the campaign on its own exposure-denominated RSI line, independently of token work, and returns the reservation's id. Settle or refund it through settle_work and refund_work."""
+        def budget(self, spec: Facade.ResearchArchiveWire) -> Facade.ResearchBudgetView:
+            """Reads the campaign's lease, every reservation it holds or held with its settlement and soft-share overdraft receipt, and the vault RSI lines behind them, including the observable hold state."""
         def record_benchmark(self, spec: Facade.ResearchBenchmarkWire) -> Facade.SelectionBenchmark:
             """Records an estimator version's held-out selection benchmark against the DGM parent formula, once per version; a win of at least 30 cases lets its information gain rank parents."""
     class _VaultResearchArchiveVerbs:
