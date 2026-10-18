@@ -9,7 +9,7 @@
 //! Beside the scheduled pass, the host serves the signed Linear webhook
 //! (`webhook`, OF-427): its tracker mapping is the direct config's tracker
 //! part in direct mode, else the file `ONEIRON_LINEAR_WEBHOOK_CONFIG` names,
-//! read and checked at startup.
+//! read and checked once, at startup.
 
 use std::collections::BTreeMap;
 use std::io::Read;
@@ -54,8 +54,19 @@ struct WebhookConfig {
 /// direct config's tracker part in direct mode, else the file
 /// `ONEIRON_LINEAR_WEBHOOK_CONFIG` names, each checked as the poller checks
 /// its own; `None` when the host configures neither, and the webhook answers
-/// `linear_webhook_not_configured`.
+/// `linear_webhook_not_configured`. The first good read, at startup, is
+/// kept: a later edit of the file waits for a restart rather than turning
+/// the route to 404.
 pub(crate) fn webhook_tracker() -> anyhow::Result<Option<LinearTrackerConfig>> {
+    static TRACKER: std::sync::OnceLock<Option<LinearTrackerConfig>> = std::sync::OnceLock::new();
+    if let Some(tracker) = TRACKER.get() {
+        return Ok(tracker.clone());
+    }
+    let tracker = read_webhook_tracker()?;
+    Ok(TRACKER.get_or_init(|| tracker).clone())
+}
+
+fn read_webhook_tracker() -> anyhow::Result<Option<LinearTrackerConfig>> {
     let webhook = std::env::var_os(LINEAR_WEBHOOK_CONFIG_ENV);
     if let Some(direct) = std::env::var_os("ONEIRON_LINEAR_CONFIG") {
         anyhow::ensure!(
