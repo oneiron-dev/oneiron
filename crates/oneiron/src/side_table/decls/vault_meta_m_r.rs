@@ -170,7 +170,8 @@ side_tables! {
     ORIGIN_MIRROR_TARGET: VaultMeta b"origin:mirror_target:v1:" Named;
     /// Durable journal row for one origin ref-publication attempt, across its
     /// Prepared/Published/Failed/Conflicted lifecycle. Key: id16.
-    ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named;
+    ORIGIN_PUBLICATION_RECORD: VaultMeta b"origin:publication:v1:" Named
+        => crate::origin::publication::erase_publication_actor_in_txn;
     /// Producer receipt pinning the exact encoded admission/outcome evidence claim body for one
     /// receive-pack operation. Key: id16.
     ORIGIN_RECEIVE_PACK_EVIDENCE: VaultMeta b"origin:receive_pack_evidence:v1:" Raw;
