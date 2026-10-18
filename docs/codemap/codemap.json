@@ -22482,6 +22482,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "DocActor"
+     ],
+     "path": "src/entity_doc/doc_actor.rs",
+     "purpose": "Whose act an entity-document row records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -22505,6 +22519,7 @@
       "ForkRecord",
       "ForkRequest",
       "ForkStatus",
+      "PendingDocForkErase",
       "ProposalBundle",
       "SettleVerb",
       "TextReceipt"
@@ -22512,8 +22527,9 @@
      "path": "src/entity_doc/forks.rs",
      "purpose": "Durable divergences, entity-bound grant admission and atomic fork-set settlement",
      "surface": {
-      "crate-vis": 16,
-      "enum": 3,
+      "const": 1,
+      "crate-vis": 19,
+      "enum": 4,
       "fn": 7,
       "struct": 4
      }
@@ -22573,9 +22589,9 @@
      "path": "src/entity_doc/mod.rs",
      "purpose": "Durable, bounded entity text documents, anchored edits, fork sets and owner purge",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "mod": 2,
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -22605,7 +22621,7 @@
      "path": "src/entity_doc/pins.rs",
      "purpose": "Causal citation floors, retained quotes and the owner's shallow-purge door",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "enum": 1,
       "fn": 9,
       "struct": 2
@@ -54748,7 +54764,7 @@
      "purpose": "Engine-native JS code-mode executor"
     },
     "entity_doc": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55702,7 +55718,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3392,
+   "source_files": 3393,
    "test_files": 902
   },
   "oneiron-android": {
