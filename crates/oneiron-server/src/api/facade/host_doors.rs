@@ -89,6 +89,8 @@ pub(crate) use super::reaction_doors::*;
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
 pub(crate) use super::critic_review_doors::*;
+// The owner's campaign split evaluation door (FIX 655), likewise.
+pub(crate) use super::campaign_split_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -837,7 +839,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals"
         | "vault.widen_proposals.approve"
         | "vault.widen_proposals.decline"
-        | "vault.settings.wake_policy.set" => owner_proof(auth, server, verb).map(drop),
+        | "vault.settings.wake_policy.set"
+        | "vault.research.evaluate_split" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

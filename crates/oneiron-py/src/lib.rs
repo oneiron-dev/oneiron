@@ -1155,6 +1155,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_research_evaluate_split(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.research.evaluate_split")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.research.evaluate_split", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_research_mark_invalid(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.research.mark_invalid")?;
         let output = py

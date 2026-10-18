@@ -112,6 +112,7 @@ both bindings and their export-census tests in one change.
 - `vault.research.weave`
 - `vault.research.measure_search`
 - `vault.research.measure_held_out`
+- `vault.research.evaluate_split`
 - `vault.research.mark_invalid`
 - `vault.research.prune`
 - `vault.research.select`

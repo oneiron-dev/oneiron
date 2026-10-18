@@ -21,6 +21,9 @@
 //! blocking thread.
 use std::sync::Arc;
 
+use oneiron::autoreason_campaign::{
+    CAMPAIGN_TASTE_DIAL, CampaignTasteDecisions, CampaignTasteWording,
+};
 use oneiron::booking::constraint::BookingDecisions;
 use oneiron::critic::review::{REVIEW_DIAL, ReviewDecisions, ReviewWording};
 use oneiron::fanout_auto::FanoutDecisions;
@@ -116,6 +119,16 @@ when the lens's contract does not apply to it, so its answers should not count."
 /// How long one lens's questions may take; a lens still open then fails the
 /// review, as a failed critic call did.
 const REVIEW_LENS_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+/// A campaign split's two taste questions over its blind input (FIX 655):
+/// this host's wording.
+const CAMPAIGN_TASTE_SCORE_WORDING: &str = "How good is this claim, read against its evidence \
+and the held-out gold it is anchored to? Answer 0 when it is wrong or unsupported and 1 when it \
+is right, fully supported and worth keeping.";
+const CAMPAIGN_TASTE_USEFUL_WORDING: &str = "Would the vault's owner want this claim kept as a \
+memory? Yes when it is true and worth recalling; no when it is trivial, redundant or wrong.";
+/// How long a split's taste pack may take; a score still open then refuses
+/// the report.
+const CAMPAIGN_TASTE_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
 const ONE: &str = "1";
 /// The PersonThreshold row's version a host's start value takes.
 const PERSON_THRESHOLD_VERSION: u32 = 1;
@@ -792,6 +805,24 @@ impl DecisionHost {
                 out_of_scope: REVIEW_OUT_OF_SCOPE_WORDING.to_owned(),
             },
             notes: None,
+        }
+    }
+
+    /// A campaign split's taste pack through this ladder for `principal`, the
+    /// owner who asked for the evaluation: the engine's taste dial, this
+    /// host's bands and wording, and one clock for the pack.
+    #[must_use]
+    pub(crate) fn campaign_taste(&self, principal: EntityId) -> CampaignTasteDecisions<'_> {
+        CampaignTasteDecisions {
+            ladder: self.ladder.ladder(),
+            principal,
+            dial: CAMPAIGN_TASTE_DIAL,
+            bands: self.bands.clone(),
+            wording: CampaignTasteWording {
+                score: CAMPAIGN_TASTE_SCORE_WORDING.to_owned(),
+                useful: CAMPAIGN_TASTE_USEFUL_WORDING.to_owned(),
+            },
+            budget: CAMPAIGN_TASTE_BUDGET,
         }
     }
 

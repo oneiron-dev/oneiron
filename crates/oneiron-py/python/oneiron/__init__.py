@@ -1024,6 +1024,9 @@ class Oneiron:
         def measure_held_out(self, spec):
             """Records a node's held-out evidence, once; only the promotion basis reads it."""
             return json.loads(_translate(lambda: self._client.vault_research_measure_held_out(json.dumps(spec))))
+        def evaluate_split(self, spec):
+            """The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored."""
+            return json.loads(_translate(lambda: self._client.vault_research_evaluate_split(json.dumps(spec))))
         def mark_invalid(self, spec):
             """Marks a node buggy: it stays as evidence and takes debug children."""
             return json.loads(_translate(lambda: self._client.vault_research_mark_invalid(json.dumps(spec))))

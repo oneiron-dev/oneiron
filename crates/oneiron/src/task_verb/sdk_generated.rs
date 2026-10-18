@@ -568,6 +568,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.research.evaluate_split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CampaignSplitWire,
+                >(),
+            ),
+            (
                 "vault.research.mark_invalid",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchInvalidWire,
@@ -2706,6 +2712,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.research.evaluate_split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.research.mark_invalid" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4515,6 +4528,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.research.measure_held_out" => {
             let _input: crate::task_verb::sdk::ResearchHeldOutWire = decode(value.clone())?;
         }
+        "vault.research.evaluate_split" => {
+            let _input: crate::task_verb::sdk::CampaignSplitWire = decode(value.clone())?;
+        }
         "vault.research.mark_invalid" => {
             let _input: crate::task_verb::sdk::ResearchInvalidWire = decode(value.clone())?;
         }
@@ -5475,6 +5491,9 @@ pub fn invoke(
         }
         "vault.research.measure_held_out" => {
             encode(vault_research_measure_held_out(memory, decode(value)?)?)
+        }
+        "vault.research.evaluate_split" => {
+            encode(vault_research_evaluate_split(memory, decode(value)?)?)
         }
         "vault.research.mark_invalid" => {
             encode(vault_research_mark_invalid(memory, decode(value)?)?)
@@ -6859,6 +6878,12 @@ pub fn vault_research_measure_held_out(
     input: crate::task_verb::sdk::ResearchHeldOutWire,
 ) -> MemoryResult<crate::autoreason_campaign::research::ExperimentNode> {
     crate::task_verb::sdk::research_measure_held_out(memory, input)
+}
+pub fn vault_research_evaluate_split(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CampaignSplitWire,
+) -> MemoryResult<crate::autoreason_campaign::CampaignSplitReport> {
+    crate::task_verb::sdk::host_only(memory, "vault.research.evaluate_split", &input)
 }
 pub fn vault_research_mark_invalid(
     memory: &Memory<'_>,

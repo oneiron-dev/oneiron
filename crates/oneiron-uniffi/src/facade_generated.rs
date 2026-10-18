@@ -531,6 +531,11 @@ export_facade! {
     let output = client.vault_research_measure_held_out(&input)?;
     crate::codec::lift_record("vault.research.measure_held_out", &output)
 };
+"vault.research.evaluate_split" => fn vault_research_evaluate_split(&self, input: CampaignSplitWire) -> CampaignSplitReport = |client| {
+    let input: oneiron::task_verb::sdk::CampaignSplitWire = crate::codec::lower_record("vault.research.evaluate_split", input)?;
+    let output = client.vault_research_evaluate_split(&input)?;
+    crate::codec::lift_record("vault.research.evaluate_split", &output)
+};
 "vault.research.mark_invalid" => fn vault_research_mark_invalid(&self, input: ResearchInvalidWire) -> ExperimentNode = |client| {
     let input: oneiron::task_verb::sdk::ResearchInvalidWire = crate::codec::lower_record("vault.research.mark_invalid", input)?;
     let output = client.vault_research_mark_invalid(&input)?;
