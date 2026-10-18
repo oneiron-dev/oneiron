@@ -820,7 +820,7 @@ impl McpCodeModeVerbs {
         {
             return refused(error);
         }
-        let memory = crate::api::credential_memory(
+        let memory = crate::api::mcp_credential_memory(
             &self.server.vault,
             self.actor.auth.as_ref(),
             self.actor.actor_ref,
@@ -1044,9 +1044,13 @@ impl AgentVerbDoor for ReaderChildDoor {
 /// A refused call as the run takes it: a verb hook's stop as the typed stop,
 /// any other refusal as its stable code.
 fn refused<T>(error: McpGatewayError) -> oneiron::Result<Result<T, AgentVerbRefusal>> {
-    match error.hook {
-        Some(stop) => Err(oneiron::Error::from(*stop)),
-        None => Ok(Err(AgentVerbRefusal {
+    match (error.hook, error.retry_after) {
+        (Some(stop), _) => Err(oneiron::Error::from(*stop)),
+        // A model call no provider answered goes back to the run as the
+        // typed outage, which stops it until its caller enters it again
+        // (FIX 3194).
+        (None, Some(retry_after)) => Err(oneiron::Error::ProviderUnavailable { retry_after }),
+        (None, None) => Ok(Err(AgentVerbRefusal {
             code: error.kind.to_owned(),
         })),
     }

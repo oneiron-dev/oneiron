@@ -40,6 +40,7 @@ use oneiron::connector_key::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
 use oneiron::retrieval_depth::RetrievalDeadline;
+use oneiron::vault_shape::ShapePlanReach;
 use oneiron::{EntityId, Vault};
 use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
@@ -183,10 +184,22 @@ struct SlateView {
     facet_limit: Option<Vec<String>>,
     manifest: Vec<SlateToolManifest>,
     rows: Vec<SlateRow>,
+    /// What every actor can send now, and once a stamp of these rows lands
+    /// and its keys qualify (ARCH-0070 `shape:reach-line`). It informs the
+    /// stamp and never blocks it.
+    reach: ShapePlanReach,
 }
 
 impl SlateView {
-    fn new(id: EntityId, slate: &ConnectorGrantSlate) -> Self {
+    /// `slate` with the reach a stamp of its rows as they stand brings.
+    fn new(vault: &Vault, id: EntityId, slate: &ConnectorGrantSlate) -> OwnerResult<Self> {
+        let reach = vault
+            .slate_stamp_reach(id, &BTreeMap::new())
+            .map_err(engine)?;
+        Ok(Self::with_reach(id, slate, reach))
+    }
+
+    fn with_reach(id: EntityId, slate: &ConnectorGrantSlate, reach: ShapePlanReach) -> Self {
         Self {
             id: id.to_hex(),
             revision: slate.revision(),
@@ -196,6 +209,7 @@ impl SlateView {
                 .map(|facets| facets.iter().map(EntityId::to_hex).collect()),
             manifest: slate.manifest().to_vec(),
             rows: slate.rows().to_vec(),
+            reach,
         }
     }
 }
@@ -446,7 +460,7 @@ fn register_connector(server: &SyncServer, request: RegisterRequest) -> OwnerRes
         key: key.to_hex(),
         status: record.status.as_str(),
         protocol_revision: record.protocol_revision,
-        slate: SlateView::new(slate_id, &slate),
+        slate: SlateView::new(vault, slate_id, &slate)?,
     })
 }
 
@@ -466,7 +480,8 @@ async fn setup(
             Some(id) => server
                 .vault()
                 .connector_slate(id)?
-                .map(|slate| SlateView::new(id, &slate)),
+                .map(|slate| SlateView::new(server.vault(), id, &slate))
+                .transpose()?,
             None => None,
         };
         Ok(Setup {
@@ -507,29 +522,43 @@ fn accept_slate(
         ConnectorKeyStatus::Active | ConnectorKeyStatus::Suspended => true,
         ConnectorKeyStatus::Revoked => return Err(removed()),
     };
-    let (id, _) = slate_of(vault, &catalog.record)?;
-    let slate = if request.all_manual {
-        if !request.rows.is_empty() || request.facets.is_some() {
-            return Err(OwnerError::Invalid(
-                "an all-manual accept takes no rows or facets".to_owned(),
-            ));
-        }
-        vault.accept_connector_slate_all_manual(owner, id, request.revision)
+    let (id, current) = slate_of(vault, &catalog.record)?;
+    if request.all_manual && (!request.rows.is_empty() || request.facets.is_some()) {
+        return Err(OwnerError::Invalid(
+            "an all-manual accept takes no rows or facets".to_owned(),
+        ));
+    }
+    let overrides: BTreeMap<String, SlateOwnerOverride> = if request.all_manual {
+        current
+            .rows()
+            .iter()
+            .filter(|row| row.stamped_disposition() != SlateDisposition::NeverAllow)
+            .map(|row| {
+                let disposition = SlateDisposition::AlwaysAsk;
+                (row.draft.tool.clone(), SlateOwnerOverride { disposition })
+            })
+            .collect()
     } else {
-        let overrides = request
+        request
             .rows
             .into_iter()
             .map(|(tool, disposition)| (tool, SlateOwnerOverride { disposition }))
-            .collect();
-        let facets = request
-            .facets
-            .map(|facets| {
-                facets
-                    .iter()
-                    .map(|facet| entity_id("facet", facet))
-                    .collect::<OwnerResult<BTreeSet<_>>>()
-            })
-            .transpose()?;
+            .collect()
+    };
+    let facets = request
+        .facets
+        .map(|facets| {
+            facets
+                .iter()
+                .map(|facet| entity_id("facet", facet))
+                .collect::<OwnerResult<BTreeSet<_>>>()
+        })
+        .transpose()?;
+    // Read before the stamp lands, so the line is what this stamp changes.
+    let reach = vault.slate_stamp_reach(id, &overrides).map_err(engine)?;
+    let slate = if request.all_manual {
+        vault.accept_connector_slate_all_manual(owner, id, request.revision)
+    } else {
         vault.stamp_connector_slate(owner, id, request.revision, &overrides, facets)
     }
     .map_err(engine)?;
@@ -538,7 +567,7 @@ fn accept_slate(
             .adopt_connector_slate_stamp(&catalog.key, unix_seconds_now())
             .map_err(engine)?;
     }
-    Ok(SlateView::new(id, &slate))
+    Ok(SlateView::with_reach(id, &slate, reach))
 }
 
 /// `POST /v1/owner/connectors/qualify`: runs the probe suite through the
@@ -746,7 +775,7 @@ fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResul
             connector: name,
             changed: false,
             key: KeyView::new(catalog.key, catalog.record)?,
-            slate: SlateView::new(slate_id, &slate),
+            slate: SlateView::new(vault, slate_id, &slate)?,
             reask: Vec::new(),
             carried: Vec::new(),
             dropped: Vec::new(),
@@ -768,7 +797,7 @@ fn refresh_connector(server: &SyncServer, request: RefreshRequest) -> OwnerResul
         connector: name,
         changed: true,
         key: KeyView::new(catalog.key, record)?,
-        slate: SlateView::new(delta.slate_id, &next),
+        slate: SlateView::new(vault, delta.slate_id, &next)?,
         reask: delta.reask.into_iter().collect(),
         carried: delta.carried.into_iter().collect(),
         dropped: delta.dropped.into_iter().collect(),
@@ -833,7 +862,7 @@ async fn proxy(
             .as_ref()
             .map(|entry| entry.name.clone())
             .unwrap_or_default();
-        let slate = SlateView::new(admitted.slate_ref, &admitted.slate);
+        let slate = SlateView::new(server.vault(), admitted.slate_ref, &admitted.slate)?;
         Ok(ProxyAdmitted {
             connector,
             key: KeyView::new(admitted.key_ref, admitted.key)?,

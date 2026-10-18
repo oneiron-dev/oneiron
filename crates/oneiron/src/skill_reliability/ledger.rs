@@ -379,6 +379,44 @@ pub fn record_skill_contributing_win(
     })
 }
 
+/// Charges one LOSS against a skill from an outcome its host settled, not a
+/// routed verdict: a team that settled failed, charged to the revision its
+/// leader's pack loaded.
+///
+/// Grounded at the door as [`record_skill_contributing_win`] is, minus the
+/// completed-attempt check: a run that failed need not have completed. A
+/// loss outranks a win on the same receipt.
+pub(crate) fn record_skill_settled_loss(
+    vault: &Vault,
+    skill: &EntityId,
+    receipt_ref: &str,
+    at: u64,
+) -> Result<()> {
+    let record = read_skill(vault, skill)?;
+    if crate::skill::resident_of(&record)?.is_some() {
+        return Err(invalid("resident loss requires its attributed actor"));
+    }
+    let Some(receipt) = crate::receipt::attempt_pack_receipt(vault, receipt_ref)? else {
+        return Err(invalid("settled loss cites an unstamped receipt"));
+    };
+    if !receipt_manifest_names_skill(&receipt, &record) {
+        return Err(invalid(
+            "settled loss names a skill absent from the receipt manifest",
+        ));
+    }
+    vault.with_write_txn_grouped(|wtxn| {
+        record_outcome_in_txn(
+            vault,
+            wtxn,
+            skill,
+            receipt_executor(&receipt),
+            receipt_ref,
+            false,
+            at,
+        )
+    })
+}
+
 /// Credits a resident fork only from its own attributed outcome. The
 /// unrestricted win door cannot name an actor and therefore refuses forks.
 pub fn record_resident_skill_contributing_win(

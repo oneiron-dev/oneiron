@@ -1299,6 +1299,8 @@ class Oneiron:
             """Speaks through the witness gate; on a new thread root, thread_audience explicitly limits readers to named room members and cannot be changed later."""
         def join(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
             """Files and decides a request to take part in a room or one of its threads."""
+        def invite(self, spec: Facade.JoinRequest) -> Facade.JoinOutcome:
+            """The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent."""
         def consent(self, spec: Facade.ConsentAnswer) -> Facade.JoinOutcome:
             """One party's answer to a join that waits on it, after which the join is decided again."""
         @property
