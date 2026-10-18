@@ -49426,7 +49426,7 @@
      "path": "src/task_verb/task_continuation.rs",
      "purpose": "The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
