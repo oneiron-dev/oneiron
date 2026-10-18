@@ -117,7 +117,9 @@ impl Vault {
         learned_at: u64,
     ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
         self.try_with_write_txn_grouped(|wtxn| {
-            self.put_commitment_series_in_txn(wtxn, id, record, envelope, valid_time, learned_at, None)
+            self.put_commitment_series_in_txn(
+                wtxn, id, record, envelope, valid_time, learned_at, None,
+            )
         })
     }
 

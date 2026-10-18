@@ -187,7 +187,11 @@ pub(super) fn receipt_history(
     let prefix = format!("{}:", message.to_hex());
     let start = after.map_or_else(|| prefix.clone(), |id| format!("{prefix}{}", id.to_hex()));
     let end = format!("{};", message.to_hex());
-    let lower = if after.is_some() { Bound::Excluded(&start) } else { Bound::Included(&start) };
+    let lower = if after.is_some() {
+        Bound::Excluded(&start)
+    } else {
+        Bound::Included(&start)
+    };
     let mut rows = Vec::new();
     let mut more = false;
     for row in RECEIPT_BY_REF.iter_range(&vault.store, txn, lower, Bound::Excluded(&end))? {
@@ -198,7 +202,11 @@ pub(super) fn receipt_history(
         }
         rows.push(receipt);
     }
-    let next = if more { rows.last().map(|row| row.generation.to_hex()) } else { None };
+    let next = if more {
+        rows.last().map(|row| row.generation.to_hex())
+    } else {
+        None
+    };
     Ok((rows, next))
 }
 

@@ -46,7 +46,10 @@ impl From<MessageStreamMode> for MessageWriteMode {
     fn from(mode: MessageStreamMode) -> Self {
         match mode {
             MessageStreamMode::Atomic => Self::Atomic,
-            MessageStreamMode::Streamed { sync_visibility, cadence } => Self::Streamed {
+            MessageStreamMode::Streamed {
+                sync_visibility,
+                cadence,
+            } => Self::Streamed {
                 visibility: sync_visibility,
                 cadence,
             },

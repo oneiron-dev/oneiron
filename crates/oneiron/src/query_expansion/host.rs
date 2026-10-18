@@ -2,7 +2,9 @@
 //! The host answers pending work; the engine never chooses or calls a model here.
 use serde::{Deserialize, Serialize};
 
-use super::{CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpansion, HydeOptions, HydeRequest};
+use super::{
+    CompletionRequest, EvidenceVerdict, GroundingContext, HydeExpansion, HydeOptions, HydeRequest,
+};
 use crate::memory::{ClaimView, Memory, MemoryResult};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -37,23 +39,37 @@ pub struct HydeHostCandidate {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "stage", rename_all = "snake_case")]
 pub enum HydeHostInput {
-    Expansion { request: HydeRequest },
-    Evidence { query: String, candidates: Vec<HydeHostCandidate> },
+    Expansion {
+        request: HydeRequest,
+    },
+    Evidence {
+        query: String,
+        candidates: Vec<HydeHostCandidate>,
+    },
 }
 
 impl HydeHostInput {
     /// Projects the evidence the pipeline already admitted through its caller's own facade.
     pub fn evidence(memory: &Memory<'_>, request: &CompletionRequest) -> MemoryResult<Self> {
-        let candidates = request.candidates.iter().map(|candidate| {
-            Ok(HydeHostCandidate {
-                id: candidate.id.to_hex(),
-                score: candidate.score,
-                claim: candidate.claim.as_ref()
-                    .map(|body| memory.served_claim_view(&candidate.id, body))
-                    .transpose()?,
+        let candidates = request
+            .candidates
+            .iter()
+            .map(|candidate| {
+                Ok(HydeHostCandidate {
+                    id: candidate.id.to_hex(),
+                    score: candidate.score,
+                    claim: candidate
+                        .claim
+                        .as_ref()
+                        .map(|body| memory.served_claim_view(&candidate.id, body))
+                        .transpose()?,
+                })
             })
-        }).collect::<MemoryResult<Vec<_>>>()?;
-        Ok(Self::Evidence { query: request.query.clone(), candidates })
+            .collect::<MemoryResult<Vec<_>>>()?;
+        Ok(Self::Evidence {
+            query: request.query.clone(),
+            candidates,
+        })
     }
 }
 

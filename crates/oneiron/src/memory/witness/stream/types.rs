@@ -29,7 +29,9 @@ pub enum StreamSyncVisibility {
     AllDevices,
 }
 /// Atomic is the default; it buffers without publishing partials.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageWriteMode {
     #[default]
