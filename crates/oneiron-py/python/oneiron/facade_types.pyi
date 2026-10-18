@@ -6838,7 +6838,7 @@ class TaskTypeTreeReadReply(TypedDict):
     tree: NotRequired[TaskTypeTreeView | None]
 class PlannedSpawnRead(TypedDict):
     spawn_ref: EntityId
-SpawnPhase = Literal["reserved", "planned", "launched", "in_doubt"]
+SpawnPhase = Literal["planned", "launched", "refused"]
 CoordinationPatternView = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
 class SkillRevisionView(TypedDict):
     skill_ref: EntityId

@@ -1013,6 +1013,7 @@
      "path": "src/agent_dispatch/planner_live/intent.rs",
      "purpose": "The reserved spawn intent (DOOR-111 S2): the owner's planned spawn, durable under its intent key",
      "surface": {
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -1023,7 +1024,17 @@
      "path": "src/agent_dispatch/planner_live/root_plan.rs",
      "purpose": "The owner's root plan (DOOR-111 S3): the live planner a leased parent's spawn reads, for a spawn the…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/planner_live/team_launch.rs",
+     "purpose": "The owner's planned launch (DOOR-111 S4a): a planned intent's plan, launched at the root as one group",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -28191,10 +28202,20 @@
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…",
      "surface": {
       "const": 16,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 2,
       "fn": 11,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/learning_setting/actor_erase.rs",
+     "purpose": "An erased owner out of the seed and pin rows that name it (FIX 3520)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -28209,7 +28230,7 @@
      "purpose": "The owner's spawn choices (ARCH-0003 #learning-settings, ARCH-0079 #seed-pin): a seed or pin over a spawn's…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 6,
       "struct": 1
@@ -28249,6 +28270,20 @@
      "surface": {
       "fn": 5,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "UnselectedLensProposalErase"
+     ],
+     "path": "src/lens/actor_erase.rs",
+     "purpose": "An erased actor out of the lens proposals it made and the slot selections it decided (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -28712,7 +28747,8 @@
      "path": "src/lens/mod.rs",
      "purpose": "Closed generated-lens atom vocabulary",
      "surface": {
-      "re-export": 18
+      "crate-vis": 1,
+      "re-export": 19
      }
     },
     {
@@ -29455,6 +29491,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AnswerActor"
+     ],
+     "path": "src/llm/decision/answer_actor.rs",
+     "purpose": "Who an answer names, and the erase that forgets it (FIX 3520): an ask's answerer, and the owner whose reason…",
+     "surface": {
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -29466,7 +29516,7 @@
      "path": "src/llm/decision/asks.rs",
      "purpose": "The person's queue, kept durable: every request the ladder's last rung queues becomes an ask put to a role…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 26,
       "struct": 4
      }
@@ -29492,7 +29542,7 @@
      "path": "src/llm/decision/codec.rs",
      "purpose": "Canonical entity references for typed-decision wire records",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -29639,9 +29689,9 @@
      "path": "src/llm/decision/mod.rs",
      "purpose": "Typed question records and shared outcome projection",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "mod": 2,
-      "re-export": 15
+      "re-export": 16
      }
     },
     {
@@ -29946,7 +29996,7 @@
      "purpose": "The host's rule rows (ARCH-0076 #fit-ask, DEC-0006): a reason the authenticated owner types with an answer…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 6,
       "struct": 3
      }
@@ -45279,7 +45329,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 17
      }
     },
@@ -45313,17 +45363,19 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "OfferSwitchReceipt",
-      "OfferSwitchUndo"
+      "OfferSwitchUndo",
+      "SwitchOwner"
      ],
      "path": "src/skill_optimize/offer_switch.rs",
      "purpose": "An approved training offer's stock switch (OF-577; ARCH-0053 #training-offers: a switch binds now, with undo)",
      "surface": {
-      "crate-vis": 1,
-      "fn": 4,
+      "crate-vis": 2,
+      "enum": 1,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -51625,7 +51677,6 @@
       "ResolvedTeam",
       "RouteObservation",
       "SkillRevisionView",
-      "SpawnPhase",
       "TaskTypeNodeSpec",
       "TaskTypeNodeView",
       "TaskTypeTreePin",
@@ -51641,7 +51692,7 @@
      "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
      "surface": {
       "const": 1,
-      "enum": 4,
+      "enum": 3,
       "fn": 3,
       "struct": 23
      }
@@ -51711,9 +51762,11 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "PatternLaunchRunner",
+      "PatternLaunchSpec",
       "PatternSkill",
       "TeamAxis",
       "TeamPattern"
@@ -51725,7 +51778,8 @@
       "crate-vis": 1,
       "enum": 2,
       "fn": 7,
-      "struct": 1
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -51803,10 +51857,10 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
-      "PlannedIntentPhase",
       "PlannedIntentView",
       "PlannedSpawnHost",
-      "PlannedSpawnRequest"
+      "PlannedSpawnRequest",
+      "SpawnPhase"
      ],
      "path": "src/team/spawn_intent.rs",
      "purpose": "The owner's planned spawn under an intent key (DOOR-111): what the owner asks, what the host serves the ask…",
@@ -56302,7 +56356,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 47,
+     "files": 48,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57037,10 +57091,10 @@
      "purpose": "The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault…"
     },
     "learning_setting": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "L",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows…"
     },
     "learning_setting_choice": {
@@ -57058,7 +57112,7 @@
      "purpose": "The owner's doors over learning-setting rows (ARCH-0003 #learning-settings): list, put and clear a seed or a…"
     },
     "lens": {
-     "files": 50,
+     "files": 51,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57107,7 +57161,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 100,
+     "files": 101,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57809,7 +57863,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3523,
+   "source_files": 3527,
    "test_files": 902
   },
   "oneiron-android": {

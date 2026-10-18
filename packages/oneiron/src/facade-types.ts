@@ -2804,8 +2804,8 @@ export type TaskTypeTreeRead = { project_ref?: EntityId | null; tree_version?: n
 export type TaskTypeTreeReadReply = { project_ref?: EntityId | null; in_force_skill_ref?: EntityId | null; tree?: TaskTypeTreeView | null }
 /** `oneiron::team::doors::PlannedSpawnRead` */
 export type PlannedSpawnRead = { spawn_ref: EntityId }
-/** `oneiron::team::doors::SpawnPhase` */
-export type SpawnPhase = "reserved" | "planned" | "launched" | "in_doubt"
+/** `oneiron::team::spawn_intent::SpawnPhase` */
+export type SpawnPhase = "planned" | "launched" | "refused"
 /** `oneiron::team::doors::CoordinationPatternView` */
 export type CoordinationPatternView = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation"
 /** `oneiron::team::doors::SkillRevisionView` */
