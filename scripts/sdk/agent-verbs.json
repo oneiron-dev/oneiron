@@ -6461,6 +6461,45 @@
       "section": false
     },
     {
+      "name": "vault.skills.pack_receipt",
+      "description": "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner.",
+      "input": "SkillPackReceiptRequest",
+      "output": "crate::task_verb::sdk::SkillPackReceipt",
+      "call": "crate::task_verb::sdk::skill_pack_receipt_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.pack_receipt\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.outcomes.project",
+      "description": "Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win.",
+      "input": "SkillPackOutcomeRequest",
+      "output": "crate::task_verb::sdk::SkillPackOutcomeProjection",
+      "call": "crate::task_verb::sdk::skill_pack_outcome_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.outcomes.project\")?, &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.skills.outcomes.get",
+      "description": "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner.",
+      "input": "SkillPackCreditRequest",
+      "output": "Option<crate::skill_attribution::LateCreditReceipt>",
+      "call": "crate::task_verb::sdk::skill_pack_credit_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.outcomes.get\")?, &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "ai.steps.submit",
       "description": "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.",
       "input": "crate::llm::model_step::ModelStepSubmit",
@@ -10395,7 +10434,11 @@
       "output": "serde_json::Value",
       "scope": "Write",
       "context": "run",
-      "effect": "SkillsCall"
+      "effect": "SkillsCall",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::SkillCallInput>",
+        "description": "Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."
+      }
     },
     {
       "name": "self.team.start",

@@ -142,7 +142,7 @@ pub enum TaskRefuseDomain {
 
 /// `self.skills.call`: one agent-callable skill, run under the run's own
 /// attempt lease (OF-353).
-#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkillCallInput {
     /// The callable skill's entity id, hex, as `self.skills.callables` lists

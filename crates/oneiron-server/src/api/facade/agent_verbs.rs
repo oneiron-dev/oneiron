@@ -422,6 +422,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.skills.save", post(facade_route))
         .route("/self.skills.fork", post(facade_route))
         .route("/self.skills.callables", post(facade_route))
+        .route("/vault.skills.pack_receipt", post(facade_route))
+        .route("/vault.skills.outcomes.project", post(facade_route))
+        .route("/vault.skills.outcomes.get", post(facade_route))
         .route("/ai.steps.submit", post(facade_route))
         .route("/ai.steps.receipt", post(facade_route))
         .route("/ai.reply", post(facade_route))
@@ -618,4 +621,5 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/tasks.refuse", post(facade_route))
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
+        .route("/self.skills.call", post(facade_route))
 }

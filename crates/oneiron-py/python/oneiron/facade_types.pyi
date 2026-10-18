@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 577 facade rows, 2203 declarations.
-Inputs: 527 of 577 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 510 of 577 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 89; unread shapes: 0.
+Census: 581 facade rows, 2210 declarations.
+Inputs: 530 of 581 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 513 of 581 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -6539,6 +6539,9 @@ RefusalLevel = Literal["none", "voice", "veto", "full"]
 class RefusalDial(TypedDict):
     bond: NotRequired[RefusalLevel | None]
     logistics: NotRequired[RefusalLevel | None]
+class AgentModel(TypedDict):
+    model_ref: ModelId
+    when: str
 class AgentDefinitionSpec(TypedDict):
     agent_id: str
     desc: str
@@ -6554,6 +6557,8 @@ class AgentDefinitionSpec(TypedDict):
     enabled: NotRequired[bool]
     display_name: NotRequired[str | None]
     refusal: NotRequired[RefusalDial | None]
+    models: NotRequired[list[AgentModel]]
+    compaction_model: NotRequired[ModelId | None]
 class AgentDefinitionCreateRequest(TypedDict):
     agent_def_ref: EntityId
     definition: AgentDefinitionSpec
@@ -8266,6 +8271,24 @@ class CallableCardView(TypedDict):
     reference: str
     arguments: Any
     returns: Any
+class SkillPackReceiptRequest(TypedDict):
+    attempt_receipt: str
+class SkillPackReceipt(TypedDict):
+    receipt: ReceiptRecord
+    loaded_skills: list[str]
+    attribution: PackAttributionFields
+class SkillPackOutcomeRequest(TypedDict):
+    attempt_receipt: str
+    outcome_receipt: str
+    succeeded: bool
+    axis: str
+    at: int
+    goal_revision: NotRequired[str | None]
+class SkillPackOutcomeProjection(TypedDict):
+    receipt: LateCreditReceipt
+    persisted: bool
+class SkillPackCreditRequest(TypedDict):
+    receipt_id: str
 class CallPurposeOtherBody(TypedDict):
     name: str
 class CallPurposeOther(TypedDict):
@@ -11455,6 +11478,9 @@ class LeaderSplitOutput(TypedDict):
     parent: EntityId
     leader: EntityId
     depth_remaining: int
+class SkillCallInput(TypedDict):
+    skill: str
+    args: Any
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str

@@ -400,6 +400,9 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    VaultSkillsPackReceipt,
+    VaultSkillsOutcomesProject,
+    VaultSkillsOutcomesGet,
     AiStepsSubmit,
     AiStepsReceipt,
     AiReply,
@@ -621,6 +624,7 @@ pub enum AgentVerb {
     TasksRefuse,
     SelfAgentsSpawn,
     SelfLeaderSplit,
+    SelfSkillsCall,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -1023,6 +1027,9 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::VaultSkillsPackReceipt,
+        Self::VaultSkillsOutcomesProject,
+        Self::VaultSkillsOutcomesGet,
         Self::AiStepsSubmit,
         Self::AiStepsReceipt,
         Self::AiReply,
@@ -1244,6 +1251,7 @@ impl AgentVerb {
         Self::TasksRefuse,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderSplit,
+        Self::SelfSkillsCall,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -1655,6 +1663,9 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::VaultSkillsPackReceipt => "vault.skills.pack_receipt",
+            Self::VaultSkillsOutcomesProject => "vault.skills.outcomes.project",
+            Self::VaultSkillsOutcomesGet => "vault.skills.outcomes.get",
             Self::AiStepsSubmit => "ai.steps.submit",
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
@@ -1880,6 +1891,7 @@ impl AgentVerb {
             Self::TasksRefuse => "tasks.refuse",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderSplit => "self.leader.split",
+            Self::SelfSkillsCall => "self.skills.call",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -2281,6 +2293,9 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsPackReceipt
+                | Self::VaultSkillsOutcomesProject
+                | Self::VaultSkillsOutcomesGet
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -2462,6 +2477,7 @@ impl AgentVerb {
                 | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
+                | Self::SelfSkillsCall
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -2911,6 +2927,9 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsPackReceipt
+                | Self::VaultSkillsOutcomesProject
+                | Self::VaultSkillsOutcomesGet
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -3092,6 +3111,7 @@ impl AgentVerb {
                 | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
+                | Self::SelfSkillsCall
         )
     }
     pub const fn is_section(self) -> bool {
@@ -3596,6 +3616,9 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::VaultSkillsPackReceipt
+                | Self::VaultSkillsOutcomesProject
+                | Self::VaultSkillsOutcomesGet
                 | Self::AiStepsSubmit
                 | Self::AiStepsReceipt
                 | Self::AiReply
@@ -3792,6 +3815,7 @@ impl AgentVerb {
                 | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
+                | Self::SelfSkillsCall
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -4040,6 +4064,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::VaultSkillsOutcomesProject
                 | Self::AiStepsSubmit
                 | Self::AiReply
                 | Self::AiVoiceStart
@@ -4168,6 +4193,7 @@ impl AgentVerb {
                 | Self::TasksRefuse
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
+                | Self::SelfSkillsCall
         )
     }
     pub const fn proposes(self) -> bool {
@@ -4608,6 +4634,9 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::VaultSkillsPackReceipt => &["spec"],
+            Self::VaultSkillsOutcomesProject => &["spec"],
+            Self::VaultSkillsOutcomesGet => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -4829,6 +4858,7 @@ impl AgentVerb {
             Self::TasksRefuse => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
+            Self::SelfSkillsCall => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -5232,6 +5262,9 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::VaultSkillsPackReceipt => &["spec"],
+            Self::VaultSkillsOutcomesProject => &["spec"],
+            Self::VaultSkillsOutcomesGet => &["spec"],
             Self::AiStepsSubmit => &["spec"],
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
@@ -5453,6 +5486,7 @@ impl AgentVerb {
             Self::TasksRefuse => &["spec"],
             Self::SelfAgentsSpawn => &["spec"],
             Self::SelfLeaderSplit => &["spec"],
+            Self::SelfSkillsCall => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -6603,6 +6637,15 @@ impl AgentVerb {
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
             }
+            Self::VaultSkillsPackReceipt => {
+                "Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."
+            }
+            Self::VaultSkillsOutcomesProject => {
+                "Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."
+            }
+            Self::VaultSkillsOutcomesGet => {
+                "Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."
+            }
             Self::AiStepsSubmit => {
                 "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
             }
@@ -7215,6 +7258,9 @@ impl AgentVerb {
             }
             Self::SelfLeaderSplit => {
                 "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
+            }
+            Self::SelfSkillsCall => {
+                "Runs a callable skill on this credential's attached leased run with its existing sandbox and gates; the result follows the stored return contract, while anchored outcomes settle separately."
             }
         }
     }
