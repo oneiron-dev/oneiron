@@ -7,7 +7,9 @@ use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
-use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
+use oneiron::code_run::{
+    CompactionHostBinding, GatedActorWrite, SpawnHostSeat, bind_compaction_caller,
+};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
@@ -249,12 +251,13 @@ pub trait McpCodeModeProvider: Send + Sync {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
     /// A compaction seat for a run the host holds none for, its summaries
-    /// bylined `byline`, its passes queued in `credential`'s turn, its calls
-    /// spent under `spend` when the run spends under a scope; `None` keeps
-    /// the run's window raw.
+    /// bylined by the actor `host` authenticated (who also writes them, when
+    /// its profile names `self`, FIX 4465), its passes queued in
+    /// `credential`'s turn, its calls spent under `spend` when the run spends
+    /// under a scope; `None` keeps the run's window raw.
     fn compaction(
         &self,
-        _byline: WriteActor,
+        _host: CompactionHostBinding,
         _credential: &str,
         _spend: Option<&SpendScopeId>,
     ) -> Option<RunCompaction> {
@@ -280,11 +283,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
 }
 
-/// Builds one run's compaction seat from the run's write actor, the
+/// Builds one run's compaction seat from the run's authenticated host
+/// binding (its write actor, its caller's place and its proof), the
 /// credential its passes queue under (its registered fingerprint's stream
 /// connection) and the spend scope its calls spend under, if any.
-pub type RunCompactionSeat =
-    Arc<dyn Fn(WriteActor, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
+pub type RunCompactionSeat = Arc<
+    dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync,
+>;
 
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
@@ -455,7 +460,20 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
                 .take(run_id)
                 .or_else(|| {
-                    provider.compaction(write_actor, &request.actor.stream_connection.0, None)
+                    // The host's own binding of the caller: the actor its
+                    // credential writes as, where its connection sits and
+                    // the slip it proved. Never a tool argument.
+                    let host = bind_compaction_caller(
+                        write_actor,
+                        request.actor.locality(),
+                        request
+                            .actor
+                            .auth
+                            .as_ref()
+                            .and_then(|auth| auth.verified_slip())
+                            .cloned(),
+                    );
+                    provider.compaction(host, &request.actor.stream_connection.0, None)
                 });
             if let Some(seat) = seat.as_mut() {
                 // Its summaries are born where the run's credential writes.

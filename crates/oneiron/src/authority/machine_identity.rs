@@ -262,8 +262,18 @@ impl Vault {
     /// admission stands whatever happens here: a failure is returned as a
     /// re-seal after a committed admission, never a rollback. A sync lane's
     /// upkeep re-seal runs again later; nothing else retries it.
+    ///
+    /// First it queues the admitted machine for the home, for an old reader
+    /// to grant it each kept sealed pad object (FIX 4271). A queue that fails
+    /// is logged, never returned: the machine's own sweep asks again.
     #[cfg(feature = "sync")]
     pub(super) fn reseal_after_machine_admission(&self) -> Result<()> {
+        if let Err(error) = self.queue_sealed_bundle_pad_admissions() {
+            tracing::warn!(
+                error = %error,
+                "queueing a machine admission for sealed pad access failed; its sweep asks again"
+            );
+        }
         self.reseal_custody_for_roster().map(drop).map_err(|error| {
             crate::error::Error::sync_engine(
                 crate::error::SyncEngineContext::CustodyResealAfterMachineAdmission,

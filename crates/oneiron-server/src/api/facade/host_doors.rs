@@ -73,6 +73,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -135,6 +136,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
+// An agent run's secret grant doors (DOOR-124), likewise.
+pub(crate) use super::secret_grant_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
@@ -1116,6 +1119,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.cleanup.run"
+        | "vault.entities.mention"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"

@@ -412,6 +412,8 @@ class Oneiron:
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
+        def secrets(self) -> "Oneiron._SelfSecretsVerbs": ...
+        @property
         def skills(self) -> "Oneiron._SelfSkillsVerbs": ...
         @property
         def decisions(self) -> "Oneiron._SelfDecisionsVerbs": ...
@@ -483,6 +485,15 @@ class Oneiron:
     class _SelfOffRecordVerbs:
         def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
             """The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
+    class _SelfSecretsVerbs:
+        def materialize(self, spec: Facade.LiveRunRequest[Facade.SecretGrantMintRequest]) -> Facade.SecretGrantView:
+            """Mints a value-free grant on a secret for this credential's attached run, to one purpose: an operation or connector (door), a host destination (leased) or a declared file (local); the answer never holds the value."""
+        def renew(self, spec: Facade.LiveRunRequest[Facade.SecretGrantRenewRequest]) -> Facade.SecretGrantView:
+            """Renews a grant the attached run holds: a fresh grant at the secret's current generation in its place, never a longer life for bytes already handed out."""
+        def teardown(self, spec: Facade.LiveRunRequest[Facade.SecretGrantTeardownRequest]) -> Facade.SecretGrantView:
+            """Tears down a grant the attached run holds, whatever its state: revokes it and its lease, removes its file or clears its destination, and says what the cleanup found."""
+        def use(self, spec: Facade.LiveRunRequest[Facade.SecretGrantUseRequest]) -> Facade.SecretUseAnswer:
+            """Hands the secret a door grant redeems to one trusted operation or connector call, for the attached run; a grant minted before a rotation refuses until renewed, and the answer never holds the value."""
     class _SelfSkillsVerbs:
         def save(self, spec: Facade.SkillSaveRequest) -> Facade.SkillAuthoringReceipt:
             """An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."""
@@ -579,6 +590,10 @@ class Oneiron:
         def research(self) -> "Oneiron._VaultResearchVerbs": ...
         @property
         def evals(self) -> "Oneiron._VaultEvalsVerbs": ...
+        @property
+        def cleanup(self) -> "Oneiron._VaultCleanupVerbs": ...
+        @property
+        def entities(self) -> "Oneiron._VaultEntitiesVerbs": ...
         @property
         def legal_holds(self) -> "Oneiron._VaultLegalHoldsVerbs": ...
         @property
@@ -1233,6 +1248,12 @@ class Oneiron:
     class _VaultEvalsCohortsVerbs:
         def setup(self, spec: Facade.EvalCohortSetup) -> Facade.EvalAuthoringReport:
             """The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance."""
+    class _VaultCleanupVerbs:
+        def run(self, spec: Facade.CleanupRunRequest) -> Facade.CleanupRunView:
+            """The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."""
+    class _VaultEntitiesVerbs:
+        def mention(self, spec: Facade.EntityMentionRequest) -> Facade.EntityResolutionWaterfallDecision:
+            """The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."""
     class _VaultLegalHoldsVerbs:
         def place(self, spec: Facade.LegalHoldPlaceRequest) -> Facade.LegalHold:
             """The owner places a customer legal hold on the named records or gate partitions."""

@@ -227,6 +227,8 @@ both bindings and their export-census tests in one change.
 - `vault.research.record_benchmark`
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
+- `vault.cleanup.run`
+- `vault.entities.mention`
 - `vault.legal_holds.place`
 - `vault.legal_holds.widen`
 - `vault.legal_holds.list`
@@ -289,6 +291,10 @@ both bindings and their export-census tests in one change.
 - `reveal.wait`
 - `reveal.describe`
 - `self.use`
+- `self.secrets.materialize`
+- `self.secrets.renew`
+- `self.secrets.teardown`
+- `self.secrets.use`
 - `vault.shares.create`
 - `vault.shares.revoke`
 - `vault.shares.view`

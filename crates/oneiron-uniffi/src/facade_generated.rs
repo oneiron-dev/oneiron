@@ -1106,6 +1106,16 @@ export_facade! {
     let output = client.vault_authority_handoff_alarms_acknowledge(&input)?;
     crate::codec::lift_record("vault.authority.handoff_alarms.acknowledge", &output)
 };
+"vault.cleanup.run" => fn vault_cleanup_run(&self) -> CleanupRunView = |client| {
+    let input: oneiron::vault_cleanup::surface::CleanupRunRequest = crate::codec::lower_empty("vault.cleanup.run")?;
+    let output = client.vault_cleanup_run(&input)?;
+    crate::codec::lift_record("vault.cleanup.run", &output)
+};
+"vault.entities.mention" => fn vault_entities_mention(&self, input: EntityMentionRequest) -> EntityResolutionWaterfallDecision = |client| {
+    let input: oneiron::ingest::EntityMentionRequest = crate::codec::lower_record("vault.entities.mention", input)?;
+    let output = client.vault_entities_mention(&input)?;
+    crate::codec::lift_record("vault.entities.mention", &output)
+};
 "vault.legal_holds.place" => fn vault_legal_holds_place(&self, input: LegalHoldPlaceRequest) -> LegalHold = |client| {
     let input: oneiron::task_verb::sdk::LegalHoldPlaceRequest = crate::codec::lower_record("vault.legal_holds.place", input)?;
     let output = client.vault_legal_holds_place(&input)?;
@@ -1415,6 +1425,26 @@ export_facade! {
     let input: oneiron::task_verb::sdk::SecretUseRequest = crate::codec::lower_record("self.use", input)?;
     let output = client.self_use(&input)?;
     crate::codec::lift_record("self.use", &output)
+};
+"self.secrets.materialize" => fn self_secrets_materialize(&self, input: LiveRunRequestSecretGrantMintRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantMintRequest> = crate::codec::lower_record("self.secrets.materialize", input)?;
+    let output = client.self_secrets_materialize(&input)?;
+    crate::codec::lift_record("self.secrets.materialize", &output)
+};
+"self.secrets.renew" => fn self_secrets_renew(&self, input: LiveRunRequestSecretGrantRenewRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantRenewRequest> = crate::codec::lower_record("self.secrets.renew", input)?;
+    let output = client.self_secrets_renew(&input)?;
+    crate::codec::lift_record("self.secrets.renew", &output)
+};
+"self.secrets.teardown" => fn self_secrets_teardown(&self, input: LiveRunRequestSecretGrantTeardownRequest) -> SecretGrantView = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantTeardownRequest> = crate::codec::lower_record("self.secrets.teardown", input)?;
+    let output = client.self_secrets_teardown(&input)?;
+    crate::codec::lift_record("self.secrets.teardown", &output)
+};
+"self.secrets.use" => fn self_secrets_use(&self, input: LiveRunRequestSecretGrantUseRequest) -> SecretUseAnswer = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::SecretGrantUseRequest> = crate::codec::lower_record("self.secrets.use", input)?;
+    let output = client.self_secrets_use(&input)?;
+    crate::codec::lift_record("self.secrets.use", &output)
 };
 "vault.shares.create" => fn vault_shares_create(&self, input: ShareCreateRequest) -> ShareCreated = |client| {
     let input: oneiron::task_verb::sdk::ShareCreateRequest = crate::codec::lower_record("vault.shares.create", input)?;
