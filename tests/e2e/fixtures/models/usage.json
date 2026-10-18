@@ -1,0 +1,107 @@
+{
+  "owner": "models-fixture-owner",
+  "vaultId": "models-fixture-vault-a",
+  "otherVaultId": "models-fixture-vault-b",
+  "modes": [
+    {
+      "configMode": "local_free",
+      "source": "local",
+      "recordsBillingFacts": false
+    },
+    {
+      "configMode": "byo_cloud_key",
+      "source": "byo",
+      "recordsBillingFacts": false
+    },
+    {
+      "configMode": "oneiron_cloud",
+      "source": "oneiron_cloud",
+      "recordsBillingFacts": true
+    }
+  ],
+  "events": [
+    {
+      "idempotencyKey": "models-usd-call-001",
+      "eventType": "inference",
+      "role": "generative_reasoner",
+      "occurredAt": 1792281600,
+      "agentId": "models-fixture-agent",
+      "model": "models-fixture/reasoner@rev-a",
+      "service": "models-fixture-text",
+      "tokenCounts": {
+        "inputTokens": 1000,
+        "outputTokens": 200,
+        "cacheReadTokens": 100,
+        "cacheWriteTokens": 50
+      },
+      "currency": "USD",
+      "serviceAmount": 625000
+    },
+    {
+      "idempotencyKey": "models-eur-call-001",
+      "eventType": "service",
+      "role": "generative_reasoner",
+      "occurredAt": 1792281601,
+      "agentId": "models-fixture-agent",
+      "model": "models-fixture/reasoner@rev-b",
+      "service": "models-fixture-service",
+      "tokenCounts": {
+        "inputTokens": 1000,
+        "outputTokens": 100,
+        "cacheReadTokens": 0,
+        "cacheWriteTokens": 0
+      },
+      "currency": "EUR",
+      "serviceAmount": 500000
+    }
+  ],
+  "expected": {
+    "costs": [
+      {
+        "amount": 4000000,
+        "currency": "USD",
+        "priceTableSnapshot": "models-fixture-prices-v1-20261018"
+      },
+      {
+        "amount": 1700000,
+        "currency": "EUR",
+        "priceTableSnapshot": "models-fixture-prices-v1-20261018"
+      }
+    ],
+    "counters": {
+      "eventCount": 2,
+      "inputTokens": 2000,
+      "outputTokens": 300,
+      "cacheReadTokens": 100,
+      "cacheWriteTokens": 50,
+      "amountsByCurrency": {
+        "USD": 4000000,
+        "EUR": 1700000
+      }
+    },
+    "usdCounter": {
+      "eventCount": 1,
+      "inputTokens": 1000,
+      "outputTokens": 200,
+      "cacheReadTokens": 100,
+      "cacheWriteTokens": 50,
+      "amountsByCurrency": {
+        "USD": 4000000
+      }
+    },
+    "eurCounter": {
+      "eventCount": 1,
+      "inputTokens": 1000,
+      "outputTokens": 100,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "amountsByCurrency": {
+        "EUR": 1700000
+      }
+    },
+    "conflictCode": "IDEMPOTENCY_REPLAY_CONFLICT",
+    "unmeteredRollupStatus": 404
+  },
+  "oracleNote": "Authored money facts: USD 2000000 input + 1200000 output + 50000 cached read + 125000 cached write + 625000 service = 4000000 nano-USD. EUR 1000000 input + 200000 output + 500000 service = 1700000 nano-EUR. No engine formula or output is used.",
+  "billingBoundary": "MODELS-07 covers the provider-list billing-fact door described in oneiron.skills.md. It does not call BYO usage-display estimates a Oneiron wallet debit; no wallet exists on this door."
+}

@@ -1,0 +1,22 @@
+{
+  "revision": "models-fixture-prices-v1-20261018",
+  "unit": "nano-currency-per-million-tokens",
+  "rates": {
+    "USD": {
+      "currency": "USD",
+      "priceTableSnapshot": "models-fixture-prices-v1-20261018",
+      "inputPerMillion": 2000000000,
+      "outputPerMillion": 6000000000,
+      "cacheReadPerMillion": 500000000,
+      "cacheWritePerMillion": 2500000000
+    },
+    "EUR": {
+      "currency": "EUR",
+      "priceTableSnapshot": "models-fixture-prices-v1-20261018",
+      "inputPerMillion": 1000000000,
+      "outputPerMillion": 2000000000,
+      "cacheReadPerMillion": 0,
+      "cacheWritePerMillion": 0
+    }
+  }
+}

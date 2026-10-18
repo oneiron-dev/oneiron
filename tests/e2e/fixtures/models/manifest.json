@@ -1,0 +1,126 @@
+{
+  "version": 1,
+  "area": "models",
+  "assets": [
+    {
+      "id": "models-usage",
+      "path": "usage.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-model-runtime-fixtures",
+        "revision": "models-e2e-v1-20261018"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "50ac4bf204c8d5a9ae8eaa664fe2bfe06bbe20b6b5b4397c8029b8debcbcf08e",
+      "expectedFacts": {
+        "oracle": "independently authored quantities, money amounts and per-mode recording behavior",
+        "hostedAmountsByCurrency": {
+          "USD": 4000000,
+          "EUR": 1700000
+        },
+        "localAndByoRecorded": false
+      },
+      "scenarios": [
+        "MODELS-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "models-price-table",
+      "path": "price-table.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-model-runtime-fixtures",
+        "revision": "models-e2e-v1-20261018"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "0b0c00b926d46021a3d5a6da8c03678e4e0d6f375172f058499b32023926286f",
+      "expectedFacts": {
+        "revision": "models-fixture-prices-v1-20261018",
+        "unit": "nano-currency-per-million-tokens",
+        "signature": "Ed25519 over exact file bytes, not a production request field"
+      },
+      "scenarios": [
+        "MODELS-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "models-price-table-public-key",
+      "path": "price-table-public-key.pem",
+      "source": {
+        "uri": "independent-oracle:oneiron-model-runtime-fixtures",
+        "revision": "models-e2e-v1-20261018"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "cbb429559d0adc90ddd9272cb25ff73338407dc7e9c5a220ea10ef7221515560",
+      "expectedFacts": {
+        "algorithm": "Ed25519",
+        "scope": "generated fixture signer only; no vendor or owner credentials"
+      },
+      "scenarios": [
+        "MODELS-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "models-price-table-signature",
+      "path": "price-table.sig",
+      "source": {
+        "uri": "independent-oracle:oneiron-model-runtime-fixtures",
+        "revision": "models-e2e-v1-20261018"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "0507de3aae5f330bd33b2ee7689d4e261a6461707ba182b306b716246eed5860",
+      "expectedFacts": {
+        "algorithm": "Ed25519",
+        "signedAsset": "models-price-table",
+        "byteLength": 64
+      },
+      "scenarios": [
+        "MODELS-07"
+      ],
+      "requires": []
+    },
+    {
+      "id": "models-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:oneiron-model-runtime-fixtures",
+        "revision": "models-e2e-v1-20261018"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "d5d651d6e28d0b9cce441f415005a4b7c358bee84b2e9a15ae6545ef42716f71",
+      "expectedFacts": {
+        "oracle": "canon plus independently authored scenario contracts, not engine output",
+        "blockedIds": [
+          "MODELS-01",
+          "MODELS-02",
+          "MODELS-03",
+          "MODELS-04",
+          "MODELS-05",
+          "MODELS-06",
+          "MODELS-08",
+          "MODELS-09"
+        ],
+        "runnableIds": [
+          "MODELS-07"
+        ],
+        "schemaAttemptsMaximum": 3,
+        "streamProducerCalls": 1,
+        "durableStreamTerminals": 1,
+        "approvalDenialChangesBinding": false
+      },
+      "scenarios": [
+        "MODELS-01",
+        "MODELS-02",
+        "MODELS-03",
+        "MODELS-04",
+        "MODELS-05",
+        "MODELS-06",
+        "MODELS-07",
+        "MODELS-08",
+        "MODELS-09"
+      ],
+      "requires": []
+    }
+  ]
+}

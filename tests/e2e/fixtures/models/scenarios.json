@@ -1,0 +1,742 @@
+{
+  "version": 1,
+  "area": "models",
+  "authoredRevision": "models-e2e-v1-20261018",
+  "policy": "G01: these are scenario design contracts, not routes; missing typed calls remain TODO.",
+  "canonPins": [
+    {
+      "uri": "/oneiron/extraction/oneiron-arch-0036-model-families-v1/",
+      "sha256": "f1d847a24975aa46e00bc43f8ec6ce52d53f806045b587772e71380a3670372c"
+    },
+    {
+      "uri": "/oneiron/agents/oneiron-arch-0026-dreamer-v2/",
+      "sha256": "59eff8c7ebf592b19e4a9b904b80ca1568366c9d1ef5e54a8cfb30571ed03252"
+    },
+    {
+      "uri": "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/",
+      "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
+    },
+    {
+      "uri": "/oneiron/core/oneiron-arch-0003-semantic-memory/",
+      "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+    },
+    {
+      "uri": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
+      "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+    },
+    {
+      "uri": "/oneiron/runtime/",
+      "sha256": "a637824710ca529d16402c5f2e72ac86f6d6db0b1ac4bc773c813da9ba86ede2"
+    }
+  ],
+  "scenarios": [
+    {
+      "id": "MODELS-01",
+      "name": "Independent model slots and role bindings should work",
+      "rows": [
+        "OF-126",
+        "OF-129",
+        "OF-131",
+        "OF-132",
+        "OF-133",
+        "OF-134",
+        "OF-138"
+      ],
+      "source": [
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#inference-slots",
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/registry/oneiron/#OF-126",
+        "/registry/oneiron/#OF-129",
+        "/registry/oneiron/#OF-131",
+        "/registry/oneiron/#OF-132",
+        "/registry/oneiron/#OF-133",
+        "/registry/oneiron/#OF-134",
+        "/registry/oneiron/#OF-138"
+      ],
+      "waitsOn": [
+        "typed model-manifest read/replace and per-slot route calls in HTTP and SDK",
+        "typed role invocation and inspectable resolved-model call receipt"
+      ],
+      "contract": {
+        "version": 2,
+        "routes": {
+          "llm": "own_server",
+          "embedder": "on_device",
+          "oneironer": "own_server"
+        },
+        "roleBindings": {
+          "generative_reasoner": {
+            "model": "models-fixture/reasoner@rev-a",
+            "slot": "llm",
+            "tier": "fixture-pinned"
+          },
+          "local_reasoner": {
+            "model": "models-fixture/alternate@rev-a",
+            "slot": "llm",
+            "tier": "fixture-pinned"
+          },
+          "retrieval_embedder": {
+            "model": "models-fixture/embedder@rev-a",
+            "slot": "embedder",
+            "tier": "fixture-pinned"
+          },
+          "extraction_encoder": {
+            "model": "models-fixture/tagger@rev-a",
+            "slot": "oneironer",
+            "tier": "fixture-pinned"
+          }
+        },
+        "note": "These are the relevant binding rows, not a complete importable manifest. Canon requires every mandatory role; the future public DTO owns that complete manifest."
+      },
+      "providerOrigins": [
+        "reasoner",
+        "alternate",
+        "embedding",
+        "tagger"
+      ],
+      "rebind": {
+        "role": "generative_reasoner",
+        "model": "models-fixture/reasoner@rev-b"
+      },
+      "expected": {
+        "unchangedRoles": [
+          "local_reasoner",
+          "retrieval_embedder",
+          "extraction_encoder"
+        ],
+        "receiptFacts": [
+          "role",
+          "model identity with revision",
+          "route",
+          "provider/catalog revision"
+        ],
+        "tierIsRoutingKey": false
+      }
+    },
+    {
+      "id": "MODELS-02",
+      "name": "Typed multimodal streaming should work",
+      "rows": [
+        "OF-126",
+        "OF-136"
+      ],
+      "source": [
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/registry/oneiron/#OF-126",
+        "/registry/oneiron/#OF-136"
+      ],
+      "waitsOn": [
+        "typed attach/detach to the same live model stream in HTTP and WS",
+        "durable terminal ContentPart read by stream/run identity"
+      ],
+      "contract": {
+        "subscribeBeforeGenerate": 2,
+        "detachSubscriber": "slow",
+        "inputParts": [
+          "text",
+          "image",
+          "audio"
+        ],
+        "events": [
+          {
+            "event": "reasoning_start",
+            "part_id": "reason-1"
+          },
+          {
+            "event": "text_start",
+            "part_id": "text-1"
+          },
+          {
+            "event": "reasoning_delta",
+            "part_id": "reason-1",
+            "text": "Read fixture evidence."
+          },
+          {
+            "event": "text_delta",
+            "part_id": "text-1",
+            "text": "Fixture "
+          },
+          {
+            "event": "image_start",
+            "part_id": "image-1",
+            "media_type": "image/png"
+          },
+          {
+            "event": "image_delta",
+            "part_id": "image-1",
+            "data_fragment": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
+          },
+          {
+            "event": "text_delta",
+            "part_id": "text-1",
+            "text": "answer."
+          },
+          {
+            "event": "image_end",
+            "part_id": "image-1",
+            "media_type": "image/png",
+            "image": {
+              "source": "base64",
+              "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
+            }
+          },
+          {
+            "event": "reasoning_end",
+            "part_id": "reason-1"
+          },
+          {
+            "event": "text_end",
+            "part_id": "text-1"
+          },
+          {
+            "event": "done",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "kind": "reasoning",
+                  "text": "Read fixture evidence."
+                },
+                {
+                  "kind": "text",
+                  "text": "Fixture answer."
+                },
+                {
+                  "kind": "image",
+                  "media_type": "image/png",
+                  "image": {
+                    "source": "base64",
+                    "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
+                  }
+                }
+              ]
+            },
+            "usage": {
+              "input": {
+                "total": 12,
+                "cache_read": 0,
+                "cache_write": 0
+              },
+              "output": {
+                "total": 5,
+                "text": 3,
+                "reasoning": 2
+              },
+              "raw_provider": {
+                "fixture": "models-stream-v1"
+              }
+            },
+            "finish_reason": "stop"
+          }
+        ]
+      },
+      "barriers": [
+        "subscribers-ready",
+        "first-part",
+        "before-done"
+      ],
+      "expected": {
+        "producerCalls": 1,
+        "durableTerminals": 1,
+        "durableTokenDeltas": 0,
+        "terminalAfterRestart": {
+          "role": "assistant",
+          "content": [
+            {
+              "kind": "reasoning",
+              "text": "Read fixture evidence."
+            },
+            {
+              "kind": "text",
+              "text": "Fixture answer."
+            },
+            {
+              "kind": "image",
+              "media_type": "image/png",
+              "image": {
+                "source": "base64",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg=="
+              }
+            }
+          ]
+        },
+        "usage": {
+          "input": {
+            "total": 12,
+            "cache_read": 0,
+            "cache_write": 0
+          },
+          "output": {
+            "total": 5,
+            "text": 3,
+            "reasoning": 2
+          },
+          "raw_provider": {
+            "fixture": "models-stream-v1"
+          }
+        }
+      },
+      "note": "Audio is input evidence, not an invented audio_* LlmStreamEvent. A future typed subscription must retain part IDs; chat currently flattens events to text."
+    },
+    {
+      "id": "MODELS-03",
+      "name": "One retry authority and explicit failure should work",
+      "rows": [
+        "OF-130",
+        "OF-140"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/registry/oneiron/#OF-130",
+        "/registry/oneiron/#OF-140"
+      ],
+      "waitsOn": [
+        "typed durable model-step submission with declared retry/fallback policy and public step receipt"
+      ],
+      "contract": {
+        "failureClasses": [
+          "Retryable",
+          "Fatal",
+          "BudgetDenied"
+        ],
+        "checkpoints": [
+          "Started",
+          "ResponseReceived",
+          "Logged",
+          "Finished"
+        ]
+      },
+      "sequences": {
+        "transient": [
+          {
+            "status": 503,
+            "body": {
+              "error": {
+                "type": "server_error",
+                "message": "fixture transient"
+              }
+            }
+          },
+          {
+            "status": 200,
+            "answer": "recovered"
+          }
+        ],
+        "fatalWithoutFallback": [
+          {
+            "status": 400,
+            "body": {
+              "error": {
+                "type": "invalid_request_error",
+                "message": "fixture fatal"
+              }
+            }
+          }
+        ],
+        "fatalWithDeclaredFallback": [
+          {
+            "status": 400,
+            "body": {
+              "error": {
+                "type": "invalid_request_error",
+                "message": "fixture fatal"
+              }
+            }
+          }
+        ],
+        "exhausted": [
+          503,
+          503,
+          503
+        ]
+      },
+      "expected": {
+        "transientAttempts": 2,
+        "exhaustedAttempts": 3,
+        "fatalAttempts": 1,
+        "fallbackValue": {
+          "outcome": "deferred",
+          "reason": "provider_failed"
+        },
+        "undeclaredFallback": false,
+        "emptyFailureSuccess": false
+      },
+      "note": "Three transport attempts is a fixture policy, not an engine default. Same-call offer fallback is distinct from durable-step retries; adapters must not multiply either count."
+    },
+    {
+      "id": "MODELS-04",
+      "name": "Structured output retries and refusal should work",
+      "rows": [
+        "OF-436"
+      ],
+      "source": [
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/registry/oneiron/#OF-436"
+      ],
+      "waitsOn": [
+        "typed one-shot Json{schema} model-step call/result over HTTP and MCP"
+      ],
+      "contract": {
+        "responseFormat": {
+          "format": "json",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer",
+                "const": 2
+              }
+            },
+            "required": [
+              "count"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "validValue": {
+          "count": 2
+        },
+        "terminalError": "typed schema-validation exhaustion"
+      },
+      "sequences": {
+        "native": [
+          "{\"count\":2}"
+        ],
+        "shim": [
+          "{\"count\":\"two\"}",
+          "{\"count\":2}"
+        ],
+        "exhausted": [
+          "{broken",
+          "{\"count\":\"two\"}",
+          "{\"count\":2,\"extra\":true}"
+        ]
+      },
+      "expected": {
+        "nativeAttempts": 1,
+        "shimAttempts": 2,
+        "exhaustedAttempts": 3,
+        "untypedFallback": false,
+        "silentCoercion": false
+      },
+      "note": "The step-layer shim/validator exists internally. Its existence does not expose a typed engine one-shot door. Do not replace this flow with agent REPL correction or ai.verdict option selection."
+    },
+    {
+      "id": "MODELS-05",
+      "name": "Budget reserve settle and cached resume should work",
+      "rows": [
+        "OF-076",
+        "OF-127",
+        "OF-286",
+        "OF-290",
+        "OF-319"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/registry/oneiron/#OF-076",
+        "/registry/oneiron/#OF-127",
+        "/registry/oneiron/#OF-286",
+        "/registry/oneiron/#OF-290",
+        "/registry/oneiron/#OF-319",
+        "/oneiron/runtime/#charge-rule"
+      ],
+      "waitsOn": [
+        "typed persisted monetary run lease/read/top-up and durable model-step resume with settlement receipts"
+      ],
+      "contract": {
+        "reservation": "reserve -> one-use lease -> settle",
+        "resume": "same logical request returns cached terminal at zero additional spend",
+        "chargeRule": "tokens when reported, reservation otherwise; failed sent rungs each pay reservation"
+      },
+      "cases": {
+        "concurrent": {
+          "capNanoUsd": 1000,
+          "reservationPerCallNanoUsd": 600,
+          "firstActualNanoUsd": 400,
+          "secondAdmittedWhileFirstHeld": false,
+          "barrier": "first-authorized-before-answer",
+          "expectedSpendAfterRestartAndResumeNanoUsd": 400,
+          "providerCallsAfterCachedResume": 1
+        },
+        "missingUsage": {
+          "reservationNanoUsd": 200,
+          "expectedSettledNanoUsd": 200
+        },
+        "failedRung": {
+          "failedReservationNanoUsd": 200,
+          "answerActualNanoUsd": 50,
+          "expectedSettledNanoUsd": 250
+        }
+      },
+      "expected": {
+        "finishAuthorizedInflight": true,
+        "cachedAdditionalSpend": 0,
+        "failedSentRungsCharged": true
+      },
+      "note": "Observe a public settled receipt before restart. A barrier proves only provider arrival, never an internal commit. Numbers are fixture prices/allowances, not changed product constants."
+    },
+    {
+      "id": "MODELS-06",
+      "name": "Graceful budget wrap and hold should work",
+      "rows": [
+        "OF-271",
+        "OF-419",
+        "OF-496",
+        "OF-532"
+      ],
+      "source": [
+        "/oneiron/agents/oneiron-arch-0079-agent-coordination-v1/#work",
+        "/oneiron/agents/oneiron-arch-0026-dreamer-v2/#run-tree",
+        "/registry/oneiron/#OF-271",
+        "/registry/oneiron/#OF-419",
+        "/registry/oneiron/#OF-496",
+        "/registry/oneiron/#OF-532"
+      ],
+      "waitsOn": [
+        "typed agent self-budget/steering notice and persisted budget hold/top-up/resume over HTTP and MCP"
+      ],
+      "contract": {
+        "budgetStages": [
+          "quiet50",
+          "plan80",
+          "land95",
+          "no-new-lease100"
+        ],
+        "hold": "resumable, not done or killed",
+        "noticeFacts": [
+          "remaining allowance",
+          "wrap warning",
+          "checkpoint",
+          "partial result"
+        ]
+      },
+      "policy": {
+        "capNanoUsd": 10000,
+        "warningPercent": 80,
+        "landingReserveNanoUsd": 1000,
+        "topUpNanoUsd": 5000,
+        "model": "models-fixture/reasoner@rev-a"
+      },
+      "expected": {
+        "spentAtWarningNanoUsd": 8100,
+        "remainingAtWarningNanoUsd": 1900,
+        "resumeSameModel": true,
+        "cheaperModelCalls": 0,
+        "partialWorkPreserved": true
+      },
+      "note": "The 10% landing reserve is declared fixture policy. BudgetGuard PLAN80/LAND95 and ATTEMPT landing are not silently conflated; soft shares may overdraw, only a pinned cap/lease hard-stops admission."
+    },
+    {
+      "id": "MODELS-07",
+      "name": "Inference mode and usage attribution should work",
+      "rows": [
+        "OF-306",
+        "OF-310"
+      ],
+      "source": [
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/oneiron/runtime/#charge-rule",
+        "/registry/oneiron/#OF-306",
+        "/registry/oneiron/#OF-310"
+      ],
+      "existingHttp": [
+        "POST /v1/usage/events",
+        "GET /v1/usage/owners/{owner}/vaults/{vault_id}/rollup"
+      ],
+      "fixture": "models-usage",
+      "priceTable": "models-price-table",
+      "expected": {
+        "costs": [
+          {
+            "amount": 4000000,
+            "currency": "USD",
+            "priceTableSnapshot": "models-fixture-prices-v1-20261018"
+          },
+          {
+            "amount": 1700000,
+            "currency": "EUR",
+            "priceTableSnapshot": "models-fixture-prices-v1-20261018"
+          }
+        ],
+        "counters": {
+          "eventCount": 2,
+          "inputTokens": 2000,
+          "outputTokens": 300,
+          "cacheReadTokens": 100,
+          "cacheWriteTokens": 50,
+          "amountsByCurrency": {
+            "USD": 4000000,
+            "EUR": 1700000
+          }
+        },
+        "usdCounter": {
+          "eventCount": 1,
+          "inputTokens": 1000,
+          "outputTokens": 200,
+          "cacheReadTokens": 100,
+          "cacheWriteTokens": 50,
+          "amountsByCurrency": {
+            "USD": 4000000
+          }
+        },
+        "eurCounter": {
+          "eventCount": 1,
+          "inputTokens": 1000,
+          "outputTokens": 100,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "amountsByCurrency": {
+            "EUR": 1700000
+          }
+        },
+        "conflictCode": "IDEMPOTENCY_REPLAY_CONFLICT",
+        "unmeteredRollupStatus": 404
+      },
+      "note": "Local/BYO billing-fact submissions must be unrecorded under the requested flow and documented usage-event contract. Current main appears to record them; a mismatch must fail, not become TODO or be adapted away."
+    },
+    {
+      "id": "MODELS-08",
+      "name": "Official subscription login boundary should work",
+      "rows": [
+        "OF-137",
+        "OF-375"
+      ],
+      "source": [
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/#handles",
+        "/registry/oneiron/#OF-137",
+        "/registry/oneiron/#OF-375"
+      ],
+      "waitsOn": [
+        "documented official subscription login/callback/logout against a configurable issuer and typed credential-free seat status"
+      ],
+      "contract": {
+        "loginKind": "own app registration or unmodified official vendor client",
+        "credentialLocation": "person runtime/vault custody, never control plane",
+        "quotaOutcome": "typed spent-window wait with reset"
+      },
+      "fixtureIssuer": {
+        "transport": "loopback only",
+        "registrationClientId": "oneiron-models-fixture",
+        "credentialType": "generated ephemeral fixture token, never real login"
+      },
+      "expected": {
+        "vendorClientImpersonation": false,
+        "controlPlaneCredentialTransfers": 0,
+        "unconfiguredPaidFallbackCalls": 0,
+        "configuredFallbackOnly": true,
+        "logoutStopsSeat": true
+      },
+      "note": "seat login-plan only prints placement and an authorization plan; it does not complete login or logout. A configured paid fallback is permission; a subscription login alone is not. Claude unmodified CLI may run in a hosted vault; ChatGPT app-server plan use stays personal/self-hosted without approval."
+    },
+    {
+      "id": "MODELS-09",
+      "name": "Model registry offers are evidence not permission should work",
+      "rows": [
+        "OF-512"
+      ],
+      "source": [
+        "/oneiron/extraction/oneiron-arch-0036-model-families-v1/#model-line",
+        "/oneiron/core/oneiron-arch-0003-semantic-memory/#learning",
+        "/registry/oneiron/#OF-512"
+      ],
+      "waitsOn": [
+        "typed model-offer catalog refresh/diff, candidate trial, proposed binding and owner deny-approval calls"
+      ],
+      "contract": {
+        "offer": "model@where",
+        "roleSwap": "proposal, requires owner authority",
+        "trial": "owned held-out labels, external ranking is only a prior"
+      },
+      "catalogs": [
+        {
+          "revision": "models-catalog-a",
+          "offers": [
+            {
+              "id": "candidate@fixture",
+              "model": "models-fixture/candidate@rev-a",
+              "priceNanoUsd": 50,
+              "externalScore": 0.6
+            }
+          ]
+        },
+        {
+          "revision": "models-catalog-b",
+          "offers": [
+            {
+              "id": "candidate@fixture",
+              "model": "models-fixture/candidate@rev-a",
+              "priceNanoUsd": 40,
+              "externalScore": 0.99
+            }
+          ]
+        }
+      ],
+      "heldOutLabels": [
+        {
+          "item": "held-out-1",
+          "label": "yes"
+        },
+        {
+          "item": "held-out-2",
+          "label": "no"
+        }
+      ],
+      "expected": {
+        "diffFields": [
+          "priceNanoUsd",
+          "externalScore"
+        ],
+        "trialCostNanoUsd": 50,
+        "approval": "deny",
+        "beforeBinding": "models-fixture/incumbent@rev-a",
+        "afterBinding": "models-fixture/incumbent@rev-a",
+        "receiptCatalogRevision": "models-catalog-b",
+        "autoAuthorizedSwap": false
+      },
+      "note": "These catalog price/score fields are fixture facts, not invented public wire fields. No live hub pack, benchmark ranking or typed learning-setting pin substitutes for the missing model-binding proposal workflow."
+    }
+  ],
+  "publicBindingSnapshot": {
+    "head": "0b01f6ebb9990a06098664e6a0d883bad86aa181",
+    "originMain": "6f2446660ef09f823131d6faaa7e586a75df0b72",
+    "note": "No differences in server, SDK or shared harness paths between these revisions at writer readback. Missing designed calls are prerequisites, never invented paths.",
+    "files": [
+      {
+        "path": "crates/oneiron-server/src/api/consumer_usage.rs",
+        "sha256": "4f88769463465fa65364ba893f4b66ee9883a3f83cb353ec53016608daadfb6c"
+      },
+      {
+        "path": "crates/oneiron-server/src/usage/model.rs",
+        "sha256": "3e7f0880dfa9a16424c24403f832a0d655099219010d8ae3a86c7697fca4e00d"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/ai/mod.rs",
+        "sha256": "ea419c93c4ec71fc0ebb5f395b769268770b58fd6b9d44ef5248772b2a5aaace"
+      },
+      {
+        "path": "crates/oneiron-server/src/api/llm.rs",
+        "sha256": "1c13c7761883ef852ccf84500e4bfa587d1ab8900bace155d69e1d0f349bbab0"
+      },
+      {
+        "path": "crates/oneiron-server/src/cli.rs",
+        "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade.ts",
+        "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+      },
+      {
+        "path": "packages/oneiron-client/src/facade-types.ts",
+        "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+      },
+      {
+        "path": "oneiron.skills.md",
+        "sha256": "9335428a1e29b40abddaf55350c9d95bbce6d50385ada010f5fff2b422851ace"
+      }
+    ]
+  }
+}
