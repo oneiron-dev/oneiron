@@ -765,6 +765,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConcernPromptInjectOutcome",
+      "ConcernPromptInjectRequest"
+     ],
+     "path": "src/agent_dispatch/continuation.rs",
+     "purpose": "The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "AgentDispatcher"
      ],
      "path": "src/agent_dispatch/dispatch.rs",
@@ -892,9 +906,9 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -1830,6 +1844,16 @@
      "purpose": "Atomic operator placement changes with lease fencing and cycle refusal",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/successor.rs",
+     "purpose": "The successor of a terminally failed attempt (FIX 3694, OF-568): the one new try an owner-approved prompt…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -19246,7 +19270,7 @@
      "purpose": "The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849)",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -48333,7 +48357,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 1,
       "mod": 2,
       "re-export": 25
@@ -49285,6 +49309,16 @@
      "path": "src/task_verb/symbol_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/task_continuation.rs",
+     "purpose": "The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3)",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -54102,7 +54136,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54144,7 +54178,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55439,7 +55473,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55609,7 +55643,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3385,
+   "source_files": 3388,
    "test_files": 902
   },
   "oneiron-android": {
