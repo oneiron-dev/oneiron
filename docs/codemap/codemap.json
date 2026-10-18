@@ -10508,6 +10508,20 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClaimAgingProfiles"
+     ],
+     "path": "src/claim/aging_profiles.rs",
+     "purpose": "Class-level aging policy data; claim classification stays predicate-root metadata",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -10540,7 +10554,7 @@
       "const": 4,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -10706,7 +10720,7 @@
      "purpose": "CLAIM body ABI + typed Claim API (ARCH-0003, pinned decisions D11/D17/D18)",
      "surface": {
       "crate-vis": 17,
-      "re-export": 11
+      "re-export": 12
      }
     },
     {
@@ -25202,6 +25216,22 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ClaimAgingProfilesConfigureRequest",
+      "ClaimAgingProfilesReceipt",
+      "ClaimAgingProfilesView"
+     ],
+     "path": "src/gate/policy_manifest_doors/claim_aging.rs",
+     "purpose": "Owner-configured class aging in the existing trusted default policy manifest",
+     "surface": {
+      "crate-vis": 3,
+      "fn": 2,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "OwnerPolicyConfiguration",
       "OwnerPolicyConfigurationReceipt",
       "OwnerPolicyConfigurationView",
@@ -25221,9 +25251,9 @@
      "path": "src/gate/policy_manifest_doors/mod.rs",
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 5,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -51206,7 +51236,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 713
+      "fn": 715
      }
     },
     {
@@ -57210,7 +57240,7 @@
      "purpose": "—"
     },
     "claim": {
-     "files": 68,
+     "files": 69,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57651,7 +57681,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 140,
+     "files": 141,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58535,7 +58565,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3570,
+   "source_files": 3572,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67065,7 +67095,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 677
+      "fn": 679
      }
     },
     {
@@ -68114,7 +68144,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 678
+      "fn": 680
      }
     },
     {
@@ -71024,6 +71054,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/aging_doors.rs",
+     "purpose": "Class-aging profile reads and edits under the caller's own owner credential",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/artifact_hosting_doors.rs",
      "purpose": "Typed publication and private preview doors under each caller's own proof",
      "surface": {
@@ -71447,7 +71487,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 124
+      "crate-vis": 125
      }
     },
     {
@@ -79176,7 +79216,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 386,
+     "files": 387,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79598,7 +79638,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 724,
+   "source_files": 725,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79794,6 +79834,7 @@
      "notable": [
       "AcceptConnect",
       "AcceptRescopeConnect",
+      "AccessFactorPolicy",
       "AccessStatus",
       "ActExecution",
       "ActionBoundRequest",
@@ -80139,6 +80180,10 @@
       "CheckpointResumeView",
       "CheckpointStepView",
       "CheckpointView",
+      "ClaimAgingProfiles",
+      "ClaimAgingProfilesConfigureRequest",
+      "ClaimAgingProfilesReceipt",
+      "ClaimAgingProfilesView",
       "ClaimApprovalStatus",
       "ClaimChangeVerdict",
       "ClaimDemoteActionInput",
@@ -82236,7 +82281,7 @@
      "purpose": "—",
      "surface": {
       "enum": 621,
-      "struct": 1818
+      "struct": 1823
      }
     },
     {
