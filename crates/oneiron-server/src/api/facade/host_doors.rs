@@ -49,6 +49,7 @@ use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
+pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;

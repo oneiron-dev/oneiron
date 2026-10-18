@@ -9565,6 +9565,20 @@ async fn ai_voice_close(
         facade_hooks_post(server, hooks, output).await?,
     ))
 }
+async fn ai_anonymous_chat(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    let _ = (server, auth, input);
+    Err(oneiron::memory::MemoryError::new(
+        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE,
+        "anonymous chat requires its standalone HTTP SDK route",
+        &["Call POST /v1/ai/anonymous-chat or the HTTP SDK ai.anonymous_chat method."],
+    )
+    .into())
+}
 async fn ai_options(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -14204,6 +14218,7 @@ pub(crate) async fn call_verb(
         "ai.voice.tool" => ai_voice_tool(server, call, input).await,
         "ai.voice.end" => ai_voice_end(server, call, input).await,
         "ai.voice.close" => ai_voice_close(server, call, input).await,
+        "ai.anonymous_chat" => ai_anonymous_chat(server, call, input).await,
         "ai.options" => ai_options(server, call, input).await,
         "ai.image" => ai_image(server, call, input).await,
         "ai.speech" => ai_speech(server, call, input).await,

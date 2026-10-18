@@ -31,7 +31,7 @@ pub enum PolicyClassifyDecision {
 
 /// Why a plane that wanted a model answer has none. A closed set, so a ledger
 /// row or a host can name the cause without carrying an error's text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum PolicySkipReason {
     /// The door had no safeguard model in reach.

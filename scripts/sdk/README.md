@@ -130,6 +130,15 @@ owner-only read of currently eligible calibration pairs, not an unrestricted
 fact export. An answer supplies a real result reference; the adapter never
 invents a model prediction or confidence receipt.
 
+`ai.anonymous_chat` is the G10 standalone HTTP exception. Its generated SDK
+route, `POST /v1/core/facade/ai.anonymous_chat`, runs the existing
+`POST /v1/ai/anonymous-chat` handler outside wire telemetry, invocation claims,
+verb hooks and call receipts, with the same `core:read` credential. Both paths
+publish the row's real request and reply/block schemas in OpenAPI. Recorded
+MCP, code-mode and socket/RPC calls refuse it before hooks or model execution;
+an embedded handle also refuses before hooks. Neither transport retention nor
+a policy notice may become an anonymous transcript or even a hash-only receipt.
+
 HTTP uses `/v1/core/facade/<verb>`, the verb's full dotted name
 (`/v1/core/facade/vault.claims.upsert`), with the existing credential binding. Core
 SDK task and room requests cannot choose another authenticated actor. MCP uses

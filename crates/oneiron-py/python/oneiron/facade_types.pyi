@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 584 facade rows, 2213 declarations.
-Inputs: 533 of 584 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 516 of 584 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 585 facade rows, 2218 declarations.
+Inputs: 534 of 585 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 517 of 585 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -8692,6 +8692,29 @@ class LiveVoiceToolReply(TypedDict):
     reply: ConnectorCallReply
 class LiveVoiceSessionRequest(TypedDict):
     session_ref: str
+AnonymousChatRequestTarget = Literal["house_mind", "plain_model"]
+class AnonymousChatRequest(TypedDict):
+    text: str
+    target: NotRequired[AnonymousChatRequestTarget]
+    model: NotRequired[ModelId | None]
+class AnonymousChatSkippedCheckView(TypedDict):
+    input: bool
+    reason: PolicySkipReason
+AnonymousChatBlockReasonView = Literal["policy", "human_review_unavailable"]
+class AnonymousChatResponseReply(TypedDict):
+    type: Literal["reply"]
+    content: str
+    notices: list[GateSystemNoticeRecord]
+    skipped_checks: list[AnonymousChatSkippedCheckView]
+    model_notices: list[GateSystemNoticeRecord]
+class AnonymousChatResponseBlocked(TypedDict):
+    type: Literal["blocked"]
+    input: bool
+    notice: GateSystemNoticeRecord
+    preceding_notices: list[GateSystemNoticeRecord]
+    reason: AnonymousChatBlockReasonView
+    model_notices: list[GateSystemNoticeRecord]
+AnonymousChatResponse = AnonymousChatResponseReply | AnonymousChatResponseBlocked
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
