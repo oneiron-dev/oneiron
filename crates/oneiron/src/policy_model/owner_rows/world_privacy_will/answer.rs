@@ -3,7 +3,8 @@
 //! holder's own act, `by: Owner` with `answer` = the request, written in the
 //! same commit as the request's settlement; the first present holder settles
 //! it, once. Under "widen needs every owner" the yeses are collected on the
-//! ask, and the last one applies it.
+//! ask, and the last one applies it: the live Owners it needs are read again
+//! at each answer, so one who left neither counts nor holds it up.
 
 use crate::authority::{ActSurface, WorldEditAuthor};
 use crate::consent::AuthenticatedOwner;
@@ -14,7 +15,7 @@ use crate::{EntityId, Vault};
 use super::super::world_privacy_switch::{WorldPrivacyReceipt, hex32};
 use super::agent::CHANGED_NOTICE;
 use super::record::{WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus};
-use super::{key_owner_in_txn, not_holder, world_holders_in_txn};
+use super::{key_owner_in_txn, not_holder, unanimity, world_holders_in_txn};
 
 /// What a holder's answer came to.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -36,8 +37,9 @@ impl Vault {
     /// A holder's answer to request `request` from `surface` (audit only):
     /// `yes` accepts a proposal or confirms an ask, else declines or cancels
     /// it. The holder must hold the world's settings right now and have been
-    /// one it went to. A yes applies the frozen settings on the frozen
-    /// revision: a world whose settings moved since is a conflict.
+    /// one it went to, or, for an ask that needs every owner, be a live
+    /// Owner now. A yes applies the frozen settings on the frozen revision: a
+    /// world whose settings moved since is a conflict.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] for a non-holder or the
@@ -62,7 +64,20 @@ impl Vault {
             let world = stored.world_id()?;
             let actor = owner.revalidate_person_in_txn(self, txn)?;
             let holders = world_holders_in_txn(self, txn, world)?;
-            if !holders.contains(&actor) || !stored.holders.contains(&actor.to_hex()) {
+            // An ask under "widen needs every owner" needs the live Owners as
+            // they stand at this answer, not as they stood when it opened
+            // (FIX-LIST "mesh PR1d widen ask needs frozen").
+            let live_needs =
+                if stored.kind == WorldPrivacyRequestKind::WidenAsk && !stored.needs.is_empty() {
+                    Some(unanimity::ask_needs_in_txn(self, txn)?)
+                } else {
+                    None
+                };
+            let went_to = stored.holders.contains(&actor.to_hex())
+                || live_needs
+                    .as_ref()
+                    .is_some_and(|needs| needs.contains(&actor));
+            if !holders.contains(&actor) || !went_to {
                 return Err(not_holder());
             }
             let lineage = owner.credential_lineage();
@@ -84,7 +99,8 @@ impl Vault {
                 }
                 return Ok(WorldPrivacyAnswer::Declined(stored));
             }
-            if stored.kind == WorldPrivacyRequestKind::WidenAsk && !stored.needs.is_empty() {
+            if let Some(needs) = &live_needs {
+                stored.needs = needs.iter().map(EntityId::to_hex).collect();
                 let me = actor.to_hex();
                 if stored.needs.contains(&me) && !stored.yes.contains(&me) {
                     stored.yes.push(me);

@@ -85,7 +85,7 @@ impl HumanDecisionQueue for NoPerson {
 /// is given. The cut starts at half the `longest` text and halves until the whole fits
 /// [`MAX_DECISION_STATE_BYTES`]; `state` says where (`cut_at_bytes`), so a provider knows
 /// it reads a cut text. With nothing left to cut, the ladder refuses the state.
-pub(crate) fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) -> Value {
+pub fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) -> Value {
     let mut cut = None;
     loop {
         let value = state(cut);
@@ -101,7 +101,7 @@ pub(crate) fn fit_state(longest: usize, state: impl Fn(Option<usize>) -> Value) 
 }
 
 /// `text` cut to at most `cut` bytes, on a character boundary.
-pub(crate) fn cut_text(text: &str, cut: Option<usize>) -> &str {
+pub fn cut_text(text: &str, cut: Option<usize>) -> &str {
     let Some(cut) = cut else {
         return text;
     };

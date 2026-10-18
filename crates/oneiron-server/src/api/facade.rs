@@ -25,6 +25,7 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod admission_doors;
 mod affect_doors;
 mod agent_definition_doors;
 mod agent_verbs;
@@ -43,10 +44,15 @@ mod channel_doors;
 mod checkout_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
+mod clustering_doors;
+mod coach_offer_doors;
 mod code_doors;
 mod code_run_doors;
+mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
+mod commitment_doors;
+mod compliance_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
 mod consent_doors;
@@ -64,19 +70,28 @@ mod decision_band_doors;
 pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
+mod eval_doors;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_connect_doors;
 mod feedback_doors;
 mod fold_doors;
+mod foreign_code_doors;
 mod gate_policy_doors;
+mod goal_optimize_doors;
+mod graduation_doors;
 mod graph_ask_doors;
+mod guest_document_doors;
 mod guest_doors;
 mod hook_regen_doors;
 pub(super) mod host_doors;
+mod host_trigger_doors;
 mod hub_doors;
+mod hyde_doors;
+mod identity_topology_doors;
 mod learning_doors;
 mod legal_hold_doors;
+mod lens_selection_doors;
 mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
@@ -89,6 +104,7 @@ mod owner_binding;
 mod persona_doors;
 mod policy_doors;
 mod project_card_doors;
+mod proxy_doors;
 mod reaction_doors;
 mod reply_doors;
 mod research_doors;
@@ -97,6 +113,8 @@ mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
 mod run_read_doors;
+mod run_review_doors;
+mod seal_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
@@ -105,6 +123,8 @@ mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
+mod sieve_doors;
+mod sieve_observation_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
@@ -119,13 +139,14 @@ mod vault_shape_doors;
 mod voice_bank_doors;
 mod wave_doors;
 mod weave_doors;
+mod web_fetch_doors;
 mod widen_proposal_doors;
 
+pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{connector_answer_as, connector_call_as};
-pub(crate) use dispatch::call_verb;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use secret_use_doors::self_use_as;
 
@@ -681,6 +702,7 @@ pub(crate) async fn row_hooks_pre_with(
             domain: verb_hook_boundary::row_domain(&verb),
             reader,
         };
+        oneiron::runtime_hooks::host_doors::admit_trigger(&server.vault, &verb, &args)?;
         let admit = |args: &serde_json::Value| {
             oneiron::task_verb::sdk::validate_input(&verb, args)
                 .map_err(|error| error.to_string())?;

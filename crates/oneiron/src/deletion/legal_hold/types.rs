@@ -42,7 +42,19 @@ pub enum LegalHoldKind {
 }
 
 /// What a hold names.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum LegalHoldTarget {
     /// One record. A CLAIM's id also holds its gate-decision key partition.

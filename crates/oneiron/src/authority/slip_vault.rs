@@ -285,6 +285,7 @@ impl Vault {
             grant_ref: None,
             invitation_ref: None,
             delegation: None,
+            comm: None,
         };
         let slip = CapabilitySlip::mint(claims.clone(), issuer)?;
         let mint = next_entry(

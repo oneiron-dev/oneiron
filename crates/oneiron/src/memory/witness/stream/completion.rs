@@ -8,7 +8,7 @@ use crate::memory::MemoryResult;
 use serde::Serialize;
 
 /// A MESSAGE's completion, read from its latest stream receipt and its seed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct MessageCompletion {
     /// The latest generation ended without finishing its answer: cut off at a
     /// length, filtered, stopped for another reason, cancelled, failed, idle

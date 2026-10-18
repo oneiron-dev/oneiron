@@ -14,7 +14,9 @@ pub enum RunVerb {
     SelfCompact,
     SelfUnfold,
     SelfFolds,
+    TasksConsultResult,
     TasksRefuse,
+    SelfReportBlocked,
     SelfAgentsSpawn,
     SelfLeaderAdvice,
     SelfLeaderPattern,
@@ -39,7 +41,9 @@ impl RunVerb {
         Self::SelfCompact,
         Self::SelfUnfold,
         Self::SelfFolds,
+        Self::TasksConsultResult,
         Self::TasksRefuse,
+        Self::SelfReportBlocked,
         Self::SelfAgentsSpawn,
         Self::SelfLeaderAdvice,
         Self::SelfLeaderPattern,
@@ -67,7 +71,9 @@ impl RunVerb {
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
             Self::SelfFolds => "self.folds",
+            Self::TasksConsultResult => "tasks.consult.result",
             Self::TasksRefuse => "tasks.refuse",
+            Self::SelfReportBlocked => "self.report_blocked",
             Self::SelfAgentsSpawn => "self.agents.spawn",
             Self::SelfLeaderAdvice => "self.leader.advice",
             Self::SelfLeaderPattern => "self.leader.pattern",
@@ -92,7 +98,9 @@ impl RunVerb {
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
+                | Self::TasksConsultResult
                 | Self::TasksRefuse
+                | Self::SelfReportBlocked
                 | Self::SelfAgentsSpawn
                 | Self::SelfLeaderSplit
                 | Self::SelfSkillsCall
@@ -115,7 +123,9 @@ impl RunVerb {
             Self::SelfCompact => crate::code_run::SelfEffect::Fold,
             Self::SelfUnfold => crate::code_run::SelfEffect::Fold,
             Self::SelfFolds => crate::code_run::SelfEffect::Fold,
+            Self::TasksConsultResult => crate::code_run::SelfEffect::ConsultResult,
             Self::TasksRefuse => crate::code_run::SelfEffect::TasksRefuse,
+            Self::SelfReportBlocked => crate::code_run::SelfEffect::ReportBlocked,
             Self::SelfAgentsSpawn => crate::code_run::SelfEffect::AgentsSpawn,
             Self::SelfLeaderAdvice => crate::code_run::SelfEffect::Leader,
             Self::SelfLeaderPattern => crate::code_run::SelfEffect::Leader,

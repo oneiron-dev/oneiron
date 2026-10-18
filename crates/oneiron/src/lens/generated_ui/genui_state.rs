@@ -87,7 +87,7 @@ impl<'de> Deserialize<'de> for GeneratedUiActionDeclaration {
 
 /// Client-authored interaction event. It names *what was touched* and nothing else:
 /// no command, actor, source, approval, or authority field exists on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiActionEvent {
     pub card_id: LensRenderId,
@@ -224,7 +224,7 @@ impl<'de> Deserialize<'de> for GeneratedUiStateSnapshot {
 }
 
 /// JSON-Pointer patch over `/$state/`. Paths are exact and never healed.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum GeneratedUiStatePatch {
     Add {
