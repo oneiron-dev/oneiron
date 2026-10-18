@@ -237,6 +237,9 @@ side_tables! {
     /// One recipient's notice of an executed shared act or membership change. Key: hex32 (recipient
     /// id) ":" hex32 (receipt id).
     SHARED_ACT_OUTCOME: VaultMeta b"shared-act:outcome:v1:" Raw;
+    /// One proposed shared-act policy change and its live editors' answers (DOOR-129). Key: hex32
+    /// (change id).
+    SHARED_ACT_POLICY_CHANGE: VaultMeta b"shared-act:policy-change:v1:" Named;
     /// The execution receipt of one shared act or membership change. Key: hex32 (receipt id).
     SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).

@@ -135,6 +135,10 @@ both bindings and their export-census tests in one change.
 - `vault.shared.erase_ask`
 - `vault.shared.erase_asks`
 - `vault.shared.close_erase_ask`
+- `vault.shared.policy.get`
+- `vault.shared.policy.propose`
+- `vault.shared.policy.answer`
+- `vault.shared.policy.change`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.residence.mode`
@@ -151,6 +155,10 @@ both bindings and their export-census tests in one change.
 - `self.off_record.execute`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.research.create_child`
+- `vault.research.archive`
+- `vault.evals.inventory`
+- `vault.evals.cohorts.setup`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -309,6 +317,10 @@ both bindings and their export-census tests in one change.
 - `self.skills.save`
 - `self.skills.fork`
 - `self.skills.callables`
+- `ai.steps.submit`
+- `ai.steps.receipt`
+- `ai.reply`
+- `vault.receipts.context`
 - `ai.options`
 - `ai.image`
 - `ai.speech`
