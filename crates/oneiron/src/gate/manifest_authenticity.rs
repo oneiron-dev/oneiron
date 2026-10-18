@@ -298,6 +298,64 @@ impl Vault {
         Ok(())
     }
 
+    /// Whether each manifest in `installs`, written in order on the vault as
+    /// it stands, narrows the resolved policy the one before it left, on
+    /// every axis (ARCH-0070). The writes go through the install door's own
+    /// write, in a transaction that never commits. A manifest the door
+    /// refuses, and every one after it, reads as no narrowing.
+    ///
+    /// # Errors
+    /// A store failure, or an unreadable manifest row.
+    pub(crate) fn manifest_installs_narrow(
+        &self,
+        installs: &[(EntityId, Vec<u8>)],
+        now: u64,
+    ) -> Result<Vec<bool>> {
+        let mut steps = vec![false; installs.len()];
+        let mut txn = self.store.env.write_txn()?;
+        let mut before = super::resolve_policy_manifest(&self.store, &txn)?;
+        for ((id, data), step) in installs.iter().zip(&mut steps) {
+            if self
+                .write_policy_manifest_in_txn(&mut txn, *id, data.clone(), now)
+                .is_err()
+            {
+                break;
+            }
+            let after = super::resolve_policy_manifest(&self.store, &txn)?;
+            *step = super::resolution::manifest_resolution_narrows(&before, &after);
+            before = after;
+        }
+        txn.abort();
+        Ok(steps)
+    }
+
+    /// Installs `data` as [`Self::install_owner_policy_manifest`] does, only
+    /// when it narrows the resolved policy the vault holds just before it,
+    /// on every axis (ARCH-0070). The check and the write share one writer,
+    /// so no landing in between can make it a widening. `Ok(false)`: nothing
+    /// was written.
+    ///
+    /// # Errors
+    /// As [`Self::install_owner_policy_manifest`].
+    pub(crate) fn install_owner_policy_manifest_narrowing(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: EntityId,
+        data: Vec<u8>,
+        now: u64,
+    ) -> Result<bool> {
+        let mut txn = self.store.env.write_txn()?;
+        let before = super::resolve_policy_manifest(&self.store, &txn)?;
+        self.write_owner_policy_manifest_in_txn(owner, &mut txn, id, data, now)?;
+        let after = super::resolve_policy_manifest(&self.store, &txn)?;
+        if !super::resolution::manifest_resolution_narrows(&before, &after) {
+            txn.abort();
+            return Ok(false);
+        }
+        txn.commit()?;
+        Ok(true)
+    }
+
     /// Apply an explanation drafted by a model only to an empty row. An
     /// authenticated owner may instead write their own why; a draft never
     /// overwrites that owner text. The engine never invents the prose.
