@@ -15,6 +15,7 @@
 import { createRequire } from "node:module"
 
 import type {
+  CheckpointPin,
   ClaimInput,
   CommitReceipt,
   FacadeReceipt,
@@ -360,7 +361,8 @@ vaultNotesLifecycle(requestJson: string): string
 interface NativeClientConstructor {
   open(path: string | undefined, dimensions: number | undefined): NativeClient
   connect(url: string, key: string): NativeClient
-  pair(link: string): { url: string; credential: string }
+  /** `pin` is absent when the vault has no attested checkpoint. */
+  pair(link: string): { url: string; credential: string; pin?: CheckpointPin }
 }
 
 interface NativeBinding {
