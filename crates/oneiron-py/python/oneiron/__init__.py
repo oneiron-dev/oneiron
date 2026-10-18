@@ -410,6 +410,9 @@ class Oneiron:
         def tagging(self) -> "Oneiron._VaultTaggingVerbs":
             return Oneiron._VaultTaggingVerbs(self._client)
         @property
+        def cluster(self) -> "Oneiron._VaultClusterVerbs":
+            return Oneiron._VaultClusterVerbs(self._client)
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs":
             return Oneiron._VaultExportVerbs(self._client)
         @property
@@ -1012,6 +1015,27 @@ class Oneiron:
         def mentions(self, spec):
             """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
             return json.loads(_translate(lambda: self._client.vault_tagging_mentions(json.dumps(spec))))
+    class _VaultClusterVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."""
+            return json.loads(_translate(lambda: self._client.vault_cluster(json.dumps(spec))))
+        def proposal(self, spec):
+            """Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_proposal(json.dumps(spec))))
+        def propose(self, spec):
+            """Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_propose(json.dumps(spec))))
+        def merge(self, spec):
+            """Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_merge(json.dumps(spec))))
+        def split(self, spec):
+            """Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_split(json.dumps(spec))))
+        def resolve_proposal(self, spec):
+            """Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."""
+            return json.loads(_translate(lambda: self._client.vault_cluster_resolve_proposal(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

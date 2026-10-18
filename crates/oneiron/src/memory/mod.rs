@@ -34,6 +34,7 @@ mod booking;
 mod claim_admission;
 mod claim_conflict;
 mod claim_stale;
+pub mod clustering;
 mod conflict_settle;
 pub mod consolidation;
 mod diagnostics;

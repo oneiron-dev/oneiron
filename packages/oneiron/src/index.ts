@@ -468,6 +468,19 @@ export class Oneiron {
       /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
       mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
     },
+    /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
+    cluster: Object.assign((input: Facade.ClusterRequest): Facade.ScopedReadResult<Facade.ClusterProposal> => this.#call(() => this.#client.vaultCluster(input) as Facade.ScopedReadResult<Facade.ClusterProposal>), {
+      /** Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable. */
+      proposal: (input: Facade.ClusterProposalRequest): Facade.ScopedReadResult<Facade.ClusterProposalView> => this.#call(() => this.#client.vaultClusterProposal(input) as Facade.ScopedReadResult<Facade.ClusterProposalView>),
+      /** Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant. */
+      propose: (input: Facade.ClusterProposeRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterPropose(input) as Facade.ClusterTopologyReceipt),
+      /** Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt. */
+      merge: (input: Facade.ClusterMergeRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterMerge(input) as Facade.ClusterTopologyReceipt),
+      /** Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue. */
+      split: (input: Facade.ClusterSplitRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterSplit(input) as Facade.ClusterTopologyReceipt),
+      /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
+      resolve_proposal: (input: Facade.ClusterResolveRequest): Facade.ClusterTopologyReceipt => this.#call(() => this.#client.vaultClusterResolveProposal(input) as Facade.ClusterTopologyReceipt),
+    }),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
       /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */

@@ -102,6 +102,12 @@ vaultTaggingTags(input: unknown): unknown
 vaultTaggingHistory(input: unknown): unknown
 vaultTaggingMentions(input: unknown): unknown
 vaultAffectClaimsConsolidate(input: unknown): unknown
+vaultCluster(input: unknown): unknown
+vaultClusterProposal(input: unknown): unknown
+vaultClusterPropose(input: unknown): unknown
+vaultClusterMerge(input: unknown): unknown
+vaultClusterSplit(input: unknown): unknown
+vaultClusterResolveProposal(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
 vaultRetrievalRun(input: unknown): unknown

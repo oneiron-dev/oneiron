@@ -1685,6 +1685,137 @@ async fn vault_affect_claims_consolidate(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_cluster(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.cluster",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_cluster_proposal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.cluster.proposal",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_cluster_propose(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.propose")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.propose", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.propose", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cluster_propose(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cluster_merge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.merge")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.merge", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.merge", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cluster_merge(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cluster_split(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.split")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.split", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.split", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_cluster_split(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_cluster_resolve_proposal(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.cluster.resolve_proposal")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.cluster.resolve_proposal", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.cluster.resolve_proposal", value).await?;
+    let (output, listed) = super::host_doors::vault_cluster_resolve_proposal(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_retrieval_recall(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -18452,6 +18583,14 @@ pub(crate) async fn call_verb(
         "vault.tagging.mentions" => vault_tagging_mentions(server, call, input).await,
         "vault.affect.claims.consolidate" => {
             vault_affect_claims_consolidate(server, call, input).await
+        }
+        "vault.cluster" => vault_cluster(server, call, input).await,
+        "vault.cluster.proposal" => vault_cluster_proposal(server, call, input).await,
+        "vault.cluster.propose" => vault_cluster_propose(server, call, input).await,
+        "vault.cluster.merge" => vault_cluster_merge(server, call, input).await,
+        "vault.cluster.split" => vault_cluster_split(server, call, input).await,
+        "vault.cluster.resolve_proposal" => {
+            vault_cluster_resolve_proposal(server, call, input).await
         }
         "vault.retrieval.recall" => vault_retrieval_recall(server, call, input).await,
         "vault.retrieval.runs" => vault_retrieval_runs(server, call, input).await,

@@ -395,6 +395,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.cluster",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.proposal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterProposalRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterProposeRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterMergeRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterSplitRequest,
+                >(),
+            ),
+            (
+                "vault.cluster.resolve_proposal",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::clustering::ClusterResolveRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.recall",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::RecallRequest>(
                 ),
@@ -4443,6 +4479,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.tagging.history",
     "vault.tagging.mentions",
     "vault.affect.claims.consolidate",
+    "vault.cluster",
+    "vault.cluster.proposal",
+    "vault.cluster.propose",
+    "vault.cluster.merge",
+    "vault.cluster.split",
+    "vault.cluster.resolve_proposal",
     "vault.retrieval.runs",
     "vault.retrieval.run",
     "vault.retrieval.turn",
@@ -4950,6 +4992,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
+        >(),
+        "vault.cluster" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>,
+        >(),
+        "vault.cluster.proposal" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>,
+        >(),
+        "vault.cluster.propose" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.merge" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.split" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
+        >(),
+        "vault.cluster.resolve_proposal" => crate::code_run::vault_read::request_schema::<
+            crate::memory::clustering::ClusterTopologyReceipt,
         >(),
         "vault.retrieval.runs" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::RetrievalRunEvidence>,
@@ -6755,6 +6815,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.affect.claims.consolidate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.proposal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.cluster.resolve_proposal" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -11952,6 +12054,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::affect::AffectClaimConsolidateRequest =
                 decode(value.clone())?;
         }
+        "vault.cluster" => {
+            let _input: crate::memory::clustering::ClusterRequest = decode(value.clone())?;
+        }
+        "vault.cluster.proposal" => {
+            let _input: crate::memory::clustering::ClusterProposalRequest = decode(value.clone())?;
+        }
+        "vault.cluster.propose" => {
+            let _input: crate::memory::clustering::ClusterProposeRequest = decode(value.clone())?;
+        }
+        "vault.cluster.merge" => {
+            let _input: crate::memory::clustering::ClusterMergeRequest = decode(value.clone())?;
+        }
+        "vault.cluster.split" => {
+            let _input: crate::memory::clustering::ClusterSplitRequest = decode(value.clone())?;
+        }
+        "vault.cluster.resolve_proposal" => {
+            let _input: crate::memory::clustering::ClusterResolveRequest = decode(value.clone())?;
+        }
         "vault.retrieval.recall" => {
             let _input: crate::task_verb::sdk::RecallRequest = decode(value.clone())?;
         }
@@ -14611,6 +14731,14 @@ pub fn invoke(
         "vault.affect.claims.consolidate" => {
             encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
         }
+        "vault.cluster" => encode(vault_cluster(memory, decode(value)?)?),
+        "vault.cluster.proposal" => encode(vault_cluster_proposal(memory, decode(value)?)?),
+        "vault.cluster.propose" => encode(vault_cluster_propose(memory, decode(value)?)?),
+        "vault.cluster.merge" => encode(vault_cluster_merge(memory, decode(value)?)?),
+        "vault.cluster.split" => encode(vault_cluster_split(memory, decode(value)?)?),
+        "vault.cluster.resolve_proposal" => {
+            encode(vault_cluster_resolve_proposal(memory, decode(value)?)?)
+        }
         "vault.retrieval.recall" => encode(vault_retrieval_recall(memory, decode(value)?)?),
         "vault.retrieval.runs" => encode(vault_retrieval_runs(memory, decode(value)?)?),
         "vault.retrieval.run" => encode(vault_retrieval_run(memory, decode(value)?)?),
@@ -16758,6 +16886,70 @@ pub fn vault_affect_claims_consolidate(
         &memory.embedded_owner("vault.affect.claims.consolidate")?,
         &input,
     )
+}
+pub fn vault_cluster(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposal>> {
+    memory.cluster(&input)
+}
+pub fn vault_cluster_proposal(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterProposalRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::clustering::ClusterProposalView>> {
+    memory.cluster_proposal(&input)
+}
+pub fn vault_cluster_propose(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterProposeRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.propose")?)
+        } else {
+            None
+        };
+        memory.cluster_propose(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_merge(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterMergeRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.merge")?)
+        } else {
+            None
+        };
+        memory.cluster_merge(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_split(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterSplitRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.split")?)
+        } else {
+            None
+        };
+        memory.cluster_split(owner.as_ref(), &input)?
+    })
+}
+pub fn vault_cluster_resolve_proposal(
+    memory: &Memory<'_>,
+    input: crate::memory::clustering::ClusterResolveRequest,
+) -> MemoryResult<crate::memory::clustering::ClusterTopologyReceipt> {
+    Ok({
+        let owner = if input.grant_ref.is_none() {
+            Some(memory.embedded_owner("vault.cluster.resolve_proposal")?)
+        } else {
+            None
+        };
+        memory.cluster_resolve_proposal(owner.as_ref(), &input)?
+    })
 }
 pub fn vault_retrieval_recall(
     memory: &Memory<'_>,

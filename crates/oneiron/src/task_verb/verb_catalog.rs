@@ -76,6 +76,12 @@ pub enum AgentVerb {
     VaultTaggingHistory,
     VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
+    VaultCluster,
+    VaultClusterProposal,
+    VaultClusterPropose,
+    VaultClusterMerge,
+    VaultClusterSplit,
+    VaultClusterResolveProposal,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -882,6 +888,12 @@ impl AgentVerb {
         Self::VaultTaggingHistory,
         Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
+        Self::VaultCluster,
+        Self::VaultClusterProposal,
+        Self::VaultClusterPropose,
+        Self::VaultClusterMerge,
+        Self::VaultClusterSplit,
+        Self::VaultClusterResolveProposal,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1691,6 +1703,12 @@ impl AgentVerb {
             Self::VaultTaggingHistory => "vault.tagging.history",
             Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
+            Self::VaultCluster => "vault.cluster",
+            Self::VaultClusterProposal => "vault.cluster.proposal",
+            Self::VaultClusterPropose => "vault.cluster.propose",
+            Self::VaultClusterMerge => "vault.cluster.merge",
+            Self::VaultClusterSplit => "vault.cluster.split",
+            Self::VaultClusterResolveProposal => "vault.cluster.resolve_proposal",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -2518,6 +2536,12 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3351,6 +3375,12 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -4163,6 +4193,8 @@ impl AgentVerb {
                 | Self::VaultClaimsUpsert
                 | Self::VaultRecall
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultCluster
+                | Self::VaultClusterProposal
                 | Self::SelfCredentialAttenuate
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
@@ -4258,6 +4290,10 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -5001,6 +5037,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultClusterPropose
+                | Self::VaultClusterMerge
+                | Self::VaultClusterSplit
+                | Self::VaultClusterResolveProposal
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
@@ -5447,6 +5487,7 @@ impl AgentVerb {
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultClusterPropose
                 | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
@@ -5555,6 +5596,12 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultCluster => &["spec"],
+            Self::VaultClusterProposal => &["spec"],
+            Self::VaultClusterPropose => &["spec"],
+            Self::VaultClusterMerge => &["spec"],
+            Self::VaultClusterSplit => &["spec"],
+            Self::VaultClusterResolveProposal => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6362,6 +6409,12 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultCluster => &["spec"],
+            Self::VaultClusterProposal => &["spec"],
+            Self::VaultClusterPropose => &["spec"],
+            Self::VaultClusterMerge => &["spec"],
+            Self::VaultClusterSplit => &["spec"],
+            Self::VaultClusterResolveProposal => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -7307,6 +7360,24 @@ impl AgentVerb {
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
+            }
+            Self::VaultCluster => {
+                "Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth."
+            }
+            Self::VaultClusterProposal => {
+                "Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable."
+            }
+            Self::VaultClusterPropose => {
+                "Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant."
+            }
+            Self::VaultClusterMerge => {
+                "Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt."
+            }
+            Self::VaultClusterSplit => {
+                "Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue."
+            }
+            Self::VaultClusterResolveProposal => {
+                "Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically."
             }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."
