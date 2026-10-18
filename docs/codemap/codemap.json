@@ -24703,6 +24703,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OwnerPolicyConfiguration",
+      "OwnerPolicyConfigurationReceipt",
+      "OwnerPolicyConfigurationView",
+      "OwnerPolicyConfigureRequest"
+     ],
+     "path": "src/gate/policy_manifest_doors/content_policy.rs",
+     "purpose": "The owner's content-policy configuration, kept in the existing default manifest",
+     "surface": {
+      "fn": 2,
+      "struct": 4
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -24710,7 +24726,7 @@
      "purpose": "Typed policy reads, owner edits and inert untrusted contributions",
      "surface": {
       "fn": 5,
-      "re-export": 1
+      "re-export": 2
      }
     },
     {
@@ -36516,6 +36532,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedRelayDecision",
+      "PolicyOutboundRequest",
+      "PolicyRowChangeRequest"
+     ],
+     "path": "src/policy_model/doors.rs",
+     "purpose": "Typed inputs for owner configuration and policy-governed outbound decisions",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 6,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -36569,6 +36601,7 @@
      "purpose": "Policy classification over two planes",
      "surface": {
       "crate-vis": 3,
+      "mod": 1,
       "re-export": 16
      }
     },
@@ -36767,7 +36800,7 @@
      "purpose": "Relay entry points and ledger writes: trust-domain dispatch, dual-plane fan-out, binding-checked receipts",
      "surface": {
       "crate-vis": 6,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -49901,7 +49934,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 568
+      "fn": 573
      }
     },
     {
@@ -55986,7 +56019,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 138,
+     "files": 139,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56308,7 +56341,7 @@
      "purpose": "—"
     },
     "policy_model": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56870,7 +56903,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3466,
+   "source_files": 3468,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65298,7 +65331,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 518
+      "fn": 523
      }
     },
     {
@@ -66347,7 +66380,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 519
+      "fn": 524
      }
     },
     {
@@ -69367,6 +69400,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/content_policy_doors.rs",
+     "purpose": "Content-policy doors beside the Gate policy doors, on each caller's own credential",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/core_write_doors.rs",
      "purpose": "The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`…",
      "surface": {
@@ -69540,7 +69583,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 100
+      "crate-vis": 101
      }
     },
     {
@@ -76105,7 +76148,7 @@
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
       "crate-vis": 19,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -76139,6 +76182,20 @@
      "surface": {
       "crate-vis": 5,
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostedPolicyRelay"
+     ],
+     "path": "src/server/policy_doors.rs",
+     "purpose": "Host bindings for the public content-policy doors",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -77005,7 +77062,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 359,
+     "files": 360,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77348,7 +77405,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 35,
+     "files": 36,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -77420,7 +77477,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 685,
+   "source_files": 687,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78320,6 +78377,10 @@
       "HostPin",
       "HostPinKind",
       "HostRuleRef",
+      "HostedOutagePolicy",
+      "HostedPassEvidence",
+      "HostedPlaneAttestation",
+      "HostedRelayDecision",
       "HostingPrivacyPosture",
       "HubAdmissionReceipt",
       "HubConsentOutcome",
@@ -78682,6 +78743,10 @@
       "OutcomeBinding",
       "OutcomeLabel",
       "OutcomeSource",
+      "OwnerPolicyConfiguration",
+      "OwnerPolicyConfigurationReceipt",
+      "OwnerPolicyConfigurationView",
+      "OwnerPolicyConfigureRequest",
       "PackAdapter",
       "PackCandidateReason",
       "PackConnectorReceipt",
@@ -78742,8 +78807,18 @@
       "PlannerRung",
       "PolicyActionOutcome",
       "PolicyAxes",
+      "PolicyBargeInKill",
       "PolicyCeiling",
+      "PolicyClassifyDecision",
+      "PolicyClassifySubject",
+      "PolicyClassifyVerdict",
+      "PolicyConfidence",
+      "PolicyContentBinding",
       "PolicyCriticality",
+      "PolicyEnforcementAction",
+      "PolicyEnforcementVoice",
+      "PolicyHedgeBucket",
+      "PolicyHelpRouting",
       "PolicyManifest",
       "PolicyManifestPropose",
       "PolicyManifestPut",
@@ -78751,9 +78826,24 @@
       "PolicyManifestReceipt",
       "PolicyManifestView",
       "PolicyManifestsView",
+      "PolicyModelEnforcement",
+      "PolicyOutboundRequest",
+      "PolicyOutputContract",
+      "PolicyPassAudit",
+      "PolicyPatternRole",
+      "PolicyPatternRule",
+      "PolicyPlane",
+      "PolicyRewordRequest",
+      "PolicyRowAction",
+      "PolicyRowChange",
+      "PolicyRowChangeRequest",
+      "PolicyRowReceipt",
+      "PolicyRowScope",
       "PolicyRule",
       "PolicySensitivity",
       "PolicySignature",
+      "PolicySkipReason",
+      "PolicyVerdictCategory",
       "PostmarkAtom",
       "Preset",
       "PriorRung",
@@ -78855,6 +78945,9 @@
       "RefreshPolicy",
       "RelationshipChange",
       "RelationshipContext",
+      "RelayBoundaryDegrade",
+      "RelayClassifierMode",
+      "RelayResolution",
       "ReleasedWait",
       "RemovalExportDelivery",
       "RenderPair",
@@ -79458,8 +79551,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 480,
-      "struct": 1360
+      "enum": 497,
+      "struct": 1379
      }
     },
     {
