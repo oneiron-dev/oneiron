@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 586 facade rows, 2224 declarations.
-Inputs: 535 of 586 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 518 of 586 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 590 facade rows, 2233 declarations.
+Inputs: 539 of 590 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 522 of 590 fully typed, 68 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 91; unread shapes: 0.
 """
 
@@ -8554,6 +8554,63 @@ class ContextEmitReceipt(TypedDict):
     request_digest: str
     result_digest: str
     context: ContextReceiptFields
+class AsrOpenRequest(TypedDict):
+    utterance_id: str
+    scope: NotRequired[RecallScope]
+    fire_limit: NotRequired[int | None]
+    final_limit: NotRequired[int | None]
+    deadline_ms: NotRequired[int | None]
+class AsrSession(TypedDict):
+    handle: str
+    utterance_id: str
+    scope: RecallScope
+    max_fires: int
+    fire_limit: int
+    final_limit: int
+    limit_clamped: bool
+    deadline_ms: int
+    narrowing: ScopedReadReceipt
+class AsrHypothesisRequest(TypedDict):
+    handle: str
+    revision: int
+    text: str
+    entity_labels: list[str]
+    salient_terms: list[str]
+    query_vector: NotRequired[list[float] | None]
+AsrFireDecision = Literal["fired", "missed_deadline", "skipped_unchanged", "skipped_empty_signature", "skipped_cap_exhausted"]
+class AsrHypothesisReceipt(TypedDict):
+    receipt_ref: str
+    handle: str
+    utterance_id: str
+    revision: int
+    text: str
+    scope: RecallScope
+    decision: AsrFireDecision
+    fires_used: int
+    run_id: NotRequired[str | None]
+    partial: bool
+    result_refs: list[str]
+    narrowing: ScopedReadReceipt
+AsrFinalDecision = Literal["promoted", "finalized"]
+class AsrFinalReceipt(TypedDict):
+    receipt_ref: str
+    handle: str
+    utterance_id: str
+    revision: int
+    text: str
+    scope: RecallScope
+    decision: AsrFinalDecision
+    reused_fire_receipt: NotRequired[str | None]
+    fires_used: int
+    run_id: NotRequired[str | None]
+    warm_appended: int
+    partial: bool
+    result_refs: list[str]
+    narrowing: ScopedReadReceipt
+class AsrCloseRequest(TypedDict):
+    handle: str
+class AsrClosed(TypedDict):
+    handle: str
 class LiveVoiceStartRequest(TypedDict):
     sample_rate: int
     channels: int

@@ -411,6 +411,10 @@ pub enum AgentVerb {
     AiStepsReceipt,
     AiReply,
     VaultReceiptsContext,
+    AiVoiceAsrOpen,
+    AiVoiceAsrHypothesis,
+    AiVoiceAsrFinalize,
+    AiVoiceAsrClose,
     AiVoiceStart,
     AiVoiceAudio,
     AiVoiceEvents,
@@ -1043,6 +1047,10 @@ impl AgentVerb {
         Self::AiStepsReceipt,
         Self::AiReply,
         Self::VaultReceiptsContext,
+        Self::AiVoiceAsrOpen,
+        Self::AiVoiceAsrHypothesis,
+        Self::AiVoiceAsrFinalize,
+        Self::AiVoiceAsrClose,
         Self::AiVoiceStart,
         Self::AiVoiceAudio,
         Self::AiVoiceEvents,
@@ -1684,6 +1692,10 @@ impl AgentVerb {
             Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiReply => "ai.reply",
             Self::VaultReceiptsContext => "vault.receipts.context",
+            Self::AiVoiceAsrOpen => "ai.voice.asr.open",
+            Self::AiVoiceAsrHypothesis => "ai.voice.asr.hypothesis",
+            Self::AiVoiceAsrFinalize => "ai.voice.asr.finalize",
+            Self::AiVoiceAsrClose => "ai.voice.asr.close",
             Self::AiVoiceStart => "ai.voice.start",
             Self::AiVoiceAudio => "ai.voice.audio",
             Self::AiVoiceEvents => "ai.voice.events",
@@ -2319,6 +2331,10 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceAsrOpen
+                | Self::AiVoiceAsrHypothesis
+                | Self::AiVoiceAsrFinalize
+                | Self::AiVoiceAsrClose
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
                 | Self::AiVoiceEvents
@@ -2958,6 +2974,10 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceAsrOpen
+                | Self::AiVoiceAsrHypothesis
+                | Self::AiVoiceAsrFinalize
+                | Self::AiVoiceAsrClose
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
                 | Self::AiVoiceEvents
@@ -3652,6 +3672,10 @@ impl AgentVerb {
                 | Self::AiStepsReceipt
                 | Self::AiReply
                 | Self::VaultReceiptsContext
+                | Self::AiVoiceAsrOpen
+                | Self::AiVoiceAsrHypothesis
+                | Self::AiVoiceAsrFinalize
+                | Self::AiVoiceAsrClose
                 | Self::AiVoiceStart
                 | Self::AiVoiceAudio
                 | Self::AiVoiceEvents
@@ -4679,6 +4703,10 @@ impl AgentVerb {
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::AiVoiceAsrOpen => &["spec"],
+            Self::AiVoiceAsrHypothesis => &["spec"],
+            Self::AiVoiceAsrFinalize => &["spec"],
+            Self::AiVoiceAsrClose => &["spec"],
             Self::AiVoiceStart => &["spec"],
             Self::AiVoiceAudio => &["spec"],
             Self::AiVoiceEvents => &["spec"],
@@ -5312,6 +5340,10 @@ impl AgentVerb {
             Self::AiStepsReceipt => &["spec"],
             Self::AiReply => &["spec"],
             Self::VaultReceiptsContext => &["spec"],
+            Self::AiVoiceAsrOpen => &["spec"],
+            Self::AiVoiceAsrHypothesis => &["spec"],
+            Self::AiVoiceAsrFinalize => &["spec"],
+            Self::AiVoiceAsrClose => &["spec"],
             Self::AiVoiceStart => &["spec"],
             Self::AiVoiceAudio => &["spec"],
             Self::AiVoiceEvents => &["spec"],
@@ -6713,6 +6745,18 @@ impl AgentVerb {
             }
             Self::VaultReceiptsContext => {
                 "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."
+            }
+            Self::AiVoiceAsrOpen => {
+                "Opens one credential-bound utterance for host-enriched ASR speculative recall, with fixed scope, at most four fires and a call-mode deadline."
+            }
+            Self::AiVoiceAsrHypothesis => {
+                "Observes an ASR hypothesis and host enrichment; returns the engine signature-change decision, actual fire budget, scoped candidates and a per-fire receipt."
+            }
+            Self::AiVoiceAsrFinalize => {
+                "Consumes an ASR utterance, promoting its compatible last fire with receipt linkage or running one full finalize pass with warm-fill and honest partial reporting."
+            }
+            Self::AiVoiceAsrClose => {
+                "Closes an unfinished ASR utterance under its opening credential and releases its warm candidates without a final retrieval."
             }
             Self::AiVoiceStart => {
                 "Opens an owner-bound live media session on the configured voice routes, using the caller credential, room audience and existing budget gates."
