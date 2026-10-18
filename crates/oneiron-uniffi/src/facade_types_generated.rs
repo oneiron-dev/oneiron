@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 477 facade rows, 1732 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 441.
+// UniFFI census: 480 facade rows, 1736 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 444.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -26630,6 +26630,62 @@ pub struct ScopedReadResultOptionalNoteHistoryView {
     pub value: Option<NoteHistoryView>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeRequest {
+    #[serde(rename = "note_ref")]
+    pub note_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeReceipt {
+    #[serde(rename = "receipt")]
+    pub receipt: String,
+    #[serde(rename = "entity")]
+    pub entity: String,
+    #[serde(rename = "document")]
+    pub document: String,
+    #[serde(rename = "actor", default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<String>,
+    #[serde(rename = "requested")]
+    pub requested: Vec<u8>,
+    #[serde(rename = "applied")]
+    pub applied: Vec<u8>,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "live_text_hash")]
+    pub live_text_hash: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "state")]
+pub enum NoteHistoryPurgeOutcome {
+    #[serde(rename = "erased")]
+    Erased {
+        #[serde(rename = "receipt")]
+        receipt: NoteHistoryPurgeReceipt,
+    },
+    #[serde(rename = "waiting")]
+    Waiting {
+        #[serde(rename = "note_ref")]
+        note_ref: String,
+        #[serde(rename = "act_id")]
+        act_id: String,
+    },
+}
+
+/// `oneiron::task_verb::sdk_note_history::NoteHistoryPurgeExecuteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeExecuteRequest {
+    #[serde(rename = "act_id")]
+    pub act_id: String,
 }
 
 /// `oneiron::note::reads::NoteEditorBinding`.

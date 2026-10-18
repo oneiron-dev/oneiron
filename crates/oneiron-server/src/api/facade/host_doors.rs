@@ -1189,7 +1189,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
         | "vault.shared.policy.get"
-        | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
+        | "vault.shared.policy.change"
+        | "vault.notes.history_purge"
+        | "vault.notes.history_purge_execute"
+        | "vault.notes.history_purge_receipts" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
