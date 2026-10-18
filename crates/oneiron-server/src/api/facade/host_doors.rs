@@ -63,16 +63,16 @@ pub(crate) use super::shared_policy_doors::*;
 // The trusted-contact doors (DOOR-140, OF-527) too.
 pub(crate) use super::trusted_contact_doors::*;
 // The owner's legal-hold doors (OF-470) too.
+pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
-pub(crate) use super::extraction_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
-pub(crate) use super::guest_doors::*;
 pub(crate) use super::federation_connect_doors::*;
+pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;

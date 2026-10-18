@@ -275,7 +275,17 @@ pub enum DurableStepError {
 /// Live progression of one durable step, stored as `u8` in the private
 /// device-local state row (ruling L6): `Started → ResponseReceived →
 /// Logged → Finished`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum StepProgression {
     Started,

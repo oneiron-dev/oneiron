@@ -729,7 +729,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/cleanup.rs` | src | s | 13 crate-vis | — | Cleanup review (ARCH-0073): the archive proposals the cleanup job opened, the digests of what cleanup… |
 | `src/owner/cooperative_deletion.rs` | src | s | 5 crate-vis | — | Courtesy unsend (OF-273, ARCH-0043 #relationship-lifecycle): after a disconnect the owner asks a former peer… |
 | `src/owner/embedder.rs` | src | s | 5 crate-vis | — | The embedder section of `doctor` and `GET /v1/owner/status`: what config asks for, what the vault pins and… |
-| `src/owner/federation_connect.rs` | src | s | 11 crate-vis | — | Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts… |
+| `src/owner/federation_connect.rs` | src | m | 11 crate-vis | — | Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts… |
 | `src/owner/feedback.rs` | src | s | 10 crate-vis | — | Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that… |
 | `src/owner/graph_fs.rs` | src | s | 4 crate-vis | — | The whole vault as a read-only file tree (OF-355, ARCH-0051), read as its owner |
 | `src/owner/guest_revoke.rs` | src | s | 1 crate-vis | — | The courtesy deletes a guest revoke queues (OF-232, FIX 1634) |
