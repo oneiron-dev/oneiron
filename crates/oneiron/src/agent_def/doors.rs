@@ -305,13 +305,65 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
+        self.update_agent_definition_as_checked(owner, id, None, def, occurred, learned_at)
+    }
+
+    /// The owner's edit of exactly the revision they read. The version check
+    /// and the existing immutable-field and ceiling gates share the writer.
+    #[expect(clippy::too_many_arguments, reason = "owner, target, revision, body and event time are one edit")]
+    pub fn update_agent_definition_at_version_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_version: &str,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.update_agent_definition_as_checked(
+            owner, id, Some(expected_version), def, occurred, learned_at,
+        )
+    }
+
+    #[expect(clippy::too_many_arguments, reason = "the revision fence is optional only for existing native callers")]
+    fn update_agent_definition_as_checked(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        expected_version: Option<&str>,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
         let data = encode_agent_definition(def)?;
         self.with_write_txn(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             let existing = self.read_agent_definition_in_txn(txn, id)?;
+            if expected_version.is_some_and(|version| version != existing.version) {
+                return Err(Error::ConcurrentWrite("agent definition revision changed"));
+            }
             validate_agent_definition_update(&existing, def)?;
             super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
             self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
+        })
+    }
+
+    /// Creates an inert custom definition as the authenticated owner. An
+    /// occupied id is never an implicit edit, including another entity kind.
+    pub fn create_agent_definition_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        def: &AgentDefinition,
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<()> {
+        self.with_write_txn(|txn| {
+            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            if self.store.port_entity_record(txn, id)?.is_some() {
+                return Err(Error::ConcurrentWrite("agent definition id is already occupied"));
+            }
+            self.put_agent_definition_in_txn(txn, id, def, occurred, learned_at)
         })
     }
 

@@ -219,7 +219,7 @@ impl HostSelfDispatcher<'_> {
     /// subproject. Her lease names the TASK, her dispatch its project, and
     /// the host's issuer signs her spawn; the guest names at most the
     /// child's leader (herself when unset) and slice (the parent's).
-    fn dispatch_leader_split(
+    pub(super) fn dispatch_leader_split(
         &self,
         leader: Option<EntityId>,
         slice: Option<crate::llm::Scope>,

@@ -189,7 +189,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.claims.upsert",
-                crate::code_run::vault_read::request_schema::<crate::memory::ClaimInput>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedClaimInput>(),
             ),
             (
                 "vault.recall",
@@ -198,6 +198,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.export",
                 crate::code_run::vault_read::request_schema::<crate::memory::ExportOptions>(),
+            ),
+            (
+                "vault.scope.ceiling",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.export.scoped",
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedExportRequest>(),
             ),
             (
                 "vault.receipts",
@@ -300,6 +308,70 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.weave.owner.item.wrong",
                 crate::code_run::vault_read::request_schema::<crate::claim::WeaveWrongItemRequest>(
                 ),
+            ),
+            (
+                "vault.skill_hubs.put",
+                crate::code_run::vault_read::request_schema::<SkillHubPutRequest>(),
+            ),
+            (
+                "vault.skill_hubs.get",
+                crate::code_run::vault_read::request_schema::<SkillHubRequest>(),
+            ),
+            (
+                "vault.skill_hubs.publishers.admit",
+                crate::code_run::vault_read::request_schema::<SkillPublisherRequest>(),
+            ),
+            (
+                "vault.skill_hubs.publishers.revoke",
+                crate::code_run::vault_read::request_schema::<SkillPublisherRequest>(),
+            ),
+            (
+                "vault.skill_hubs.refs.get",
+                crate::code_run::vault_read::request_schema::<HubRefRequest>(),
+            ),
+            (
+                "vault.skill_hubs.refs.set",
+                crate::code_run::vault_read::request_schema::<HubRefSetRequest>(),
+            ),
+            (
+                "vault.packs.install",
+                crate::code_run::vault_read::request_schema::<HubImportRequest>(),
+            ),
+            (
+                "vault.packs.sync",
+                crate::code_run::vault_read::request_schema::<HubPackRequest>(),
+            ),
+            (
+                "vault.packs.get",
+                crate::code_run::vault_read::request_schema::<HubPackRequest>(),
+            ),
+            (
+                "vault.skills.import",
+                crate::code_run::vault_read::request_schema::<HubImportRequest>(),
+            ),
+            (
+                "vault.skills.sync",
+                crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
+            ),
+            (
+                "vault.skills.receipts",
+                crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
+            ),
+            (
+                "vault.skills.permissions.approve",
+                crate::code_run::vault_read::request_schema::<HubSkillPermissionRequest>(),
+            ),
+            (
+                "vault.packs.hooks.bind",
+                crate::code_run::vault_read::request_schema::<HubHookBindRequest>(),
+            ),
+            (
+                "vault.packs.hooks.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.packs.hooks.qualify",
+                crate::code_run::vault_read::request_schema::<HubHookQualifyRequest>(),
             ),
             (
                 "vault.packs.put",
@@ -968,6 +1040,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDefinitionCreateRequest,
+                >(),
+            ),
+            (
+                "vault.agents.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDefinitionRequest,
+                >(),
+            ),
+            (
+                "vault.agents.update",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDefinitionUpdateRequest,
+                >(),
+            ),
+            (
+                "vault.workspace.establish",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkspacePresetRequest,
+                >(),
+            ),
+            (
+                "vault.workspace.members.onboard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkspaceMemberOnboardRequest,
+                >(),
+            ),
+            (
+                "vault.workspace.roster",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::WorkspaceRosterRequest,
+                >(),
+            ),
+            (
                 "vault.agents.export_pack",
                 crate::code_run::vault_read::request_schema::<
                     crate::share_travel::AgentPackExportRequest,
@@ -1551,7 +1659,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.commit",
-                crate::code_run::vault_read::request_schema::<CommitRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
             (
                 "vault.remember",
@@ -1844,7 +1952,7 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             ),
             (
                 "vault.claims.seed",
-                crate::code_run::vault_read::request_schema::<CommitRequest>(),
+                crate::code_run::vault_read::request_schema::<crate::memory::ScopedCommitRequest>(),
             ),
             (
                 "vault.channel_identities.provision",
@@ -1992,6 +2100,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteRefRequest>(),
             ),
             (
+                "self.agents.spawn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
+                >(),
+            ),
+            (
+                "self.leader.split",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>,
+                >(),
+            ),
+            (
                 "connector.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ConnectorAnswerRequest,
@@ -2036,10 +2156,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::code_run::TaskRefuseInput>(),
             ),
             (
-                "self.agents.spawn",
-                crate::code_run::vault_read::request_schema::<crate::code_run::AgentSpawnInput>(),
-            ),
-            (
                 "self.leader.advice",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderAdviceInput>(),
             ),
@@ -2047,10 +2163,6 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "self.leader.pattern",
                 crate::code_run::vault_read::request_schema::<crate::code_run::LeaderPatternInput>(
                 ),
-            ),
-            (
-                "self.leader.split",
-                crate::code_run::vault_read::request_schema::<crate::code_run::LeaderSplitInput>(),
             ),
             (
                 "self.skills.call",
@@ -2424,6 +2536,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.scope.ceiling" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.export.scoped" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.receipts" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -2565,6 +2691,118 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.weave.owner.item.wrong" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.publishers.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.publishers.revoke" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.refs.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skill_hubs.refs.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.install" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.sync" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.import" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.sync" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.permissions.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.bind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.qualify" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -3351,6 +3589,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.export" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.update" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.establish" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.members.onboard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.workspace.roster" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4586,6 +4866,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.agents.spawn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.leader.split" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         _ => return None,
     };
     Some(
@@ -4714,8 +5008,7 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_witness_turn(&input)?;
         }
         "vault.claims.upsert" => {
-            let input: crate::memory::ClaimInput = decode(value.clone())?;
-            crate::memory::caps::check_claim_input(&input)?;
+            let _input: crate::memory::ScopedClaimInput = decode(value.clone())?;
         }
         "vault.recall" => {
             let input: RecallRequest = decode(value.clone())?;
@@ -4730,6 +5023,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.export" => {
             let _input: crate::memory::ExportOptions = decode(value.clone())?;
+        }
+        "vault.scope.ceiling" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.export.scoped" => {
+            let _input: crate::memory::ScopedExportRequest = decode(value.clone())?;
         }
         "vault.receipts" => {
             let input: crate::task_verb::sdk::VaultReceiptsRequest = decode(value.clone())?;
@@ -4802,6 +5101,54 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.weave.owner.item.wrong" => {
             let _input: crate::claim::WeaveWrongItemRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.put" => {
+            let _input: SkillHubPutRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.get" => {
+            let _input: SkillHubRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.publishers.admit" => {
+            let _input: SkillPublisherRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.publishers.revoke" => {
+            let _input: SkillPublisherRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.refs.get" => {
+            let _input: HubRefRequest = decode(value.clone())?;
+        }
+        "vault.skill_hubs.refs.set" => {
+            let _input: HubRefSetRequest = decode(value.clone())?;
+        }
+        "vault.packs.install" => {
+            let _input: HubImportRequest = decode(value.clone())?;
+        }
+        "vault.packs.sync" => {
+            let _input: HubPackRequest = decode(value.clone())?;
+        }
+        "vault.packs.get" => {
+            let _input: HubPackRequest = decode(value.clone())?;
+        }
+        "vault.skills.import" => {
+            let _input: HubImportRequest = decode(value.clone())?;
+        }
+        "vault.skills.sync" => {
+            let _input: HubSkillRequest = decode(value.clone())?;
+        }
+        "vault.skills.receipts" => {
+            let _input: HubSkillRequest = decode(value.clone())?;
+        }
+        "vault.skills.permissions.approve" => {
+            let _input: HubSkillPermissionRequest = decode(value.clone())?;
+        }
+        "vault.packs.hooks.bind" => {
+            let _input: HubHookBindRequest = decode(value.clone())?;
+        }
+        "vault.packs.hooks.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.packs.hooks.qualify" => {
+            let _input: HubHookQualifyRequest = decode(value.clone())?;
         }
         "vault.packs.put" => {
             let _input: PackPutRequest = decode(value.clone())?;
@@ -5179,6 +5526,27 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.export" => {
             let _input: crate::blob_artifact::ArtifactExportRequest = decode(value.clone())?;
+        }
+        "vault.agents.create" => {
+            let _input: crate::task_verb::sdk::AgentDefinitionCreateRequest =
+                decode(value.clone())?;
+        }
+        "vault.agents.get" => {
+            let _input: crate::task_verb::sdk::AgentDefinitionRequest = decode(value.clone())?;
+        }
+        "vault.agents.update" => {
+            let _input: crate::task_verb::sdk::AgentDefinitionUpdateRequest =
+                decode(value.clone())?;
+        }
+        "vault.workspace.establish" => {
+            let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
+        }
+        "vault.workspace.members.onboard" => {
+            let _input: crate::task_verb::sdk::WorkspaceMemberOnboardRequest =
+                decode(value.clone())?;
+        }
+        "vault.workspace.roster" => {
+            let _input: crate::task_verb::sdk::WorkspaceRosterRequest = decode(value.clone())?;
         }
         "vault.agents.export_pack" => {
             let _input: crate::share_travel::AgentPackExportRequest = decode(value.clone())?;
@@ -5559,11 +5927,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
         }
         "vault.commit" => {
-            let input: CommitRequest = decode(value.clone())?;
+            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-            for claim in &input.claims {
-                crate::memory::caps::check_claim_input(claim)?;
-            }
         }
         "vault.remember" => {
             let input: crate::memory::ClaimInput = decode(value.clone())?;
@@ -5752,11 +6117,8 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
         "vault.claims.seed" => {
-            let input: CommitRequest = decode(value.clone())?;
+            let input: crate::memory::ScopedCommitRequest = decode(value.clone())?;
             crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-            for claim in &input.claims {
-                crate::memory::caps::check_claim_input(claim)?;
-            }
         }
         "vault.channel_identities.provision" => {
             let _input: crate::memory::channel_doors::ChannelIdentityProvisionRequest =
@@ -5857,6 +6219,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.defaults" => {
             let _input: crate::note::NoteRefRequest = decode(value.clone())?;
         }
+        "self.agents.spawn" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput> =
+                decode(value.clone())?;
+        }
+        "self.leader.split" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput> =
+                decode(value.clone())?;
+        }
         _ => {
             return Err(wrong_root(verb)
                 .unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb")));
@@ -5917,6 +6287,8 @@ pub fn invoke(
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
         "vault.export" => encode(vault_export(memory, decode(value)?)?),
+        "vault.scope.ceiling" => encode(vault_scope_ceiling(memory, decode(value)?)?),
+        "vault.export.scoped" => encode(vault_export_scoped(memory, decode(value)?)?),
         "vault.receipts" => encode(vault_receipts(memory, decode(value)?)?),
         "vault.images.view" => encode(vault_images_view(memory, decode(value)?)?),
         "vault.receipts.get" => encode(vault_receipts_get(memory, decode(value)?)?),
@@ -5950,6 +6322,28 @@ pub fn invoke(
         "vault.weave.owner.item.wrong" => {
             encode(vault_weave_owner_item_wrong(memory, decode(value)?)?)
         }
+        "vault.skill_hubs.put" => encode(vault_skill_hubs_put(memory, decode(value)?)?),
+        "vault.skill_hubs.get" => encode(vault_skill_hubs_get(memory, decode(value)?)?),
+        "vault.skill_hubs.publishers.admit" => {
+            encode(vault_skill_hubs_publishers_admit(memory, decode(value)?)?)
+        }
+        "vault.skill_hubs.publishers.revoke" => {
+            encode(vault_skill_hubs_publishers_revoke(memory, decode(value)?)?)
+        }
+        "vault.skill_hubs.refs.get" => encode(vault_skill_hubs_refs_get(memory, decode(value)?)?),
+        "vault.skill_hubs.refs.set" => encode(vault_skill_hubs_refs_set(memory, decode(value)?)?),
+        "vault.packs.install" => encode(vault_packs_install(memory, decode(value)?)?),
+        "vault.packs.sync" => encode(vault_packs_sync(memory, decode(value)?)?),
+        "vault.packs.get" => encode(vault_packs_get(memory, decode(value)?)?),
+        "vault.skills.import" => encode(vault_skills_import(memory, decode(value)?)?),
+        "vault.skills.sync" => encode(vault_skills_sync(memory, decode(value)?)?),
+        "vault.skills.receipts" => encode(vault_skills_receipts(memory, decode(value)?)?),
+        "vault.skills.permissions.approve" => {
+            encode(vault_skills_permissions_approve(memory, decode(value)?)?)
+        }
+        "vault.packs.hooks.bind" => encode(vault_packs_hooks_bind(memory, decode(value)?)?),
+        "vault.packs.hooks.list" => encode(vault_packs_hooks_list(memory, decode(value)?)?),
+        "vault.packs.hooks.qualify" => encode(vault_packs_hooks_qualify(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
         "vault.connectors.subscriptions.put" => {
@@ -6164,6 +6558,14 @@ pub fn invoke(
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.artifacts.export" => encode(vault_artifacts_export(memory, decode(value)?)?),
+        "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
+        "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
+        "vault.agents.update" => encode(vault_agents_update(memory, decode(value)?)?),
+        "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
+        "vault.workspace.members.onboard" => {
+            encode(vault_workspace_members_onboard(memory, decode(value)?)?)
+        }
+        "vault.workspace.roster" => encode(vault_workspace_roster(memory, decode(value)?)?),
         "vault.agents.export_pack" => encode(vault_agents_export_pack(memory, decode(value)?)?),
         "vault.artifacts.born_from" => encode(vault_artifacts_born_from(memory, decode(value)?)?),
         "vault.artifacts.proposals" => encode(vault_artifacts_proposals(memory, decode(value)?)?),
@@ -6447,6 +6849,8 @@ pub fn invoke(
         "vault.notes.lifecycle" => encode(vault_notes_lifecycle(memory, decode(value)?)?),
         "vault.notes.set_overrides" => encode(vault_notes_set_overrides(memory, decode(value)?)?),
         "vault.notes.defaults" => encode(vault_notes_defaults(memory, decode(value)?)?),
+        "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
+        "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -6926,16 +7330,15 @@ pub fn vault_witness(
 }
 pub fn vault_claims_upsert(
     memory: &Memory<'_>,
-    input: crate::memory::ClaimInput,
+    input: crate::memory::ScopedClaimInput,
 ) -> MemoryResult<crate::memory::CommitReceipt> {
-    crate::memory::caps::check_claim_input(&input)?;
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.upsert",
         &input,
-        &["/subject_ref", "/world_ref", "/relationship_ref"],
+        &["/subject_ref", "/evidence_turn_refs/*"],
     )?;
-    memory.claim_upsert(&input)
+    memory.claim_upsert_scoped(&input)
 }
 pub fn vault_recall(
     memory: &Memory<'_>,
@@ -6956,6 +7359,18 @@ pub fn vault_export(
     input: crate::memory::ExportOptions,
 ) -> MemoryResult<crate::memory::MemoryExport> {
     memory.export(&input)
+}
+pub fn vault_scope_ceiling(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::memory::CredentialCeiling> {
+    memory.credential_ceiling()
+}
+pub fn vault_export_scoped(
+    memory: &Memory<'_>,
+    input: crate::memory::ScopedExportRequest,
+) -> MemoryResult<crate::memory::ScopedExport> {
+    memory.export_scoped(&input)
 }
 pub fn vault_receipts(
     memory: &Memory<'_>,
@@ -7106,6 +7521,162 @@ pub fn vault_weave_owner_item_wrong(
         &memory.embedded_owner("vault.weave.owner.item.wrong")?,
         &input,
     )
+}
+pub fn vault_skill_hubs_put(
+    memory: &Memory<'_>,
+    input: SkillHubPutRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillHubConfigured> {
+    crate::task_verb::sdk::skill_hub_put_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.put")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_get(
+    memory: &Memory<'_>,
+    input: SkillHubRequest,
+) -> MemoryResult<crate::skill_hub::SkillHubRecord> {
+    crate::task_verb::sdk::skill_hub_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.get")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_publishers_admit(
+    memory: &Memory<'_>,
+    input: SkillPublisherRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillPublisherAdmission> {
+    crate::task_verb::sdk::skill_publisher_admit_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.publishers.admit")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_publishers_revoke(
+    memory: &Memory<'_>,
+    input: SkillPublisherRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::skill_publisher_revoke_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.publishers.revoke")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_refs_get(
+    memory: &Memory<'_>,
+    input: HubRefRequest,
+) -> MemoryResult<Option<crate::skill_hub::TrackedHubRef>> {
+    crate::task_verb::sdk::hub_ref_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.refs.get")?,
+        &input,
+    )
+}
+pub fn vault_skill_hubs_refs_set(
+    memory: &Memory<'_>,
+    input: HubRefSetRequest,
+) -> MemoryResult<crate::skill_hub::TrackedHubRef> {
+    crate::task_verb::sdk::hub_ref_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skill_hubs.refs.set")?,
+        &input,
+    )
+}
+pub fn vault_packs_install(
+    memory: &Memory<'_>,
+    input: HubImportRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    crate::task_verb::sdk::hub_pack_install_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.install")?,
+        &input,
+    )
+}
+pub fn vault_packs_sync(
+    memory: &Memory<'_>,
+    input: HubPackRequest,
+) -> MemoryResult<crate::task_verb::sdk::PackPutReceipt> {
+    crate::task_verb::sdk::hub_pack_sync_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.sync")?,
+        &input,
+    )
+}
+pub fn vault_packs_get(
+    memory: &Memory<'_>,
+    input: HubPackRequest,
+) -> MemoryResult<Option<crate::skill_hub::pack_catalog::PackInstallReceipt>> {
+    crate::task_verb::sdk::hub_pack_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.get")?,
+        &input,
+    )
+}
+pub fn vault_skills_import(
+    memory: &Memory<'_>,
+    input: HubImportRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubSkillImported> {
+    crate::task_verb::sdk::hub_skill_import_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.import")?,
+        &input,
+    )
+}
+pub fn vault_skills_sync(
+    memory: &Memory<'_>,
+    input: HubSkillRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubSkillSyncReceipt> {
+    crate::task_verb::sdk::hub_skill_sync_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.sync")?,
+        &input,
+    )
+}
+pub fn vault_skills_receipts(
+    memory: &Memory<'_>,
+    input: HubSkillRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubSkillReceipts> {
+    crate::task_verb::sdk::hub_skill_receipts_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.receipts")?,
+        &input,
+    )
+}
+pub fn vault_skills_permissions_approve(
+    memory: &Memory<'_>,
+    input: HubSkillPermissionRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubConsentReceipt> {
+    crate::task_verb::sdk::hub_skill_permissions_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.permissions.approve")?,
+        &input,
+    )
+}
+pub fn vault_packs_hooks_bind(
+    memory: &Memory<'_>,
+    input: HubHookBindRequest,
+) -> MemoryResult<Vec<crate::EntityId>> {
+    crate::task_verb::sdk::hub_hooks_bind_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.hooks.bind")?,
+        &input,
+    )
+}
+pub fn vault_packs_hooks_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::HubHookBindingRow>> {
+    crate::task_verb::sdk::hub_hooks_list_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.hooks.list")?,
+        &crate::task_verb::sdk::EmptyRequest {},
+    )
+}
+pub fn vault_packs_hooks_qualify(
+    memory: &Memory<'_>,
+    input: HubHookQualifyRequest,
+) -> MemoryResult<crate::task_verb::sdk::HubHookQualificationReceipt> {
+    crate::task_verb::sdk::hub_hooks_qualify_embedded(memory, &input)
 }
 pub fn vault_packs_put(
     memory: &Memory<'_>,
@@ -8060,6 +8631,66 @@ pub fn vault_artifacts_export(
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactExportFile>> {
     memory.artifacts_export(&input)
 }
+pub fn vault_agents_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDefinitionCreateRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDefinitionView> {
+    crate::task_verb::sdk::create_agent_definition_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.create")?,
+        input,
+    )
+}
+pub fn vault_agents_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDefinitionRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDefinitionView> {
+    crate::task_verb::sdk::read_agent_definition_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.get")?,
+        input,
+    )
+}
+pub fn vault_agents_update(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDefinitionUpdateRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDefinitionView> {
+    crate::task_verb::sdk::update_agent_definition_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.update")?,
+        input,
+    )
+}
+pub fn vault_workspace_establish(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkspacePresetRequest,
+) -> MemoryResult<crate::task_verb::sdk::WorkspacePresetReceipt> {
+    crate::task_verb::sdk::establish_workspace_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workspace.establish")?,
+        input,
+    )
+}
+pub fn vault_workspace_members_onboard(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkspaceMemberOnboardRequest,
+) -> MemoryResult<crate::workspace_roster::MemberOnboardingOutcome> {
+    crate::task_verb::sdk::onboard_workspace_member_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workspace.members.onboard")?,
+        input,
+    )
+}
+pub fn vault_workspace_roster(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::WorkspaceRosterRequest,
+) -> MemoryResult<Vec<crate::workspace_roster::WorkspaceRosterEntry>> {
+    crate::task_verb::sdk::read_workspace_roster_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.workspace.roster")?,
+        input,
+    )
+}
 pub fn vault_agents_export_pack(
     memory: &Memory<'_>,
     input: crate::share_travel::AgentPackExportRequest,
@@ -8943,23 +9574,16 @@ pub fn self_desktop_handover(
 }
 pub fn vault_commit(
     memory: &Memory<'_>,
-    input: CommitRequest,
+    input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-    for claim in &input.claims {
-        crate::memory::caps::check_claim_input(claim)?;
-    }
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.commit",
         &input,
-        &[
-            "/claims/*/subject_ref",
-            "/claims/*/world_ref",
-            "/claims/*/relationship_ref",
-        ],
+        &["/claims/*/subject_ref", "/claims/*/evidence_turn_refs/*"],
     )?;
-    memory.commit(&input.claims)
+    memory.commit_scoped(&input.claims, false)
 }
 pub fn vault_remember(
     memory: &Memory<'_>,
@@ -9524,23 +10148,16 @@ pub fn vault_consolidation_status(
 }
 pub fn vault_claims_seed(
     memory: &Memory<'_>,
-    input: CommitRequest,
+    input: crate::memory::ScopedCommitRequest,
 ) -> MemoryResult<Vec<crate::memory::CommitOutcome>> {
     crate::memory::caps::check_batch_len("claims", input.claims.len())?;
-    for claim in &input.claims {
-        crate::memory::caps::check_claim_input(claim)?;
-    }
     crate::gate::record_references::admit_row_references(
         memory,
         "vault.claims.seed",
         &input,
-        &[
-            "/claims/*/subject_ref",
-            "/claims/*/world_ref",
-            "/claims/*/relationship_ref",
-        ],
+        &["/claims/*/subject_ref", "/claims/*/evidence_turn_refs/*"],
     )?;
-    memory_requests::seed_claims(memory, input)
+    memory.commit_scoped(&input.claims, true)
 }
 pub fn vault_channel_identities_provision(
     memory: &Memory<'_>,
@@ -9791,4 +10408,16 @@ pub fn vault_notes_defaults(
         &["/note_ref"],
     )?;
     memory.note_defaults(&input)
+}
+pub fn self_agents_spawn(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::AgentSpawnInput>,
+) -> MemoryResult<crate::code_run::AgentSpawnOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.agents.spawn", &input)
+}
+pub fn self_leader_split(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::code_run::LeaderSplitInput>,
+) -> MemoryResult<crate::code_run::LeaderSplitOutput> {
+    crate::task_verb::sdk::host_only(memory, "self.leader.split", &input)
 }

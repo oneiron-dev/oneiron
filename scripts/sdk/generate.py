@@ -12,17 +12,35 @@ from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text())
-ROWS = [row for row in MANIFEST['verbs'] if 'call' in row]
-DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row]
+# A run row may also expose a typed host door. Its `host` projection takes
+# a credential-bound live-run attachment beside the original spec; code mode
+# keeps the run's own input and binding. The name, scope and reply stay one row.
+HOST_RUN_ROWS = [row for row in MANIFEST['verbs'] if 'host' in row]
+for row in HOST_RUN_ROWS:
+    if row.get('context') != 'run' or set(row['host']) != {'input', 'description'}:
+        raise ValueError(f'{row["name"]}: a host projection names the run row public input and description')
+ROWS = [row for row in MANIFEST['verbs'] if 'call' in row] + [
+    {'name': row['name'], 'input': row['host']['input'], 'output': row['output'],
+     'description': row['host']['description'], 'scope': row['scope'],
+     'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
+     'host_door': True, 'host_door_session': True,
+     'admission': {'unrestricted_record_scope': True}, 'section': False}
+    for row in HOST_RUN_ROWS
+]
+DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row and 'host' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
 # A `context: "run"` row is answered by the code run itself, over its own
 # dispatcher and storage route, as the typed `self.*` call its `effect` names.
 # Code mode serves it beside the host's rows; no host door, tool, route or
-# binding can carry a run, so it projects nowhere else. Its optional `output`
+# binding carries a run unless the row declares its credential-bound `host`
+# projection. Its optional `output`
 # is the type its reply carries, which only the catalog fragment reads.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
+# Code mode always reads the run input; the served schema reads its host input.
+CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_RUN_ROWS}] + RUN_ROWS
+SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
-    if set(row) - {'output', 'outputs_by_input'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
+    if set(row) - {'output', 'outputs_by_input', 'host'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
         raise ValueError(f'{row["name"]}: a run row names its input, scope, effect, output and per-input outputs, and nothing else')
 # `outputs_by_input` maps an input field, by its wire name, to the reply code
 # mode answers when that field is present and not null (`describe({fold})`
@@ -1041,8 +1059,8 @@ def run_catalog():
     'RunVerb: the rows code mode serves that the run answers itself.'
     variants = {r['name']: ''.join(part.title() for part in r['name'].replace('.', '_').split('_')) for r in RUN_ROWS}
     out = HEADER + '/// The verb-table rows a code run answers itself, as the typed `self.*` call\n'
-    out += '/// each names: code mode serves them beside the host\'s rows, and no host door,\n'
-    out += '/// tool, route or binding carries them.\n'
+    out += '/// each names. A row with a host projection also has a typed door bound to\n'
+    out += '/// its caller\'s credential and live-run attachment.\n'
     out += '#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum RunVerb { ' + ','.join(variants.values()) + ' }\nimpl RunVerb {\n'
     out += 'pub const ALL: &[Self] = &[' + ','.join('Self::' + variant for variant in variants.values()) + '];\n'
     out += "pub fn from_name(name: &str) -> Option<Self> { Self::ALL.iter().copied().find(|verb| verb.as_str() == name) }\n"
@@ -1105,6 +1123,12 @@ def facade_dispatch(facade_rows):
     # which the credential must carry.
     def record_scope_guard(r):
         admission = r.get('admission', {})
+        if admission.get('claim_record_scope'):
+            return 'let position = facade_claim_position(server, call)?;'
+        if admission.get('credential_record_scope'):
+            return 'facade_scoped_credential(auth)?;'
+        if admission.get('scoped_export'):
+            return 'facade_scoped_export_credential(auth)?;'
         if admission.get('born_record_scope'):
             return 'let position = facade_landing(server, call)?;'
         if admission.get('lane_record_scope'):
@@ -1194,7 +1218,7 @@ def facade_dispatch(facade_rows):
         if takes_task_work_turn(r):
             # Rule 5: the engine call runs on the turn the dispatch awaited.
             result = f'facade_invoke_in_turn({on}, actor, class, "{name}", value, &producers, Some(turn))?'
-        if r.get('admission', {}).get('born_record_scope'):
+        if r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope'):
             result = f'facade_invoke_born({on}, actor, class, "{name}", value, position, &producers)?'
         result += ';'
         readables = r.get('admission', {}).get('readable', [])
@@ -1221,7 +1245,7 @@ def facade_dispatch(facade_rows):
             landed = 'server.ai.turn_landed_by(server.vault(), actor, class);'
         # A born door's landing judges its record bounds, so only the grant is
         # left to check.
-        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') else 'require'
+        require = 'require_granted' if r.get('admission', {}).get('born_record_scope') or r.get('admission', {}).get('claim_record_scope') else 'require'
         head += f'''auth.{require}(CoreScope::{r["scope"]})?;
         {record_scope_guard(r)}
         let value = input?;\n'''
@@ -1283,7 +1307,7 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 match verb {{
 '''
     dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
-    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in ROWS if r.get('context') == 'browser']), ('Run', RUN_ROWS)]:
+    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in ROWS if r.get('context') == 'browser']), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
@@ -1303,7 +1327,7 @@ def outputs():
     # Sharing one immutable schema table avoids repeated schemars generation on tool listing.
     core += "// GLOBAL STATE: compiled verb schemas are immutable, vault-independent metadata; share one table across callers.\n"
     core += "static SCHEMAS: std::sync::LazyLock<std::collections::HashMap<&'static str, serde_json::Value>> = std::sync::LazyLock::new(|| std::collections::HashMap::from([\n"
-    for r in ROWS + RUN_ROWS:
+    for r in SCHEMA_ROWS:
         core += f'({json.dumps(r["name"])}, crate::code_run::vault_read::request_schema::<{r["input"]}>()),\n'
     core += "])); SCHEMAS.get(verb) }\n"
     core += "pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> { mcp_arguments_schema_from_input(verb, input_schema(verb)?) }\n"
@@ -1516,7 +1540,7 @@ def outputs():
     # ONE-2510 S2: the code-mode catalog fragment over every row code mode
     # serves, at catalog_fragment.d.ts and at code-mode.d.ts, with its
     # revision; its own inventory leaves the facade types above as they are.
-    files.update(catalog_fragment(ROOT, ROWS + RUN_ROWS, HEADER))
+    files.update(catalog_fragment(ROOT, CODE_MODE_ROWS, HEADER))
     for path, text in list(files.items()):
         if path.endswith('.rs'):
             result = subprocess.run(['rustfmt', '--edition', '2024', '--emit', 'stdout'], input=text, text=True, capture_output=True, cwd=ROOT, check=True)
