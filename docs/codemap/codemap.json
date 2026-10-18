@@ -11133,7 +11133,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_document/mod.rs",
-     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
+     "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…",
      "surface": {
       "crate-vis": 2,
       "re-export": 5
@@ -11180,7 +11180,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9
      }
     },
@@ -11190,6 +11190,16 @@
      "notable": [],
      "path": "src/code_document/storage/lift.rs",
      "purpose": "Code documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage/receipt_actor.rs",
+     "purpose": "Whose operation a code-document receipt records, and the erase that forgets it (FIX 3520)",
      "surface": {
       "crate-vis": 4
      }
@@ -11221,7 +11231,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 8
      }
     },
@@ -39756,9 +39766,9 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -39784,7 +39794,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -39799,10 +39809,26 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingRepoProposalErase",
+      "ProposalActor"
+     ],
+     "path": "src/repo_mutation/proposal/actor_erase.rs",
+     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 3
      }
     },
     {
@@ -39843,7 +39869,7 @@
      "path": "src/repo_mutation/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -39899,7 +39925,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 7,
       "struct": 6,
@@ -55749,11 +55775,11 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers"
+     "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…"
     },
     "code_memory": {
      "files": 7,
@@ -56596,7 +56622,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57053,7 +57079,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3476,
+   "source_files": 3478,
    "test_files": 902
   },
   "oneiron-android": {
