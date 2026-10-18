@@ -110,6 +110,8 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
+// The owner's proposed-claim review and settle doors (DOOR-115), likewise.
+pub(crate) use super::claim_settle_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -1057,6 +1059,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals.decline"
         | "vault.craft_candidates"
         | "vault.craft_candidates.answer"
+        | "vault.claims.review"
+        | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
         | "vault.budgets.lease.open"
         | "vault.budgets.lease"

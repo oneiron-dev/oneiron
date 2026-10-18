@@ -7,6 +7,7 @@
 #[cfg(feature = "sync")]
 mod carried;
 mod citation_floor;
+mod doc_actor;
 mod document;
 mod forks;
 mod history_erase;
@@ -37,9 +38,14 @@ mod verbs;
 
 #[cfg(feature = "sync")]
 pub(crate) use carried::{CarriedDocument, DocumentMerge};
+pub use doc_actor::DocActor;
 pub use document::{Birth, EntityDoc, TextChange};
 pub use forks::{
-    DocAuthorization, ForkRecord, ForkRequest, ForkStatus, ProposalBundle, SettleVerb, TextReceipt,
+    ACTOR_ERASE_PENDING_ENTITY_DOC_FORK, DocAuthorization, ForkRecord, ForkRequest, ForkStatus,
+    PendingDocForkErase, ProposalBundle, SettleVerb, TextReceipt,
+};
+pub(crate) use forks::{
+    erase_fork_actor_in_txn, erase_proposal_actor_in_txn, erase_receipt_actor_in_txn,
 };
 pub use history_erase::TextHistoryErase;
 pub(crate) use history_erase::admit_history_erase_in_txn;
@@ -49,6 +55,7 @@ pub use office::{DeckBody, DeckExport, DeckReview, ReevalWake};
 #[cfg(feature = "sync")]
 pub(crate) use pins::PinMerge;
 pub use pins::{CitationPin, CursorResolution, PurgeReceipt};
+pub(crate) use pins::{erase_pin_actor_in_txn, erase_purge_actor_in_txn};
 pub(crate) use registry::EntityDocRegistry;
 pub use registry::{EntityDocumentHead, EntityDocumentView, RegistryStatus};
 pub use storage::TextField;

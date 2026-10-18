@@ -185,6 +185,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.widen_proposals", post(facade_route))
         .route("/vault.widen_proposals.approve", post(facade_route))
         .route("/vault.widen_proposals.decline", post(facade_route))
+        .route("/vault.claims.review", post(facade_route))
+        .route("/vault.claims.settle", post(facade_route))
         .route("/vault.craft_candidates", post(facade_route))
         .route("/vault.craft_candidates.answer", post(facade_route))
         .route("/vault.settings.wake_policy.set", post(facade_route))
