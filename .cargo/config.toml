@@ -12,3 +12,9 @@
 # pkix-path-builder internally.
 [patch.crates-io]
 pkix-chain = { path = "crates/oneiron-seal/vendor/pkix-chain-0.4.1" }
+
+# cmake 4 refuses a bundled CMakeLists that declares a minimum below 3.5
+# (expat-sys's libexpat does), so the macOS and phone-target builds pin the
+# policy floor cmake 4 still accepts.
+[env]
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
