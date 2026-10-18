@@ -99,6 +99,12 @@ both bindings and their export-census tests in one change.
 - `vault.affect.wellness.policy.configure`
 - `vault.affect.wellness.derive`
 - `vault.affect.wellness.get`
+- `vault.cluster`
+- `vault.cluster.proposal`
+- `vault.cluster.propose`
+- `vault.cluster.merge`
+- `vault.cluster.split`
+- `vault.cluster.resolve_proposal`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
 - `vault.retrieval.run`

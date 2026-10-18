@@ -326,6 +326,26 @@ impl OneironClient {
                 "vault.affect.wellness.get" => remote_agent_verb_output::<
                     oneiron::memory::wellness_doors::WellnessProjection,
                 >(client, verb, &input),
+                "vault.cluster" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<oneiron::memory::clustering::ClusterProposal>,
+                >(client, verb, &input),
+                "vault.cluster.proposal" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<
+                        oneiron::memory::clustering::ClusterProposalView,
+                    >,
+                >(client, verb, &input),
+                "vault.cluster.propose" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
+                "vault.cluster.merge" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
+                "vault.cluster.split" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
+                "vault.cluster.resolve_proposal" => remote_agent_verb_output::<
+                    oneiron::memory::clustering::ClusterTopologyReceipt,
+                >(client, verb, &input),
                 "vault.retrieval.recall" => {
                     remote_agent_verb_output::<oneiron::memory::MemoryPack>(client, verb, &input)
                 }
@@ -3942,6 +3962,84 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.affect.wellness.get", value)
+    }
+    pub fn vault_cluster(
+        &self,
+        input: &oneiron::memory::clustering::ClusterRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<oneiron::memory::clustering::ClusterProposal>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster", value)
+    }
+    pub fn vault_cluster_proposal(
+        &self,
+        input: &oneiron::memory::clustering::ClusterProposalRequest,
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<oneiron::memory::clustering::ClusterProposalView>,
+        MemoryError,
+    > {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.proposal", value)
+    }
+    pub fn vault_cluster_propose(
+        &self,
+        input: &oneiron::memory::clustering::ClusterProposeRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.propose", value)
+    }
+    pub fn vault_cluster_merge(
+        &self,
+        input: &oneiron::memory::clustering::ClusterMergeRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.merge", value)
+    }
+    pub fn vault_cluster_split(
+        &self,
+        input: &oneiron::memory::clustering::ClusterSplitRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.split", value)
+    }
+    pub fn vault_cluster_resolve_proposal(
+        &self,
+        input: &oneiron::memory::clustering::ClusterResolveRequest,
+    ) -> Result<oneiron::memory::clustering::ClusterTopologyReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.cluster.resolve_proposal", value)
     }
     pub fn vault_retrieval_recall(
         &self,
