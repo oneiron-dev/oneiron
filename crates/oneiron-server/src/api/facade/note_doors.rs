@@ -100,3 +100,79 @@ pub(crate) async fn vault_notes_editor_close(
     )
     .await
 }
+
+/// The owner explicitly erases a NOTE's history through the engine's pin
+/// boundary, or opens the shared vault's existing erase veto window.
+pub(crate) async fn vault_notes_history_purge(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> Listed<oneiron::task_verb::sdk::NoteHistoryPurgeOutcome> {
+    super::legal_hold_doors::as_owner_naming(
+        server,
+        auth,
+        "vault.notes.history_purge",
+        move |server, owner| {
+            oneiron::task_verb::sdk::purge_note_history_as_owner(server.vault(), owner, input)
+        },
+        |outcome| match outcome {
+            oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Erased { receipt } => {
+                super::host_doors::hex_rows([&receipt.entity])
+            }
+            oneiron::task_verb::sdk::NoteHistoryPurgeOutcome::Waiting { note_ref, .. } => {
+                super::host_doors::hex_rows([note_ref])
+            }
+        },
+    )
+    .await
+}
+
+/// Run the exact history erase the owner already opened, once its shared
+/// veto window permits it. The act id is not an authority credential.
+pub(crate) async fn vault_notes_history_purge_execute(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::NoteHistoryPurgeExecuteRequest,
+) -> Listed<oneiron::task_verb::sdk::NoteHistoryPurgeReceipt> {
+    super::legal_hold_doors::as_owner_naming(
+        server,
+        auth,
+        "vault.notes.history_purge_execute",
+        move |server, owner| {
+            oneiron::task_verb::sdk::execute_note_history_purge_as_owner(
+                server.vault(),
+                owner,
+                input,
+            )
+        },
+        |receipt| super::host_doors::hex_rows([&receipt.entity]),
+    )
+    .await
+}
+
+/// Durable engine receipts survive a host restart; an editor binding does not.
+pub(crate) async fn vault_notes_history_purge_receipts(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest,
+) -> Listed<Vec<oneiron::task_verb::sdk::NoteHistoryPurgeReceipt>> {
+    super::legal_hold_doors::as_owner_naming(
+        server,
+        auth,
+        "vault.notes.history_purge_receipts",
+        move |server, owner| {
+            oneiron::task_verb::sdk::note_history_purge_receipts_as_owner(
+                server.vault(),
+                owner,
+                input,
+            )
+        },
+        |receipts| {
+            receipts
+                .iter()
+                .flat_map(|receipt| super::host_doors::hex_rows([&receipt.entity]))
+                .collect()
+        },
+    )
+    .await
+}
