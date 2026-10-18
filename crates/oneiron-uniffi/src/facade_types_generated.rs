@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 371 facade rows, 1379 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 339.
+// UniFFI census: 375 facade rows, 1391 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 343.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -18026,6 +18026,126 @@ pub enum WireCommitOutcome {
         )]
         receipt_ref: Option<String>,
     },
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingPageTokenRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingPageTokenRequest {
+    #[serde(rename = "page_ref")]
+    pub page_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingPageTokenResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BookingPageTokenResponse {
+    #[serde(rename = "page_token")]
+    pub page_token: String,
+}
+
+/// `oneiron::calendar::query::requests::CalendarReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarReadRequest {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+}
+
+/// `oneiron::calendar::query::requests::CalendarEventView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarEventView {
+    #[serde(rename = "origin")]
+    pub origin: String,
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "name", default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(rename = "start_utc", default, skip_serializing_if = "Option::is_none")]
+    pub start_utc: Option<u64>,
+    #[serde(rename = "end_utc", default, skip_serializing_if = "Option::is_none")]
+    pub end_utc: Option<u64>,
+    #[serde(rename = "calendar_systems")]
+    pub calendar_systems: Vec<String>,
+    #[serde(rename = "blocks_time")]
+    pub blocks_time: bool,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalCalendarEventView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalCalendarEventView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<CalendarEventView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::calendar::query::requests::CalendarSel`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarSel {
+    #[serde(rename = "system", default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+}
+
+/// `oneiron::calendar::query::requests::CalendarRangeDto`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarRangeDto {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::calendar::query::requests::CalendarSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarSearchRequest {
+    #[serde(rename = "calendars")]
+    pub calendars: Vec<CalendarSel>,
+    #[serde(rename = "range", default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<CalendarRangeDto>,
+    #[serde(rename = "text", default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(rename = "limit")]
+    pub limit: u32,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `CalendarEventViewList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarEventViewList {
+    #[serde(rename = "value")]
+    pub value: Vec<CalendarEventView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::task_verb::sdk_calendar::CalendarFreebusyRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarFreebusyRequest {
+    #[serde(rename = "calendars")]
+    pub calendars: Vec<CalendarSel>,
+    #[serde(rename = "range")]
+    pub range: CalendarRangeDto,
+}
+
+/// `oneiron::memory::outbound::calendar::CalendarFreebusyIntervalDto`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CalendarFreebusyIntervalDto {
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `CalendarFreebusyDto`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultCalendarFreebusyDto {
+    #[serde(rename = "value")]
+    pub value: Vec<CalendarFreebusyIntervalDto>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.

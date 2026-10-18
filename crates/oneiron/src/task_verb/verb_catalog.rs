@@ -335,6 +335,10 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingPageToken,
+    VaultCalendarRead,
+    VaultCalendarSearch,
+    VaultCalendarFreebusy,
     VaultClaimsList,
     VaultClaimsHistory,
     VaultDelete,
@@ -752,6 +756,10 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingPageToken,
+        Self::VaultCalendarRead,
+        Self::VaultCalendarSearch,
+        Self::VaultCalendarFreebusy,
         Self::VaultClaimsList,
         Self::VaultClaimsHistory,
         Self::VaultDelete,
@@ -1176,6 +1184,10 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::VaultCalendarRead => "vault.calendar.read",
+            Self::VaultCalendarSearch => "vault.calendar.search",
+            Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
             Self::VaultClaimsList => "vault.claims.list",
             Self::VaultClaimsHistory => "vault.claims.history",
             Self::VaultDelete => "vault.delete",
@@ -1556,6 +1568,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingPageToken
+                | Self::VaultCalendarRead
+                | Self::VaultCalendarSearch
+                | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -1980,6 +1996,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingPageToken
+                | Self::VaultCalendarRead
+                | Self::VaultCalendarSearch
+                | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultDelete
@@ -2142,6 +2162,9 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
+                | Self::VaultCalendarRead
+                | Self::VaultCalendarSearch
+                | Self::VaultCalendarFreebusy
                 | Self::VaultClaimsList
                 | Self::VaultClaimsHistory
                 | Self::VaultHydrate
@@ -2478,6 +2501,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingPageToken
                 | Self::VaultDelete
                 | Self::VaultWritesPending
                 | Self::VaultStructuralPut
@@ -3168,6 +3192,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarRead => &["spec"],
+            Self::VaultCalendarSearch => &["spec"],
+            Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -3586,6 +3614,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarRead => &["spec"],
+            Self::VaultCalendarSearch => &["spec"],
+            Self::VaultCalendarFreebusy => &["spec"],
             Self::VaultClaimsList => &["spec"],
             Self::VaultClaimsHistory => &["spec"],
             Self::VaultDelete => &["spec"],
@@ -4576,6 +4608,18 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingPageToken => {
+                "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
+            }
+            Self::VaultCalendarRead => {
+                "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."
+            }
+            Self::VaultCalendarSearch => {
+                "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt."
+            }
+            Self::VaultCalendarFreebusy => {
+                "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt."
             }
             Self::VaultClaimsList => {
                 "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt."

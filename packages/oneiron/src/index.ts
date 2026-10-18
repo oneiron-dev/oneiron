@@ -1016,6 +1016,18 @@ export class Oneiron {
     remember: (input: Facade.ClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultRemember(input) as Facade.CommitReceipt),
     /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
     forget: (input: Facade.ForgetRequest): Facade.CommitReceipt[] => this.#call(() => this.#client.vaultForget(input) as Facade.CommitReceipt[]),
+    booking: {
+      /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
+      page_token: (input: Facade.BookingPageTokenRequest): Facade.BookingPageTokenResponse => this.#call(() => this.#client.vaultBookingPageToken(input) as Facade.BookingPageTokenResponse),
+    },
+    calendar: {
+      /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
+      read: (input: Facade.CalendarReadRequest): Facade.ScopedReadResult<Facade.CalendarEventView | null> => this.#call(() => this.#client.vaultCalendarRead(input) as Facade.ScopedReadResult<Facade.CalendarEventView | null>),
+      /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
+      search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
+      /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
+      freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+    },
     /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
     delete: (input: Facade.SafeDeleteRequest): Facade.DeleteReceipt => this.#call(() => this.#client.vaultDelete(input) as Facade.DeleteReceipt),
     writes: {

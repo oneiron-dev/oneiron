@@ -4852,6 +4852,58 @@
       }
     },
     {
+      "name": "vault.booking.page_token",
+      "description": "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority.",
+      "input": "crate::task_verb::sdk::BookingPageTokenRequest",
+      "output": "crate::task_verb::sdk::BookingPageTokenResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.page_token\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.calendar.read",
+      "description": "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt.",
+      "input": "crate::calendar::CalendarReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::CalendarEventView>>",
+      "call": "memory.calendar_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.search",
+      "description": "Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt.",
+      "input": "crate::calendar::CalendarSearchRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::CalendarEventView>>",
+      "call": "memory.calendar_search(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.freebusy",
+      "description": "Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt.",
+      "input": "crate::task_verb::sdk::CalendarFreebusyRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>",
+      "call": "memory.calendar_freebusy(&input.calendars, input.range.to_time_range())?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
       "name": "vault.claims.list",
       "description": "Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt.",
       "uniffi": {
