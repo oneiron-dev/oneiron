@@ -316,6 +316,14 @@ impl AuthenticatedOwner {
         lineage
     }
 
+    /// Whether this proof answers from `slip`'s own lineage: carried under
+    /// that very slip, or under one minted directly from it. A code consent
+    /// wait (DOOR-079) refuses such an answer: the opener never settles its
+    /// own wait. A proof no credential carried shares no slip lineage.
+    pub(crate) fn answers_from_slip_lineage(&self, slip: &[u8; 32]) -> bool {
+        self.credential_lineage().contains(slip)
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,
@@ -1040,6 +1048,42 @@ impl Vault {
     ) -> Result<()> {
         owner.revalidate_in_txn(self, &*wtxn)?;
         self.append_consent_gate_decision_in_txn(wtxn, &owner.stamp(), receipt, None)
+    }
+
+    /// Appends one code consent wait receipt (DOOR-079) into the consent
+    /// Gate family, in the writer that records the act it receipts.
+    /// `answered_by` is the authenticated answer it follows, when one was:
+    /// its provenance, not a currently present owner. A settlement no person
+    /// answered (the call's expiry, or its own gate releasing it) is the
+    /// engine's own record.
+    pub(crate) fn append_code_wait_receipt_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        receipt: &ConsentReceipt,
+        answered_by: Option<&ConsentOwnerStamp>,
+    ) -> Result<()> {
+        if let Some(stamp) = answered_by {
+            return self.append_consent_gate_decision_in_txn(wtxn, stamp, receipt, None);
+        }
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id: receipt.decision_id(),
+            created_at: crate::ports::recorded_at_in_txn(&self.store, wtxn)?,
+            outcome: receipt.gate_outcome().to_owned(),
+            reason_codes: vec![receipt.reason_code().to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: Vec::new(),
+            actor_class: "system".to_owned(),
+            actor_ref: None,
+            content_kind: CONSENT_CONTENT_KIND.to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: receipt.grant_ref(),
+            diff_handle: receipt.diff_handle(),
+            read_frontier_hash: [0_u8; 32],
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(wtxn, &record)
     }
 
     /// Projects a [`ConsentReceipt`] into the existing Gate receipt family.

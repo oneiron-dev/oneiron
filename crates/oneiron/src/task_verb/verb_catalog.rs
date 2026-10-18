@@ -130,6 +130,11 @@ pub enum AgentVerb {
     VaultAuthorityAudit,
     VaultAuthorityHistoryExport,
     VaultAuthorityHistoryImport,
+    VaultSlimPolicy,
+    VaultSlimState,
+    VaultSlimResumeStep,
+    VaultSlimDropHeavy,
+    VaultSlimResume,
     VaultMeshPathReceipts,
     VaultInspectionResolve,
     VaultSharedProposeDelete,
@@ -346,6 +351,7 @@ pub enum AgentVerb {
     VaultArtifactsReviewSlides,
     VaultArtifactsAsk,
     VaultCriticReview,
+    VaultArtifactsInspectDeck,
     VaultArtifactsProposeDeck,
     VaultArtifactsProposeOutput,
     VaultArtifactsKeep,
@@ -572,6 +578,17 @@ pub enum AgentVerb {
     VaultDeliveryWindowPolicyRetract,
     VaultDeliveryWindowEvaluate,
     ConnectorOutboundSchedule,
+    VaultSummariesCreate,
+    VaultSummariesRead,
+    VaultSummariesStatus,
+    VaultSummariesKeep,
+    VaultSummariesEdit,
+    VaultSummariesPatch,
+    VaultSummariesRegenerate,
+    VaultSummariesProposalsRead,
+    VaultSummariesProposalsMerge,
+    VaultSummariesProposalsSwitch,
+    VaultSummariesProposalsReject,
     VaultNotesCreate,
     VaultNotesFromEntity,
     VaultNotesRead,
@@ -739,6 +756,11 @@ impl AgentVerb {
         Self::VaultAuthorityAudit,
         Self::VaultAuthorityHistoryExport,
         Self::VaultAuthorityHistoryImport,
+        Self::VaultSlimPolicy,
+        Self::VaultSlimState,
+        Self::VaultSlimResumeStep,
+        Self::VaultSlimDropHeavy,
+        Self::VaultSlimResume,
         Self::VaultMeshPathReceipts,
         Self::VaultInspectionResolve,
         Self::VaultSharedProposeDelete,
@@ -955,6 +977,7 @@ impl AgentVerb {
         Self::VaultArtifactsReviewSlides,
         Self::VaultArtifactsAsk,
         Self::VaultCriticReview,
+        Self::VaultArtifactsInspectDeck,
         Self::VaultArtifactsProposeDeck,
         Self::VaultArtifactsProposeOutput,
         Self::VaultArtifactsKeep,
@@ -1181,6 +1204,17 @@ impl AgentVerb {
         Self::VaultDeliveryWindowPolicyRetract,
         Self::VaultDeliveryWindowEvaluate,
         Self::ConnectorOutboundSchedule,
+        Self::VaultSummariesCreate,
+        Self::VaultSummariesRead,
+        Self::VaultSummariesStatus,
+        Self::VaultSummariesKeep,
+        Self::VaultSummariesEdit,
+        Self::VaultSummariesPatch,
+        Self::VaultSummariesRegenerate,
+        Self::VaultSummariesProposalsRead,
+        Self::VaultSummariesProposalsMerge,
+        Self::VaultSummariesProposalsSwitch,
+        Self::VaultSummariesProposalsReject,
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
@@ -1351,6 +1385,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => "vault.authority.audit",
             Self::VaultAuthorityHistoryExport => "vault.authority.history.export",
             Self::VaultAuthorityHistoryImport => "vault.authority.history.import",
+            Self::VaultSlimPolicy => "vault.slim.policy",
+            Self::VaultSlimState => "vault.slim.state",
+            Self::VaultSlimResumeStep => "vault.slim.resume_step",
+            Self::VaultSlimDropHeavy => "vault.slim.drop_heavy",
+            Self::VaultSlimResume => "vault.slim.resume",
             Self::VaultMeshPathReceipts => "vault.mesh.path_receipts",
             Self::VaultInspectionResolve => "vault.inspection.resolve",
             Self::VaultSharedProposeDelete => "vault.shared.propose_delete",
@@ -1573,6 +1612,7 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => "vault.artifacts.review_slides",
             Self::VaultArtifactsAsk => "vault.artifacts.ask",
             Self::VaultCriticReview => "vault.critic.review",
+            Self::VaultArtifactsInspectDeck => "vault.artifacts.inspect_deck",
             Self::VaultArtifactsProposeDeck => "vault.artifacts.propose_deck",
             Self::VaultArtifactsProposeOutput => "vault.artifacts.propose_output",
             Self::VaultArtifactsKeep => "vault.artifacts.keep",
@@ -1803,6 +1843,17 @@ impl AgentVerb {
             Self::VaultDeliveryWindowPolicyRetract => "vault.delivery_window.policy.retract",
             Self::VaultDeliveryWindowEvaluate => "vault.delivery_window.evaluate",
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
+            Self::VaultSummariesCreate => "vault.summaries.create",
+            Self::VaultSummariesRead => "vault.summaries.read",
+            Self::VaultSummariesStatus => "vault.summaries.status",
+            Self::VaultSummariesKeep => "vault.summaries.keep",
+            Self::VaultSummariesEdit => "vault.summaries.edit",
+            Self::VaultSummariesPatch => "vault.summaries.patch",
+            Self::VaultSummariesRegenerate => "vault.summaries.regenerate",
+            Self::VaultSummariesProposalsRead => "vault.summaries.proposals.read",
+            Self::VaultSummariesProposalsMerge => "vault.summaries.proposals.merge",
+            Self::VaultSummariesProposalsSwitch => "vault.summaries.proposals.switch",
+            Self::VaultSummariesProposalsReject => "vault.summaries.proposals.reject",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
@@ -1969,6 +2020,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2185,6 +2241,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2371,6 +2428,17 @@ impl AgentVerb {
                 | Self::VaultDeliveryWindowPolicyRetract
                 | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultSummariesCreate
+                | Self::VaultSummariesRead
+                | Self::VaultSummariesStatus
+                | Self::VaultSummariesKeep
+                | Self::VaultSummariesEdit
+                | Self::VaultSummariesPatch
+                | Self::VaultSummariesRegenerate
+                | Self::VaultSummariesProposalsRead
+                | Self::VaultSummariesProposalsMerge
+                | Self::VaultSummariesProposalsSwitch
+                | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
@@ -2585,6 +2653,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -2801,6 +2874,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -2987,6 +3061,17 @@ impl AgentVerb {
                 | Self::VaultDeliveryWindowPolicyRetract
                 | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultSummariesCreate
+                | Self::VaultSummariesRead
+                | Self::VaultSummariesStatus
+                | Self::VaultSummariesKeep
+                | Self::VaultSummariesEdit
+                | Self::VaultSummariesPatch
+                | Self::VaultSummariesRegenerate
+                | Self::VaultSummariesProposalsRead
+                | Self::VaultSummariesProposalsMerge
+                | Self::VaultSummariesProposalsSwitch
+                | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
@@ -3130,6 +3215,8 @@ impl AgentVerb {
                 | Self::VaultNeighbors
                 | Self::VaultProductivityTree
                 | Self::VaultClaimsSeed
+                | Self::VaultSummariesRead
+                | Self::VaultSummariesProposalsRead
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
                 | Self::VaultNotesForksRead
@@ -3254,6 +3341,11 @@ impl AgentVerb {
                 | Self::VaultAuthorityAudit
                 | Self::VaultAuthorityHistoryExport
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimPolicy
+                | Self::VaultSlimState
+                | Self::VaultSlimResumeStep
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultMeshPathReceipts
                 | Self::VaultInspectionResolve
                 | Self::VaultSharedProposeDelete
@@ -3470,6 +3562,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
                 | Self::VaultCriticReview
+                | Self::VaultArtifactsInspectDeck
                 | Self::VaultArtifactsProposeDeck
                 | Self::VaultArtifactsProposeOutput
                 | Self::VaultArtifactsKeep
@@ -3680,6 +3773,15 @@ impl AgentVerb {
                 | Self::VaultDeliveryWindowPolicyRetract
                 | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultSummariesCreate
+                | Self::VaultSummariesStatus
+                | Self::VaultSummariesKeep
+                | Self::VaultSummariesEdit
+                | Self::VaultSummariesPatch
+                | Self::VaultSummariesRegenerate
+                | Self::VaultSummariesProposalsMerge
+                | Self::VaultSummariesProposalsSwitch
+                | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
@@ -3787,6 +3889,8 @@ impl AgentVerb {
                 | Self::VaultPacksSetupAnswer
                 | Self::VaultPacksSetupVerify
                 | Self::VaultAuthorityHistoryImport
+                | Self::VaultSlimDropHeavy
+                | Self::VaultSlimResume
                 | Self::VaultSharedProposeDelete
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
@@ -4056,6 +4160,14 @@ impl AgentVerb {
                 | Self::VaultDeliveryWindowPolicyPut
                 | Self::VaultDeliveryWindowPolicyRetract
                 | Self::ConnectorOutboundSchedule
+                | Self::VaultSummariesCreate
+                | Self::VaultSummariesKeep
+                | Self::VaultSummariesEdit
+                | Self::VaultSummariesPatch
+                | Self::VaultSummariesRegenerate
+                | Self::VaultSummariesProposalsMerge
+                | Self::VaultSummariesProposalsSwitch
+                | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
@@ -4247,6 +4359,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultSlimPolicy => &["spec"],
+            Self::VaultSlimState => &["spec"],
+            Self::VaultSlimResumeStep => &["spec"],
+            Self::VaultSlimDropHeavy => &["spec"],
+            Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -4463,6 +4580,7 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -4689,6 +4807,17 @@ impl AgentVerb {
             Self::VaultDeliveryWindowPolicyRetract => &["spec"],
             Self::VaultDeliveryWindowEvaluate => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
+            Self::VaultSummariesCreate => &["spec"],
+            Self::VaultSummariesRead => &["spec"],
+            Self::VaultSummariesStatus => &["spec"],
+            Self::VaultSummariesKeep => &["spec"],
+            Self::VaultSummariesEdit => &["spec"],
+            Self::VaultSummariesPatch => &["spec"],
+            Self::VaultSummariesRegenerate => &["spec"],
+            Self::VaultSummariesProposalsRead => &["spec"],
+            Self::VaultSummariesProposalsMerge => &["spec"],
+            Self::VaultSummariesProposalsSwitch => &["spec"],
+            Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
@@ -4857,6 +4986,11 @@ impl AgentVerb {
             Self::VaultAuthorityAudit => &["spec"],
             Self::VaultAuthorityHistoryExport => &[],
             Self::VaultAuthorityHistoryImport => &["spec"],
+            Self::VaultSlimPolicy => &["spec"],
+            Self::VaultSlimState => &["spec"],
+            Self::VaultSlimResumeStep => &["spec"],
+            Self::VaultSlimDropHeavy => &["spec"],
+            Self::VaultSlimResume => &["spec"],
             Self::VaultMeshPathReceipts => &["spec"],
             Self::VaultInspectionResolve => &["spec"],
             Self::VaultSharedProposeDelete => &["spec"],
@@ -5073,6 +5207,7 @@ impl AgentVerb {
             Self::VaultArtifactsReviewSlides => &["spec"],
             Self::VaultArtifactsAsk => &["spec"],
             Self::VaultCriticReview => &["spec"],
+            Self::VaultArtifactsInspectDeck => &["spec"],
             Self::VaultArtifactsProposeDeck => &["spec"],
             Self::VaultArtifactsProposeOutput => &["spec"],
             Self::VaultArtifactsKeep => &["spec"],
@@ -5299,6 +5434,17 @@ impl AgentVerb {
             Self::VaultDeliveryWindowPolicyRetract => &["spec"],
             Self::VaultDeliveryWindowEvaluate => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
+            Self::VaultSummariesCreate => &["spec"],
+            Self::VaultSummariesRead => &["spec"],
+            Self::VaultSummariesStatus => &["spec"],
+            Self::VaultSummariesKeep => &["spec"],
+            Self::VaultSummariesEdit => &["spec"],
+            Self::VaultSummariesPatch => &["spec"],
+            Self::VaultSummariesRegenerate => &["spec"],
+            Self::VaultSummariesProposalsRead => &["spec"],
+            Self::VaultSummariesProposalsMerge => &["spec"],
+            Self::VaultSummariesProposalsSwitch => &["spec"],
+            Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
@@ -5709,6 +5855,21 @@ impl AgentVerb {
             }
             Self::VaultAuthorityHistoryImport => {
                 "Imports original base64 signed authority envelopes atomically for the owner, preserving bytes and refolding locally. Invalid signatures, foreign genesis and missing parents write nothing."
+            }
+            Self::VaultSlimPolicy => {
+                "Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."
+            }
+            Self::VaultSlimState => {
+                "Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."
+            }
+            Self::VaultSlimResumeStep => {
+                "Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."
+            }
+            Self::VaultSlimDropHeavy => {
+                "Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."
+            }
+            Self::VaultSlimResume => {
+                "Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."
             }
             Self::VaultMeshPathReceipts => {
                 "The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."
@@ -6334,6 +6495,9 @@ impl AgentVerb {
             Self::VaultCriticReview => {
                 "Reviews one document, design or proposed claim through the host's decision ladder, one lens at a time, and writes the verdict as the caller; nothing is applied to the target."
             }
+            Self::VaultArtifactsInspectDeck => {
+                "Inspects one PPTX version for native edit targets and comment identities without minting ids."
+            }
             Self::VaultArtifactsProposeDeck => {
                 "Runs one native deck transaction over an artifact's head and holds the proposal for Keep."
             }
@@ -6949,6 +7113,39 @@ impl AgentVerb {
             }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."
+            }
+            Self::VaultSummariesCreate => {
+                "Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth."
+            }
+            Self::VaultSummariesRead => {
+                "Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot."
+            }
+            Self::VaultSummariesStatus => {
+                "Reads the calling principal's own summary declaration and its retained completion or failure."
+            }
+            Self::VaultSummariesKeep => {
+                "Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant."
+            }
+            Self::VaultSummariesEdit => {
+                "Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal."
+            }
+            Self::VaultSummariesPatch => {
+                "Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read."
+            }
+            Self::VaultSummariesRegenerate => {
+                "Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch."
+            }
+            Self::VaultSummariesProposalsRead => {
+                "Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable."
+            }
+            Self::VaultSummariesProposalsMerge => {
+                "Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts."
+            }
+            Self::VaultSummariesProposalsSwitch => {
+                "Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set."
+            }
+            Self::VaultSummariesProposalsReject => {
+                "Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."
             }
             Self::VaultNotesCreate => {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."

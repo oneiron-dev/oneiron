@@ -3,6 +3,7 @@
 use serde_json::Value;
 
 use crate::EntityId;
+use crate::code_run::consent_wait::{self, CodeConsentCallSite};
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunBridgeCall, CodeRunDeterminism, CodeRunReplayRecord};
 use crate::code_run::storage::{ExecutorStorage, derived_executor_id};
@@ -177,10 +178,20 @@ impl HostSelfDispatcher<'_> {
         let generation = self
             .storage
             .put_code_run_replay_record_if_generation_with_heal(&receipt, stopped, None)?;
+        // A call a code consent wait may bind carries its place in the run
+        // (DOOR-079 1a), so a hold for consent alone binds the wait to it.
+        let consent_site = self.code_consent_site(&call, site, ordinal, receipt_id)?;
+        let origin = match &consent_site {
+            Some(consent_site) => origin.with_code_consent(consent_site.clone()),
+            None => origin,
+        };
         let outcome = match door.call(&call, &origin, invocation) {
             // A held connector call parks before its receipt keeps it, so a
-            // resumed step parks on the same call again.
-            Ok(answer) => connector_call_answer(call.verb, answered(answer)),
+            // resumed step parks on the same call again: on its code consent
+            // wait when one was bound to it, else on the call itself.
+            Ok(answer) => {
+                self.code_consent_answer(consent_site.as_ref(), call.verb, answered(answer))?
+            }
             Err(Error::VerbHook(stop)) if matches!(*stop, VerbHookStop::Hidden { .. }) => {
                 answered(Err(AgentVerbRefusal {
                     code: VERB_HOOK_HIDDEN.to_owned(),
@@ -362,6 +373,60 @@ impl HostSelfDispatcher<'_> {
             ordinal += 1;
         }
         Ok(())
+    }
+
+    /// Where a write a code consent wait may bind sits in the run (DOOR-079
+    /// 1a): the wait id its write receipt and call identity fix, and the
+    /// step, bridge position and write ordinal, all from the executor's own
+    /// call site. `None` for a verb no code consent wait binds.
+    fn code_consent_site(
+        &self,
+        call: &SelfAgentVerbCall,
+        site: ExecutorCallSite<'_>,
+        ordinal: u64,
+        receipt_id: EntityId,
+    ) -> Result<Option<CodeConsentCallSite>> {
+        if !consent_wait::code_consent_binds(call.verb) {
+            return Ok(None);
+        }
+        let request_digest =
+            *blake3::hash(&call_identity(call.verb.as_str(), &call.input)).as_bytes();
+        Ok(Some(CodeConsentCallSite {
+            wait_id: consent_wait::code_consent_wait_id(receipt_id, &request_digest)?,
+            run_id: site.run_id,
+            run_ref: self.run_ref.clone(),
+            step_start: site.step_start,
+            bridge_seq: site.seq,
+            write_ordinal: ordinal,
+            write_receipt_id: receipt_id,
+            request_digest,
+        }))
+    }
+
+    /// A verb's answer as the run takes it, when a code consent wait may
+    /// bind it: a held call its wait was bound to parks the run on that
+    /// wait, which only its owner's answer and the effect's own gate settle.
+    /// Every other answer is [`connector_call_answer`]'s.
+    fn code_consent_answer(
+        &self,
+        consent_site: Option<&CodeConsentCallSite>,
+        verb: AgentVerb,
+        outcome: SelfDispatchOutcome,
+    ) -> Result<SelfDispatchOutcome> {
+        if let (Some(consent_site), SelfDispatchOutcome::AgentVerb(answer)) =
+            (consent_site, &outcome)
+            && let Some(call_ref) = held_call_ref(verb, &answer.output)
+            && let ExecutorStorage::Canonical(vault) = &self.storage
+            && consent_wait::code_consent_binds_held_call(vault, consent_site.wait_id, call_ref)?
+        {
+            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: consent_site.wait_id,
+                effect: SelfEffect::AgentVerb,
+                reason: SelfDurableWaitReason::OutboundEffect,
+                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
+            }));
+        }
+        Ok(connector_call_answer(verb, outcome))
     }
 
     /// The receipt of the step's write at `ordinal`: the run, the step's first

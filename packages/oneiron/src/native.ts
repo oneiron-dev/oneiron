@@ -156,6 +156,11 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultSlimPolicy(input: unknown): unknown
+vaultSlimState(input: unknown): unknown
+vaultSlimResumeStep(input: unknown): unknown
+vaultSlimDropHeavy(input: unknown): unknown
+vaultSlimResume(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
@@ -372,6 +377,7 @@ vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
+vaultArtifactsInspectDeck(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string
@@ -558,6 +564,17 @@ vaultDeliveryWindowPolicyList(input: unknown): unknown
 vaultDeliveryWindowPolicyRetract(input: unknown): unknown
 vaultDeliveryWindowEvaluate(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
+vaultSummariesCreate(input: unknown): unknown
+vaultSummariesRead(input: unknown): unknown
+vaultSummariesStatus(input: unknown): unknown
+vaultSummariesKeep(input: unknown): unknown
+vaultSummariesEdit(input: unknown): unknown
+vaultSummariesPatch(input: unknown): unknown
+vaultSummariesRegenerate(input: unknown): unknown
+vaultSummariesProposalsRead(input: unknown): unknown
+vaultSummariesProposalsMerge(input: unknown): unknown
+vaultSummariesProposalsSwitch(input: unknown): unknown
+vaultSummariesProposalsReject(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown

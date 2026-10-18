@@ -550,6 +550,8 @@ class Oneiron:
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
         @property
+        def slim(self) -> "Oneiron._VaultSlimVerbs": ...
+        @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs": ...
@@ -683,6 +685,8 @@ class Oneiron:
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs": ...
         @property
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
+        @property
+        def summaries(self) -> "Oneiron._VaultSummariesVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
     class _VaultPeopleVerbs:
@@ -989,6 +993,17 @@ class Oneiron:
             """Every saved authority handoff fork alarm, for the owner."""
         def acknowledge(self, spec: Facade.HandoffAlarmRequest) -> Facade.AuthorityHandoffAlarm:
             """The owner acknowledges one saved handoff fork alarm."""
+    class _VaultSlimVerbs:
+        def policy(self, spec: Facade.EmptyRequest) -> Facade.SlimIdlePolicy:
+            """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""
+        def state(self, spec: Facade.EmptyRequest) -> Facade.SlimStateSnapshot:
+            """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+        def resume_step(self, spec: Facade.SlimResumeStepRequest) -> Facade.SavedResumeStep:
+            """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
+        def drop_heavy(self, spec: Facade.SlimDropRequest) -> Facade.SlimDropReceipt:
+            """Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."""
+        def resume(self, spec: Facade.EmptyRequest) -> Facade.SlimResumeReceipt:
+            """Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."""
     class _VaultMeshVerbs:
         def path_receipts(self, spec: Facade.MeshPathReceiptsRequest) -> list[Facade.MeshPathReceipt]:
             """The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."""
@@ -1375,6 +1390,8 @@ class Oneiron:
         def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.SlideReviewOutcome: ...
         def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ArtifactAskOutcome:
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
+        def inspect_deck(self, spec: Facade.DeckInspectRequest) -> Facade.DeckInspectionView:
+            """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
         def propose_deck(self, request: Facade.DeckProposeRequest) -> Facade.DeckProposeOutcome: ...
         def propose_output(self, request: Facade.NativeOutputRequest) -> Facade.PendingProposalView: ...
         def keep(self, request: Facade.ProposalSettleRequest) -> Facade.KeptProposal: ...
@@ -1861,6 +1878,32 @@ class Oneiron:
             """Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance."""
         def retract(self, spec: Facade.DeliveryWindowPolicyRetractRequest) -> Facade.CommitReceipt:
             """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
+    class _VaultSummariesVerbs:
+        def create(self, request: Facade.SummaryCreateRequest) -> Facade.SummaryQueued:
+            """Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth."""
+        def read(self, request: Facade.SummaryReadRequest) -> Facade.ScopedReadResult[Facade.SummaryReadView | None]:
+            """Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot."""
+        def status(self, request: Facade.SummaryStatusRequest) -> Facade.ScopeSummaryStatus:
+            """Reads the calling principal's own summary declaration and its retained completion or failure."""
+        def keep(self, request: Facade.SummaryKeepRequest) -> Facade.SummaryKeepResult:
+            """Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant."""
+        def edit(self, request: Facade.SummaryEditRequest) -> Facade.SummaryProposalView:
+            """Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal."""
+        def patch(self, request: Facade.SummaryPatchRequest) -> Facade.SummaryMutationResult:
+            """Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read."""
+        def regenerate(self, request: Facade.SummaryRegenerateRequest) -> Facade.SummaryMutationResult:
+            """Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch."""
+        @property
+        def proposals(self) -> "Oneiron._VaultSummariesProposalsVerbs": ...
+    class _VaultSummariesProposalsVerbs:
+        def read(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable."""
+        def merge(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts."""
+        def switch(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set."""
+        def reject(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""

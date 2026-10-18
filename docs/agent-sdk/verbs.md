@@ -128,6 +128,11 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.slim.policy`
+- `vault.slim.state`
+- `vault.slim.resume_step`
+- `vault.slim.drop_heavy`
+- `vault.slim.resume`
 - `vault.mesh.path_receipts`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
@@ -344,6 +349,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
 - `vault.critic.review`
+- `vault.artifacts.inspect_deck`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
 - `vault.artifacts.keep`
@@ -530,6 +536,17 @@ both bindings and their export-census tests in one change.
 - `vault.delivery_window.policy.retract`
 - `vault.delivery_window.evaluate`
 - `connector.outbound.schedule`
+- `vault.summaries.create`
+- `vault.summaries.read`
+- `vault.summaries.status`
+- `vault.summaries.keep`
+- `vault.summaries.edit`
+- `vault.summaries.patch`
+- `vault.summaries.regenerate`
+- `vault.summaries.proposals.read`
+- `vault.summaries.proposals.merge`
+- `vault.summaries.proposals.switch`
+- `vault.summaries.proposals.reject`
 - `vault.notes.create`
 - `vault.notes.from_entity`
 - `vault.notes.read`

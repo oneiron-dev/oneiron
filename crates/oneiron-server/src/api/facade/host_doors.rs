@@ -84,6 +84,7 @@ pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
+pub(crate) use super::summary_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
 // The weave lens's human doors, likewise.
@@ -105,6 +106,7 @@ pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
 pub(crate) use super::setting_doors::*;
+pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
 // The owner's root wave door (OF-427), likewise.
@@ -1127,6 +1129,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.weights.get"
         | "vault.retrieval.weights.configure"
         | "vault.affect.claims.consolidate"
+        | "vault.slim.policy"
+        | "vault.slim.state"
+        | "vault.slim.resume_step"
+        | "vault.slim.drop_heavy"
+        | "vault.slim.resume"
         | "vault.retrieval.recall"
         | "vault.retrieval.runs"
         | "vault.retrieval.run"

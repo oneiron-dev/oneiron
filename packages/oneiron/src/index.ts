@@ -666,6 +666,18 @@ export class Oneiron {
         acknowledge: (input: Facade.HandoffAlarmRequest): Facade.AuthorityHandoffAlarm => this.#call(() => this.#client.vaultAuthorityHandoffAlarmsAcknowledge(input) as Facade.AuthorityHandoffAlarm),
       }),
     },
+    slim: {
+      /** Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild. */
+      policy: (input: Facade.EmptyRequest): Facade.SlimIdlePolicy => this.#call(() => this.#client.vaultSlimPolicy(input) as Facade.SlimIdlePolicy),
+      /** Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault. */
+      state: (input: Facade.EmptyRequest): Facade.SlimStateSnapshot => this.#call(() => this.#client.vaultSlimState(input) as Facade.SlimStateSnapshot),
+      /** Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it. */
+      resume_step: (input: Facade.SlimResumeStepRequest): Facade.SavedResumeStep => this.#call(() => this.#client.vaultSlimResumeStep(input) as Facade.SavedResumeStep),
+      /** Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required. */
+      drop_heavy: (input: Facade.SlimDropRequest): Facade.SlimDropReceipt => this.#call(() => this.#client.vaultSlimDropHeavy(input) as Facade.SlimDropReceipt),
+      /** Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued. */
+      resume: (input: Facade.EmptyRequest): Facade.SlimResumeReceipt => this.#call(() => this.#client.vaultSlimResume(input) as Facade.SlimResumeReceipt),
+    },
     mesh: {
       /** The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner. */
       path_receipts: (input: Facade.MeshPathReceiptsRequest): Facade.MeshPathReceipt[] => this.#call(() => this.#client.vaultMeshPathReceipts(input) as Facade.MeshPathReceipt[]),
@@ -1076,6 +1088,8 @@ export class Oneiron {
       review_slides: (request: Facade.SlideReviewSubmit): Facade.SlideReviewOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsReviewSlides(keyedJson(request))) as Facade.SlideReviewOutcome; return result }),
       /** Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard. */
       ask: (input: Facade.ArtifactAskSubmit): Facade.ArtifactAskOutcome => this.#call(() => this.#client.vaultArtifactsAsk(input) as Facade.ArtifactAskOutcome),
+      /** Inspects one PPTX version for native edit targets and comment identities without minting ids. */
+      inspect_deck: (input: Facade.DeckInspectRequest): Facade.DeckInspectionView => this.#call(() => this.#client.vaultArtifactsInspectDeck(input) as Facade.DeckInspectionView),
       /** Runs one native deck transaction over the head and holds the proposal for Keep. */
       propose_deck: (request: Facade.DeckProposeRequest): Facade.DeckProposeOutcome => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsProposeDeck(keyedJson(request))) as Facade.DeckProposeOutcome; return result }),
       /** Offers one native organ result as the artifact's next version, held for Keep. */
@@ -1583,6 +1597,32 @@ export class Oneiron {
       },
       /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
       evaluate: (input: Facade.DeliveryWindowEvaluateRequest): Facade.DeliveryWindowPreview => this.#call(() => this.#client.vaultDeliveryWindowEvaluate(input) as Facade.DeliveryWindowPreview),
+    },
+    summaries: {
+      /** Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth. */
+      create: (request: Facade.SummaryCreateRequest): Facade.SummaryQueued => this.#call(() => this.#client.vaultSummariesCreate(request) as Facade.SummaryQueued),
+      /** Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot. */
+      read: (request: Facade.SummaryReadRequest): Facade.ScopedReadResult<Facade.SummaryReadView | null> => this.#call(() => this.#client.vaultSummariesRead(request) as Facade.ScopedReadResult<Facade.SummaryReadView | null>),
+      /** Reads the calling principal's own summary declaration and its retained completion or failure. */
+      status: (request: Facade.SummaryStatusRequest): Facade.ScopeSummaryStatus => this.#call(() => this.#client.vaultSummariesStatus(request) as Facade.ScopeSummaryStatus),
+      /** Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant. */
+      keep: (request: Facade.SummaryKeepRequest): Facade.SummaryKeepResult => this.#call(() => this.#client.vaultSummariesKeep(request) as Facade.SummaryKeepResult),
+      /** Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal. */
+      edit: (request: Facade.SummaryEditRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesEdit(request) as Facade.SummaryProposalView),
+      /** Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read. */
+      patch: (request: Facade.SummaryPatchRequest): Facade.SummaryMutationResult => this.#call(() => this.#client.vaultSummariesPatch(request) as Facade.SummaryMutationResult),
+      /** Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch. */
+      regenerate: (request: Facade.SummaryRegenerateRequest): Facade.SummaryMutationResult => this.#call(() => this.#client.vaultSummariesRegenerate(request) as Facade.SummaryMutationResult),
+      proposals: {
+        /** Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable. */
+        read: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsRead(request) as Facade.SummaryProposalView),
+        /** Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts. */
+        merge: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsMerge(request) as Facade.SummaryProposalView),
+        /** Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set. */
+        switch: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsSwitch(request) as Facade.SummaryProposalView),
+        /** Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads. */
+        reject: (request: Facade.SummaryProposalRequest): Facade.SummaryProposalView => this.#call(() => this.#client.vaultSummariesProposalsReject(request) as Facade.SummaryProposalView),
+      },
     },
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */

@@ -117,6 +117,7 @@ fn admit_word_with_source(
     )?;
     super::super::training_swap_ask::guard_word(vault, txn, id, group, source, actor, word, owner)?;
     super::super::comm_widen::guard_word(vault, txn, id, group, source, actor, word)?;
+    super::super::code_consent_word::guard_word(vault, txn, id, group, source, actor, word)?;
     if word.confirmation.is_some() {
         if source != TaskAskSource::Human {
             return Err(invalid());
