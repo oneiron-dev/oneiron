@@ -346,6 +346,57 @@ pub(crate) fn drop_table_columns(
     (out != formula).then_some(out)
 }
 
+/// `formula` with each reference to a table in `tables` (names in lower
+/// case) reading `#REF!`, as Excel's does when the sheet holding the table
+/// goes: a structured reference (`Sales[Price]`, `Sales[#All]`) or the bare
+/// table name. A sheet prefix, a function and a reference into another
+/// workbook stay. `None` when nothing changed.
+#[must_use]
+pub fn drop_tables(formula: &str, tables: &HashSet<String>) -> Option<String> {
+    let bytes = formula.as_bytes();
+    let mut out = String::with_capacity(formula.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'"' || b == b'\'' {
+            let end = quoted_end(bytes, i);
+            out.push_str(&formula[i..end]);
+            i = end;
+            continue;
+        }
+        if b == b'[' {
+            let end = bracket_end(bytes, i);
+            out.push_str(&formula[i..end]);
+            i = end;
+            continue;
+        }
+        let ch = formula[i..].chars().next()?;
+        if !(ch.is_alphanumeric() || matches!(ch, '_' | '\\')) {
+            out.push(ch);
+            i += ch.len_utf8();
+            continue;
+        }
+        let end = token_end(formula, i);
+        let name = &formula[i..end];
+        let next = bytes.get(end).copied();
+        if (i > 0 && bytes[i - 1] == b'!')
+            || matches!(next, Some(b'!' | b'('))
+            || !tables.contains(&name.to_lowercase())
+        {
+            out.push_str(name);
+            i = end;
+            continue;
+        }
+        out.push_str("#REF!");
+        i = if next == Some(b'[') {
+            bracket_end(bytes, end)
+        } else {
+            end
+        };
+    }
+    (out != formula).then_some(out)
+}
+
 /// One structured reference's brackets after columns `gone` (lower case)
 /// leave a table whose columns were `columns`: `None` when it keeps them
 /// all, `Some(None)` when it reads `#REF!`.
