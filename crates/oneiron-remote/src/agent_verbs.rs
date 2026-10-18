@@ -728,6 +728,15 @@ impl OneironClient {
                 "vault.packs.remove" => remote_agent_verb_output::<
                     oneiron::skill_hub::pack_catalog::PackInstallReceipt,
                 >(client, verb, &input),
+                "ai.chat.completions" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ChatCompletionResponse,
+                >(client, verb, &input),
+                "vault.connectors.proxy.admit" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ProxyConnectorRegistration,
+                >(client, verb, &input),
+                "vault.connectors.proxy.revoke_write" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::ProxyConnectorRegistration,
+                >(client, verb, &input),
                 "vault.connectors.subscriptions.put" => remote_agent_verb_output::<
                     oneiron::connector_key::ChannelMessageSubscription,
                 >(client, verb, &input),
@@ -5646,6 +5655,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.packs.remove", value)
+    }
+    pub fn ai_chat_completions(
+        &self,
+        input: &oneiron::task_verb::sdk::ChatCompletionRequest,
+    ) -> Result<oneiron::task_verb::sdk::ChatCompletionResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.chat.completions", value)
+    }
+    pub fn vault_connectors_proxy_admit(
+        &self,
+        input: &oneiron::task_verb::sdk::ProxyConnectorAdmitRequest,
+    ) -> Result<oneiron::task_verb::sdk::ProxyConnectorRegistration, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.proxy.admit", value)
+    }
+    pub fn vault_connectors_proxy_revoke_write(
+        &self,
+        input: &oneiron::task_verb::sdk::ProxyConnectorRevokeWriteRequest,
+    ) -> Result<oneiron::task_verb::sdk::ProxyConnectorRegistration, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.connectors.proxy.revoke_write", value)
     }
     pub fn vault_connectors_subscriptions_put(
         &self,

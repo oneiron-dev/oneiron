@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 905 facade rows, 3099 declarations.
-Inputs: 851 of 905 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 821 of 905 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 908 facade rows, 3120 declarations.
+Inputs: 854 of 908 fully typed, 54 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 822 of 908 fully typed, 86 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 102; unread shapes: 0.
 """
 
@@ -4631,6 +4631,95 @@ class ConnectorPackGrantsPutRequest(TypedDict):
     rows: list[ConnectorPackGrantRow]
 class PackRemoveRequest(TypedDict):
     pack: str
+ChatRole = Literal["system", "developer", "user", "assistant"]
+class ChatPart(TypedDict):
+    type: Literal["text"]
+    text: str
+ChatContent = str | list[ChatPart]
+class ChatMessage(TypedDict):
+    role: ChatRole
+    content: ChatContent
+    name: NotRequired[str | None]
+ChatStop = str | list[str]
+class ChatCompletionRequest(TypedDict):
+    model: str
+    messages: list[ChatMessage]
+    stream: NotRequired[bool | None]
+    n: NotRequired[int | None]
+    temperature: NotRequired[float | None]
+    top_p: NotRequired[float | None]
+    max_tokens: NotRequired[int | None]
+    max_completion_tokens: NotRequired[int | None]
+    stop: NotRequired[ChatStop | None]
+    presence_penalty: NotRequired[float | None]
+    frequency_penalty: NotRequired[float | None]
+    seed: NotRequired[int | None]
+    user: NotRequired[str | None]
+ChatCompletionObject = Literal["chat.completion"]
+ChatCompletionRole = Literal["assistant"]
+class ChatCompletionMessage(TypedDict):
+    role: ChatCompletionRole
+    content: str
+class ChatCompletionChoice(TypedDict):
+    index: int
+    message: ChatCompletionMessage
+    finish_reason: str
+class ChatCompletionUsage(TypedDict):
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+class ChatCompletionRememberError(TypedDict):
+    code: str
+    message: str
+class ChatCompletionRememberedSaved(TypedDict):
+    claim: str
+    approval: str
+class ChatCompletionRememberedRefused(TypedDict):
+    error: ChatCompletionRememberError
+ChatCompletionRemembered = ChatCompletionRememberedSaved | ChatCompletionRememberedRefused
+class ChatCompletionMemory(TypedDict):
+    injected: bool
+    remembered: ChatCompletionRemembered
+class ChatCompletionResponse(TypedDict):
+    id: str
+    object: ChatCompletionObject
+    created: int
+    model: str
+    choices: list[ChatCompletionChoice]
+    usage: ChatCompletionUsage
+    oneiron: ChatCompletionMemory
+class ProxyConnectorAdmitRequest(TypedDict):
+    actor: str
+class ConnectorPendingManifestView(TypedDict):
+    candidate: str
+    protocol_revision: str
+    report_hash: NotRequired[str | None]
+class ConnectorKeyView(TypedDict):
+    id: str
+    status: str
+    secret_ref: NotRequired[str | None]
+    protocol_revision: NotRequired[str | None]
+    accepted_slate_revision: NotRequired[int | None]
+    consent_required: bool
+    qualification: NotRequired[ConnectorQualificationReceipt | None]
+    manifest_hash: NotRequired[str | None]
+    pending_manifest: NotRequired[ConnectorPendingManifestView | None]
+class ConnectorSlateView(TypedDict):
+    id: str
+    revision: int
+    stamped: bool
+    facet_limit: NotRequired[list[str] | None]
+    manifest: list[SlateToolManifest]
+    rows: list[SlateRow]
+    reach: ShapePlanReach
+class ProxyConnectorRegistration(TypedDict):
+    connector: str
+    key: ConnectorKeyView
+    slate: ConnectorSlateView
+class ProxyConnectorRevokeWriteRequest(TypedDict):
+    actor: str
+    key: str
+    revision: int
 class ChannelSubscriptionRequest(TypedDict):
     agent: str
     channel: str

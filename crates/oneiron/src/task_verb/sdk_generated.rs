@@ -1122,6 +1122,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<PackRemoveRequest>(),
             ),
             (
+                "ai.chat.completions",
+                crate::code_run::vault_read::request_schema::<ChatCompletionRequest>(),
+            ),
+            (
+                "vault.connectors.proxy.admit",
+                crate::code_run::vault_read::request_schema::<ProxyConnectorAdmitRequest>(),
+            ),
+            (
+                "vault.connectors.proxy.revoke_write",
+                crate::code_run::vault_read::request_schema::<ProxyConnectorRevokeWriteRequest>(),
+            ),
+            (
                 "vault.connectors.subscriptions.put",
                 crate::code_run::vault_read::request_schema::<ChannelSubscriptionRequest>(),
             ),
@@ -5265,6 +5277,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.packs.connector.update",
     "vault.packs.connector.grants.get",
     "vault.packs.connector.grants.put",
+    "ai.chat.completions",
+    "vault.connectors.proxy.admit",
+    "vault.connectors.proxy.revoke_write",
     "vault.authority.history.export",
     "vault.authority.history.import",
     "vault.slim.policy",
@@ -6149,6 +6164,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.packs.connector.grants.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ConnectorPackGrants,
+        >(),
+        "ai.chat.completions" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ChatCompletionResponse,
+        >(),
+        "vault.connectors.proxy.admit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ProxyConnectorRegistration,
+        >(),
+        "vault.connectors.proxy.revoke_write" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ProxyConnectorRegistration,
         >(),
         "vault.authority.history.export" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SignedAuthorityHistory,
@@ -9021,6 +9045,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.remove" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.chat.completions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.proxy.admit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.connectors.proxy.revoke_write" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -14528,6 +14573,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.packs.remove" => {
             let _input: PackRemoveRequest = decode(value.clone())?;
         }
+        "ai.chat.completions" => {
+            let _input: ChatCompletionRequest = decode(value.clone())?;
+        }
+        "vault.connectors.proxy.admit" => {
+            let _input: ProxyConnectorAdmitRequest = decode(value.clone())?;
+        }
+        "vault.connectors.proxy.revoke_write" => {
+            let _input: ProxyConnectorRevokeWriteRequest = decode(value.clone())?;
+        }
         "vault.connectors.subscriptions.put" => {
             let _input: ChannelSubscriptionRequest = decode(value.clone())?;
         }
@@ -17394,6 +17448,13 @@ pub fn invoke(
             encode(vault_packs_connector_grants_put(memory, decode(value)?)?)
         }
         "vault.packs.remove" => encode(vault_packs_remove(memory, decode(value)?)?),
+        "ai.chat.completions" => encode(ai_chat_completions(memory, decode(value)?)?),
+        "vault.connectors.proxy.admit" => {
+            encode(vault_connectors_proxy_admit(memory, decode(value)?)?)
+        }
+        "vault.connectors.proxy.revoke_write" => {
+            encode(vault_connectors_proxy_revoke_write(memory, decode(value)?)?)
+        }
         "vault.connectors.subscriptions.put" => {
             encode(vault_connectors_subscriptions_put(memory, decode(value)?)?)
         }
@@ -20715,6 +20776,24 @@ pub fn vault_packs_remove(
     input: PackRemoveRequest,
 ) -> MemoryResult<crate::skill_hub::pack_catalog::PackInstallReceipt> {
     crate::task_verb::sdk::remove_pack_embedded(memory, input)
+}
+pub fn ai_chat_completions(
+    memory: &Memory<'_>,
+    input: ChatCompletionRequest,
+) -> MemoryResult<crate::task_verb::sdk::ChatCompletionResponse> {
+    crate::task_verb::sdk::host_only(memory, "ai.chat.completions", &input)
+}
+pub fn vault_connectors_proxy_admit(
+    memory: &Memory<'_>,
+    input: ProxyConnectorAdmitRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProxyConnectorRegistration> {
+    crate::task_verb::sdk::host_only(memory, "vault.connectors.proxy.admit", &input)
+}
+pub fn vault_connectors_proxy_revoke_write(
+    memory: &Memory<'_>,
+    input: ProxyConnectorRevokeWriteRequest,
+) -> MemoryResult<crate::task_verb::sdk::ProxyConnectorRegistration> {
+    crate::task_verb::sdk::host_only(memory, "vault.connectors.proxy.revoke_write", &input)
 }
 pub fn vault_connectors_subscriptions_put(
     memory: &Memory<'_>,

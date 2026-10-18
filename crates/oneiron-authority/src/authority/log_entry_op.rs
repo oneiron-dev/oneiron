@@ -132,6 +132,11 @@ pub enum AuthorityOp {
     /// install key, with the request among its parents. A main-log entry,
     /// value-free.
     OwnerWorkResult(OwnerWorkResult),
+    /// One owner choice of the vault's checkpoint root policy, signed by
+    /// the install key of a live machine of the vault, in any role (mesh
+    /// PR2c, K06). A main-log entry, so every machine the owner admits
+    /// folds it.
+    CheckpointPolicySet(CheckpointPolicySet),
 }
 
 /// A canonical, signed AUTHORITY_LOG entry.
@@ -189,6 +194,7 @@ impl AuthorityLogEntry {
             AuthorityOp::ResidenceResult(result) => result.validate_entry(self)?,
             AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
             AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
+            AuthorityOp::CheckpointPolicySet(set) => set.validate_entry(self)?,
             _ => {}
         }
         self.signer.validate()?;
@@ -407,6 +413,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::GrantTravelSet(set) => set.validate(),
         AuthorityOp::OwnerWorkRequest(request) => request.validate(),
         AuthorityOp::OwnerWorkResult(result) => result.validate(),
+        AuthorityOp::CheckpointPolicySet(set) => set.validate(),
     }
 }
 

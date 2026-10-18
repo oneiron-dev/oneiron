@@ -3604,6 +3604,54 @@
       "section": false
     },
     {
+      "name": "ai.chat.completions",
+      "description": "Recalls scoped memory, injects it as data, forwards a buffered OpenAI chat call and proposes the exchange under the paired connector's own ceiling.",
+      "input": "ChatCompletionRequest",
+      "output": "crate::task_verb::sdk::ChatCompletionResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.chat.completions\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door_session": true,
+      "proposes": true,
+      "mcp_scope": "filtered"
+    },
+    {
+      "name": "vault.connectors.proxy.admit",
+      "description": "The owner admits the OpenAI memory proxy for one paired actor, stamping its read and remember slate and activating its connector key.",
+      "input": "ProxyConnectorAdmitRequest",
+      "output": "crate::task_verb::sdk::ProxyConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.proxy.admit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.connectors.proxy.revoke_write",
+      "description": "The owner withdraws only the proxy remember grant at the reviewed key and slate revision; read access, stored memories and the connector remain intact.",
+      "input": "ProxyConnectorRevokeWriteRequest",
+      "output": "crate::task_verb::sdk::ProxyConnectorRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.connectors.proxy.revoke_write\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.connectors.subscriptions.put",
       "description": "The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer.",
       "input": "ChannelSubscriptionRequest",
