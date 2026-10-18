@@ -31373,6 +31373,56 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/merge_queue_doors/mod.rs",
+     "purpose": "Typed speculative merge queue doors (DOOR-132): enqueue stored repository proposals as one batch, stage it…",
+     "surface": {
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/merge_queue_doors/observation.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/merge_queue_doors/operations.rs",
+     "purpose": "—",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "MergeQueueBatchRequest",
+      "MergeQueueBatchView",
+      "MergeQueueEnqueueRequest",
+      "MergeQueueObservation",
+      "MergeQueueObserveRequest",
+      "MergeQueuePathView",
+      "MergeQueuePointersView",
+      "MergeQueueRepoRequest",
+      "MergeQueueRequeueView"
+     ],
+     "path": "src/memory/merge_queue_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/message_result.rs",
      "purpose": "The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`…",
      "surface": {
@@ -31388,7 +31438,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 6,
+      "mod": 7,
       "re-export": 43
      }
     },
@@ -49628,7 +49678,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 527
+      "fn": 534
      }
     },
     {
@@ -55808,7 +55858,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 159,
+     "files": 163,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56489,7 +56539,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3441,
+   "source_files": 3445,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64903,7 +64953,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 477
+      "fn": 484
      }
     },
     {
@@ -65952,7 +66002,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 478
+      "fn": 485
      }
     },
     {
@@ -69115,7 +69165,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 94
+      "crate-vis": 95
      }
     },
     {
@@ -69156,6 +69206,16 @@
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/merge_queue_doors.rs",
+     "purpose": "Credential-bound host projections of the typed speculative merge queue doors (DOOR-132)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -76510,7 +76570,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 350,
+     "files": 351,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76925,7 +76985,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 675,
+   "source_files": 676,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77126,6 +77186,7 @@
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
+      "AffectedTests",
       "AgentBudgetView",
       "AgentCeilingInput",
       "AgentDefinitionCreateRequest",
@@ -77247,6 +77308,7 @@
       "AuthorityHandoffAlarmAck",
       "AuthorityHistoryImported",
       "BandMode",
+      "BatchState",
       "BlindCampaignJudgeInput",
       "BlockChange",
       "BodyBlockKind",
@@ -77427,6 +77489,7 @@
       "ColdAuthorityAuditRow",
       "CollectionAtom",
       "CommReach",
+      "CommandOutput",
       "CompanionSharingRequest",
       "CompanionSharingSetRequest",
       "CompanionSharingStored",
@@ -77505,6 +77568,8 @@
       "ContextPackRetrievalBudgetControls",
       "ContextReceiptFields",
       "ContextSpec",
+      "ContractDiff",
+      "ContractVerdict",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
@@ -77988,6 +78053,15 @@
       "MemorySupersedeInput",
       "MemoryWriteOutput",
       "MergeCrossover",
+      "MergeQueueBatchRequest",
+      "MergeQueueBatchView",
+      "MergeQueueEnqueueRequest",
+      "MergeQueueObservation",
+      "MergeQueueObserveRequest",
+      "MergeQueuePathView",
+      "MergeQueuePointersView",
+      "MergeQueueRepoRequest",
+      "MergeQueueRequeueView",
       "MergedFinding",
       "MeshPathDirection",
       "MeshPathKind",
@@ -78264,6 +78338,7 @@
       "QualificationInjectionSurface",
       "QualificationLimits",
       "QualificationPlan",
+      "Quarantine",
       "QuestionActivation",
       "QuestionAnswer",
       "QuestionAnswersRequest",
@@ -78860,8 +78935,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 464,
-      "struct": 1273
+      "enum": 466,
+      "struct": 1286
      }
     },
     {

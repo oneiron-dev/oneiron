@@ -874,6 +874,29 @@ impl OneironClient {
                 "vault.code.symbols.definitions" => remote_agent_verb_output::<
                     oneiron::memory::codebase_doors::CodeSnapshotDefinitionsView,
                 >(client, verb, &input),
+                "vault.code.merge_queue.enqueue" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueBatchView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.stage" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueBatchView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.observe" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueObservation,
+                >(client, verb, &input),
+                "vault.code.merge_queue.requeue_survivors" => {
+                    remote_agent_verb_output::<
+                        oneiron::memory::merge_queue_doors::MergeQueueRequeueView,
+                    >(client, verb, &input)
+                }
+                "vault.code.merge_queue.land_reviewed" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueueBatchView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.settle_slow" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueuePointersView,
+                >(client, verb, &input),
+                "vault.code.merge_queue.recover" => remote_agent_verb_output::<
+                    oneiron::memory::merge_queue_doors::MergeQueuePointersView,
+                >(client, verb, &input),
                 "vault.artifacts.export" => remote_agent_verb_output::<
                     Option<oneiron::blob_artifact::ArtifactExportFile>,
                 >(client, verb, &input),
@@ -4878,6 +4901,90 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.symbols.definitions", value)
+    }
+    pub fn vault_code_merge_queue_enqueue(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueBatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.enqueue", value)
+    }
+    pub fn vault_code_merge_queue_stage(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueBatchRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueBatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.stage", value)
+    }
+    pub fn vault_code_merge_queue_observe(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueObserveRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueObservation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.observe", value)
+    }
+    pub fn vault_code_merge_queue_requeue_survivors(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueBatchRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueRequeueView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.requeue_survivors", value)
+    }
+    pub fn vault_code_merge_queue_land_reviewed(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueBatchRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueueBatchView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.land_reviewed", value)
+    }
+    pub fn vault_code_merge_queue_settle_slow(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueRepoRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueuePointersView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.settle_slow", value)
+    }
+    pub fn vault_code_merge_queue_recover(
+        &self,
+        input: &oneiron::memory::merge_queue_doors::MergeQueueRepoRequest,
+    ) -> Result<oneiron::memory::merge_queue_doors::MergeQueuePointersView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.merge_queue.recover", value)
     }
     /// One version's export file (base64), with its pinned name and media type.
     pub fn vault_artifacts_export(

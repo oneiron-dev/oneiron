@@ -149,6 +149,12 @@ impl Memory<'_> {
         let Some(proposal) = vault.repo_proposal(EntityId::from_hex(&input.proposal_ref)?)? else {
             return Ok(None);
         };
+        // The proposal claim is read through the caller's credential, so a
+        // withheld proposal answers as an absent one (FIX 4344).
+        if self.get_entity(&proposal.id.to_hex())?.value.is_none() {
+            return Ok(None);
+        }
+        self.produced_from([proposal.id, proposal.session, proposal.provenance_claim]);
         let repo = RepoRef::parse(&proposal.repo)?;
         let base =
             vault.mount_repo_ref(&repo, RepoMountRef::Fork(proposal.pre_action_fork_hash))?;
