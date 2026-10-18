@@ -1,5 +1,7 @@
 //! Host entry points for the CEO starter on a leased, task-bound leader.
 
+use std::sync::Arc;
+
 use super::HostSelfDispatcher;
 use crate::agent_dispatch::{
     AgentDispatchInput, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, LeaderStarter,
@@ -10,7 +12,8 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::AttemptRecord;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfLeaderCall, SelfSpawnAsk,
+    SelfAgentSpawnResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfLeaderCall,
+    SelfSpawnAsk,
 };
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::error::{ArtifactError, Error, Result};
@@ -19,6 +22,7 @@ use crate::memory::MemoryResult;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::skill::LoadedSkillPack;
 use crate::task_type::PlacementDecisions;
+use crate::team::{LeasedSpawnRequest, PatternLaunchRunner, PlannedSpawnHost, SpawnPhase};
 use crate::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
 use crate::{EntityId, Vault};
 
@@ -27,6 +31,18 @@ fn invalid() -> Error {
         "leader starter requires its host-bound acquired agent lease",
     ))
 }
+
+/// The placement adapter a leased agent's planned spawn reserves its intent
+/// under (DOOR-111 S4c-4): the run's own dispatcher, which keeps no
+/// idempotency key of its own.
+const LEASED_SPAWN_ADAPTER: &str = "code_run.agents_spawn.v1";
+
+const SPAWN_REFUSED: &str = "this planned spawn was refused, and its intent key keeps the \
+     refusal; ask again under a new intent key";
+const SPAWN_UNLAUNCHED: &str = "this planned spawn is planned but did not launch; ask again \
+     under the same intent key to launch it";
+const SPAWN_UNQUEUED: &str = "this planned spawn's launch names no queued agent; ask again \
+     under a new intent key";
 
 /// The host's planner (OF-541, OF-389): the skills, seats, executor and
 /// ladders a planned spawn, its type placement and the leader's advice read
@@ -49,6 +65,11 @@ pub struct HostPlannerBinding<'a> {
     pub leader: LeaderStarterSkills,
     /// How many shapes advice returns when the leader names no count.
     pub top: usize,
+    /// The run's own pattern runner (DOOR-111 S4c-4): a planned team's
+    /// start is written on the spawning agent's seat, under its meter and
+    /// payer. Unset, a planned spawn takes the planned path that places,
+    /// plans and dispatches the plan's seat alone.
+    pub pattern_runner: Option<Arc<dyn PatternLaunchRunner>>,
 }
 
 /// The host's typed-decision ladder for a run's planner: its principal,
@@ -128,6 +149,93 @@ impl HostSelfDispatcher<'_> {
 
     pub(super) const fn planner_bound(&self) -> bool {
         self.planner.is_some()
+    }
+
+    /// Whether the host's planner lends this run its own pattern runner.
+    pub(super) fn pattern_runner_bound(&self) -> bool {
+        self.planner
+            .as_ref()
+            .is_some_and(|planner| planner.pattern_runner.is_some())
+    }
+
+    /// DOOR-111 S4c-4: a leased agent's planned spawn on a host that lends
+    /// the run its own pattern runner. The ask is reserved under its intent
+    /// key beneath the agent's real parent attempt, placed and planned on
+    /// the host's planner, each on a fresh clock of its budget, and launched
+    /// whole: a team's start is written on the runner, and its leader and
+    /// members are queued as one group. The same key answers what it kept.
+    /// The leader, or a solo's one agent, answers as the spawn's queued
+    /// attempt, with the launch statement its dispatch froze.
+    ///
+    /// A refusal the intent kept answers as the planned path's planner
+    /// refusals do, typed as invalid dispatch input.
+    pub(super) fn launch_planned_spawn(
+        &self,
+        intent_key: String,
+        ask: SelfSpawnAsk,
+        context: AgentSpawnContext,
+        at: u64,
+    ) -> Result<SelfDispatchOutcome> {
+        let planner = self.planner.as_ref().ok_or_else(invalid)?;
+        let runner = planner.pattern_runner.as_deref().ok_or_else(invalid)?;
+        let (vault, leased) = self.leader_attempt()?;
+        let host = planner.decisions.as_ref();
+        let placement_clock = host.map(|host| HostPlannerDecisions::clock(host.placement_budget));
+        let placement = host
+            .zip(placement_clock.as_ref())
+            .map(|(host, clock)| host.placement(clock));
+        let planner_clock = host.map(|host| HostPlannerDecisions::clock(host.planner_budget));
+        let decisions = host
+            .zip(planner_clock.as_ref())
+            .map(|(host, clock)| host.planner(clock));
+        let spawn_host = PlannedSpawnHost {
+            seats: &planner.seats,
+            skills: &planner.skills,
+            executor: &planner.executor,
+            placement: placement.as_ref(),
+            planner: decisions.as_ref(),
+            spend: None,
+            placement_adapter: LEASED_SPAWN_ADAPTER,
+            placement_key: None,
+        };
+        let request = LeasedSpawnRequest {
+            intent_key,
+            ask,
+            context,
+        };
+        let view = AgentDispatcher::new(vault).launch_planned_spawn_for_attempt(
+            &leased,
+            &self.actor.entity_ref(),
+            &request,
+            &spawn_host,
+            Some(runner),
+            at,
+        )?;
+        let attempt_ref = match view.phase {
+            SpawnPhase::Launched => view.root_attempt.ok_or_else(|| refused(SPAWN_UNQUEUED))?,
+            SpawnPhase::Planned => return Err(refused(SPAWN_UNLAUNCHED)),
+            SpawnPhase::Refused => {
+                tracing::warn!(
+                    agent = %self.actor.entity_ref().to_hex(),
+                    refusal = view.refusal.as_deref().unwrap_or_default(),
+                    "a leased agent's planned spawn was refused"
+                );
+                return Err(refused(SPAWN_REFUSED));
+            }
+        };
+        // The statement the leader's dispatch froze, when it reads.
+        let launch = DreamerRunnerStore::new(vault)
+            .status(attempt_ref)
+            .ok()
+            .flatten()
+            .and_then(|status| decode_agent_dispatch_input(&status.payload.input).ok())
+            .and_then(|input| input.launch);
+        Ok(SelfDispatchOutcome::AgentSpawn(
+            SelfAgentSpawnResult::Queued {
+                attempt_ref,
+                launch,
+            },
+        ))
     }
 
     /// OF-541: a leased agent's spawn, placed once and planned on the host's
@@ -493,6 +601,12 @@ fn task_subproject_id(wrapper: EntityId) -> Result<EntityId> {
         crate::entity_id::derived_domains::TASK_SUBPROJECT,
         &[wrapper.as_bytes()],
     )?)
+}
+
+/// A planned spawn the launch did not queue, as the planned path's planner
+/// refusals answer: invalid dispatch input.
+fn refused(reason: &'static str) -> Error {
+    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason))
 }
 
 /// A budget the spawner set, seed or pin, narrows the child's hard carve; it
