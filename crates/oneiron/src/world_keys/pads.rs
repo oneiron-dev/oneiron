@@ -350,6 +350,11 @@ fn world_pad_rows_in_txn(
         let Some(raw) = store.port_entity_raw(txn, &id)?.map(Zeroizing::new) else {
             continue;
         };
+        // A soft-erased pad keeps its header only: its pad is gone already, and
+        // it names no world.
+        if raw.len() == ENTITY_METADATA_HEADER_LEN {
+            continue;
+        }
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("world key pad header"))?;
         let (key, _) = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -519,7 +524,10 @@ pub(crate) fn destroy_world_keys_in_txn(
     for (id, _, learned_at) in &rows {
         crate::batch::deindex_entity(store, wtxn, id)?;
         let window = pad_window(target, *learned_at);
-        stage_engine_row_hard_erasure_at_in_txn(store, wtxn, id, window, &tombstone)?;
+        stage_engine_row_hard_erasure_at_in_txn(store, wtxn, id, window.clone(), &tombstone)?;
+        // The batch that owns this transaction publishes the window once it
+        // commits (FIX 3334); an erase door publishes its own (FIX 343).
+        crate::batch::queue_pad_tombstone_window(store, wtxn, window);
     }
     super::content::purge_world_mirrors_in_txn(store, wtxn, target)?;
     if let Some(existing) = existing {

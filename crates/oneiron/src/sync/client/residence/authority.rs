@@ -29,13 +29,14 @@ use serde_json::json;
 
 use std::collections::BTreeSet;
 
+use super::super::base::home_withheld_worlds;
 use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
     AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
     AuthorityCheckpointPin, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
     AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
-    decode_authority_log_entry_body,
+    decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -265,7 +266,9 @@ async fn fetch_authority_checkpoint(
 
 /// Appends to the home the signed entries it named as lacking, parents
 /// first, in pages that each import whole there: every parent of an entry is
-/// held by the home or sent before it. Returns how many it sent.
+/// held by the home or sent before it. The side branch of a world the home
+/// may not read stays here (FIX 922 item 11); nothing outside the world
+/// names it. Returns how many it sent.
 async fn append_authority(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
@@ -289,9 +292,19 @@ async fn append_authority(
     let mut bytes = 0;
     // The rows this machine holds: an adopted machine not yet hydrated holds
     // no covered row, and the full export refuses there.
-    for entry in held_authority_history(vault).map_err(storage)? {
-        let hash = authority_entry_hash(&decode_authority_log_entry_body(&entry).map_err(storage)?)
-            .map_err(storage)?;
+    let history = held_authority_history(vault).map_err(storage)?;
+    // Read after the history, so a settings edit it holds is judged too.
+    let withheld = home_withheld_worlds(vault, rpc.home);
+    for entry in history {
+        let body = decode_authority_log_entry_body(&entry).map_err(storage)?;
+        if let Some(world) = side_world(&body.op)
+            && withheld
+                .as_ref()
+                .is_none_or(|worlds| worlds.contains(&world))
+        {
+            continue;
+        }
+        let hash = authority_entry_hash(&body).map_err(storage)?;
         if !wanted.contains(&hash) {
             continue;
         }

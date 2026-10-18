@@ -295,7 +295,7 @@ fn measured_surprise_in_txn(
     if !signals.surprise {
         let floor = f32::from(super::policy::policy_in_txn(vault, txn)?.surprise_permille) / 1000.0;
         for turn in turns {
-            let measured = crate::tagging::tag_set_in_txn(&vault.store, txn, &turn)?
+            let measured = crate::tagging::readable_view_in_txn(&vault.store, txn, &turn)?
                 .and_then(|tags| tags.surprise);
             if measured.is_some_and(|surprise| surprise > 0.0 && surprise >= floor) {
                 signals.surprise = true;

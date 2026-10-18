@@ -1,6 +1,7 @@
 //! OF-382: a consented corpus, pinned training job, checked checkpoint and
 //! owner-approved role swap. Training and evaluation are host-supplied work;
 //! this module never launches a trainer or deploys its result automatically.
+mod authorize;
 mod connector;
 mod custody;
 mod export;
@@ -14,8 +15,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 
+pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
-pub use promotion::TrainingEvalInput;
+pub use promotion::{SwapExpectation, TrainingEvalInput, ViewedSwap};
+pub(crate) use promotion::{role_swap_receipt_in, training_run_in, training_runs_in};
 pub use types::*;
 
 const RUNS: SideTable<EntityId, TrainingRun, Named> =

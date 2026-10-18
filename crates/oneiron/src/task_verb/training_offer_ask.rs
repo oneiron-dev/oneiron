@@ -132,11 +132,11 @@ fn intent_key(key: &OfferAskKey) -> String {
     )
 }
 
-fn canonical_id(hex: &str) -> Option<EntityId> {
+pub(super) fn canonical_id(hex: &str) -> Option<EntityId> {
     EntityId::from_hex(hex).ok().filter(|id| id.to_hex() == hex)
 }
 
-fn canonical_digest(digest: &str) -> Option<String> {
+pub(super) fn canonical_digest(digest: &str) -> Option<String> {
     let lower_hex = |byte: u8| matches!(byte, b'0'..=b'9' | b'a'..=b'f');
     (digest.len() == 64 && digest.bytes().all(lower_hex)).then(|| digest.to_owned())
 }
@@ -159,7 +159,10 @@ pub(crate) fn training_offer_ask_key(intent_key: &str) -> Option<OfferAskKey> {
 
 /// The one string `entries` holds under `name`; `None` when absent, repeated
 /// or not a string.
-fn single_str<'a>(entries: &'a [(rmpv::Value, rmpv::Value)], name: &str) -> Option<&'a str> {
+pub(super) fn single_str<'a>(
+    entries: &'a [(rmpv::Value, rmpv::Value)],
+    name: &str,
+) -> Option<&'a str> {
     let mut values = entries
         .iter()
         .filter(|(key, _)| key.as_str() == Some(name))
@@ -270,6 +273,22 @@ pub(crate) fn reserved_offer_question_in(
             turn: route.turn,
             message: route.message,
         }))
+}
+
+/// The conversation `owner`'s first offer question was reserved in: the
+/// owner's private conversation with the Coach, if it asked them yet.
+/// # Errors
+/// Storage errors.
+pub(super) fn owner_conversation_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &EntityId,
+) -> Result<Option<EntityId>> {
+    Ok(ASKS
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .find(|(_, route)| route.owner == *owner)
+        .map(|(_, route)| route.conversation))
 }
 
 /// The reservation for `key`, its ids minted on first use. An owner's later
@@ -625,6 +644,7 @@ pub(super) fn resolve_answer_in(
         &route.offer,
         &route.digest,
         choice,
+        None,
         result.settlement.at,
         Some(&id),
     )?;

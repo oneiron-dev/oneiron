@@ -13,7 +13,9 @@
 //! its entry fact and the audience predicate reads it there, so an unplaced
 //! speaker is never dropped from an audience while it waits to be
 //! identified. Its "who is this?" ask (ILDF2 P4) is raised once, on the
-//! roster revision it first entered under.
+//! roster revision it first entered under. A speaker its roster placed but
+//! who is no room member gets its entry fact too, asked nothing; so does any
+//! speaker in a project room, which no PERSON entry is recorded for.
 //!
 //! The owner answers P5 on a private surface: [`Vault::confirm_container_attendee`]
 //! clears the entry's contact standing under a frozen offer and sets the
@@ -36,13 +38,23 @@ use crate::task_verb::{AttendeeEntryFact, TaskAskReceipt};
 
 const ENTRY_SLOT_DOMAIN: &[u8] = b"oneiron.conversation.attendee_entry.slot.v1";
 
+/// What an entering speaker's first entry asks its owner.
+#[derive(Clone, Copy)]
+enum EntryAsk {
+    /// "Who is this?", once: a speaker the vault cannot place.
+    Identity,
+    /// Nothing: a speaker its roster placed.
+    Unasked,
+}
+
 /// Who entered a container.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerAttendee {
     /// A PERSON entering as a room member.
     Person(EntityId),
-    /// A speaker the vault cannot place yet, by its stable keys.
+    /// A voice speaker no room member covers, by its stable keys: one the
+    /// vault cannot place yet, or one it placed who is no member.
     Speaker {
         session_key: String,
         speaker_key: String,
@@ -60,7 +72,7 @@ pub struct ContainerAttendeeEvent {
     /// The durable TURN the entry was heard in, when one exists.
     pub trigger_turn: Option<EntityId>,
     /// Live contacts an unplaced speaker may be, in the host's order; empty
-    /// for a PERSON.
+    /// for a PERSON and for a speaker entered asked nothing.
     pub candidates: Vec<EntityId>,
     /// When a "who is this?" ask lapses unanswered (engine seconds).
     pub until: u64,
@@ -164,20 +176,38 @@ impl Memory<'_> {
     /// this?" ask on the revision it entered under. A later revision, a
     /// rejoin or another device replays the stored entry and asks nothing;
     /// an entry whose ask an interrupted call never admitted is raised by the
-    /// next call. A project room keeps its own rule.
+    /// next call. A project room keeps its own rule: a PERSON's entry is its
+    /// roster's, and a speaker gets its entry fact, asked nothing and joined
+    /// to no roster.
     ///
     /// Returns the identity ask this call raised, if it raised one.
     pub fn container_attendee_entered(
         &self,
         event: &ContainerAttendeeEvent,
     ) -> MemoryResult<Option<TaskAskReceipt>> {
+        self.attendee_entered(event, EntryAsk::Identity)
+    }
+
+    /// [`Self::container_attendee_entered`], a speaker asked as `ask` says.
+    fn attendee_entered(
+        &self,
+        event: &ContainerAttendeeEvent,
+        ask: EntryAsk,
+    ) -> MemoryResult<Option<TaskAskReceipt>> {
         let vault = self.vault();
         let writer = WriteActor::new(self.actor(), self.actor_class());
         let pending = self.with_verified_actor_write_txn(|txn| {
             body::body_in(vault, txn, event.container)?;
-            if crate::workspace_roster::project_room_audience_in(vault, txn, event.container, &[])?
-                .is_some()
-            {
+            // A project room keeps its own rule: a PERSON enters it through
+            // its roster, and a speaker enters it asked nothing.
+            let project = crate::workspace_roster::project_room_audience_in(
+                vault,
+                txn,
+                event.container,
+                &[],
+            )?
+            .is_some();
+            if project && matches!(event.attendee, ContainerAttendee::Person(_)) {
                 return Ok(None);
             }
             if let ContainerAttendee::Person(person) = &event.attendee
@@ -187,8 +217,11 @@ impl Memory<'_> {
             {
                 return Ok(None);
             }
-            let admitted =
-                crate::task_verb::admit_attendee_entry_in_txn(vault, txn, self.actor(), event)?;
+            let admit = match (ask, project) {
+                (EntryAsk::Identity, false) => crate::task_verb::admit_attendee_entry_in_txn,
+                _ => crate::task_verb::admit_unasked_attendee_entry_in_txn,
+            };
+            let admitted = admit(vault, txn, self.actor(), event)?;
             if let ContainerAttendee::Person(person) = &admitted.fact.attendee
                 && admitted.first
             {
@@ -227,16 +260,20 @@ impl Memory<'_> {
         .map(Some)
     }
 
-    /// Records the entry of each speaker `roster` could not place into
-    /// `container`, the committed room its voice session is heard in, through
-    /// [`Self::container_attendee_entered`]: a
+    /// Records the entry into `container`, the committed room its voice
+    /// session is heard in, of each speaker of `roster` the room's members
+    /// do not cover: the speakers its live call must place there, as the
+    /// room's reads require them (FIX 1388/1389 C1). Each enters as a
     /// [`ContainerAttendee::Speaker`] by the session's ref and the capture's
     /// speaker key, under the roster's revision, the keys the interlocutor
-    /// read asks the identity at. A voice host that binds its session to a
-    /// room calls it once the matcher has written the roster; `trigger_turn`,
-    /// `candidates` (live contacts, in its order) and `until` are its own.
-    /// A speaker already entered replays its stored entry. Answers each
-    /// "who is this?" ask raised.
+    /// read asks the identity at. A speaker the roster could not place goes
+    /// through [`Self::container_attendee_entered`]; one it placed, as no
+    /// member, enters asked nothing. A voice host that binds its session to
+    /// a room calls it once the matcher has written the roster;
+    /// `trigger_turn`, `candidates` (live contacts, in its order, offered by
+    /// an unplaced speaker's ask only) and `until` are its own. A speaker
+    /// already entered replays its stored entry. Answers each "who is
+    /// this?" ask raised.
     pub fn voice_speakers_entered(
         &self,
         container: EntityId,
@@ -245,20 +282,27 @@ impl Memory<'_> {
         candidates: &[EntityId],
         until: u64,
     ) -> MemoryResult<Vec<TaskAskReceipt>> {
+        let members = self.vault().room_audience_members(container)?;
         let mut asks = Vec::new();
-        for speaker_key in roster.unplaced_speakers() {
-            asks.extend(self.container_attendee_entered(&ContainerAttendeeEvent {
+        for speaker in crate::conversation::required_live_speakers(roster, &members) {
+            let (ask, candidates) = if speaker.placed {
+                (EntryAsk::Unasked, Vec::new())
+            } else {
+                (EntryAsk::Identity, candidates.to_vec())
+            };
+            let event = ContainerAttendeeEvent {
                 container,
                 attendee: ContainerAttendee::Speaker {
                     session_key: roster.voice_session_ref.clone(),
-                    speaker_key: speaker_key.to_owned(),
+                    speaker_key: speaker.speaker_key.to_owned(),
                 },
                 roster_revision: roster.roster_revision,
                 trigger_turn,
-                candidates: candidates.to_vec(),
+                candidates,
                 until,
                 history: HistoryChoice::Inherit,
-            })?);
+            };
+            asks.extend(self.attendee_entered(&event, ask)?);
         }
         Ok(asks)
     }

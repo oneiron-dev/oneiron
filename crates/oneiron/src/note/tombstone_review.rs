@@ -143,8 +143,9 @@ fn same_archive(a: &NoteTombstoneProposal, b: &NoteTombstoneProposal) -> bool {
 }
 
 /// `note`'s tombstone proposal as of `now`, if it qualifies: archived by
-/// cleanup past [`TOMBSTONE_RETENTION_MULTIPLIER`] times its kind's finite
-/// retention, linked from nothing, and unread since its archive.
+/// cleanup past [`TOMBSTONE_RETENTION_MULTIPLIER`] times its finite
+/// retention (its kind's, or its own override), linked from nothing, and
+/// unread since its archive.
 fn qualifies_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -172,9 +173,7 @@ fn qualifies_in_txn(
         return Ok(None);
     };
     let kind = body.kind.as_str().into_owned();
-    let Some(descriptor) = super::descriptor_in_txn(&vault.store, txn, &kind)? else {
-        return Ok(None);
-    };
+    let descriptor = super::note_defaults_in_txn(&vault.store, txn, &note, &kind)?;
     let (super::RetentionDefault::ArchiveAfterDays, Some(days @ 1..)) =
         (descriptor.retention, descriptor.archive_after_days)
     else {

@@ -1727,6 +1727,12 @@ class Oneiron:
         def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
             """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
             return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
+        def set_overrides(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Sets the defaults one NOTE overrides over its kind's; empty overrides clear them."""
+            return json.loads(_translate(lambda: self._client.vault_notes_set_overrides(json.dumps(request, allow_nan=False))))
+        def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
+            """One NOTE's overrides and the defaults its gates read after them."""
+            return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

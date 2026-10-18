@@ -22,8 +22,8 @@ use oneiron::llm::registry::ModelRegistryRow;
 use oneiron::skill_optimize::{
     ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
     OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    model_role_seat, offer_skill_cell, seat_model_role, training_offer, training_offer_checks,
-    training_offer_skill_id, training_offers,
+    model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
+    training_offer_checks, training_offer_skill_id, training_offers,
 };
 use oneiron::training_pack::{ComputeChoice, TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
@@ -781,21 +781,17 @@ pub(super) fn check(
         return Ok(());
     };
     // The model the yes asked for: the stock model, or the custom one bound
-    // from a run for the seat after the yes.
+    // from the exact run the yes handed off.
     let approved = match intent {
         OfferIntent::Switch { to, .. } => to.model.clone(),
         OfferIntent::Train { .. } => {
-            let bound = vault
-                .training_runs()?
-                .into_iter()
-                .filter(|run| {
-                    run.plan.role == role
-                        && run.plan.seat == offer.seat
-                        && run.state == TrainingState::Bound
-                        && run.created_at >= answer.at
-                })
-                .max_by_key(|run| (run.created_at, run.id));
-            let Some(run) = bound else {
+            let Some(handoff) = offer_training_handoff(vault, &id)? else {
+                return Ok(());
+            };
+            let Some(run) = vault
+                .training_run(&handoff.run)?
+                .filter(|run| run.state == TrainingState::Bound)
+            else {
                 return Ok(());
             };
             run.plan.output_binding.model.as_str().to_owned()
