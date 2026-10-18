@@ -205,6 +205,8 @@ pub(crate) fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<Sel
         }
         // ONE-2510: the run's answer to a connector's mid-call questions.
         RunVerb::ConnectorAnswer => SelfCall::ConnectorAnswer(decode(input)?),
+        // FIX 4480: the run's agent asks to change a world's settings.
+        RunVerb::VaultWorldsPrivacySet => SelfCall::WorldPrivacySet(decode(input)?),
     })
 }
 

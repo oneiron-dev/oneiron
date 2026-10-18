@@ -430,6 +430,142 @@ pub(super) fn prepare_cut_audit(
     }))
 }
 
+/// [`case_texts`], listing into `rows` each row the text was read from, from
+/// those same reads: every TURN whose text was read and each MESSAGE child
+/// that text joined, as [`crate::embed::turn_text_in_txn`] joins them, and
+/// every finalized proposal artifact read. A source it could not read is a
+/// gap, as there, and lists nothing.
+fn case_texts_listing(
+    vault: &Vault,
+    lineage: &LineageReader,
+    case: &AuditCase,
+    gaps: &mut Vec<CoverageGap>,
+    rows: &mut Vec<EntityId>,
+) -> Result<Vec<String>> {
+    let (turns, artifacts) = text_sources(vault, lineage, &case.receipts)?;
+    let mut texts = Vec::new();
+    {
+        let txn = vault.store.env.read_txn()?;
+        for turn in turns {
+            let messages = crate::tagging::turn_messages_in_txn(vault, &txn, &turn)?
+                .map(|messages| {
+                    messages
+                        .into_iter()
+                        .map(|message| Ok((EntityId::from_hex(&message.id)?, message.text)))
+                        .collect::<Result<Vec<_>>>()
+                })
+                .transpose()?;
+            match messages
+                .as_deref()
+                .and_then(crate::embed::joined_turn_text)
+            {
+                Some(text) => {
+                    rows.push(turn);
+                    rows.extend(messages.iter().flatten().map(|(message, _)| *message));
+                    texts.push(text);
+                }
+                None => gaps.push(CoverageGap {
+                    case: case.case,
+                    source: Some(format!("{SOURCE_TURN_ROOT}{}", turn.to_hex())),
+                }),
+            }
+        }
+    }
+    for artifact in artifacts {
+        match finalized_proposal_text(vault, ProposalArtifactRef::new(artifact))? {
+            Some(proposal) => {
+                rows.push(artifact);
+                texts.push(proposal.proposed_text);
+                texts.push(proposal.final_text);
+            }
+            None => gaps.push(CoverageGap {
+                case: case.case,
+                source: Some(amendment_receipt_id(artifact)),
+            }),
+        }
+    }
+    Ok(texts)
+}
+
+/// [`case_shingles`], listing as [`case_texts_listing`] does.
+fn case_shingles_listing(
+    vault: &Vault,
+    lineage: &LineageReader,
+    cases: &[AuditCase],
+    gaps: &mut Vec<CoverageGap>,
+    rows: &mut Vec<EntityId>,
+) -> Result<Vec<(EntityId, Shingles)>> {
+    let mut read = Vec::with_capacity(cases.len());
+    for case in cases {
+        let before = gaps.len();
+        let set = shingles(&case_texts_listing(vault, lineage, case, gaps, rows)?);
+        if set.is_empty() {
+            if gaps.len() == before {
+                gaps.push(CoverageGap {
+                    case: case.case,
+                    source: None,
+                });
+            }
+        } else {
+            read.push((case.case, set));
+        }
+    }
+    Ok(read)
+}
+
+/// [`prepare_cut_audit`], listing into `rows` every row whose text the audit
+/// compared, from the same reads ([`case_texts_listing`]): the TURNs, their
+/// MESSAGE children and the proposal artifacts. A cut that would take no
+/// member reads no text and lists none.
+pub(super) fn prepare_cut_audit_listing(
+    vault: &Vault,
+    lineage: &LineageReader,
+    seat: &EvalSeat,
+    window: (u64, u64),
+    provenance: AuditProvenance,
+    rows: &mut Vec<EntityId>,
+) -> Result<Option<EvalCutAuditDraft>> {
+    let (from, until) = window;
+    let Some((members, compared)) = audit_cases(vault, seat, from, until)? else {
+        return Ok(None);
+    };
+    let mut gaps = Vec::new();
+    let left = case_shingles_listing(vault, lineage, &members, &mut gaps, rows)?;
+    let right = case_shingles_listing(vault, lineage, &compared, &mut gaps, rows)?;
+    let mut comparisons = 0_u64;
+    let mut flags = Vec::new();
+    for (member, member_set) in &left {
+        for (other, other_set) in &right {
+            comparisons = comparisons.saturating_add(1);
+            let intersection = member_set.intersection(other_set).count();
+            let union = member_set.len() + other_set.len() - intersection;
+            let score = intersection as f64 / union as f64;
+            if score >= THRESHOLD {
+                flags.push(NearCopyFlag {
+                    member_case: *member,
+                    other_case: *other,
+                    score,
+                    intersection: u64::try_from(intersection).unwrap_or(u64::MAX),
+                    union: u64::try_from(union).unwrap_or(u64::MAX),
+                });
+            }
+        }
+    }
+    let member_ids: Vec<EntityId> = members.iter().map(|case| case.case).collect();
+    Ok(Some(EvalCutAuditDraft {
+        seat: seat.clone(),
+        from,
+        until,
+        provenance,
+        membership_digest: membership_digest(&member_ids),
+        members,
+        compared,
+        comparisons,
+        flags,
+        gaps,
+    }))
+}
+
 impl Vault {
     /// The near-copy audit a cohort was cut with, if one was kept.
     /// # Errors

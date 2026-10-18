@@ -63,6 +63,7 @@ mod entity_erase;
 mod export;
 mod expression_preference;
 pub mod extraction;
+pub mod hook_regen_doors;
 mod inspection;
 mod key_value;
 mod lifted_view;

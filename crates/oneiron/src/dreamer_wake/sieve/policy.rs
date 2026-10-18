@@ -18,7 +18,7 @@ fn invalid() -> Error {
 }
 
 /// Per-vault sieve dials. Confidences and band edges are percentages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SievePolicy {
     /// Turns one pass reads; the rest wait for the next pass.

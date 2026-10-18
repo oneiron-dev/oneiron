@@ -8,7 +8,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::{self, *};
 
-use super::host_doors::{Listed, internal, refused};
+use super::host_doors::{Listed, MaybeListed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -324,30 +324,44 @@ pub(crate) async fn vault_packs_hooks_list(
     .await
 }
 
-/// Qualification runs the server's real hook sandbox and preserves each replay.
-/// Like `vault.hooks.replay`, it does not claim a complete list of replay reads.
+/// Qualification runs the server's real hook sandbox and preserves each
+/// replay (`host_door_lists`). It lists the pack's source row and what each
+/// hook's listing replay lists, as `vault.hooks.replay` does: the binding
+/// it would get, its body's source, each entry's fact row and every row a
+/// replayed read served. `None` when a replay's verdict evidence is not
+/// listed, never an empty list standing in for it. A refusal lists none.
 pub(crate) async fn vault_packs_hooks_qualify(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: HubHookQualifyRequest,
-) -> MemoryResult<HubHookQualificationReceipt> {
-    let (answer, _) = owner_call(
-        server,
-        auth,
-        "vault.packs.hooks.qualify",
-        move |server, owner| {
-            let runtime = server.hook_runtime.get().cloned().ok_or_else(|| {
-                MemoryError::new(
+) -> MaybeListed<HubHookQualificationReceipt> {
+    const VERB: &str = "vault.packs.hooks.qualify";
+    let owner = match owner_proof(auth, server, VERB) {
+        Ok(owner) => owner,
+        Err(refusal) => return (Err(refusal), Some(Vec::new())),
+    };
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        let Some(runtime) = server.hook_runtime.get().cloned() else {
+            return (
+                Err(MemoryError::new(
                     MEMORY_CODE_MODEL_UNAVAILABLE,
                     "no hook sandbox runs on this server",
                     &["Serve with fact hooks enabled on a build with the code sandbox."],
-                )
-            })?;
-            let answer =
-                sdk::hub_hooks_qualify_as_owner(server.vault(), owner, runtime.as_ref(), &input)?;
-            Ok((answer, Vec::new()))
-        },
-    )
-    .await;
-    answer
+                )),
+                Some(Vec::new()),
+            );
+        };
+        match sdk::hub_hooks_qualify_as_owner_listing(
+            server.vault(),
+            &owner,
+            runtime.as_ref(),
+            &input,
+        ) {
+            Ok((answer, rows)) => (Ok(answer), rows),
+            Err(error) => (Err(error), Some(Vec::new())),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| (Err(internal(VERB)), Some(Vec::new())))
 }

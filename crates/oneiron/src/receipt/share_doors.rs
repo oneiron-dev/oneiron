@@ -27,7 +27,7 @@ pub struct ShareRevokeReceipt {
 /// One pinned citation of a shared brief, as the viewer may see it. A
 /// citation the share or the viewer's own read withholds is `redacted`, and
 /// then says nothing of its lifecycle, confidence or quote.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SharedBriefCitation {
     /// The cited CLAIM, as 32 hex.

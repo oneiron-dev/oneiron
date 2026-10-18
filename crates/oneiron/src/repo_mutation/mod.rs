@@ -1,4 +1,6 @@
 mod conflict;
+mod conflict_doors;
+pub(crate) use conflict_doors::conflict_proposals;
 mod conflict_value;
 mod document;
 mod git;

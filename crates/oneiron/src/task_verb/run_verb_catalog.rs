@@ -5,6 +5,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunVerb {
     ConnectorAnswer,
+    VaultWorldsPrivacySet,
     VaultSearch,
     VaultClaimsPut,
     VaultClaimsSupersede,
@@ -30,6 +31,7 @@ pub enum RunVerb {
 impl RunVerb {
     pub const ALL: &[Self] = &[
         Self::ConnectorAnswer,
+        Self::VaultWorldsPrivacySet,
         Self::VaultSearch,
         Self::VaultClaimsPut,
         Self::VaultClaimsSupersede,
@@ -58,6 +60,7 @@ impl RunVerb {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ConnectorAnswer => "connector.answer",
+            Self::VaultWorldsPrivacySet => "vault.worlds.privacy.set",
             Self::VaultSearch => "vault.search",
             Self::VaultClaimsPut => "vault.claims.put",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
@@ -85,6 +88,7 @@ impl RunVerb {
         matches!(
             self,
             Self::ConnectorAnswer
+                | Self::VaultWorldsPrivacySet
                 | Self::VaultClaimsPut
                 | Self::VaultClaimsSupersede
                 | Self::VaultEdgesPut
@@ -106,6 +110,7 @@ impl RunVerb {
     pub const fn effect(self) -> crate::code_run::SelfEffect {
         match self {
             Self::ConnectorAnswer => crate::code_run::SelfEffect::ConnectorAnswer,
+            Self::VaultWorldsPrivacySet => crate::code_run::SelfEffect::WorldPrivacySet,
             Self::VaultSearch => crate::code_run::SelfEffect::MemorySearch,
             Self::VaultClaimsPut => crate::code_run::SelfEffect::MemoryPutClaim,
             Self::VaultClaimsSupersede => crate::code_run::SelfEffect::MemorySupersedeClaim,

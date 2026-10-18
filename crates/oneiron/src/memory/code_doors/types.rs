@@ -84,7 +84,7 @@ pub struct CodeProposalSubmitRequest {
 }
 
 /// The staged proposal, as the engine stored it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CodeProposalSubmitted {
     /// The engine-minted proposal id, the `repo.proposed_diff` claim. Not a
     /// queue entry or a receipt.
