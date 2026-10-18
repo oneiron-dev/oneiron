@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use oneiron::Vault;
 use oneiron::consent::lifecycle::{
-    self, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest,
-    RevokeGrantRequest,
+    self, ApproveOnceRequest, ConsentActReceipt, CreateStandingGrantRequest, RevokeGrantRequest,
 };
 use oneiron::consent::{AuthenticatedOwner, ConsentRegistry, ConsentRegistryQuery};
 use oneiron::memory::MemoryResult;
@@ -36,9 +35,12 @@ pub(crate) async fn vault_consent_approve_once(
     auth: &CoreAuth,
     input: ApproveOnceRequest,
 ) -> Listed<ConsentActReceipt> {
-    as_owner(server, auth, "vault.consent.approve_once", move |vault, owner| {
-        lifecycle::approve_once(vault, owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.consent.approve_once",
+        move |vault, owner| lifecycle::approve_once(vault, owner, input),
+    )
     .await
 }
 
@@ -61,9 +63,12 @@ pub(crate) async fn vault_consent_registry(
     auth: &CoreAuth,
     input: ConsentRegistryQuery,
 ) -> Listed<ConsentRegistry> {
-    as_owner(server, auth, "vault.consent.registry", move |vault, owner| {
-        lifecycle::registry(vault, owner, input)
-    })
+    as_owner(
+        server,
+        auth,
+        "vault.consent.registry",
+        move |vault, owner| lifecycle::registry(vault, owner, input),
+    )
     .await
 }
 

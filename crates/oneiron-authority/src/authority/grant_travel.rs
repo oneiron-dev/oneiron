@@ -61,7 +61,8 @@ impl GrantTravelSet {
         {
             return Err(invalid_authority());
         }
-        self.act.validate_carried(OwnerActKind::GrantTravel, self.grant)?;
+        self.act
+            .validate_carried(OwnerActKind::GrantTravel, self.grant)?;
         // Only the owner's own say-so sets a grant's travel until an agent's
         // Grant line names the act (mesh contract §4).
         if self.act.by != ActBy::Owner {

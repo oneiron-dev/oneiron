@@ -32,7 +32,14 @@ const BYPASS_GRANT_REF_DOMAIN: &[u8] = b"oneiron.consent.bypass_grant.v1\0";
 
 /// Where a bypass grant applies.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
@@ -69,7 +76,14 @@ impl BypassScope {
 
 /// The bypass half of a persisted grant row.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
     schemars::JsonSchema,
 )]
 pub struct BypassExtent {

@@ -8,7 +8,9 @@ use crate::pipeline::{FacetMode, ScoredEntity, WorldScope};
 use crate::ports::EntityStoreRead;
 use crate::retrieval_depth::RetrievalDeadline;
 
-use super::{PassOutput, SpeculativeFinal, SpeculativePartial, SpeculativePass, SpeculativeSession};
+use super::{
+    PassOutput, SpeculativeFinal, SpeculativePartial, SpeculativePass, SpeculativeSession,
+};
 
 #[derive(Clone)]
 pub(crate) struct SpeculativeReadScope {
@@ -28,17 +30,19 @@ impl SpeculativeReadScope {
     ) -> Result<PassOutput> {
         let lane = vault.scoped_read(self.key.clone());
         let (filter, policy) = lane.recall_plan()?;
-        let admitted = |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {
-            let Some(row) = store.port_entity_record(txn, id)? else {
-                return Ok(false);
+        let admitted =
+            |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {
+                let Some(row) = store.port_entity_record(txn, id)? else {
+                    return Ok(false);
+                };
+                let wanted = self.kinds.as_ref().map_or_else(
+                    || !crate::memory::CONTAINER_KINDS.contains(&row.entity_type),
+                    |kinds| kinds.contains(&row.entity_type),
+                );
+                Ok(wanted && lane.recall_candidate_in(txn, &policy, &filter, id)?)
             };
-            let wanted = self.kinds.as_ref().map_or_else(
-                || !crate::memory::CONTAINER_KINDS.contains(&row.entity_type),
-                |kinds| kinds.contains(&row.entity_type),
-            );
-            Ok(wanted && lane.recall_candidate_in(txn, &policy, &filter, id)?)
-        };
-        let mut builder = pass.builder(vault, deadline)
+        let mut builder = pass
+            .builder(vault, deadline)
             .world(self.worlds.clone())
             .corpus(self.corpus.clone())
             .authority_filter(filter.clone())
@@ -58,7 +62,9 @@ impl SpeculativeReadScope {
         vault: &crate::Vault,
         scores: Vec<ScoredEntity>,
     ) -> Result<ScopedReadResult<Vec<ScoredEntity>>> {
-        vault.scoped_read(self.key.clone()).filter_scored_entities(scores)
+        vault
+            .scoped_read(self.key.clone())
+            .filter_scored_entities(scores)
     }
 }
 
@@ -73,7 +79,9 @@ impl SpeculativeSession {
         let scope = self.scope.as_ref().ok_or(crate::Error::InvalidConfig(
             "speculative session has no credential-bound read".to_owned(),
         ))?;
-        self.vault.scoped_read(scope.key.clone()).read_receipt(None, 0)
+        self.vault
+            .scoped_read(scope.key.clone())
+            .read_receipt(None, 0)
     }
 
     /// Release only the candidates the current credential still reads. This
@@ -97,15 +105,37 @@ impl SpeculativeSession {
         let vault = Arc::clone(&self.vault);
         let output = self.finalize(partial)?;
         match output {
-            SpeculativeFinal::Promoted { scores, run_id, partial } => {
+            SpeculativeFinal::Promoted {
+                scores,
+                run_id,
+                partial,
+            } => {
                 let released = scope.release(&vault, scores)?;
-                Ok((SpeculativeFinal::Promoted { scores: released.value, run_id, partial }, released.receipt))
+                Ok((
+                    SpeculativeFinal::Promoted {
+                        scores: released.value,
+                        run_id,
+                        partial,
+                    },
+                    released.receipt,
+                ))
             }
-            SpeculativeFinal::Finalized { scores, run_id, warm_appended, partial } => {
+            SpeculativeFinal::Finalized {
+                scores,
+                run_id,
+                warm_appended,
+                partial,
+            } => {
                 let released = scope.release(&vault, scores)?;
-                Ok((SpeculativeFinal::Finalized {
-                    scores: released.value, run_id, warm_appended, partial,
-                }, released.receipt))
+                Ok((
+                    SpeculativeFinal::Finalized {
+                        scores: released.value,
+                        run_id,
+                        warm_appended,
+                        partial,
+                    },
+                    released.receipt,
+                ))
             }
         }
     }

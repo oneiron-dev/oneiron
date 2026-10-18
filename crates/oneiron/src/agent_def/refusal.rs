@@ -27,7 +27,9 @@ use crate::federation::{SharedVaultCreation, SharedVaultPreset};
 pub const REFUSAL_DIAL_KEYS: [&str; 2] = ["bond", "logistics"];
 
 /// One position on the dial, weakest to strongest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalLevel {
     /// She proceeds silently; nothing is recorded.
@@ -120,7 +122,9 @@ pub enum RefusalOutcome {
 /// vault-kind default ([`VaultKind::default_refusal`]); a set domain may sit
 /// anywhere from `None` to `Full`. An empty dial is not a valid record:
 /// omitting the dial is the one spelling of "every domain at its default".
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct RefusalDial {

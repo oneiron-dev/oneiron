@@ -21,7 +21,13 @@ pub(crate) async fn vault_federation_coreference_link(
         auth,
         "vault.federation.coreference.link",
         move |server, owner| sdk::link_coreference_as_owner(server.vault(), owner, input),
-        |receipt| vec![receipt.local_person, receipt.other_person, receipt.status_claim],
+        |receipt| {
+            vec![
+                receipt.local_person,
+                receipt.other_person,
+                receipt.status_claim,
+            ]
+        },
     )
     .await
 }
@@ -36,7 +42,13 @@ pub(crate) async fn vault_federation_coreference_confirm(
         auth,
         "vault.federation.coreference.confirm",
         move |server, owner| sdk::confirm_coreference_as_owner(server.vault(), owner, input),
-        |receipt| vec![receipt.local_person, receipt.other_person, receipt.status_claim],
+        |receipt| {
+            vec![
+                receipt.local_person,
+                receipt.other_person,
+                receipt.status_claim,
+            ]
+        },
     )
     .await
 }
@@ -51,7 +63,13 @@ pub(crate) async fn vault_federation_coreference_share_consent(
         auth,
         "vault.federation.coreference.share_consent",
         move |server, owner| sdk::share_coreference_as_owner(server.vault(), owner, input),
-        |receipt| vec![receipt.local_person, receipt.other_person, receipt.consent_claim],
+        |receipt| {
+            vec![
+                receipt.local_person,
+                receipt.other_person,
+                receipt.consent_claim,
+            ]
+        },
     )
     .await
 }

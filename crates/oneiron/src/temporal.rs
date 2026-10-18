@@ -15,7 +15,15 @@ pub use oneiron_contracts::temporal::{
 
 /// Temporal anchor intent for bitemporal scoring.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
     schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]

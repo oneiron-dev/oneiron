@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use oneiron::artifact_hosting::door_types::*;
 use oneiron::artifact_hosting::preview::PreviewSessionManifest;
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED, MemoryError, MemoryResult};
+use oneiron::memory::{
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_LEASE_REQUIRED, MemoryError, MemoryResult,
+};
 use oneiron_vault_contract::host::PreviewPortHost;
 use tokio::sync::Mutex;
 
@@ -32,17 +34,24 @@ impl super::SyncServer {
         stop: ManagedShutdown,
     ) -> MemoryResult<()> {
         let manifest = process.manifest().clone();
-        manifest.validate(oneiron_vault_contract::now_ts()).map_err(MemoryError::bad_request)?;
+        manifest
+            .validate(oneiron_vault_contract::now_ts())
+            .map_err(MemoryError::bad_request)?;
         let key = (manifest.session_ref.clone(), manifest.lease_ref.clone());
         let mut held = self.artifact_previews.held.lock().await;
         if held.contains_key(&key) {
-            return Err(MemoryError::bad_request("preview lease is already installed"));
+            return Err(MemoryError::bad_request(
+                "preview lease is already installed",
+            ));
         }
-        held.insert(key, HostedPreview {
-            manifest,
-            host: LocalPreviewHost::new(process, stop),
-            lease: None,
-        });
+        held.insert(
+            key,
+            HostedPreview {
+                manifest,
+                host: LocalPreviewHost::new(process, stop),
+                lease: None,
+            },
+        );
         Ok(())
     }
 }
@@ -56,12 +65,23 @@ impl ArtifactPreviews {
         let key = (manifest.session_ref.clone(), manifest.lease_ref.clone());
         let entry = held.get_mut(&key).ok_or_else(unbound)?;
         if manifest != entry.manifest {
-            return Err(MemoryError::bad_request("preview manifest does not match the runtime declaration"));
+            return Err(MemoryError::bad_request(
+                "preview manifest does not match the runtime declaration",
+            ));
         }
         if entry.lease.is_none() {
-            entry.lease = Some(entry.host.open_preview(manifest.clone()).await.map_err(preview_error)?);
+            entry.lease = Some(
+                entry
+                    .host
+                    .open_preview(manifest.clone())
+                    .await
+                    .map_err(preview_error)?,
+            );
         }
-        view(entry.lease.as_ref().ok_or_else(unbound)?, &manifest.owner_ref)
+        view(
+            entry.lease.as_ref().ok_or_else(unbound)?,
+            &manifest.owner_ref,
+        )
     }
 
     pub(crate) async fn read(
@@ -70,8 +90,11 @@ impl ArtifactPreviews {
         input: ArtifactPreviewRequest,
     ) -> MemoryResult<Option<ArtifactPreviewView>> {
         let held = self.held.lock().await;
-        let Some(lease) = held.get(&(input.session_ref, input.lease_ref))
-            .and_then(|entry| entry.lease.as_ref()).filter(|lease| lease.is_live()) else {
+        let Some(lease) = held
+            .get(&(input.session_ref, input.lease_ref))
+            .and_then(|entry| entry.lease.as_ref())
+            .filter(|lease| lease.is_live())
+        else {
             return Ok(None);
         };
         view(lease, principal).map(Some)
@@ -107,9 +130,14 @@ impl ArtifactPreviews {
         if invite {
             lease.invite(owner, &principal).map_err(preview_error)?;
         } else {
-            lease.revoke_invite(owner, &principal).map_err(preview_error)?;
+            lease
+                .revoke_invite(owner, &principal)
+                .map_err(preview_error)?;
         }
-        Ok(ArtifactPreviewInvitation { principal_ref: input.principal_ref, invited: invite })
+        Ok(ArtifactPreviewInvitation {
+            principal_ref: input.principal_ref,
+            invited: invite,
+        })
     }
 
     pub(crate) async fn share(
@@ -134,12 +162,17 @@ fn lease<'a>(
     held: &'a BTreeMap<(String, String), HostedPreview>,
     key: &(String, String),
 ) -> MemoryResult<&'a PreviewLease> {
-    held.get(key).and_then(|entry| entry.lease.as_ref())
-        .filter(|lease| lease.is_live()).ok_or_else(unbound)
+    held.get(key)
+        .and_then(|entry| entry.lease.as_ref())
+        .filter(|lease| lease.is_live())
+        .ok_or_else(unbound)
 }
 
 fn view(lease: &PreviewLease, principal: &str) -> MemoryResult<ArtifactPreviewView> {
-    let access_url = lease.access_url(principal).map_err(preview_error)?.to_string();
+    let access_url = lease
+        .access_url(principal)
+        .map_err(preview_error)?
+        .to_string();
     let endpoint = lease.endpoint();
     Ok(ArtifactPreviewView {
         session_ref: endpoint.session_ref.clone(),
@@ -161,5 +194,9 @@ fn unbound() -> MemoryError {
 }
 
 fn preview_error(error: impl std::fmt::Display) -> MemoryError {
-    MemoryError::new(MEMORY_CODE_FORBIDDEN, error.to_string(), &["Use the live lease's owner, invitation or sharing URL."])
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        error.to_string(),
+        &["Use the live lease's owner, invitation or sharing URL."],
+    )
 }

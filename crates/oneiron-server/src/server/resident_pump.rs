@@ -42,8 +42,8 @@ use oneiron::attempt_queue::{
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, CodeRunReplayRecord, CompactionHostBinding, HostPlannerBinding,
-    HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat, TaskExposure,
-    bind_compaction_caller, finalize_step_captures, park_and_bind_wait_trap,
+    HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat, TaskExposure, bind_compaction_caller,
+    finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::{OutputContextEntry, restore_output};
 use oneiron::dreamer_consolidation::confession::{confession_ask, parse_confession};

@@ -56,7 +56,9 @@ impl AsrHypothesisRequest {
 
     pub fn validate(&self) -> crate::memory::MemoryResult<()> {
         if self.text.trim().is_empty() {
-            return Err(crate::memory::MemoryError::bad_request("ASR text must be nonempty"));
+            return Err(crate::memory::MemoryError::bad_request(
+                "ASR text must be nonempty",
+            ));
         }
         crate::memory::caps::check_query(&self.text)
     }

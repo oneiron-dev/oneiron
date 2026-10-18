@@ -16,7 +16,9 @@ impl Memory<'_> {
         scope: &RecallScope,
     ) -> MemoryResult<SpeculativeSession> {
         if !std::ptr::eq(self.vault(), Arc::as_ptr(&vault)) {
-            return Err(MemoryError::bad_request("speculative session belongs to another vault"));
+            return Err(MemoryError::bad_request(
+                "speculative session belongs to another vault",
+            ));
         }
         let worlds = self.recall_worlds(scope)?;
         let mut key = self.read_key()?;
@@ -27,7 +29,11 @@ impl Memory<'_> {
             key,
             worlds: worlds.map_or(WorldScope::All, WorldScope::WorldSet),
             corpus: self.selected_projects(scope)?,
-            facet: scope.facet.as_deref().map(|reference| self.resolve_ref(reference)).transpose()?,
+            facet: scope
+                .facet
+                .as_deref()
+                .map(|reference| self.resolve_ref(reference))
+                .transpose()?,
             kinds: recall_kinds(scope)?,
         };
         Ok(SpeculativeSession::new(vault, config).with_scope(read))

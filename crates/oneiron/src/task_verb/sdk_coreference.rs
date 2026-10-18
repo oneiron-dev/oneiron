@@ -73,9 +73,8 @@ impl CoreferenceShareConsentRequest {
                 "pact must be 64 lowercase hex characters",
             ));
         }
-        super::brief::decode_hex(&self.pact).ok_or_else(|| {
-            MemoryError::bad_request("pact must be 64 lowercase hex characters")
-        })
+        super::brief::decode_hex(&self.pact)
+            .ok_or_else(|| MemoryError::bad_request("pact must be 64 lowercase hex characters"))
     }
 }
 

@@ -36,7 +36,9 @@ use crate::write_envelope::WriteActor;
 // ---------------------------------------------------------------------------
 
 /// Status of a cross-vault coreference link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CoreferenceStatus {
     /// Asserted, not yet owner-confirmed. Written `Proposed`.

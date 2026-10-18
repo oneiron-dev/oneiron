@@ -174,7 +174,11 @@ impl fmt::Debug for RunSecretDestinations {
         let slots = lock(&self.slots);
         f.debug_map()
             .entries(slots.iter().map(|(name, slot)| {
-                let held = if slot.value.is_some() { "filled" } else { "empty" };
+                let held = if slot.value.is_some() {
+                    "filled"
+                } else {
+                    "empty"
+                };
                 (name, held)
             }))
             .finish()

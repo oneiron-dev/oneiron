@@ -324,7 +324,9 @@ pub(crate) async fn vault_off_record_start(
         let rooms = vault.off_record_session_vault();
         let session_ref = &input.session_ref;
         let record = match input.mode {
-            OffRecordEnterMode::OffRecord => rooms.enter_as_creator(session_ref, input.backend, who),
+            OffRecordEnterMode::OffRecord => {
+                rooms.enter_as_creator(session_ref, input.backend, who)
+            }
             OffRecordEnterMode::Anonymous => {
                 rooms.enter_anonymous_as_creator(session_ref, input.backend, who)
             }
