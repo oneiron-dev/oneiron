@@ -74,6 +74,8 @@ pub(crate) use provisional::{
     confirm_in_txn as confirm_provisional_in_txn, mint_for_span_in_txn, provisional_in_txn,
     refuse_held_id_in_txn, release_held_id_in_txn, resolve_in_txn as resolve_provisional_in_txn,
 };
+#[cfg(feature = "sync")]
+pub(crate) use provisional::{demote_in_txn as demote_tags_in_txn, demotion_kept_origins_in_txn};
 pub(crate) use save::{save_shadow_output_in_txn, shares_world_in_txn};
 pub(crate) use tags::{
     current_tags_in_txn, erase_in_txn, erase_scope_exists_in_txn, message_text_in_txn,
