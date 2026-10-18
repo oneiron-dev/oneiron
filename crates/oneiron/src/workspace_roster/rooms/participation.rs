@@ -31,6 +31,7 @@ use super::super::join_consent::{
 };
 use super::super::join_door::rooms_join_in_txn;
 use super::super::join_receipt::JoinReceiptRef;
+use super::fact_subject::FactSubject;
 use super::{ProjectRoom, RoomTurn, invalid, require_member, room_in, turn_in};
 use crate::agent_dispatch::SpendScopeId;
 use crate::error::{ClaimError, Error, RecordError, Result};
@@ -96,12 +97,12 @@ const fn subject_kind(subject: &JoinSubject) -> u8 {
 }
 
 /// One fact's key: room, thread (all zero for the room itself), subject kind
-/// and id, cause kind and id.
+/// and id, or no one's digest (FIX 4228), cause kind and id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct FactKey {
     pub(super) room: EntityId,
     pub(super) branch: [u8; 16],
-    pub(super) subject: JoinSubject,
+    pub(super) subject: FactSubject,
     pub(super) cause: (u8, [u8; 16]),
 }
 
@@ -111,8 +112,8 @@ impl SideKey for FactKey {
     fn encode_into(&self, out: &mut Vec<u8>) {
         out.extend_from_slice(self.room.as_bytes());
         out.extend_from_slice(&self.branch);
-        out.push(subject_kind(&self.subject));
-        out.extend_from_slice(self.subject.id().as_bytes());
+        out.push(self.subject.kind());
+        out.extend_from_slice(&self.subject.key_id());
         out.push(self.cause.0);
         out.extend_from_slice(&self.cause.1);
     }
@@ -124,15 +125,10 @@ impl SideKey for FactKey {
         let id = |range: std::ops::Range<usize>| -> Option<[u8; 16]> {
             bytes.get(range)?.try_into().ok()
         };
-        let subject = EntityId::from_bytes(id(33..49)?).ok()?;
         Some(Self {
             room: EntityId::from_bytes(id(0..16)?).ok()?,
             branch: id(16..32)?,
-            subject: match bytes[32] {
-                1 => JoinSubject::Person(subject),
-                2 => JoinSubject::Agent(subject),
-                _ => return None,
-            },
+            subject: FactSubject::decode(bytes[32], id(33..49)?)?,
             cause: (bytes[49], id(50..66)?),
         })
     }
@@ -187,7 +183,7 @@ pub(crate) fn record_participation_in_txn(
     let key = FactKey {
         room,
         branch: branch_bytes(branch),
-        subject: *subject,
+        subject: FactSubject::Live(*subject),
         cause: (cause.kind(), cause.key_id()),
     };
     let held = if cause.first_only() {

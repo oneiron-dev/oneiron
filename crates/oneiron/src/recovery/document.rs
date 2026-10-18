@@ -195,6 +195,8 @@ pub(super) fn capture(
             if receipt_id != receipt.id {
                 return Err(invalid("stored receipt key"));
             }
+            // The artifact names no one this vault erased (FIX 3878).
+            let receipt = receipt.erased_here(vault, txn)?;
             let value = CanonicalHeadMove {
                 id: *receipt.id.as_bytes(),
                 entity_id: *receipt.note.as_bytes(),
@@ -368,4 +370,19 @@ pub(crate) fn materialize_window_documents(
 
 pub(super) fn validate_workflows(snapshot: &CanonicalSnapshot) -> Result<()> {
     workflow::validate(snapshot)
+}
+
+#[cfg(feature = "sync")]
+impl CanonicalSnapshot {
+    /// This artifact as this vault recovers it (FIX 3878, 4227): each actor
+    /// this vault erased reads as no one in its NOTE workflows and its room
+    /// side rows, as the erase took it out of this vault's own rows. Every
+    /// check, write and equivalence test of a recovery reads this form.
+    pub(crate) fn with_actors_erased_here(&self, vault: &Vault) -> Result<Self> {
+        let mut snapshot = self.clone();
+        let txn = vault.store.env.read_txn()?;
+        workflow::erase_actors_here(vault, &txn, &mut snapshot)?;
+        crate::sync::room_facts::erase_carried_actors(vault, &txn, &mut snapshot.room_facts)?;
+        Ok(snapshot)
+    }
 }

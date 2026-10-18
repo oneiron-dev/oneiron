@@ -170,6 +170,7 @@ pub(crate) fn refresh_for(
     if state.cores.is_empty() && removed.is_empty() && !is_native(doc) {
         return Ok(false);
     }
+    state.erase_actors_here(vault, &txn)?;
     state.drop_deleted(&removed);
     state.validate()?;
     // Never commit while the read transaction is held: Observer A opens a writer.
@@ -237,8 +238,14 @@ pub(crate) fn copy_judged(vault: &Vault, source: &LoroDoc, out: &LoroDoc) -> Res
         crate::claim::CallerLocality::OffDevice,
     )?;
     let dropped = dropped_in(vault, &txn, &flagged, source, &ids)?;
+    if !is_native(source) {
+        return Ok(());
+    }
+    // A carried copy names no one this vault erased (FIX 3878).
+    let mut state = codec::read(source)?;
+    state.erase_actors_here(vault, &txn)?;
     drop(txn);
-    copy_selected(source, out, &dropped)
+    copy_state(state, out, &dropped)
 }
 
 /// Copy only complete workflows whose NOTE owners already passed selection:
@@ -253,7 +260,11 @@ pub(crate) fn copy_selected(
     if !is_native(source) {
         return Ok(());
     }
-    let mut state = codec::read(source)?;
+    copy_state(codec::read(source)?, out, dropped)
+}
+
+/// [`copy_selected`] of `state`, the workflows a source carries.
+fn copy_state(mut state: State, out: &LoroDoc, dropped: &BTreeSet<EntityId>) -> Result<()> {
     let mut keep = BTreeSet::new();
     for (key, _) in rows(out, "entities")? {
         let note = id(&key)?;

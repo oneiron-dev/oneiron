@@ -149,6 +149,32 @@ impl State {
             !row.waiting.is_empty() || !row.landed.is_empty()
         });
     }
+    /// Each actor this vault erased out of the workflow rows this state
+    /// carries, as the erase takes it out of this vault's own (FIX 3878): a
+    /// decided fork, a landing and a receipt name no one, and a fork no one
+    /// decided goes with its proposal value and its place in a bundle.
+    fn erase_actors_here(&mut self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<()> {
+        for (id, fork) in std::mem::take(&mut self.forks) {
+            let place = (fork.note, fork.fork);
+            match fork.carried_here(vault, txn)? {
+                Some(fork) => {
+                    self.forks.insert(id, fork);
+                }
+                None => {
+                    self.docs.remove(&place);
+                }
+            }
+        }
+        for receipt in self.receipts.values_mut() {
+            receipt.actor = receipt.actor.erased_here(vault, txn)?;
+        }
+        for (id, bundle) in std::mem::take(&mut self.bundles) {
+            if let Some(bundle) = bundle.carried_here(vault, txn)? {
+                self.bundles.insert(id, bundle);
+            }
+        }
+        Ok(())
+    }
     fn retain(&mut self, keep: &BTreeSet<EntityId>) -> Result<()> {
         for bundle in self.bundles.values() {
             let notes = bundle_notes(bundle);

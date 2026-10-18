@@ -5,6 +5,8 @@
 use std::collections::BTreeMap;
 
 use super::super::join_receipt::{JOINS, READY, intent_digest, is_join_ref, join_ref, ready_key};
+use super::carrier_erase;
+use super::fact_subject::FactSubject;
 use super::offers::{
     OFFER_CURRENT, OFFERS, OfferBallot, OfferState, StoredOffer, current_key, is_offer_id,
 };
@@ -37,6 +39,9 @@ pub(crate) enum TurnMergeRefusal {
     /// decisions, two answers, or one voter's two ballots under one stamp.
     /// Neither is chosen silently.
     DecisionConflict,
+    /// This vault erased an actor the row waits on or names by id, and the
+    /// erase took the row out here (FIX 4227, 4228); no erase is undone.
+    ActorErased,
 }
 
 /// What merging a carried turn row did.
@@ -357,13 +362,17 @@ pub(crate) fn replicated_side_rows_in(
         .iter_from(store, txn, &prefix)?
         .flatten()
     {
-        if !subjects.contains(&key.subject) {
-            subjects.push(key.subject);
+        // An erased subject's fact names no one and rides no window (FIX 4228).
+        let FactSubject::Live(subject) = key.subject else {
+            continue;
+        };
+        if !subjects.contains(&subject) {
+            subjects.push(subject);
         }
         rows.push(RoomSideRow::Participation {
             room,
             branch,
-            subject: key.subject,
+            subject,
             at: fact.at,
             join_ref: fact.join_ref,
             cause: fact.cause,
@@ -514,13 +523,17 @@ pub(crate) fn merge_replicated_side_row_in_txn(
     let store = &vault.store;
     match row {
         RoomSideRow::HostPin { room, pin } => {
+            // FIX 4227: the pin as this vault knows who it names.
+            let Some(pin) = carrier_erase::carried_pin(vault, txn, pin)? else {
+                return Ok(SideMerge::Refused(TurnMergeRefusal::ActorErased));
+            };
             if super::hosting::HOST_PINS
                 .get_lenient(store, txn, room)?
-                .is_some_and(|held| held == *pin)
+                .is_some_and(|held| held == pin)
             {
                 return Ok(SideMerge::Held);
             }
-            super::hosting::HOST_PINS.put(store, txn, room, pin)?;
+            super::hosting::HOST_PINS.put(store, txn, room, &pin)?;
         }
         RoomSideRow::Handle {
             room,
@@ -563,8 +576,12 @@ pub(crate) fn merge_replicated_side_row_in_txn(
             let key = participation::FactKey {
                 room: *room,
                 branch: branch.map_or([0; 16], |branch| *branch.as_bytes()),
-                subject: *subject,
+                subject: FactSubject::Live(*subject),
                 cause: (cause.kind(), cause.key_id()),
+            };
+            // FIX 4228: an erased subject's fact lands under no one's key.
+            let Some(key) = carrier_erase::carried_fact_key_in_txn(vault, txn, key)? else {
+                return Ok(SideMerge::Refused(TurnMergeRefusal::ActorErased));
             };
             let carried = participation::Fact {
                 at: *at,
@@ -628,19 +645,24 @@ fn merge_shared_in_txn(
     row: &RoomSideRow,
 ) -> Result<(SideMerge, bool, Option<String>)> {
     let store = &vault.store;
-    let held = match row {
-        RoomSideRow::Join { receipt } => JOINS
-            .get_lenient(store, txn, &receipt.join_ref)?
-            .map(|receipt| RoomSideRow::Join { receipt }),
-        RoomSideRow::Offer { offer } => OFFERS
-            .get_lenient(store, txn, &offer.card.offer_id)?
-            .map(|offer| RoomSideRow::Offer { offer }),
-        _ => return Ok((SideMerge::Refused(TurnMergeRefusal::InvalidIds), true, None)),
+    // FIX 4227, 4228: both copies as this vault knows who they name, each
+    // in its history form where it names an erased party by id.
+    let (carried, held, changed) = match carrier_erase::shared_here(vault, txn, row)? {
+        carrier_erase::SharedHere::Live {
+            carried,
+            held,
+            changed,
+        } => (carried, held, changed),
+        carrier_erase::SharedHere::Settled(merge) => return Ok((merge, true, None)),
     };
+    // The window's copy is judged as this vault knows it: a name only the
+    // export scrub can take out of it is no part it lacks.
     let merged = match held {
-        None => row.clone(),
-        Some(held) => match merged_shared_row(row, &held) {
-            Ok(merged) if merged == held => return Ok((SideMerge::Held, merged == *row, None)),
+        None => carried.clone(),
+        Some(held) => match merged_shared_row(&carried, &held) {
+            Ok(merged) if merged == held && !changed => {
+                return Ok((SideMerge::Held, merged == carried, None));
+            }
             Ok(merged) => merged,
             Err(refusal) => return Ok((SideMerge::Refused(refusal), true, None)),
         },
@@ -660,7 +682,7 @@ fn merge_shared_in_txn(
     // FIX 3322: a carried card that lost currency is replaced here, which
     // the window's copy lacks; another card it displaced is handed back.
     let own = row.merged_place().map(|(_, reference)| reference);
-    let holds = merged == *row && replaced.as_deref() != own;
+    let holds = merged == carried && replaced.as_deref() != own;
     Ok((
         SideMerge::Written,
         holds,
@@ -709,12 +731,15 @@ fn merged_join(
     }
     let mut answers = ours.answers.clone();
     for answer in &theirs.answers {
+        // Who an answer names settles by the carrier rule (FIX 4227).
         match answers
-            .iter()
+            .iter_mut()
             .find(|held| held.answer_ref == answer.answer_ref)
         {
-            Some(held) if held != answer => return Err(TurnMergeRefusal::FixedFieldsConflict),
-            Some(_) => {}
+            Some(held) => {
+                *held = carrier_erase::answer_erased_wins(held, answer)
+                    .ok_or(TurnMergeRefusal::FixedFieldsConflict)?;
+            }
             None => answers.push(answer.clone()),
         }
     }
@@ -736,12 +761,13 @@ fn merged_join(
             serde_json::to_vec(&rest).unwrap_or_default(),
         )
     };
-    let mut merged = if order(ours) >= order(theirs) {
-        ours.clone()
+    let (mut merged, other) = if order(ours) >= order(theirs) {
+        (ours.clone(), theirs)
     } else {
-        theirs.clone()
+        (theirs.clone(), ours)
     };
     merged.answers = answers;
+    carrier_erase::join_erased_with(&mut merged, other);
     Ok(merged)
 }
 
@@ -770,10 +796,16 @@ fn merged_offer(
         || card.join_ref != other.join_ref
         || card.created_at != other.created_at
         || ours.draft_digest != theirs.draft_digest
-        || ours.minted_by != theirs.minted_by
     {
         return Err(TurnMergeRefusal::FixedFieldsConflict);
     }
+    // Who minted and answered the card settles by the carrier rule (FIX 4227).
+    let minted_by = crate::deletion::carrier_actor_merged(
+        ours.minted_by,
+        theirs.minted_by,
+        crate::workspace_roster::RosterActor::Erased,
+    )
+    .ok_or(TurnMergeRefusal::FixedFieldsConflict)?;
     let landed = |offer: &StoredOffer| {
         offer.answer.is_some()
             || matches!(
@@ -781,9 +813,8 @@ fn merged_offer(
                 OfferState::Joined { .. } | OfferState::NotNow { .. }
             )
     };
-    if landed(ours)
-        && landed(theirs)
-        && (ours.answer != theirs.answer || ours.card.state != theirs.card.state)
+    let answer = carrier_erase::offer_answer_erased_wins(&ours.answer, &theirs.answer);
+    if landed(ours) && landed(theirs) && (answer.is_none() || ours.card.state != theirs.card.state)
     {
         return Err(TurnMergeRefusal::DecisionConflict);
     }
@@ -801,6 +832,10 @@ fn merged_offer(
     } else {
         theirs.clone()
     };
+    merged.minted_by = minted_by;
+    if let Some(answer) = answer.filter(|_| landed(ours) && landed(theirs)) {
+        merged.answer = answer;
+    }
     merged.reopen_epoch = ours.reopen_epoch.max(theirs.reopen_epoch);
     merged.card.last_engaged_at = ours.card.last_engaged_at.max(theirs.card.last_engaged_at);
     merged.votes = BTreeMap::new();

@@ -1,11 +1,14 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
 mod audience;
 mod audience_overlay;
+mod carrier_erase;
+mod fact_subject;
 mod history;
 mod hosting;
 mod liveness;
 mod offer_activity;
 mod offer_erase;
+mod offer_history;
 mod offer_liveness;
 mod offer_reopen;
 mod offer_settle;
@@ -32,6 +35,9 @@ pub(crate) use audience::{
     validate_private_audience_in,
 };
 pub(crate) use audience_overlay::overlay_thread_binding_in;
+#[cfg(feature = "sync")]
+pub(crate) use carrier_erase::erased_side_row_here;
+pub use fact_subject::{ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(super) use history::PAGE_LIMIT;
 pub(super) use history::delete_room_metadata;
 pub(crate) use history::erase_room_side_rows;
@@ -56,6 +62,7 @@ pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
 pub(crate) use offer_erase::erase_offer_actor_in_txn;
+pub use offer_history::ACTOR_ERASE_OFFER_BINDING;
 pub use offer_reopen::OfferReopenRequest;
 pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};

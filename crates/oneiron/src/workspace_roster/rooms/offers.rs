@@ -23,6 +23,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use super::offer_history::{OFFER_ROWS, OfferRow};
 use super::offer_settle::{Acceptance, Settled, Step, run_settlement};
 use super::{TURNS, invalid};
 use crate::agent_dispatch::{AgentDispatcher, SpendScopeId, SpendState};
@@ -263,7 +264,7 @@ pub(super) fn delete_room_offers(
     txn: &mut heed::RwTxn<'_>,
     room: EntityId,
 ) -> Result<()> {
-    delete_offers_where(store, txn, |card| card.room == room)?;
+    delete_offers_where(store, txn, |at, _| at == room)?;
     OFFER_CURRENT.delete_from(store, txn, format!("{}/", room.to_hex()).as_bytes())?;
     Ok(())
 }
@@ -277,8 +278,8 @@ pub(super) fn delete_thread_offers(
     room: EntityId,
     thread: EntityId,
 ) -> Result<()> {
-    delete_offers_where(store, txn, |card| {
-        card.room == room && card.branch == Some(thread)
+    delete_offers_where(store, txn, |at, branch| {
+        at == room && branch == Some(thread)
     })?;
     OFFER_CURRENT.delete_from(
         store,
@@ -288,23 +289,25 @@ pub(super) fn delete_thread_offers(
     Ok(())
 }
 
-/// Deletes every stored card `doomed` names. OFFERS is keyed by offer id, not
-/// by room, so the sweep reads the whole table in keyset pages.
+/// Deletes every stored card, live or history, minted for a room and thread
+/// `doomed` names. OFFERS is keyed by offer id, not by room, so the sweep
+/// reads the whole table in keyset pages.
 fn delete_offers_where(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
-    doomed: impl Fn(&OfferCard) -> bool,
+    doomed: impl Fn(EntityId, Option<EntityId>) -> bool,
 ) -> Result<()> {
     let page_limit = super::history::PAGE_LIMIT;
     let mut after: Option<String> = None;
     loop {
         let start = after.as_ref().map_or(Bound::Unbounded, Bound::Excluded);
-        let page: Vec<(String, StoredOffer)> = OFFERS
+        let page: Vec<(String, OfferRow)> = OFFER_ROWS
             .iter_range(store, txn, start, Bound::Unbounded)?
             .take(page_limit)
             .collect::<Result<_>>()?;
-        for (offer_id, stored) in &page {
-            if doomed(&stored.card) {
+        for (offer_id, row) in &page {
+            let (room, branch) = row.place();
+            if doomed(room, branch) {
                 OFFERS.delete(store, txn, offer_id)?;
             }
         }

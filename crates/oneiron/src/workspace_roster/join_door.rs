@@ -423,7 +423,7 @@ fn file_join_in_txn(
     }
     let join_ref = join_ref(request)?;
     let intent_digest = intent_digest(request)?;
-    let mut filing = match JOINS.get(&vault.store, txn, &join_ref)? {
+    let mut filing = match super::join_history::live_join(&vault.store, txn, &join_ref)? {
         Some(stored) if stored.intent_digest != intent_digest || stored.history != history => {
             return Err(Error::InvalidConfig(
                 "this intent_key already names a different join".into(),
@@ -495,8 +495,7 @@ pub fn rooms_consent_in_txn(
     now: u64,
 ) -> Result<JoinOutcome> {
     vault.verify_write_actor_in_txn(txn, &caller)?;
-    let receipt = JOINS
-        .get(&vault.store, txn, &answer.join_ref)?
+    let receipt = super::join_history::live_join(&vault.store, txn, &answer.join_ref)?
         .ok_or(Error::EntityNotFound)?;
     if receipt.is_settled() {
         return Ok(JoinOutcome::of(&receipt));

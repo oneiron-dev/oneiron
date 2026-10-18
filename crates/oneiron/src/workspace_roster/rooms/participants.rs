@@ -8,6 +8,7 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use super::fact_subject::FactSubject;
 use super::history::PAGE_LIMIT;
 use super::participation::{
     FACTS, Fact, FactKey, JoinCause, agent_standing_in_txn, participant_in_txn,
@@ -176,7 +177,7 @@ impl Memory<'_> {
         let past = start.map(|subject| FactKey {
             room,
             branch: place_branch,
-            subject,
+            subject: FactSubject::Live(subject),
             cause: (0xff, [0xff; 16]),
         });
         let rows: Box<dyn Iterator<Item = Result<(FactKey, Fact)>> + '_> = match &past {
@@ -196,8 +197,12 @@ impl Memory<'_> {
             if fact.cause.kind() != key.cause.0 || fact.cause.key_id() != key.cause.1 {
                 return Err(Error::CorruptedIndex("participation fact names another cause").into());
             }
+            // An erased subject's fact names no one to show (FIX 4228).
+            let FactSubject::Live(subject) = key.subject else {
+                continue;
+            };
             if let Some(last) = folded.last_mut()
-                && last.subject == key.subject
+                && last.subject == subject
             {
                 last.facts.push(fact);
                 continue;
@@ -207,7 +212,7 @@ impl Memory<'_> {
                 break;
             }
             folded.push(Folded {
-                subject: key.subject,
+                subject,
                 facts: vec![fact],
                 currently_eligible: false,
                 standing_receipt: None,

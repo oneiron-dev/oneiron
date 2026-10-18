@@ -71,3 +71,61 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
     }
     Ok(())
 }
+
+/// How two carrier copies of one row settle when they differ only in who
+/// they name (FIX 3878): a window's copy, a recovery artifact's or another
+/// machine's. It is never an authority or a replay check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierActorMerge {
+    /// Where one copy names an actor and the other names no one, the erased
+    /// copy wins. Two different live actors still conflict.
+    ErasedWins,
+    /// Any difference conflicts.
+    Exact,
+}
+
+/// Erase wins over every copy (FIX 3878, 4227, 4228; a call, from the erase
+/// rule): a carrier copy that still names an erased actor takes the erased
+/// form wherever it meets one that does not.
+pub const ACTOR_ERASE_CARRIER_MERGE: CarrierActorMerge = CarrierActorMerge::ErasedWins;
+
+/// What tells a receiver that an actor a carrier copy names is erased.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarrierEraseSource {
+    /// This vault's own hard-delete marker for the actor (`dt:`): never an
+    /// absent row, nor a peer's word.
+    LocalHardDeleteMarker,
+}
+
+/// A receiver reads an actor as erased by its own marker (FIX 3878, 4227,
+/// 4228; a call).
+pub const ACTOR_ERASE_CARRIER_SOURCE: CarrierEraseSource =
+    CarrierEraseSource::LocalHardDeleteMarker;
+
+/// Two copies' actors as one under [`ACTOR_ERASE_CARRIER_MERGE`]: the actor
+/// that stands, or `None` when they conflict. `erased` is the type's no one.
+pub(crate) fn carrier_actor_merged<T: Copy + Eq>(held: T, carried: T, erased: T) -> Option<T> {
+    if held == carried {
+        return Some(held);
+    }
+    match ACTOR_ERASE_CARRIER_MERGE {
+        CarrierActorMerge::ErasedWins if held == erased || carried == erased => Some(erased),
+        CarrierActorMerge::ErasedWins | CarrierActorMerge::Exact => None,
+    }
+}
+
+impl Vault {
+    /// Whether a carrier copy that names `actor` reads it as no one here, as
+    /// [`ACTOR_ERASE_CARRIER_SOURCE`] says (FIX 3878).
+    pub(crate) fn carrier_actor_erased_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: &EntityId,
+    ) -> Result<bool> {
+        match ACTOR_ERASE_CARRIER_SOURCE {
+            CarrierEraseSource::LocalHardDeleteMarker => {
+                self.local_hard_delete_marker_exists_in_txn(txn, actor)
+            }
+        }
+    }
+}
