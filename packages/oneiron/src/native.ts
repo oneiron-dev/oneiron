@@ -544,6 +544,17 @@ vaultDeliveryWindowPolicyList(input: unknown): unknown
 vaultDeliveryWindowPolicyRetract(input: unknown): unknown
 vaultDeliveryWindowEvaluate(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
+vaultSummariesCreate(input: unknown): unknown
+vaultSummariesRead(input: unknown): unknown
+vaultSummariesStatus(input: unknown): unknown
+vaultSummariesKeep(input: unknown): unknown
+vaultSummariesEdit(input: unknown): unknown
+vaultSummariesPatch(input: unknown): unknown
+vaultSummariesRegenerate(input: unknown): unknown
+vaultSummariesProposalsRead(input: unknown): unknown
+vaultSummariesProposalsMerge(input: unknown): unknown
+vaultSummariesProposalsSwitch(input: unknown): unknown
+vaultSummariesProposalsReject(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown

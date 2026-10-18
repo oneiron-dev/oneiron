@@ -4676,6 +4676,107 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_summaries_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_keep(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.keep")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.keep", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_edit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.edit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.edit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_patch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.patch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.patch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_regenerate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.regenerate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.summaries.regenerate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_proposals_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.proposals.read")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.summaries.proposals.read", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_proposals_merge(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.proposals.merge")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.summaries.proposals.merge", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_proposals_switch(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.proposals.switch")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.summaries.proposals.switch", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_summaries_proposals_reject(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.summaries.proposals.reject")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.summaries.proposals.reject", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.create")?;
         let output = py

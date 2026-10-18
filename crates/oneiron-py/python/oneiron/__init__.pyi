@@ -678,6 +678,8 @@ class Oneiron:
         @property
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
         @property
+        def summaries(self) -> "Oneiron._VaultSummariesVerbs": ...
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
         @property
         def tasks(self) -> "Oneiron._VaultTasksVerbs": ...
@@ -1796,6 +1798,32 @@ class Oneiron:
             """Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance."""
         def retract(self, spec: Facade.DeliveryWindowPolicyRetractRequest) -> Facade.CommitReceipt:
             """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
+    class _VaultSummariesVerbs:
+        def create(self, request: Facade.SummaryCreateRequest) -> Facade.SummaryQueued:
+            """Declares a readable source scope; only the configured Dreamer writes and source-links the SUMMARY birth."""
+        def read(self, request: Facade.SummaryReadRequest) -> Facade.ScopedReadResult[Facade.SummaryReadView | None]:
+            """Reads SUMMARY text, keep, derivation, covers and stable edit anchors in one caller-scoped snapshot."""
+        def status(self, request: Facade.SummaryStatusRequest) -> Facade.ScopeSummaryStatus:
+            """Reads the calling principal's own summary declaration and its retained completion or failure."""
+        def keep(self, request: Facade.SummaryKeepRequest) -> Facade.SummaryKeepResult:
+            """Edits the SUMMARY keep memo at the exact frontier read, under the caller's owner proof or entity-bound text grant."""
+        def edit(self, request: Facade.SummaryEditRequest) -> Facade.SummaryProposalView:
+            """Applies attributed anchored SUMMARY edits through existing grants; ungranted edits remain a typed review proposal."""
+        def patch(self, request: Facade.SummaryPatchRequest) -> Facade.SummaryMutationResult:
+            """Applies generated anchored SUMMARY operations after a keep fence and source admission; durable receipts name the sources read."""
+        def regenerate(self, request: Facade.SummaryRegenerateRequest) -> Facade.SummaryMutationResult:
+            """Retains generated SUMMARY text as a source-linked rewrite fork after reading keep; no head moves without explicit switch."""
+        @property
+        def proposals(self) -> "Oneiron._VaultSummariesProposalsVerbs": ...
+    class _VaultSummariesProposalsVerbs:
+        def read(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Reads a SUMMARY proposal's fork provenance, retained text and durable receipts only when every member is readable."""
+        def merge(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Merges the complete SUMMARY proposal under existing entity grants, preserving concurrent head edits and durable receipts."""
+        def switch(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Explicitly switches the complete SUMMARY proposal under existing entity grants; a stale causal base refuses the entire set."""
+        def reject(self, request: Facade.SummaryProposalRequest) -> Facade.SummaryProposalView:
+            """Rejects the complete SUMMARY proposal under existing entity grants, dropping pending fork text without moving live heads."""
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
