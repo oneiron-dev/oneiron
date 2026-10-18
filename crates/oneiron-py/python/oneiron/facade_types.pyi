@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 426 facade rows, 1639 declarations.
-Inputs: 380 of 426 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 376 of 426 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 434 facade rows, 1653 declarations.
+Inputs: 386 of 434 fully typed, 48 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 384 of 434 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -3289,6 +3289,63 @@ class ResidencePruneRequest(TypedDict):
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+OffRecordEnterMode = Literal["off_record", "anonymous"]
+OffRecordBackendClass = Literal["local", "remote_provider"]
+class OffRecordStartRequest(TypedDict):
+    session_ref: str
+    mode: OffRecordEnterMode
+    backend: OffRecordBackendClass
+OffRecordMode = Literal["off_record", "on_record", "anonymous"]
+class OffRecordSessionView(TypedDict):
+    session_ref: str
+    mode: OffRecordMode
+    backend: OffRecordBackendClass
+    entered_at: str
+    promoted_turns: list[str]
+    closing: bool
+class OffRecordSessionRequest(TypedDict):
+    session_ref: str
+class OffRecordWitnessRequest(TypedDict):
+    session_ref: str
+    turn: WitnessTurn
+    summary: NotRequired[str | None]
+class OffRecordClosed(TypedDict):
+    session_ref: str
+    turns_dropped: int
+    context_receipts_dropped: int
+    emit_receipts_dropped: int
+    emit_receipts_kept: int
+    promoted_turns_kept: int
+class OffRecordRecallRequest(TypedDict):
+    session_ref: str
+    query: str
+    limit: int
+class CreateNoteRequest(TypedDict):
+    kind: str
+    markdown: str
+class OffRecordNoteRequest(TypedDict):
+    session_ref: str
+    note: CreateNoteRequest
+class EntityRefReceipt(TypedDict):
+    entity_ref: str
+    id_hex: str
+    receipt_ref: str
+    record: NotRequired[RecordRef | None]
+class OffRecordClaimRequest(TypedDict):
+    session_ref: str
+    claim: ScopedClaimInput
+class OffRecordExecuteRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    task: str
+OffRecordRunStatus = Literal["complete", "waiting", "yielded", "window_full"]
+class OffRecordExecuted(TypedDict):
+    run_ref: str
+    run_id: str
+    status: OffRecordRunStatus
+    next_step_seq: NotRequired[int | None]
+    steps_run: int
+    bridge_calls: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -6750,11 +6807,6 @@ class StructuralPutInput(TypedDict):
     edges: NotRequired[list[StructuralEdgeSpec] | None]
     occurred_at: int
     learned_at: NotRequired[int | None]
-class EntityRefReceipt(TypedDict):
-    entity_ref: str
-    id_hex: str
-    receipt_ref: str
-    record: NotRequired[RecordRef | None]
 class HabitCheckinInput(TypedDict):
     habit_ref: str
     id: NotRequired[str | None]
@@ -8143,9 +8195,6 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
-class CreateNoteRequest(TypedDict):
-    kind: str
-    markdown: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

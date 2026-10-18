@@ -690,6 +690,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.off_record.start",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordStartRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordSessionRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.witness",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordWitnessRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordSessionRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.recall",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRecallRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.notes.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordNoteRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.claims.upsert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordClaimRequest,
+                >(),
+            ),
+            (
+                "self.off_record.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordExecuteRequest,
+                >(),
+            ),
+            (
                 "vault.records.erase_preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RecordEraseRequest,
@@ -2470,6 +2518,13 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.off_record.start",
+    "vault.off_record.status",
+    "vault.off_record.witness",
+    "vault.off_record.discard",
+    "vault.off_record.notes.create",
+    "vault.off_record.claims.upsert",
+    "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
     "vault.decisions.bands.read",
@@ -2479,6 +2534,27 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordSessionView,
+        >(),
+        "vault.off_record.status" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordSessionView,
+        >(),
+        "vault.off_record.witness" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
+        }
+        "vault.off_record.discard" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OffRecordClosed>()
+        }
+        "vault.off_record.notes.create" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
+        "vault.off_record.claims.upsert" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordExecuted,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
@@ -2497,6 +2573,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         _ => return None,
     })
 }
+/// The facade rows no transport keeps a call receipt of (DOOR-127): an
+/// off-record session's own rows.
+pub const NO_RECORD_ROWS: &[&str] = &[
+    "vault.off_record.start",
+    "vault.off_record.status",
+    "vault.off_record.witness",
+    "vault.off_record.discard",
+    "vault.off_record.recall",
+    "vault.off_record.notes.create",
+    "vault.off_record.claims.upsert",
+    "self.off_record.execute",
+];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
 }
@@ -3504,6 +3592,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.residence.prune" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.witness" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.notes.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.claims.upsert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.execute" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5988,6 +6132,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.residence.prune" => {
             let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
         }
+        "vault.off_record.start" => {
+            let _input: crate::task_verb::sdk::OffRecordStartRequest = decode(value.clone())?;
+        }
+        "vault.off_record.status" => {
+            let _input: crate::task_verb::sdk::OffRecordSessionRequest = decode(value.clone())?;
+        }
+        "vault.off_record.witness" => {
+            let _input: crate::task_verb::sdk::OffRecordWitnessRequest = decode(value.clone())?;
+        }
+        "vault.off_record.discard" => {
+            let _input: crate::task_verb::sdk::OffRecordSessionRequest = decode(value.clone())?;
+        }
+        "vault.off_record.recall" => {
+            let _input: crate::task_verb::sdk::OffRecordRecallRequest = decode(value.clone())?;
+        }
+        "vault.off_record.notes.create" => {
+            let _input: crate::task_verb::sdk::OffRecordNoteRequest = decode(value.clone())?;
+        }
+        "vault.off_record.claims.upsert" => {
+            let _input: crate::task_verb::sdk::OffRecordClaimRequest = decode(value.clone())?;
+        }
+        "self.off_record.execute" => {
+            let _input: crate::task_verb::sdk::OffRecordExecuteRequest = decode(value.clone())?;
+        }
         "vault.records.erase_preview" => {
             let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
         }
@@ -7263,6 +7431,18 @@ pub fn invoke(
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
         "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
+        "vault.off_record.start" => encode(vault_off_record_start(memory, decode(value)?)?),
+        "vault.off_record.status" => encode(vault_off_record_status(memory, decode(value)?)?),
+        "vault.off_record.witness" => encode(vault_off_record_witness(memory, decode(value)?)?),
+        "vault.off_record.discard" => encode(vault_off_record_discard(memory, decode(value)?)?),
+        "vault.off_record.recall" => encode(vault_off_record_recall(memory, decode(value)?)?),
+        "vault.off_record.notes.create" => {
+            encode(vault_off_record_notes_create(memory, decode(value)?)?)
+        }
+        "vault.off_record.claims.upsert" => {
+            encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
+        }
+        "self.off_record.execute" => encode(self_off_record_execute(memory, decode(value)?)?),
         "vault.records.erase_preview" => {
             encode(vault_records_erase_preview(memory, decode(value)?)?)
         }
@@ -9079,6 +9259,54 @@ pub fn vault_residence_prune(
     input: crate::task_verb::sdk::ResidencePruneRequest,
 ) -> MemoryResult<crate::task_verb::sdk::ResidencePruned> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
+}
+pub fn vault_off_record_start(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordSessionView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.start", &input)
+}
+pub fn vault_off_record_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordSessionView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.status", &input)
+}
+pub fn vault_off_record_witness(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordWitnessRequest,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.witness", &input)
+}
+pub fn vault_off_record_discard(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordClosed> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.discard", &input)
+}
+pub fn vault_off_record_recall(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRecallRequest,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.recall", &input)
+}
+pub fn vault_off_record_notes_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordNoteRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.notes.create", &input)
+}
+pub fn vault_off_record_claims_upsert(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordClaimRequest,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.claims.upsert", &input)
+}
+pub fn self_off_record_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordExecuteRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordExecuted> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.execute", &input)
 }
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,

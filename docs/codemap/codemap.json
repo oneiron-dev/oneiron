@@ -31592,6 +31592,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/session_writes.rs",
+     "purpose": "NOTE and claim writes through an off-record session's handle (DOOR-127; Engine ruling 10-18 on ARCH-0052…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/shape_doors.rs",
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
@@ -33004,6 +33014,16 @@
      "surface": {
       "crate-vis": 14,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/off_record/lifecycle/overlay_writes.rs",
+     "purpose": "Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -49023,7 +49043,7 @@
      "surface": {
       "enum": 1,
       "fn": 12,
-      "re-export": 33,
+      "re-export": 34,
       "struct": 36
      }
     },
@@ -49286,8 +49306,8 @@
      "path": "src/task_verb/sdk_generated.rs",
      "purpose": "—",
      "surface": {
-      "const": 3,
-      "fn": 473
+      "const": 4,
+      "fn": 481
      }
     },
     {
@@ -49458,6 +49478,32 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OffRecordClaimRequest",
+      "OffRecordClosed",
+      "OffRecordEnterMode",
+      "OffRecordExecuteRequest",
+      "OffRecordExecuted",
+      "OffRecordNoteRequest",
+      "OffRecordRecallRequest",
+      "OffRecordRunStatus",
+      "OffRecordSessionRequest",
+      "OffRecordSessionView",
+      "OffRecordStartRequest",
+      "OffRecordWitnessRequest"
+     ],
+     "path": "src/task_verb/sdk_off_record.rs",
+     "purpose": "The owner's off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over the engine's off-record…",
+     "surface": {
+      "const": 1,
+      "enum": 2,
+      "fn": 1,
+      "struct": 10
      }
     },
     {
@@ -55376,7 +55422,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 147,
+     "files": 148,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55404,7 +55450,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55887,7 +55933,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 145,
+     "files": 146,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -56057,7 +56103,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3414,
+   "source_files": 3417,
    "test_files": 902
   },
   "oneiron-android": {
@@ -64470,7 +64516,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 423
+      "fn": 431
      }
     },
     {
@@ -65518,7 +65564,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 424
+      "fn": 432
      }
     },
     {
@@ -68621,7 +68667,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 83
+      "crate-vis": 84
      }
     },
     {
@@ -68672,6 +68718,16 @@
      "purpose": "Host-held NOTE editor bindings beside the ordinary scoped NOTE reads",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/off_record_doors.rs",
+     "purpose": "The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06)",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -73540,12 +73596,22 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 1,
       "fn": 7,
       "struct": 3,
       "trait": 2,
       "type": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/mcp/exec_host/off_record_run.rs",
+     "purpose": "Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75936,7 +76002,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 338,
+     "files": 339,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -76202,7 +76268,7 @@
      "purpose": "Managed serve mode: the vault engine as a supervised child process"
     },
     "mcp": {
-     "files": 22,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -76351,7 +76417,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 661,
+   "source_files": 663,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77391,6 +77457,20 @@
       "Of360QaAnswer",
       "Of360RateMetric",
       "Of360Speaker",
+      "OffRecordBackendClass",
+      "OffRecordClaimRequest",
+      "OffRecordClosed",
+      "OffRecordEnterMode",
+      "OffRecordExecuteRequest",
+      "OffRecordExecuted",
+      "OffRecordMode",
+      "OffRecordNoteRequest",
+      "OffRecordRecallRequest",
+      "OffRecordRunStatus",
+      "OffRecordSessionRequest",
+      "OffRecordSessionView",
+      "OffRecordStartRequest",
+      "OffRecordWitnessRequest",
       "OfferAnswer",
       "OfferAnswerRequest",
       "OfferCard",
@@ -78058,12 +78138,17 @@
       "WireDeleteReceipt",
       "WireEntityView",
       "WireMentionProvenance",
+      "WireQuoteSpan",
       "WireReadScope",
       "WireRecordRefusal",
       "WireRefusalReason",
+      "WireWitnessAuthor",
+      "WireWitnessMessage",
       "WireWitnessReceipt",
+      "WireWitnessTurn",
       "WithheldRef",
       "WithheldRole",
+      "WitnessAssertions",
       "WorkCompanionPolicy",
       "WorkCompanionSetRequest",
       "WorkspaceCompanionInput",
@@ -78102,8 +78187,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 430,
-      "struct": 1124
+      "enum": 435,
+      "struct": 1138
      }
     },
     {

@@ -139,6 +139,14 @@ pub enum AgentVerb {
     VaultResidenceOpen,
     VaultResidenceIndex,
     VaultResidencePrune,
+    VaultOffRecordStart,
+    VaultOffRecordStatus,
+    VaultOffRecordWitness,
+    VaultOffRecordDiscard,
+    VaultOffRecordRecall,
+    VaultOffRecordNotesCreate,
+    VaultOffRecordClaimsUpsert,
+    SelfOffRecordExecute,
     VaultRecordsErasePreview,
     VaultRecordsEraseConfirm,
     VaultResearchBind,
@@ -611,6 +619,14 @@ impl AgentVerb {
         Self::VaultResidenceOpen,
         Self::VaultResidenceIndex,
         Self::VaultResidencePrune,
+        Self::VaultOffRecordStart,
+        Self::VaultOffRecordStatus,
+        Self::VaultOffRecordWitness,
+        Self::VaultOffRecordDiscard,
+        Self::VaultOffRecordRecall,
+        Self::VaultOffRecordNotesCreate,
+        Self::VaultOffRecordClaimsUpsert,
+        Self::SelfOffRecordExecute,
         Self::VaultRecordsErasePreview,
         Self::VaultRecordsEraseConfirm,
         Self::VaultResearchBind,
@@ -1086,6 +1102,14 @@ impl AgentVerb {
             Self::VaultResidenceOpen => "vault.residence.open",
             Self::VaultResidenceIndex => "vault.residence.index",
             Self::VaultResidencePrune => "vault.residence.prune",
+            Self::VaultOffRecordStart => "vault.off_record.start",
+            Self::VaultOffRecordStatus => "vault.off_record.status",
+            Self::VaultOffRecordWitness => "vault.off_record.witness",
+            Self::VaultOffRecordDiscard => "vault.off_record.discard",
+            Self::VaultOffRecordRecall => "vault.off_record.recall",
+            Self::VaultOffRecordNotesCreate => "vault.off_record.notes.create",
+            Self::VaultOffRecordClaimsUpsert => "vault.off_record.claims.upsert",
+            Self::SelfOffRecordExecute => "self.off_record.execute",
             Self::VaultRecordsErasePreview => "vault.records.erase_preview",
             Self::VaultRecordsEraseConfirm => "vault.records.erase_confirm",
             Self::VaultResearchBind => "vault.research.bind",
@@ -1565,6 +1589,14 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultOffRecordStart
+                | Self::VaultOffRecordStatus
+                | Self::VaultOffRecordWitness
+                | Self::VaultOffRecordDiscard
+                | Self::VaultOffRecordRecall
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2044,6 +2076,14 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultOffRecordStart
+                | Self::VaultOffRecordStatus
+                | Self::VaultOffRecordWitness
+                | Self::VaultOffRecordDiscard
+                | Self::VaultOffRecordRecall
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2564,6 +2604,14 @@ impl AgentVerb {
                 | Self::VaultResidenceOpen
                 | Self::VaultResidenceIndex
                 | Self::VaultResidencePrune
+                | Self::VaultOffRecordStart
+                | Self::VaultOffRecordStatus
+                | Self::VaultOffRecordWitness
+                | Self::VaultOffRecordDiscard
+                | Self::VaultOffRecordRecall
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -2966,6 +3014,12 @@ impl AgentVerb {
                 | Self::VaultResidenceMode
                 | Self::VaultResidenceOpen
                 | Self::VaultResidencePrune
+                | Self::VaultOffRecordStart
+                | Self::VaultOffRecordWitness
+                | Self::VaultOffRecordDiscard
+                | Self::VaultOffRecordNotesCreate
+                | Self::VaultOffRecordClaimsUpsert
+                | Self::SelfOffRecordExecute
                 | Self::VaultRecordsErasePreview
                 | Self::VaultRecordsEraseConfirm
                 | Self::VaultResearchBind
@@ -3333,6 +3387,14 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultOffRecordStart => &["spec"],
+            Self::VaultOffRecordStatus => &["spec"],
+            Self::VaultOffRecordWitness => &["spec"],
+            Self::VaultOffRecordDiscard => &["spec"],
+            Self::VaultOffRecordRecall => &["spec"],
+            Self::VaultOffRecordNotesCreate => &["spec"],
+            Self::VaultOffRecordClaimsUpsert => &["spec"],
+            Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -3806,6 +3868,14 @@ impl AgentVerb {
             Self::VaultResidenceOpen => &["spec"],
             Self::VaultResidenceIndex => &["spec"],
             Self::VaultResidencePrune => &["spec"],
+            Self::VaultOffRecordStart => &["spec"],
+            Self::VaultOffRecordStatus => &["spec"],
+            Self::VaultOffRecordWitness => &["spec"],
+            Self::VaultOffRecordDiscard => &["spec"],
+            Self::VaultOffRecordRecall => &["spec"],
+            Self::VaultOffRecordNotesCreate => &["spec"],
+            Self::VaultOffRecordClaimsUpsert => &["spec"],
+            Self::SelfOffRecordExecute => &["spec"],
             Self::VaultRecordsErasePreview => &["spec"],
             Self::VaultRecordsEraseConfirm => &["spec"],
             Self::VaultResearchBind => &["spec"],
@@ -4531,6 +4601,30 @@ impl AgentVerb {
             }
             Self::VaultResidencePrune => {
                 "Drops the opened-item caches one of the owner's machines last touched before a time."
+            }
+            Self::VaultOffRecordStart => {
+                "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."
+            }
+            Self::VaultOffRecordStatus => {
+                "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing."
+            }
+            Self::VaultOffRecordWitness => {
+                "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close."
+            }
+            Self::VaultOffRecordDiscard => {
+                "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."
+            }
+            Self::VaultOffRecordRecall => {
+                "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."
+            }
+            Self::VaultOffRecordNotesCreate => {
+                "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."
+            }
+            Self::VaultOffRecordClaimsUpsert => {
+                "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."
+            }
+            Self::SelfOffRecordExecute => {
+                "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."
             }
             Self::VaultRecordsErasePreview => {
                 "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."

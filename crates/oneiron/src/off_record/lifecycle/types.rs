@@ -14,7 +14,7 @@ pub(super) const OFF_RECORD_SESSION_REF_MAX_LEN: usize = 256;
 /// The mode says where NEW writes land. It never moves rows: flipping to
 /// [`OffRecordMode::OnRecord`] seals the overlay so later writes go to base,
 /// and the room's earlier turns stay overlay-only until promote or close.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OffRecordMode {
     OffRecord,
@@ -36,7 +36,7 @@ impl OffRecordMode {
 
 /// Backend class the disclosure-honesty line is relative to (OF-326
 /// EF-316-style honesty caveat): evaporation is backend-relative.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OffRecordBackendClass {
     /// Local inference: real evaporation — nothing leaves the device and
