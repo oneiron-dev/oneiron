@@ -36,6 +36,7 @@ pub mod config;
 mod connector_admission_host;
 pub mod connector_call_host;
 mod connector_call_settle;
+mod connector_elicitation;
 pub mod control_keys;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod credential_resume;

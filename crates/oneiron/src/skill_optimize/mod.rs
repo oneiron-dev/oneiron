@@ -144,6 +144,7 @@ mod judge_swap;
 mod labels;
 mod offer;
 mod offer_switch;
+mod offer_training;
 pub(crate) mod policy;
 mod response_pair;
 mod selection;
@@ -209,13 +210,17 @@ pub use self::offer::{
     ComputeDestination, OFFER_SKILL_AXIS, OfferAnswer, OfferAnswerRecord, OfferCandidate,
     OfferCheck, OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
     SeatWorkload, TrainingOffer, TrainingOfferDraft, eval_authoring_skill_id, offer_skill_cell,
-    pending_training_offers, record_offer_check, record_training_offer, settle_training_offer,
-    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
+    pending_training_offers, record_offer_check, record_training_offer, training_offer,
+    training_offer_checks, training_offer_skill_id, training_offers,
 };
 pub(crate) use self::offer::{pending_training_offer_in_txn, settle_training_offer_in_txn};
 pub use self::offer_switch::{
     OfferSwitchReceipt, OfferSwitchUndo, model_role_seat, seat_model_role, training_offer_switch,
     undo_training_offer_switch,
+};
+pub use self::offer_training::{
+    OfferTrainingHandoff, TrainingChoice, authorize_offer_training, check_offer_training_plan,
+    offer_training_handoff, settle_training_offer, suggested_training_plan,
 };
 pub use self::response_pair::{ResponsePairPick, pick_response_pair, response_pair_picks};
 pub use self::selection::{

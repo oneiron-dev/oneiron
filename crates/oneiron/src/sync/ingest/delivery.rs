@@ -112,7 +112,9 @@ fn delivery_key(pact: &[u8; 32], epoch: u64, record: EntityId) -> String {
 /// Attributes `blob`, which an entity door wrote at `id` in `wtxn`, to the
 /// pact and epoch of the delivery an import on this thread carries, when it
 /// is that delivery's row with the bytes the peer brought. A foreign world
-/// the record sits in is registered to the pact in the same transaction.
+/// the record sits in is registered to the pact in the same transaction. A
+/// guest's WORLD row lands under its foreign id (FIX 3657): that id is the
+/// world it sits in, registered as a foreign CLAIM's world is.
 pub(in crate::sync) fn note_delivered_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -135,14 +137,20 @@ pub(in crate::sync) fn note_delivered_in_txn(
     ) else {
         return Ok(());
     };
-    let world = crate::federation::record_scope::record_world_in(
-        &vault.store,
-        wtxn,
-        id,
-        header.entity_type,
-        body,
-    )?
-    .flatten();
+    let world = if header.entity_type == crate::registry::ENTITY_TYPE_WORLD
+        && ForeignWorldId::from_entity_id(id).is_ok()
+    {
+        Some(id)
+    } else {
+        crate::federation::record_scope::record_world_in(
+            &vault.store,
+            wtxn,
+            id,
+            header.entity_type,
+            body,
+        )?
+        .flatten()
+    };
     let place = world.map_or_else(Vec::new, |world| world.as_bytes().to_vec());
     DELIVERED.put(&vault.store, wtxn, &delivery_key(&pact, epoch, id), &place)?;
     if let Some(foreign) = world.and_then(|world| ForeignWorldId::from_entity_id(world).ok()) {

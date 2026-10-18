@@ -49,6 +49,11 @@ const GUEST_ACTOR_SCHEMA_VERSION: u64 = 1;
 const GUEST_ACTOR_KIND: &str = "connect_guest";
 const GUEST_ACTOR_KEYS: [&str; 4] = ["schema_version", "kind", "name", "origin_vault"];
 
+/// How many guest actor generations a (this vault, peer vault) pair may use
+/// up: each deleted actor moves the next mint to the next generation. Never
+/// reached in practice; the mint refuses past it.
+const GUEST_ACTOR_GENERATIONS: u64 = 1024;
+
 /// What [`Vault::mint_connect_grant`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ConnectGrantMinted {
@@ -396,10 +401,12 @@ impl Vault {
         })
     }
 
-    /// The peer's vault-resident guest actor: one PERSON row per (this
-    /// vault, peer vault), its id derived from both, its body carrying the
-    /// origin vault. Resolved when present with the same body; created when
-    /// absent; anything else at that id refuses.
+    /// The peer's vault-resident guest actor: a PERSON row per (this vault,
+    /// peer vault), its id derived from both and a generation, its body
+    /// carrying the origin vault. The first generation whose id was never
+    /// deleted is the actor (FIX 3685): resolved when present with the same
+    /// body, created when absent; any other row there refuses. A deleted
+    /// actor stays deleted, and older grants keep naming it.
     fn connect_guest_actor_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -407,25 +414,36 @@ impl Vault {
         peer_vault_id: &AuthorityVaultId,
         now: u64,
     ) -> Result<EntityId> {
-        let actor = EntityId::derive(
-            derived_domains::CONNECT_GUEST_ACTOR,
-            &[&local[..], &peer_vault_id[..]],
-        )?;
         let body = guest_actor_body(peer_vault_id)?;
-        match live_entity_row_in_txn(&self.store, txn, &actor)? {
-            LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_PERSON,
-                body: stored,
-            } if stored == body => return Ok(actor),
-            LiveEntityRow::Absent => {}
-            LiveEntityRow::Live { .. } | LiveEntityRow::DeletedShell => {
-                return Err(refused(
-                    "the peer vault's guest actor row is not a live Connect guest",
-                ));
+        for generation in 0..GUEST_ACTOR_GENERATIONS {
+            let actor = EntityId::derive(
+                derived_domains::CONNECT_GUEST_ACTOR,
+                &[&local[..], &peer_vault_id[..], &generation.to_be_bytes()],
+            )?;
+            if crate::ports::TombstoneStoreRead::port_deletion_state(&self.store, txn, &actor)?
+                .deleted
+            {
+                continue;
+            }
+            match live_entity_row_in_txn(&self.store, txn, &actor)? {
+                LiveEntityRow::Live {
+                    entity_type: ENTITY_TYPE_PERSON,
+                    body: stored,
+                } if stored == body => return Ok(actor),
+                LiveEntityRow::Absent => {
+                    self.put_connect_row_in_txn(txn, actor, ENTITY_TYPE_PERSON, now, body, false)?;
+                    return Ok(actor);
+                }
+                LiveEntityRow::Live { .. } | LiveEntityRow::DeletedShell => {
+                    return Err(refused(
+                        "the peer vault's guest actor row is not a live Connect guest",
+                    ));
+                }
             }
         }
-        self.put_connect_row_in_txn(txn, actor, ENTITY_TYPE_PERSON, now, body, false)?;
-        Ok(actor)
+        Err(refused(
+            "the peer vault's guest actor generations are used up",
+        ))
     }
 
     fn put_connect_row_in_txn(

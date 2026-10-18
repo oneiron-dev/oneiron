@@ -147,6 +147,9 @@ pub enum EngineLimit {
     /// calls another runs the inner one's step inside its own. Past it the
     /// row asks whether everything is okay and the call runs.
     CallableNestDepth,
+    /// Bytes of the banked source clip one cloned-voice render sends as its
+    /// reference. Past it the whole clip is still sent.
+    VoiceReferenceBytes,
     /// Bytes of one signing item's PDF the e-sign seal holds in memory: its
     /// original or its prepared copy, whichever is larger. Past it asks
     /// whether everything is okay, and the item is prepared and sealed whole.
@@ -155,7 +158,7 @@ pub enum EngineLimit {
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 36] = [
+    pub const ALL: [Self; 37] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -191,6 +194,7 @@ impl EngineLimit {
         Self::ContributionJudgeTaskBytes,
         Self::ContributionJudgeAnswerBytes,
         Self::CallableNestDepth,
+        Self::VoiceReferenceBytes,
         Self::EsignPdfBytes,
     ];
 
@@ -232,6 +236,7 @@ impl EngineLimit {
             Self::ContributionJudgeTaskBytes => "limits.contribution_judge_task_bytes",
             Self::ContributionJudgeAnswerBytes => "limits.contribution_judge_answer_bytes",
             Self::CallableNestDepth => "limits.callable_nest_depth",
+            Self::VoiceReferenceBytes => "limits.voice_reference_bytes",
             Self::EsignPdfBytes => "limits.esign_pdf_bytes",
         }
     }
@@ -281,6 +286,8 @@ impl EngineLimit {
             Self::ContributionJudgeTaskBytes => 24 << 10,
             Self::ContributionJudgeAnswerBytes => 16 << 10,
             Self::CallableNestDepth => 8,
+            // The serving policy's old reference cap.
+            Self::VoiceReferenceBytes => 16 << 20,
             Self::EsignPdfBytes => 256 << 20,
         }
     }

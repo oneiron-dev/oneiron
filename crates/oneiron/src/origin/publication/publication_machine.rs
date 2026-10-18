@@ -23,9 +23,9 @@ use super::publication_codec::{
 use super::publication_journal::validate_origin_publication_request;
 use super::publication_journal::{OriginAdvance, origin_receipt};
 use super::publication_types::{
-    ORIGIN_PUBLICATION_INTENT_PREDICATE, ORIGIN_PUBLICATION_PREDICATE, OriginCensusDisposition,
-    OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord, OriginPublicationRequest,
-    OriginPublicationStatus,
+    ORIGIN_PUBLICATION_INTENT_PREDICATE, ORIGIN_PUBLICATION_PREDICATE, OriginActor,
+    OriginCensusDisposition, OriginKeepRefKind, OriginPublicationReceipt, OriginPublicationRecord,
+    OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // The state machine
@@ -153,7 +153,7 @@ impl Vault {
             required_lfs_oids: request.required_lfs_oids.clone(),
             provenance_claim_id: request.provenance_claim_id,
             publication_claim_id: None,
-            actor_id: request.actor_id,
+            actor_id: OriginActor::Actor(request.actor_id),
             status: OriginPublicationStatus::Prepared,
             failure: None,
             occurred: request.occurred,

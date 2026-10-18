@@ -118,8 +118,8 @@ mod facade;
 // the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
     DoorClaim, FacadeApiError, FacadeCall, INVOCATION_CONFLICT, INVOCATION_IN_FLIGHT,
-    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_call_as,
-    invocation_body, self_use_as,
+    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
+    connector_call_as, invocation_body, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;

@@ -140,7 +140,11 @@ fn settle_connector_calls(
             }
         };
         let reply = ConnectorCallReply::project(&call.name, &call.tool, outcome);
-        if reply.wait_ref().is_some() {
+        // A connector that asked for input mid-call received the call: its
+        // row now keeps that delivery, which a later pass delivers to the
+        // wait, receipt-only. Nobody parked on the wait holds the questions'
+        // handle, so they lapse unanswered.
+        if reply.wait_ref().is_some() || matches!(reply, ConnectorCallReply::AwaitingInput { .. }) {
             backoffs.defer(call.call_ref, now);
             continue;
         }

@@ -44,6 +44,7 @@ use super::{
 };
 use crate::Vault;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::llm::media::wav::{WavClip, pcm16_wav};
 use crate::llm::media::{
     AiMediaDoor, AiOperation, MediaFuture, MediaPart, MediaRequest, MediaResponse, MediaVoice,
@@ -189,9 +190,9 @@ impl BankVoiceBinding {
     /// Binds `voice_id`'s source clip for a reference target: `register`'s,
     /// or the identity's first. The clip is the person's raw voice, so a
     /// third-party route refuses, as does an identity with no source refs
-    /// or no render consent reaching `locality`, a clip that is not a WAV
-    /// with its transcript, or one larger than the vault's serving policy
-    /// allows.
+    /// or no render consent reaching `locality`, or a clip that is not a
+    /// WAV with its transcript. A long clip binds whole, asking past its
+    /// `[limits]` row.
     pub fn bind_reference(
         vault: &Vault,
         voice_id: &str,
@@ -202,17 +203,19 @@ impl BankVoiceBinding {
         if locality == ModelLocality::ThirdParty {
             return Err(invalid("a voice reference never goes to a third party"));
         }
-        let limits = vault.voice_serving_limits(None)?;
         let (clip, fence) = vault.fenced_voice_reference(voice_id, target, register, locality)?;
         if clip.media_type != "audio/wav"
             || clip.audio.len() < 12
             || !clip.audio.starts_with(b"RIFF")
             || &clip.audio[8..12] != b"WAVE"
             || clip.transcript.trim().is_empty()
-            || clip.audio.len() as u64 > limits.max_ref_bytes
         {
             return Err(invalid("a voice reference is a WAV with its transcript"));
         }
+        vault.measure_limit(
+            EngineLimit::VoiceReferenceBytes,
+            u64::try_from(clip.audio.len()).unwrap_or(u64::MAX),
+        );
         Ok(Self {
             voice_id: voice_id.to_owned(),
             target: target.to_owned(),
