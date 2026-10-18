@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 677 facade rows, 2483 declarations.
-Inputs: 625 of 677 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 602 of 677 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 679 facade rows, 2488 declarations.
+Inputs: 627 of 679 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 604 of 679 fully typed, 75 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 95; unread shapes: 0.
 """
 
@@ -1727,6 +1727,23 @@ class MemoryPack(TypedDict):
     rendered: NotRequired[str | None]
     narrowing: ScopedReadReceipt
     retrieval_run_id: NotRequired[RetrievalRunId | None]
+class AccessFactorPolicy(TypedDict):
+    half_life_secs: float
+    floor: float
+class ClaimAgingProfiles(TypedDict):
+    durable: AccessFactorPolicy
+    standard: AccessFactorPolicy
+    ephemeral: AccessFactorPolicy
+class ClaimAgingProfilesView(TypedDict):
+    manifest_ref: str
+    body_hash: str
+    profiles: ClaimAgingProfiles
+class ClaimAgingProfilesConfigureRequest(TypedDict):
+    expected_body_hash: str
+    profiles: ClaimAgingProfiles
+class ClaimAgingProfilesReceipt(TypedDict):
+    configuration: ClaimAgingProfilesView
+    receipt_ref: str
 class RetrievalWeights(TypedDict):
     affect: float
     arousal: float

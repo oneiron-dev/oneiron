@@ -277,6 +277,16 @@ export_facade! {
     let output = client.vault_recall(&query, effort, &scope, limit, format.as_deref(), as_of, deadline_ms, media, query_affect)?;
     Lift::lift(output)
 };
+"vault.retrieval.aging.get" => fn vault_retrieval_aging_get(&self) -> ClaimAgingProfilesView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.aging.get")?;
+    let output = client.vault_retrieval_aging_get(&input)?;
+    crate::codec::lift_record("vault.retrieval.aging.get", &output)
+};
+"vault.retrieval.aging.configure" => fn vault_retrieval_aging_configure(&self, input: ClaimAgingProfilesConfigureRequest) -> ClaimAgingProfilesReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::ClaimAgingProfilesConfigureRequest = crate::codec::lower_record("vault.retrieval.aging.configure", input)?;
+    let output = client.vault_retrieval_aging_configure(&input)?;
+    crate::codec::lift_record("vault.retrieval.aging.configure", &output)
+};
 "vault.retrieval.weights.get" => fn vault_retrieval_weights_get(&self) -> RetrievalWeightsView = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.retrieval.weights.get")?;
     let output = client.vault_retrieval_weights_get(&input)?;

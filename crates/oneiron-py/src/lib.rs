@@ -729,6 +729,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode_recall(&output)
     }
+    fn vault_retrieval_aging_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.aging.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.retrieval.aging.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_retrieval_aging_configure(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.retrieval.aging.configure")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.retrieval.aging.configure", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_retrieval_weights_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.retrieval.weights.get")?;
         let output = py

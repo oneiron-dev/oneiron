@@ -678,6 +678,8 @@ class Oneiron:
             """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
     class _VaultRetrievalVerbs:
         @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs": ...
+        @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs": ...
         def recall(self, spec: Facade.RecallRequest) -> Facade.MemoryPack:
             """Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."""
@@ -695,6 +697,11 @@ class Oneiron:
             """The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata."""
         def replay(self, spec: Facade.RetrievalDiagnosticRequest) -> Facade.RetrievalDiagnosticReplay:
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
+    class _VaultRetrievalAgingVerbs:
+        def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.ClaimAgingProfilesView:
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+        def configure(self, spec: Facade.ClaimAgingProfilesConfigureRequest) -> Facade.ClaimAgingProfilesReceipt:
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
     class _VaultRetrievalWeightsVerbs:
         def get(self, spec: Facade.EmptyRequest | None = None) -> Facade.RetrievalWeightsView:
             """The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash."""

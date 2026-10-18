@@ -797,6 +797,9 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         @property
+        def aging(self) -> "Oneiron._VaultRetrievalAgingVerbs":
+            return Oneiron._VaultRetrievalAgingVerbs(self._client)
+        @property
         def weights(self) -> "Oneiron._VaultRetrievalWeightsVerbs":
             return Oneiron._VaultRetrievalWeightsVerbs(self._client)
         def recall(self, spec):
@@ -823,6 +826,15 @@ class Oneiron:
         def replay(self, spec):
             """The owner replays recorded state, ordered pack scores and trace from exact finalized runs; no fresh search, clock or outcome-derived feature is used."""
             return json.loads(_translate(lambda: self._client.vault_retrieval_replay(json.dumps(spec))))
+    class _VaultRetrievalAgingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_aging_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies."""
+            return json.loads(_translate(lambda: self._client.vault_retrieval_aging_configure(json.dumps(spec))))
     class _VaultRetrievalWeightsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

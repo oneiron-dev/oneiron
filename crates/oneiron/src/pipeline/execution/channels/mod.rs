@@ -514,6 +514,7 @@ impl PipelineBuilder<'_> {
                 confidence: self.apply_confidence,
                 gravity: self.apply_gravity,
                 access_factor_overrides: self.access_factor_overrides,
+                claim_aging_profiles: self.claim_aging_profiles,
                 access_factor_application: AccessFactorApplication::Apply,
                 affect: self.affect_policy,
             };
