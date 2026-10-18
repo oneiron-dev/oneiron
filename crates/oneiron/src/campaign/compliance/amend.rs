@@ -28,7 +28,7 @@ const NOTICE: SideTable<[u8; 4], String, Raw> =
 // ---------------------------------------------------------------------------
 
 /// What an amendment does to the pack's strictness.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub enum ComplianceAmendmentClass {
     /// Provably stricter: rows added, dials tightened, nothing relaxed.
     Tightening,
@@ -201,21 +201,33 @@ fn apply_compliance_amendment(
     proposed: CompliancePack,
 ) -> Result<ComplianceAmendmentOutcome> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let current = active_compliance_pack_in_txn(&vault.store, &wtxn)?;
-    let class = classify_compliance_amendment(&current, &proposed)?;
-    let outcome = match class {
-        ComplianceAmendmentClass::LooseningOrAmbiguous => {
-            PENDING.put(&vault.store, &mut wtxn, &(), &proposed)?;
-            ComplianceAmendmentOutcome::PendingOwnerStamp {
-                proposal_hash: compliance_proposal_hash(&proposed)?,
-            }
-        }
-        ComplianceAmendmentClass::Tightening | ComplianceAmendmentClass::MetadataRefresh => {
-            activate_compliance_pack(&vault.store, &mut wtxn, &proposed, class, proposer)?
-        }
-    };
+    let (_, outcome) = apply_compliance_amendment_in_txn(
+        &vault.store, &mut wtxn, proposer, &proposed, true,
+    )?;
     wtxn.commit()?;
     Ok(outcome)
+}
+
+/// Shared activation path for the caller-bound doors. A proposed-only caller
+/// can stage a tightening, but cannot turn its ceiling into activation authority.
+pub(super) fn apply_compliance_amendment_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    proposer: &str,
+    proposed: &CompliancePack,
+    can_activate: bool,
+) -> Result<(ComplianceAmendmentClass, ComplianceAmendmentOutcome)> {
+    let current = active_compliance_pack_in_txn(store, wtxn)?;
+    let class = classify_compliance_amendment(&current, proposed)?;
+    let outcome = if !can_activate || class == ComplianceAmendmentClass::LooseningOrAmbiguous {
+        PENDING.put(store, wtxn, &(), proposed)?;
+        ComplianceAmendmentOutcome::PendingOwnerStamp {
+            proposal_hash: compliance_proposal_hash(proposed)?,
+        }
+    } else {
+        activate_compliance_pack(store, wtxn, proposed, class, proposer)?
+    };
+    Ok((class, outcome))
 }
 
 /// The owner gate: activates the staged proposal iff the stamp binds the exact
@@ -232,27 +244,56 @@ pub fn stamp_compliance_amendment(
     proposal_hash: [u8; 32],
 ) -> Result<CompliancePack> {
     let mut wtxn = vault.store.env.write_txn()?;
-    let Some(pending) = PENDING.get(&vault.store, &wtxn, &())? else {
-        return Err(invalid_pack("no amendment is awaiting an owner stamp"));
-    };
-    if compliance_proposal_hash(&pending)? != proposal_hash {
-        return Err(invalid_pack(
-            "owner stamp does not bind the staged rows and version",
-        ));
-    }
-    let current = active_compliance_pack_in_txn(&vault.store, &wtxn)?;
-    if pending.pack_version <= current.pack_version {
-        return Err(invalid_pack("staged amendment no longer advances the pack"));
-    }
-    activate_compliance_pack(
-        &vault.store,
-        &mut wtxn,
-        &pending,
-        ComplianceAmendmentClass::LooseningOrAmbiguous,
-        &owner.to_hex(),
+    let pending = stamp_compliance_amendment_in_txn(
+        &vault.store, &mut wtxn, owner, proposal_hash,
     )?;
-    PENDING.delete(&vault.store, &mut wtxn, &())?;
     wtxn.commit()?;
+    Ok(pending)
+}
+
+pub(super) fn pending_compliance_pack_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<CompliancePack>> {
+    PENDING.get(store, txn, &())
+}
+
+fn matching_pending_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    proposal_hash: [u8; 32],
+) -> Result<CompliancePack> {
+    let pending = pending_compliance_pack_in_txn(store, txn)?
+        .ok_or_else(|| invalid_pack("no amendment is awaiting an owner stamp"))?;
+    if compliance_proposal_hash(&pending)? != proposal_hash {
+        return Err(invalid_pack("owner stamp does not bind the staged rows and version"));
+    }
+    Ok(pending)
+}
+
+pub(super) fn stamp_compliance_amendment_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    owner: EntityId,
+    proposal_hash: [u8; 32],
+) -> Result<CompliancePack> {
+    let pending = matching_pending_in_txn(store, wtxn, proposal_hash)?;
+    let current = active_compliance_pack_in_txn(store, wtxn)?;
+    classify_compliance_amendment(&current, &pending)?;
+    activate_compliance_pack(
+        store, wtxn, &pending, ComplianceAmendmentClass::LooseningOrAmbiguous, &owner.to_hex(),
+    )?;
+    PENDING.delete(store, wtxn, &())?;
+    Ok(pending)
+}
+
+pub(super) fn reject_compliance_amendment_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    proposal_hash: [u8; 32],
+) -> Result<CompliancePack> {
+    let pending = matching_pending_in_txn(store, wtxn, proposal_hash)?;
+    PENDING.delete(store, wtxn, &())?;
     Ok(pending)
 }
 
@@ -294,8 +335,15 @@ const fn amendment_class_token(class: ComplianceAmendmentClass) -> &'static str 
 /// Storage errors, and [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) when a notice is not UTF-8.
 pub fn compliance_amendment_notices(vault: &Vault) -> Result<Vec<String>> {
     let rtxn = vault.store.env.read_txn()?;
+    compliance_amendment_notices_in_txn(&vault.store, &rtxn)
+}
+
+pub(super) fn compliance_amendment_notices_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<String>> {
     Ok(NOTICE
-        .scan(&vault.store, &rtxn)?
+        .scan(store, txn)?
         .into_iter()
         .map(|(_, notice)| notice)
         .collect())

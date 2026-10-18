@@ -1262,6 +1262,8 @@ class Oneiron:
         def search(self, request: KeyValueSearch) -> list[KeyValueItem]: ...
         def namespaces(self, request: KeyValueNamespaces) -> list[list[str]]: ...
     class _VaultCampaignVerbs:
+        @property
+        def compliance(self) -> "Oneiron._VaultCampaignComplianceVerbs": ...
         def enroll(self, spec: Facade.CampaignEnrollRequest) -> Facade.CampaignEnrollmentReceipt:
             """Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."""
         @property
@@ -1270,6 +1272,19 @@ class Oneiron:
             """Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."""
         @property
         def program(self) -> "Oneiron._VaultCampaignProgramVerbs": ...
+    class _VaultCampaignComplianceVerbs:
+        def install(self, spec: Facade.ComplianceAmendRequest) -> Facade.ComplianceReceipt:
+            """The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval."""
+        def amend(self, spec: Facade.ComplianceAmendRequest) -> Facade.ComplianceReceipt:
+            """Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp."""
+        def approve(self, spec: Facade.ComplianceApprovalRequest) -> Facade.ComplianceReceipt:
+            """The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt."""
+        def reject(self, spec: Facade.ComplianceApprovalRequest) -> Facade.ComplianceReceipt:
+            """The owner rejects the exact pending compliance proposal hash without changing the effective rules."""
+        def verify(self, spec: Facade.ComplianceVerifyRequest) -> Facade.ComplianceReceipt:
+            """The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy."""
+        def result(self, spec: Facade.ComplianceResultRequest) -> Facade.ComplianceResult:
+            """Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot."""
     class _VaultCampaignStageVerbs:
         def evidence(self, spec: Facade.CampaignStageEvidenceRequest) -> Facade.CampaignStageEvidenceReceipt:
             """Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."""

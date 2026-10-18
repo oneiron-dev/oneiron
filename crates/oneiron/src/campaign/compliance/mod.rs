@@ -30,6 +30,8 @@
 
 mod amend;
 mod codec;
+mod contracts;
+mod doors;
 mod evaluate;
 mod hydrate;
 mod pack_store;
@@ -39,6 +41,11 @@ pub use self::amend::{
     ComplianceAmendmentClass, ComplianceAmendmentOutcome, classify_compliance_amendment,
     compliance_amendment_notices, compliance_proposal_hash, ingest_published_compliance_update,
     propose_compliance_amendment, stamp_compliance_amendment,
+};
+pub use self::contracts::{
+    ComplianceAmendRequest, ComplianceApprovalRequest, ComplianceDisposition, ComplianceOperation,
+    ComplianceOwnerStamp, CompliancePendingProposal, ComplianceReceipt, ComplianceResult,
+    ComplianceResultRequest, ComplianceRowVerification, ComplianceVerifyRequest,
 };
 pub use self::evaluate::{
     ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,

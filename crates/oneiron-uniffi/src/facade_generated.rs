@@ -481,6 +481,36 @@ export_facade! {
     let output = client.vault_kv_namespaces(&input)?;
     crate::codec::lift_record("vault.kv.namespaces", &output)
 };
+"vault.campaign.compliance.install" => fn vault_campaign_compliance_install(&self, input: ComplianceAmendRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceAmendRequest = crate::codec::lower_record("vault.campaign.compliance.install", input)?;
+    let output = client.vault_campaign_compliance_install(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.install", &output)
+};
+"vault.campaign.compliance.amend" => fn vault_campaign_compliance_amend(&self, input: ComplianceAmendRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceAmendRequest = crate::codec::lower_record("vault.campaign.compliance.amend", input)?;
+    let output = client.vault_campaign_compliance_amend(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.amend", &output)
+};
+"vault.campaign.compliance.approve" => fn vault_campaign_compliance_approve(&self, input: ComplianceApprovalRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceApprovalRequest = crate::codec::lower_record("vault.campaign.compliance.approve", input)?;
+    let output = client.vault_campaign_compliance_approve(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.approve", &output)
+};
+"vault.campaign.compliance.reject" => fn vault_campaign_compliance_reject(&self, input: ComplianceApprovalRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceApprovalRequest = crate::codec::lower_record("vault.campaign.compliance.reject", input)?;
+    let output = client.vault_campaign_compliance_reject(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.reject", &output)
+};
+"vault.campaign.compliance.verify" => fn vault_campaign_compliance_verify(&self, input: ComplianceVerifyRequest) -> ComplianceReceipt = |client| {
+    let input: oneiron::campaign::compliance::ComplianceVerifyRequest = crate::codec::lower_record("vault.campaign.compliance.verify", input)?;
+    let output = client.vault_campaign_compliance_verify(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.verify", &output)
+};
+"vault.campaign.compliance.result" => fn vault_campaign_compliance_result(&self, input: ComplianceResultRequest) -> ComplianceResult = |client| {
+    let input: oneiron::campaign::compliance::ComplianceResultRequest = crate::codec::lower_record("vault.campaign.compliance.result", input)?;
+    let output = client.vault_campaign_compliance_result(&input)?;
+    crate::codec::lift_record("vault.campaign.compliance.result", &output)
+};
 "vault.campaign.enroll" => fn vault_campaign_enroll(&self, input: CampaignEnrollRequest) -> CampaignEnrollmentReceipt = |client| {
     let input: oneiron::campaign::surface::CampaignEnrollRequest = crate::codec::lower_record("vault.campaign.enroll", input)?;
     let output = client.vault_campaign_enroll(&input)?;

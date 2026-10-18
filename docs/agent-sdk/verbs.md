@@ -102,6 +102,12 @@ both bindings and their export-census tests in one change.
 - `vault.kv.delete`
 - `vault.kv.search`
 - `vault.kv.namespaces`
+- `vault.campaign.compliance.install`
+- `vault.campaign.compliance.amend`
+- `vault.campaign.compliance.approve`
+- `vault.campaign.compliance.reject`
+- `vault.campaign.compliance.verify`
+- `vault.campaign.compliance.result`
 - `vault.campaign.enroll`
 - `vault.campaign.stage.evidence`
 - `vault.campaign.unsubscribe`

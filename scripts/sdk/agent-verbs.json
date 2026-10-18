@@ -1739,6 +1739,96 @@
       }
     },
     {
+      "name": "vault.campaign.compliance.install",
+      "description": "The owner installs cited compliance rows through the versioned amendment classifier; a loosening still waits for an exact-hash owner approval.",
+      "input": "crate::campaign::compliance::ComplianceAmendRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_install_as(&memory.embedded_owner(\"vault.campaign.compliance.install\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.amend",
+      "description": "Proposes cited compliance rows against the active version. Tightening activates with a notice only within the caller ceiling; loosening waits for the owner stamp.",
+      "input": "crate::campaign::compliance::ComplianceAmendRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_amend(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.campaign.compliance.approve",
+      "description": "The owner approves the exact pending compliance proposal hash against the active version, with a durable authority receipt.",
+      "input": "crate::campaign::compliance::ComplianceApprovalRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_approve_as(&memory.embedded_owner(\"vault.campaign.compliance.approve\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.reject",
+      "description": "The owner rejects the exact pending compliance proposal hash without changing the effective rules.",
+      "input": "crate::campaign::compliance::ComplianceApprovalRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_reject_as(&memory.embedded_owner(\"vault.campaign.compliance.reject\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.verify",
+      "description": "The owner records cited verification dates for existing compliance rows, including an explicitly stale date, without changing requirements or freshness policy.",
+      "input": "crate::campaign::compliance::ComplianceVerifyRequest",
+      "output": "crate::campaign::compliance::ComplianceReceipt",
+      "call": "memory.compliance_verify_as(&memory.embedded_owner(\"vault.campaign.compliance.verify\")?, &input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.compliance.result",
+      "description": "Reads the active compliance pack, exact pending proposal, activation notices and amendment or owner-verification receipts from one snapshot.",
+      "input": "crate::campaign::compliance::ComplianceResultRequest",
+      "output": "crate::campaign::compliance::ComplianceResult",
+      "call": "memory.compliance_result(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.campaign.enroll",
       "description": "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing.",
       "input": "crate::campaign::surface::CampaignEnrollRequest",

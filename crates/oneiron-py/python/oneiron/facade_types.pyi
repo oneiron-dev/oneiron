@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 757 facade rows, 2666 declarations.
-Inputs: 705 of 757 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 677 of 757 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 763 facade rows, 2686 declarations.
+Inputs: 711 of 763 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 683 of 763 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -2497,6 +2497,72 @@ class KeyValueNamespaces(TypedDict):
     max_depth: NotRequired[int | None]
     limit: NotRequired[int]
     offset: NotRequired[int]
+UnknownJurisdictionDefault = Literal["strict_pole"]
+ComplianceExemptionEvidence = Literal["legal_form", "publication_context"]
+class ConditionalExemptionEvidence(TypedDict):
+    jurisdiction: str
+    evidence: ComplianceExemptionEvidence
+ComplianceRuleKind = Literal["consent_class", "sender_id", "physical_address", "optout_mechanism", "optout_deadline", "content_marking", "records", "source_hygiene"]
+B2bExemption = Literal["yes", "no", "conditional"]
+class ComplianceSource(TypedDict):
+    citation: str
+    url: str
+class ComplianceRuleRow(TypedDict):
+    jurisdiction: str
+    channel: str
+    rule_kind: ComplianceRuleKind
+    requirement: str
+    b2b_exemption: B2bExemption
+    source: ComplianceSource
+    verified_at: int
+    version: int
+    penalty_note: str
+class CompliancePack(TypedDict):
+    pack_id: str
+    pack_version: int
+    min_engine_version: str
+    verified_at_max_age_secs: int
+    unknown_jurisdiction_default: UnknownJurisdictionDefault
+    strict_pole_jurisdiction: str
+    jurisdiction_confidence_floor_millis: int
+    prohibited_list_provenance_classes: list[str]
+    conditional_exemption_evidence: list[ConditionalExemptionEvidence]
+    warning: str
+    rows: list[ComplianceRuleRow]
+class ComplianceAmendRequest(TypedDict):
+    prior_version: int
+    pack: CompliancePack
+ComplianceOperation = Literal["install", "amend", "approve", "reject", "verify"]
+ComplianceDisposition = Literal["applied", "pending_owner_stamp", "rejected"]
+ComplianceAmendmentClass = Literal["Tightening", "MetadataRefresh", "LooseningOrAmbiguous"]
+class ComplianceOwnerStamp(TypedDict):
+    owner_ref: str
+    proposal_hash: str
+    recorded_at: int
+ComplianceReceipt = TypedDict("ComplianceReceipt", {"receipt_ref": str, "operation": ComplianceOperation, "disposition": ComplianceDisposition, "prior_version": int, "effective_version": int, "proposed_version": int, "class": NotRequired[ComplianceAmendmentClass | None], "proposal_hash": str, "actor_ref": str, "owner_stamp": NotRequired[ComplianceOwnerStamp | None], "notice": NotRequired[str | None], "reason_codes": list[str], "recorded_at": int})
+class ComplianceApprovalRequest(TypedDict):
+    prior_version: int
+    proposal_hash: str
+class ComplianceRowVerification(TypedDict):
+    jurisdiction: str
+    channel: str
+    rule_kind: ComplianceRuleKind
+    expected_row_version: int
+    source: ComplianceSource
+    verified_at: int
+class ComplianceVerifyRequest(TypedDict):
+    prior_version: int
+    rows: list[ComplianceRowVerification]
+class ComplianceResultRequest(TypedDict):
+    receipt_ref: NotRequired[str | None]
+class CompliancePendingProposal(TypedDict):
+    pack: CompliancePack
+    proposal_hash: str
+class ComplianceResult(TypedDict):
+    active: CompliancePack
+    pending: NotRequired[CompliancePendingProposal | None]
+    notices: list[str]
+    receipts: list[ComplianceReceipt]
 class CampaignMemberChannelSpec(TypedDict):
     channel: str
     basis_evidence: str
