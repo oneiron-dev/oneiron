@@ -1022,9 +1022,13 @@ impl OffRecordSession<'_> {
         }
     }
 
+    /// Closes this instance, the one the handle bound
+    /// ([`Vault::close_off_record_session`]): a stretch that took its name
+    /// since is never the one closed, so no bind carries over to it.
     pub fn close(self) -> Result<OffRecordCloseOutcome> {
-        self.vault.close_off_record_session(
+        self.vault.close_off_record_entry(
             &self.session_ref,
+            &self.entry,
             SessionLocalReceiptLog::off_record(&self.session_ref),
         )
     }

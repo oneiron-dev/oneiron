@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 664 code-mode rows (643 host rows, 21 run rows), 2368 declarations.
-// Replies: 585 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 669 code-mode rows (648 host rows, 21 run rows), 2380 declarations.
+// Replies: 590 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -731,6 +731,13 @@ declare namespace Sdk {
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
   type SharedActPolicyChangeRequest = { change_id: string };
+  type CoreferenceStatus = "proposed" | "confirmed";
+  type CoreferenceLinkRequest = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus };
+  type CoreferenceLinkReceipt = { local_person: EntityId; other_person: EntityId; status: CoreferenceStatus; status_claim: EntityId };
+  type CoreferencePairRequest = { local_person: EntityId; other_person: EntityId };
+  type CoreferenceShareConsentRequest = { local_person: EntityId; other_person: EntityId; pact: string };
+  type CoreferenceShareConsentReceipt = { local_person: EntityId; other_person: EntityId; pact: string; consent_claim: EntityId };
+  type CoreferenceUnlinkReceipt = { local_person: EntityId; other_person: EntityId; unlinked: boolean; retracted_claims: EntityId[]; original_claims_retained: boolean };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -1481,6 +1488,11 @@ declare namespace Sdk {
   type CancelForceReceipt = { task_ref: EntityId; effected: boolean; forced: number; branches: RunBranchView[] };
   type RunBranchesRequest = { task_ref: EntityId };
   type RunBranchesView = { task_ref: EntityId; branches: RunBranchView[] };
+  type ConsultReadRequest = { task_ref: EntityId };
+  type ConsultDisposition = "completed" | "rejected" | "failed" | "expired" | "abandoned" | "cancelled";
+  type ConsultSummaryView = { kind: "answer"; evidence_refs: ConsultPayloadRef[] } | { kind: "abstained"; reason_ref: ConsultPayloadRef };
+  type ConsultTerminalView = { disposition: ConsultDisposition; result_ref?: EntityId | null; summary?: ConsultSummaryView | null; finished_at: number; ladder?: string | null; counter_task_ref?: EntityId | null };
+  type ConsultInspection = { task_ref: EntityId; deadline_at?: number | null; terminal?: ConsultTerminalView | null };
   type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
   type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
@@ -2636,7 +2648,7 @@ declare namespace self {
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */
   const message: (input: Sdk.MessagePersonRequest) => Promise<Sdk.MessagePersonReceipt | StoredResult>;
   const off_record: {
-    /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+    /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
     execute(input: Sdk.OffRecordExecuteRequest): Promise<Sdk.OffRecordExecuted | StoredResult>;
   };
   const run: {
@@ -3090,6 +3102,10 @@ declare const vault: Sdk.VaultHost & {
     /** Reads the status of one consolidation attempt by its durable job reference. */
     status(input: Sdk.ConsolidationStatusRequest): Promise<Sdk.DreamerAttemptView | null | StoredResult>;
   };
+  consults: {
+    /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
+    get(input: Sdk.ConsultReadRequest): Promise<Sdk.ConsultInspection | StoredResult>;
+  };
   conversations: {
     /** Creates a conversation; a body naming members also authors its membership ledger, creator and role grants as the caller. */
     create(input: Sdk.ConversationCreateInput): Promise<Sdk.CoreEntityWriteReceipt | StoredResult>;
@@ -3267,6 +3283,16 @@ declare const vault: Sdk.VaultHost & {
         /** The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal. */
         offer(input: Sdk.RescopeConnect): Promise<Sdk.RescopeOffer | StoredResult>;
       };
+    };
+    coreference: {
+      /** The owner atomically confirms cross-vault identity without changing either person or their claims. */
+      confirm(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceLinkReceipt | StoredResult>;
+      /** The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads. */
+      link(input: Sdk.CoreferenceLinkRequest): Promise<Sdk.CoreferenceLinkReceipt | StoredResult>;
+      /** The owner consents to exporting an existing identity link into exactly one named federation pact. */
+      share_consent(input: Sdk.CoreferenceShareConsentRequest): Promise<Sdk.CoreferenceShareConsentReceipt | StoredResult>;
+      /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
+      unlink(input: Sdk.CoreferencePairRequest): Promise<Sdk.CoreferenceUnlinkReceipt | StoredResult>;
     };
   };
   /** Retracts claims by exact claim or by subject and predicate; never a hard delete. */
@@ -3448,22 +3474,22 @@ declare const vault: Sdk.VaultHost & {
   };
   off_record: {
     claims: {
-      /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+      /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
       upsert(input: Sdk.OffRecordClaimRequest): Promise<Sdk.CommitReceipt | StoredResult>;
     };
-    /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+    /** The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
     discard(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordClosed | StoredResult>;
     notes: {
-      /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+      /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
       create(input: Sdk.OffRecordNoteRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     };
-    /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+    /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
     recall(input: Sdk.OffRecordRecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
-    /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+    /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
     start(input: Sdk.OffRecordStartRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
-    /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+    /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
     status(input: Sdk.OffRecordSessionRequest): Promise<Sdk.OffRecordSessionView | StoredResult>;
-    /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+    /** The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close. */
     witness(input: Sdk.OffRecordWitnessRequest): Promise<Sdk.WitnessReceipt | StoredResult>;
   };
   packs: {

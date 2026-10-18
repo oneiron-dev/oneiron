@@ -1596,6 +1596,63 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_federation_coreference_link(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.coreference.link")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.coreference.link", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_coreference_confirm(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.coreference.confirm")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.coreference.confirm", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_coreference_share_consent(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value =
+            decode(input_json, "vault.federation.coreference.share_consent")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.coreference.share_consent", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_federation_coreference_unlink(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.federation.coreference.unlink")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.federation.coreference.unlink", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_federation_connect_identity(
         &self,
         py: Python<'_>,
@@ -3386,6 +3443,13 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.runs.branches.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.runs.branches.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_consults_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.consults.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.consults.get", input))
             .map_err(raise)?;
         encode(&output)
     }

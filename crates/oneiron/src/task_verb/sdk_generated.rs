@@ -813,6 +813,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.federation.coreference.link",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CoreferenceLinkRequest,
+                >(),
+            ),
+            (
+                "vault.federation.coreference.confirm",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CoreferencePairRequest,
+                >(),
+            ),
+            (
+                "vault.federation.coreference.share_consent",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CoreferenceShareConsentRequest,
+                >(),
+            ),
+            (
+                "vault.federation.coreference.unlink",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::CoreferencePairRequest,
+                >(),
+            ),
+            (
                 "vault.federation.connect.identity",
                 crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::EmptyRequest>(
                 ),
@@ -1962,6 +1986,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.runs.branches.get",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::run_doors::RunBranchesRequest,
+                >(),
+            ),
+            (
+                "vault.consults.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::ConsultReadRequest,
                 >(),
             ),
             (
@@ -3552,6 +3582,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
     "vault.shared.policy.change",
+    "vault.federation.coreference.link",
+    "vault.federation.coreference.confirm",
+    "vault.federation.coreference.share_consent",
+    "vault.federation.coreference.unlink",
     "vault.federation.connect.identity",
     "vault.federation.connect.grants.mint",
     "vault.federation.connect.offer",
@@ -3654,6 +3688,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.spawn.get",
     "vault.tasks.cancel_force",
     "vault.runs.branches.get",
+    "vault.consults.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3931,6 +3966,20 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.shared.policy.change" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPolicyChange,
+        >(),
+        "vault.federation.coreference.link" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CoreferenceLinkReceipt,
+        >(),
+        "vault.federation.coreference.confirm" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CoreferenceLinkReceipt,
+        >(),
+        "vault.federation.coreference.share_consent" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::CoreferenceShareConsentReceipt,
+            >()
+        }
+        "vault.federation.coreference.unlink" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::CoreferenceUnlinkReceipt,
         >(),
         "vault.federation.connect.identity" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::ConnectIdentity>()
@@ -4243,6 +4292,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.runs.branches.get" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::run_doors::RunBranchesView,
+        >(),
+        "vault.consults.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::ConsultInspection,
         >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
@@ -5720,6 +5772,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.federation.coreference.link" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.coreference.confirm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.coreference.share_consent" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.federation.coreference.unlink" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.federation.connect.identity" => &[],
         "vault.federation.connect.grants.mint" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -7053,6 +7133,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.runs.branches.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.consults.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9379,6 +9466,20 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::SharedActPolicyChangeRequest =
                 decode(value.clone())?;
         }
+        "vault.federation.coreference.link" => {
+            let _input: crate::task_verb::sdk::CoreferenceLinkRequest = decode(value.clone())?;
+        }
+        "vault.federation.coreference.confirm" => {
+            let _input: crate::task_verb::sdk::CoreferencePairRequest = decode(value.clone())?;
+        }
+        "vault.federation.coreference.share_consent" => {
+            let input: crate::task_verb::sdk::CoreferenceShareConsentRequest =
+                decode(value.clone())?;
+            input.pact_id()?;
+        }
+        "vault.federation.coreference.unlink" => {
+            let _input: crate::task_verb::sdk::CoreferencePairRequest = decode(value.clone())?;
+        }
         "vault.federation.connect.identity" => {
             let _input: crate::task_verb::sdk::EmptyRequest = decode(value.clone())?;
         }
@@ -10040,6 +10141,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.runs.branches.get" => {
             let _input: crate::task_verb::run_doors::RunBranchesRequest = decode(value.clone())?;
+        }
+        "vault.consults.get" => {
+            let _input: crate::task_verb::run_doors::ConsultReadRequest = decode(value.clone())?;
         }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
@@ -11220,6 +11324,19 @@ pub fn invoke(
         }
         "vault.shared.policy.answer" => encode(vault_shared_policy_answer(memory, decode(value)?)?),
         "vault.shared.policy.change" => encode(vault_shared_policy_change(memory, decode(value)?)?),
+        "vault.federation.coreference.link" => {
+            encode(vault_federation_coreference_link(memory, decode(value)?)?)
+        }
+        "vault.federation.coreference.confirm" => encode(vault_federation_coreference_confirm(
+            memory,
+            decode(value)?,
+        )?),
+        "vault.federation.coreference.share_consent" => encode(
+            vault_federation_coreference_share_consent(memory, decode(value)?)?,
+        ),
+        "vault.federation.coreference.unlink" => {
+            encode(vault_federation_coreference_unlink(memory, decode(value)?)?)
+        }
         "vault.federation.connect.identity" => {
             encode(vault_federation_connect_identity(memory, decode(value)?)?)
         }
@@ -11610,6 +11727,7 @@ pub fn invoke(
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
         "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
+        "vault.consults.get" => encode(vault_consults_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -13583,6 +13701,47 @@ pub fn vault_shared_policy_change(
         input,
     )
 }
+pub fn vault_federation_coreference_link(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CoreferenceLinkRequest,
+) -> MemoryResult<crate::task_verb::sdk::CoreferenceLinkReceipt> {
+    crate::task_verb::sdk::link_coreference_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.coreference.link")?,
+        input,
+    )
+}
+pub fn vault_federation_coreference_confirm(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CoreferencePairRequest,
+) -> MemoryResult<crate::task_verb::sdk::CoreferenceLinkReceipt> {
+    crate::task_verb::sdk::confirm_coreference_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.coreference.confirm")?,
+        input,
+    )
+}
+pub fn vault_federation_coreference_share_consent(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CoreferenceShareConsentRequest,
+) -> MemoryResult<crate::task_verb::sdk::CoreferenceShareConsentReceipt> {
+    input.pact_id()?;
+    crate::task_verb::sdk::share_coreference_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.coreference.share_consent")?,
+        input,
+    )
+}
+pub fn vault_federation_coreference_unlink(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::CoreferencePairRequest,
+) -> MemoryResult<crate::task_verb::sdk::CoreferenceUnlinkReceipt> {
+    crate::task_verb::sdk::unlink_coreference_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.federation.coreference.unlink")?,
+        input,
+    )
+}
 pub fn vault_federation_connect_identity(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EmptyRequest,
@@ -15177,6 +15336,16 @@ pub fn vault_runs_branches_get(
     crate::task_verb::run_doors::read_branches_as(
         memory.vault(),
         &memory.embedded_owner("vault.runs.branches.get")?,
+        input,
+    )
+}
+pub fn vault_consults_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::ConsultReadRequest,
+) -> MemoryResult<crate::task_verb::run_doors::ConsultInspection> {
+    crate::task_verb::run_doors::read_consult_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consults.get")?,
         input,
     )
 }

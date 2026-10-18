@@ -298,7 +298,7 @@ export class Oneiron {
       attenuate: (input: Facade.CredentialAttenuationRequest): Facade.CredentialAttenuated => this.#call(() => this.#client.selfCredentialAttenuate(input) as Facade.CredentialAttenuated),
     },
     off_record: {
-      /** The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
+      /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
     },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
@@ -768,6 +768,16 @@ export class Oneiron {
       withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
     federation: {
+      coreference: {
+        /** The owner atomically links two people with proposed or confirmed identity status, without pooling their claims or granting reads. */
+        link: (input: Facade.CoreferenceLinkRequest): Facade.CoreferenceLinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceLink(input) as Facade.CoreferenceLinkReceipt),
+        /** The owner atomically confirms cross-vault identity without changing either person or their claims. */
+        confirm: (input: Facade.CoreferencePairRequest): Facade.CoreferenceLinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceConfirm(input) as Facade.CoreferenceLinkReceipt),
+        /** The owner consents to exporting an existing identity link into exactly one named federation pact. */
+        share_consent: (input: Facade.CoreferenceShareConsentRequest): Facade.CoreferenceShareConsentReceipt => this.#call(() => this.#client.vaultFederationCoreferenceShareConsent(input) as Facade.CoreferenceShareConsentReceipt),
+        /** The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims. */
+        unlink: (input: Facade.CoreferencePairRequest): Facade.CoreferenceUnlinkReceipt => this.#call(() => this.#client.vaultFederationCoreferenceUnlink(input) as Facade.CoreferenceUnlinkReceipt),
+      },
       connect: {
         /** The owner reads this vault identity and the host key used for reciprocal Connect consent. */
         identity: (input: Facade.EmptyRequest): Facade.ConnectIdentity => this.#call(() => this.#client.vaultFederationConnectIdentity(input) as Facade.ConnectIdentity),
@@ -847,22 +857,22 @@ export class Oneiron {
       prune: (input: Facade.ResidencePruneRequest): Facade.ResidencePruneAnswer => this.#call(() => this.#client.vaultResidencePrune(input) as Facade.ResidencePruneAnswer),
     },
     off_record: {
-      /** The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it. */
+      /** The vault's owner, or a person or agent who then manages it with the owner, enters an off-record session alone, off record or anonymous; nothing of it reaches the vault unless the owner promotes or saves it. */
       start: (input: Facade.OffRecordStartRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStart(input) as Facade.OffRecordSessionView),
-      /** The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing. */
+      /** The session's creator or the vault's owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing; a room's member reads what their membership shows. */
       status: (input: Facade.OffRecordSessionRequest): Facade.OffRecordSessionView => this.#call(() => this.#client.vaultOffRecordStatus(input) as Facade.OffRecordSessionView),
-      /** The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close. */
+      /** The session's creator or the vault's owner witnesses one turn into an off-record session, or a member into a room's; it stays in the room until promoted or dropped at close. */
       witness: (input: Facade.OffRecordWitnessRequest): Facade.WitnessReceipt => this.#call(() => this.#client.vaultOffRecordWitness(input) as Facade.WitnessReceipt),
-      /** The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
+      /** The session's creator or the vault's owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay. */
       discard: (input: Facade.OffRecordSessionRequest): Facade.OffRecordClosed => this.#call(() => this.#client.vaultOffRecordDiscard(input) as Facade.OffRecordClosed),
-      /** The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
+      /** The session's creator or the vault's owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike. */
       recall: (input: Facade.OffRecordRecallRequest): Facade.MemoryPack => this.#call(() => this.#client.vaultOffRecordRecall(input) as Facade.MemoryPack),
       notes: {
-        /** The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
+        /** The session's creator or the vault's owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it. */
         create: (input: Facade.OffRecordNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultOffRecordNotesCreate(input) as Facade.EntityRefReceipt),
       },
       claims: {
-        /** The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
+        /** The session's creator or the vault's owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it. */
         upsert: (input: Facade.OffRecordClaimRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultOffRecordClaimsUpsert(input) as Facade.CommitReceipt),
       },
     },
@@ -1350,6 +1360,10 @@ export class Oneiron {
         /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
         get: (input: Facade.RunBranchesRequest): Facade.RunBranchesView => this.#call(() => this.#client.vaultRunsBranchesGet(input) as Facade.RunBranchesView),
       },
+    },
+    consults: {
+      /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */
+      get: (input: Facade.ConsultReadRequest): Facade.ConsultInspection => this.#call(() => this.#client.vaultConsultsGet(input) as Facade.ConsultInspection),
     },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */

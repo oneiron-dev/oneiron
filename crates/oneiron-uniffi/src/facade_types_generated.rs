@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 609 facade rows, 2220 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 569.
+// UniFFI census: 614 facade rows, 2232 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 574.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -10717,6 +10717,90 @@ pub struct SharedActPolicyAnswerRequest {
 pub struct SharedActPolicyChangeRequest {
     #[serde(rename = "change_id")]
     pub change_id: String,
+}
+
+/// `oneiron::federation::coreference::CoreferenceStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CoreferenceStatus {
+    #[serde(rename = "proposed")]
+    Proposed,
+    #[serde(rename = "confirmed")]
+    Confirmed,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferenceLinkRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "status")]
+    pub status: CoreferenceStatus,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceLinkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceLinkReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "status")]
+    pub status: CoreferenceStatus,
+    #[serde(rename = "status_claim")]
+    pub status_claim: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferencePairRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferencePairRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct CoreferenceShareConsentRequest {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "pact")]
+    pub pact: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceShareConsentReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceShareConsentReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "consent_claim")]
+    pub consent_claim: String,
+}
+
+/// `oneiron::task_verb::sdk_coreference::CoreferenceUnlinkReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CoreferenceUnlinkReceipt {
+    #[serde(rename = "local_person")]
+    pub local_person: String,
+    #[serde(rename = "other_person")]
+    pub other_person: String,
+    #[serde(rename = "unlinked")]
+    pub unlinked: bool,
+    #[serde(rename = "retracted_claims")]
+    pub retracted_claims: Vec<String>,
+    #[serde(rename = "original_claims_retained")]
+    pub original_claims_retained: bool,
 }
 
 /// `oneiron::task_verb::sdk_federation::ConnectIdentity`.
@@ -22066,6 +22150,87 @@ pub struct RunBranchesView {
     pub task_ref: String,
     #[serde(rename = "branches")]
     pub branches: Vec<RunBranchView>,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultReadRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConsultReadRequest {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultDisposition`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConsultDisposition {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "failed")]
+    Failed,
+    #[serde(rename = "expired")]
+    Expired,
+    #[serde(rename = "abandoned")]
+    Abandoned,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultSummaryView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ConsultSummaryView {
+    #[serde(rename = "answer")]
+    Answer {
+        #[serde(rename = "evidence_refs")]
+        evidence_refs: Vec<ConsultPayloadRef>,
+    },
+    #[serde(rename = "abstained")]
+    Abstained {
+        #[serde(rename = "reason_ref")]
+        reason_ref: ConsultPayloadRef,
+    },
+}
+
+/// `oneiron::task_verb::run_doors::ConsultTerminalView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsultTerminalView {
+    #[serde(rename = "disposition")]
+    pub disposition: ConsultDisposition,
+    #[serde(
+        rename = "result_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub result_ref: Option<String>,
+    #[serde(rename = "summary", default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ConsultSummaryView>,
+    #[serde(rename = "finished_at")]
+    pub finished_at: u64,
+    #[serde(rename = "ladder", default, skip_serializing_if = "Option::is_none")]
+    pub ladder: Option<String>,
+    #[serde(
+        rename = "counter_task_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub counter_task_ref: Option<String>,
+}
+
+/// `oneiron::task_verb::run_doors::ConsultInspection`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConsultInspection {
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(
+        rename = "deadline_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub deadline_at: Option<u64>,
+    #[serde(rename = "terminal", default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<ConsultTerminalView>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.
