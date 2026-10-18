@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 551 facade rows, 2096 declarations.
-Inputs: 500 of 551 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 489 of 551 fully typed, 62 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 90; unread shapes: 0.
+Census: 559 facade rows, 2116 declarations.
+Inputs: 508 of 559 fully typed, 51 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 492 of 559 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 93; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -2651,6 +2651,119 @@ class HubSkillReceipts(TypedDict):
     sources: list[HubRef]
     imports: list[HubImportReceipt]
     admission: NotRequired[HubAdmissionReceipt | None]
+class SkillConvertRequest(TypedDict):
+    message_refs: list[EntityId]
+    hint: NotRequired[str | None]
+class SkillConvertReceiptCreated(TypedDict):
+    outcome: Literal["created"]
+    entity: EntityId
+class SkillConvertReceiptDupPointer(TypedDict):
+    outcome: Literal["dup_pointer"]
+    entity: EntityId
+class SkillConvertReceiptMergeProposed(TypedDict):
+    outcome: Literal["merge_proposed"]
+    existing: EntityId
+    proposal: EntityId
+SkillConvertReceipt = SkillConvertReceiptCreated | SkillConvertReceiptDupPointer | SkillConvertReceiptMergeProposed
+SkillLibraryLifecycle = Literal["candidate", "active", "stale", "archived", "superseded"]
+class SkillLibraryCall(TypedDict):
+    reference: str
+    arguments: Any
+    returns: Any
+class SkillLibraryDependency(TypedDict):
+    skill_id: str
+    min_version: NotRequired[str | None]
+class SkillSourceEvidence(TypedDict):
+    message_ref: EntityId
+    available: bool
+class SkillStaleView(TypedDict):
+    reason: str
+    deleted_refs: list[EntityId]
+class SkillForkLineage(TypedDict):
+    parent: EntityId
+    parent_version: NotRequired[str | None]
+    parent_document: NotRequired[EntityId | None]
+    parent_frontier: NotRequired[list[int] | None]
+    parent_available: bool
+    hub_sources: list[HubRef]
+class SkillLibraryFile(TypedDict):
+    path: str
+    content: list[int]
+class SkillCapabilityView(TypedDict):
+    bins: list[str]
+    env: list[str]
+    mcp: list[str]
+    allowed_tools: list[str]
+class SkillLibraryScan(TypedDict):
+    contentHash: str
+    provider: str
+    scannedAt: int
+    verdict: str
+    riskLevel: str
+    completeness: str
+    governance: str
+    scannedAtDeclared: NotRequired[int | None]
+class SkillLibraryView(TypedDict):
+    entity: EntityId
+    skill_id: str
+    desc: str
+    version: str
+    content_hash: NotRequired[str | None]
+    lifecycle: SkillLibraryLifecycle
+    approval: ClaimApprovalStatus
+    loadable: bool
+    source: str
+    role: str
+    call: NotRequired[SkillLibraryCall | None]
+    governance_tier: NotRequired[str | None]
+    generated: bool
+    human_authored: bool
+    dependencies: list[SkillLibraryDependency]
+    provenance: Any
+    source_messages: list[SkillSourceEvidence]
+    stale: NotRequired[SkillStaleView | None]
+    lineage: list[SkillForkLineage]
+    files: NotRequired[list[SkillLibraryFile] | None]
+    capabilities: NotRequired[SkillCapabilityView | None]
+    scans: list[SkillLibraryScan]
+    receipts: HubSkillReceipts
+class SkillLibraryListRequest(TypedDict):
+    after: NotRequired[EntityId | None]
+    limit: int
+class SkillLibraryPage(TypedDict):
+    skills: list[SkillLibraryView]
+    next_after: NotRequired[EntityId | None]
+class SkillRestoreAdmission(TypedDict):
+    source: HubRef
+    publisher: str
+    evidence_skill: EntityId
+    effect_digest: NotRequired[str | None]
+class SkillLibraryRestoreRequest(TypedDict):
+    entity: EntityId
+    admission: NotRequired[SkillRestoreAdmission | None]
+class SkillLibraryRestoreReceiptRestored(TypedDict):
+    outcome: Literal["restored"]
+    skill: SkillLibraryView
+    admission: NotRequired[HubAdmissionReceipt | None]
+class SkillLibraryRestoreReceiptPendingAdmission(TypedDict):
+    outcome: Literal["pending_admission"]
+    entity: EntityId
+    content_hash: str
+    effect_digest: str
+class SkillLibraryRestoreReceiptRefused(TypedDict):
+    outcome: Literal["refused"]
+    entity: EntityId
+    admission: HubAdmissionReceipt
+SkillLibraryRestoreReceipt = SkillLibraryRestoreReceiptRestored | SkillLibraryRestoreReceiptPendingAdmission | SkillLibraryRestoreReceiptRefused
+class SkillLibraryForkRequest(TypedDict):
+    parent: EntityId
+    entity: NotRequired[EntityId | None]
+    skill_id: str
+class SkillHashRuleRequest(TypedDict):
+    content_hash: str
+    blocked: bool
+class SkillCodeAutoInstallRequest(TypedDict):
+    enabled: bool
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef

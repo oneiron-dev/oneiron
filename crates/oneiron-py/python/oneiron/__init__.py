@@ -1226,9 +1226,45 @@ class Oneiron:
         def receipts(self, spec):
             """Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_receipts(json.dumps(spec))))
+        def convert(self, spec):
+            """Converts selected messages through the configured refiner; user initiation approves conversion, never admission."""
+            return json.loads(_translate(lambda: self._client.vault_skills_convert(json.dumps(spec))))
+        def get(self, spec):
+            """Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry."""
+            return json.loads(_translate(lambda: self._client.vault_skills_get(json.dumps(spec))))
+        def list(self, spec):
+            """Lists a page of the owner skill library, including inactive skills and their retained evidence."""
+            return json.loads(_translate(lambda: self._client.vault_skills_list(json.dumps(spec))))
+        def archive(self, spec):
+            """The owner soft-retires an active skill without deleting its body, source or receipts; running callable invocations are cancelled."""
+            return json.loads(_translate(lambda: self._client.vault_skills_archive(json.dumps(spec))))
+        def restore(self, spec):
+            """The owner restores an archived skill through the same admission gates; a hub restore prepares exact consent and reruns held-out scoring."""
+            return json.loads(_translate(lambda: self._client.vault_skills_restore(json.dumps(spec))))
+        def fork(self, spec):
+            """The owner forks a stored skill under a new identity through the existing fork law; retained parent/version and hub ancestry remain inspectable."""
+            return json.loads(_translate(lambda: self._client.vault_skills_fork(json.dumps(spec))))
+        @property
+        def rules(self) -> "Oneiron._VaultSkillsRulesVerbs":
+            return Oneiron._VaultSkillsRulesVerbs(self._client)
+        @property
+        def code_auto_install(self) -> "Oneiron._VaultSkillsCodeAutoInstallVerbs":
+            return Oneiron._VaultSkillsCodeAutoInstallVerbs(self._client)
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+    class _VaultSkillsRulesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets or clears a known-bad canonical skill hash rule, independently of advisory scanner prose."""
+            return json.loads(_translate(lambda: self._client.vault_skills_rules_set(json.dumps(spec))))
+    class _VaultSkillsCodeAutoInstallVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def set(self, spec):
+            """The owner sets the code auto-install switch through its existing consent gate; the switch grants no sandbox qualification."""
+            return json.loads(_translate(lambda: self._client.vault_skills_code_auto_install_set(json.dumps(spec))))
     class _VaultSkillsPermissionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
