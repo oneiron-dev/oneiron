@@ -191,10 +191,6 @@ pub fn validate_context_spec(spec: &ContextSpec) -> Result<()> {
         }
     }
     validate_optional_text(
-        spec.briefing.as_deref(),
-        "context spec briefing is too long",
-    )?;
-    validate_optional_text(
         spec.annotation.as_deref(),
         "context spec annotation is too long",
     )
