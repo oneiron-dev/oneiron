@@ -129,6 +129,7 @@ pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
+pub(crate) use super::result_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
@@ -1202,6 +1203,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
         | "vault.code.oplog"
+        | "vault.results.status"
+        | "vault.results.recover"
+        | "vault.results.read"
+        | "vault.results.slice"
         | "vault.code.model_heal_count"
         | "vault.code.export"
         | "vault.code.origin.authority.get"

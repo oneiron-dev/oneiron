@@ -1030,6 +1030,8 @@ class Oneiron:
         @property
         def code(self) -> "Oneiron._VaultCodeVerbs": ...
         @property
+        def results(self) -> "Oneiron._VaultResultsVerbs": ...
+        @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
@@ -1854,6 +1856,15 @@ class Oneiron:
             """Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."""
         def recover(self, spec: Facade.MergeQueueRepoRequest) -> Facade.MergeQueuePointersView:
             """Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."""
+    class _VaultResultsVerbs:
+        def status(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner inspects retained result occurrences, incomplete body descriptors and recorded producing-run effects without entering the run."""
+        def recover(self, spec: Facade.ResultRunRequest) -> Facade.ResultRunStatus:
+            """The owner reopens retained result status after restart; it never resumes the producer or replays an effect to regenerate output."""
+        def read(self, spec: Facade.ResultOccurrenceRequest) -> Facade.ResultReadView:
+            """The owner reads one exact retained result occurrence card under its current taint and source-row fence, never by content authority alone."""
+        def slice(self, spec: Facade.ResultSliceRequest) -> Facade.ResultSliceView:
+            """The owner reads a typed byte or line range of one exact result occurrence, with bounded continuations and current taint withholding."""
     class _VaultAgentsVerbs:
         def create(self, spec: Facade.AgentDefinitionCreateRequest) -> Facade.AgentDefinitionView:
             """The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."""

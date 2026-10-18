@@ -880,6 +880,18 @@ impl OneironClient {
                 "vault.code.model_heal_count" => remote_agent_verb_output::<
                     oneiron::memory::code_run_doors::CodeRunModelHealCountView,
                 >(client, verb, &input),
+                "vault.results.status" => remote_agent_verb_output::<
+                    oneiron::memory::result_doors::ResultRunStatus,
+                >(client, verb, &input),
+                "vault.results.recover" => remote_agent_verb_output::<
+                    oneiron::memory::result_doors::ResultRunStatus,
+                >(client, verb, &input),
+                "vault.results.read" => remote_agent_verb_output::<
+                    oneiron::memory::result_doors::ResultReadView,
+                >(client, verb, &input),
+                "vault.results.slice" => remote_agent_verb_output::<
+                    oneiron::memory::result_doors::ResultSliceView,
+                >(client, verb, &input),
                 "vault.code.repo_diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeRepoDiffView>,
                 >(client, verb, &input),
@@ -5049,6 +5061,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.model_heal_count", value)
+    }
+    pub fn vault_results_status(
+        &self,
+        input: &oneiron::memory::result_doors::ResultRunRequest,
+    ) -> Result<oneiron::memory::result_doors::ResultRunStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.results.status", value)
+    }
+    pub fn vault_results_recover(
+        &self,
+        input: &oneiron::memory::result_doors::ResultRunRequest,
+    ) -> Result<oneiron::memory::result_doors::ResultRunStatus, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.results.recover", value)
+    }
+    pub fn vault_results_read(
+        &self,
+        input: &oneiron::memory::result_doors::ResultOccurrenceRequest,
+    ) -> Result<oneiron::memory::result_doors::ResultReadView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.results.read", value)
+    }
+    pub fn vault_results_slice(
+        &self,
+        input: &oneiron::memory::result_doors::ResultSliceRequest,
+    ) -> Result<oneiron::memory::result_doors::ResultSliceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.results.slice", value)
     }
     /// Every file changed between two trees of a repository, unit by unit, with the operations that wrote each.
     pub fn vault_code_repo_diff(
