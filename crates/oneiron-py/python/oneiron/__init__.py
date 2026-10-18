@@ -1019,7 +1019,7 @@ class Oneiron:
             """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
             return json.loads(_translate(lambda: self._client.vault_residence_mode(json.dumps(spec))))
         def open(self, spec):
-            """Opens one item on one of the owner's machines: its read cache, its local row, or a first touch at the home."""
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
             return json.loads(_translate(lambda: self._client.vault_residence_open(json.dumps(spec))))
         def index(self, spec):
             """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
@@ -1748,6 +1748,15 @@ class Oneiron:
         def from_entity(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind from an existing entity."""
             return json.loads(_translate(lambda: self._client.vault_notes_from_entity(json.dumps(input, allow_nan=False))))
+        def read(self, input: dict[str, Any]) -> Any:
+            """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
+            return json.loads(_translate(lambda: self._client.vault_notes_read(json.dumps(input, allow_nan=False))))
+        def history(self, input: dict[str, Any]) -> Any:
+            """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+            return json.loads(_translate(lambda: self._client.vault_notes_history(json.dumps(input, allow_nan=False))))
+        @property
+        def editor(self) -> "Oneiron._VaultNotesEditorVerbs":
+            return Oneiron._VaultNotesEditorVerbs(self._client)
         def edit(self, input: dict[str, Any]) -> Any:
             """Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending."""
             return json.loads(_translate(lambda: self._client.vault_notes_edit(json.dumps(input, allow_nan=False))))
@@ -1763,6 +1772,15 @@ class Oneiron:
         def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
             """One NOTE's overrides and the defaults its gates read after them."""
             return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
+    class _VaultNotesEditorVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def bind(self, spec):
+            """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
+            return json.loads(_translate(lambda: self._client.vault_notes_editor_bind(json.dumps(spec))))
+        def close(self, spec):
+            """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
+            return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

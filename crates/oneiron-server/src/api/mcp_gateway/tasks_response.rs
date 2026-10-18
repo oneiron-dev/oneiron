@@ -1254,6 +1254,10 @@ fn mcp_agent_verb_input(
         "connector.outbound.schedule" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.create" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.read" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.history" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.editor.bind" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.editor.close" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.edit" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.seal" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.lifecycle" => a.spec.clone().ok_or_else(invalid),
@@ -2314,6 +2318,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.from_entity" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.read" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.editor.bind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.editor.close" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.edit" => {
@@ -6521,6 +6537,70 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_notes_from_entity(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.read" => {
+            let input: oneiron::note::NoteReadRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_read(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.history" => {
+            let input: oneiron::note::NoteAccessRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_history(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.editor.bind" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.notes.editor.bind", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::note::NoteAccessRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_notes_editor_bind(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.editor.close" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.notes.editor.close", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::note::NoteEditorCloseRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::vault_notes_editor_close(
+                server,
+                auth,
+                (actor.actor_ref, actor.actor_class),
+                memory.invocation(),
+                input,
+            )
+            .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
