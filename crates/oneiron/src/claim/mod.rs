@@ -54,6 +54,7 @@ mod evidence_support;
 mod expression_archive;
 mod expression_preference;
 mod history_handoff;
+mod history_pin_exchange;
 pub(crate) mod history_projection;
 pub use history_projection::ResolvedMachineClaim;
 pub(crate) mod history_store;
