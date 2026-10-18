@@ -21472,17 +21472,15 @@ pub struct PlannedSpawnRead {
     pub spawn_ref: String,
 }
 
-/// `oneiron::team::doors::SpawnPhase`.
+/// `oneiron::team::spawn_intent::SpawnPhase`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum SpawnPhase {
-    #[serde(rename = "reserved")]
-    Reserved,
     #[serde(rename = "planned")]
     Planned,
     #[serde(rename = "launched")]
     Launched,
-    #[serde(rename = "in_doubt")]
-    InDoubt,
+    #[serde(rename = "refused")]
+    Refused,
 }
 
 /// `oneiron::team::doors::CoordinationPatternView`.

@@ -15,10 +15,12 @@
 //!
 //! The owner's root plan (DOOR-111, `root_plan`) reads the same evidence in
 //! the root's launch context, and `intent` reserves it under the owner's
-//! intent key and freezes what it placed and planned.
+//! intent key and freezes what it placed and planned. `team_launch` then
+//! launches the plan as one group, a team through its pattern skill.
 
 mod intent;
 mod root_plan;
+mod team_launch;
 
 use std::collections::BTreeMap;
 

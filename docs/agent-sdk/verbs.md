@@ -441,6 +441,10 @@ both bindings and their export-census tests in one change.
 - `ai.steps.receipt`
 - `ai.reply`
 - `vault.receipts.context`
+- `ai.voice.asr.open`
+- `ai.voice.asr.hypothesis`
+- `ai.voice.asr.finalize`
+- `ai.voice.asr.close`
 - `ai.voice.start`
 - `ai.voice.audio`
 - `ai.voice.events`

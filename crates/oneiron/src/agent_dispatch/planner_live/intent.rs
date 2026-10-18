@@ -15,16 +15,23 @@
 //! owner asks again under a new key; under a keyed adapter, the same adapter
 //! and key resume it under a fresh fence, so an older custody can no longer
 //! settle it.
+//!
+//! A planned intent then launches (S4a, `team_launch`). A team's pattern
+//! start is frozen first, the first one frozen winning; the launched row,
+//! with the identities the launch queued, is written in the launch's own
+//! group writer. A launched intent answers them and never launches again.
 
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
 use crate::consent::AuthenticatedOwner;
-use crate::entity_id::EntityId;
+use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::task_type::TaskTypeRef;
-use crate::team::{PlannedIntentPhase, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest};
+use crate::team::{
+    PatternLaunchSpec, PlannedIntentView, PlannedSpawnHost, PlannedSpawnRequest, SpawnPhase,
+};
 
 use super::super::widen_record::invalid;
 use super::super::{AgentDispatcher, SpawnPlanReceipt};
@@ -59,14 +66,18 @@ enum IntentPhase {
     /// have run, so it is never rerun.
     InDoubt,
     Planned,
+    /// Queued and bound in the launch's own writer. It never launches
+    /// again.
+    Launched,
     Refused,
 }
 
-impl From<PlannedIntentPhase> for IntentPhase {
-    fn from(phase: PlannedIntentPhase) -> Self {
+impl From<SpawnPhase> for IntentPhase {
+    fn from(phase: SpawnPhase) -> Self {
         match phase {
-            PlannedIntentPhase::Planned => Self::Planned,
-            PlannedIntentPhase::Refused => Self::Refused,
+            SpawnPhase::Planned => Self::Planned,
+            SpawnPhase::Launched => Self::Launched,
+            SpawnPhase::Refused => Self::Refused,
         }
     }
 }
@@ -95,16 +106,26 @@ struct PlannedIntent {
     placed: Option<TaskTypeRef>,
     plan: Option<SpawnPlanReceipt>,
     refusal: Option<String>,
+    /// A team's pattern start, frozen before it launches.
+    pattern_launch: Option<PatternLaunchSpec>,
+    /// What the launch queued and bound: the leader, or a solo's one agent,
+    /// each member in launch order, and the team.
+    root_attempt: Option<AttemptId>,
+    member_attempts: Vec<AttemptId>,
+    team_ref: Option<String>,
 }
 
 impl PlannedIntent {
-    fn view(&self, phase: PlannedIntentPhase) -> PlannedIntentView {
+    fn view(&self, phase: SpawnPhase) -> PlannedIntentView {
         PlannedIntentView {
             intent_key: self.ask.intent_key.clone(),
             phase,
             placed: self.placed.clone(),
             plan: self.plan.clone(),
             refusal: self.refusal.clone(),
+            root_attempt: self.root_attempt,
+            member_attempts: self.member_attempts.clone(),
+            team_ref: self.team_ref.clone(),
         }
     }
 }
@@ -122,12 +143,48 @@ enum Reserved {
     Custody(IntentReservation),
 }
 
+/// A planned intent a launch reads, under its row key.
+pub(super) struct PlannedLaunch {
+    key: [u8; 32],
+    row: PlannedIntent,
+}
+
+impl PlannedLaunch {
+    /// The intent's key digest in hex, which the launch's dedupe keys and
+    /// team reference carry.
+    pub(super) fn digest_hex(&self) -> String {
+        bytes_to_hex_lower(&self.key)
+    }
+
+    /// The plan the intent froze.
+    pub(super) fn plan(&self) -> Result<&SpawnPlanReceipt> {
+        self.row
+            .plan
+            .as_ref()
+            .ok_or_else(|| invalid("a planned intent holds its plan"))
+    }
+
+    /// A team's pattern start, once one is frozen.
+    pub(super) fn spec(&self) -> Option<&PatternLaunchSpec> {
+        self.row.pattern_launch.as_ref()
+    }
+}
+
+/// Where a planned intent stands for its launch.
+pub(super) enum LaunchStand {
+    /// Still planned: the launch reads it.
+    Planned(Box<PlannedLaunch>),
+    /// Launched or refused since: what it kept.
+    Settled(Box<PlannedIntentView>),
+}
+
 impl AgentDispatcher<'_> {
     /// The owner's planned spawn under an intent key (DOOR-111): the engine
     /// reserves the intent, places its type once against the root project's
     /// tree, plans it there, and freezes the placed stamp and the plan
     /// receipt. Nothing launches. The same key with the same ask returns
-    /// what was frozen, a kept refusal included, and never plans again.
+    /// what was frozen, a kept refusal or a launch included, and never plans
+    /// again.
     ///
     /// Custody is committed before placement or the planner may ask a model,
     /// and no writer is held across either. A placement or planner refusal
@@ -155,14 +212,14 @@ impl AgentDispatcher<'_> {
         // planner may ask a model.
         match self.place_and_plan_as_owner(owner, request, host, at) {
             Ok((placed, plan)) => {
-                self.settle_planned_intent(&reservation, PlannedIntentPhase::Planned, at, |row| {
+                self.settle_planned_intent(&reservation, SpawnPhase::Planned, at, |row| {
                     row.placed = Some(placed);
                     row.plan = Some(plan);
                 })
             }
             Err(error) if retained(&error) => {
                 let refusal = format!("{error}; ask again under a new intent key");
-                self.settle_planned_intent(&reservation, PlannedIntentPhase::Refused, at, |row| {
+                self.settle_planned_intent(&reservation, SpawnPhase::Refused, at, |row| {
                     row.refusal = Some(refusal);
                 })
             }
@@ -204,6 +261,10 @@ impl AgentDispatcher<'_> {
                 placed: None,
                 plan: None,
                 refusal: None,
+                pattern_launch: None,
+                root_attempt: None,
+                member_attempts: Vec::new(),
+                team_ref: None,
             },
             Some(row)
                 if row.actor != actor
@@ -216,11 +277,15 @@ impl AgentDispatcher<'_> {
                 let phase = row.phase;
                 match phase {
                     IntentPhase::Planned => {
-                        let view = row.view(PlannedIntentPhase::Planned);
+                        let view = row.view(SpawnPhase::Planned);
+                        return Ok(Reserved::Answered(Box::new(view)));
+                    }
+                    IntentPhase::Launched => {
+                        let view = row.view(SpawnPhase::Launched);
                         return Ok(Reserved::Answered(Box::new(view)));
                     }
                     IntentPhase::Refused => {
-                        let view = row.view(PlannedIntentPhase::Refused);
+                        let view = row.view(SpawnPhase::Refused);
                         return Ok(Reserved::Answered(Box::new(view)));
                     }
                     IntentPhase::InDoubt => return Err(invalid(IN_DOUBT)),
@@ -295,7 +360,7 @@ impl AgentDispatcher<'_> {
     fn settle_planned_intent(
         &self,
         reservation: &IntentReservation,
-        phase: PlannedIntentPhase,
+        phase: SpawnPhase,
         at: u64,
         settle: impl FnOnce(&mut PlannedIntent),
     ) -> Result<PlannedIntentView> {
@@ -310,6 +375,97 @@ impl AgentDispatcher<'_> {
         INTENTS.put(&self.vault.store, &mut txn, &reservation.key, &row)?;
         txn.commit()?;
         Ok(row.view(phase))
+    }
+
+    /// Where the owner's planned intent stands for its launch, on `txn`:
+    /// the owner's proof first, then the intent under its key, which must
+    /// hold the same ask. A launched or refused intent answers what it
+    /// kept.
+    pub(super) fn planned_launch_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        owner: &AuthenticatedOwner,
+        request: &PlannedSpawnRequest,
+    ) -> Result<LaunchStand> {
+        let (actor, _) = self.owner_root_in_txn(owner, txn)?;
+        let key = intent_row_key(&actor, &request.intent_key);
+        let row = INTENTS
+            .get(&self.vault.store, txn, &key)?
+            .ok_or_else(|| invalid(CUSTODY_LOST))?;
+        if row.ask_digest != ask_digest(request)? {
+            return Err(invalid(DIFFERENT_ASK));
+        }
+        launch_stand(key, row)
+    }
+
+    /// Freezes the pattern start a runner wrote for a planned team, in one
+    /// writer under a fresh owner proof. The first start frozen wins: a
+    /// later one is dropped, so one intent never launches two. Answers
+    /// where the intent stands after, its frozen start included.
+    pub(super) fn freeze_pattern_launch(
+        &self,
+        owner: &AuthenticatedOwner,
+        request: &PlannedSpawnRequest,
+        spec: PatternLaunchSpec,
+        at: u64,
+    ) -> Result<LaunchStand> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let mut planned = match self.planned_launch_in_txn(&txn, owner, request)? {
+            LaunchStand::Planned(planned) if planned.row.pattern_launch.is_none() => planned,
+            stand => return Ok(stand),
+        };
+        planned.row.pattern_launch = Some(spec);
+        planned.row.updated_at = at;
+        INTENTS.put(&self.vault.store, &mut txn, &planned.key, &planned.row)?;
+        txn.commit()?;
+        Ok(LaunchStand::Planned(planned))
+    }
+
+    /// Marks a planned intent launched in the launch's own group writer,
+    /// with the leader or solo agent it queued, its members and its team.
+    /// The group commits it.
+    pub(super) fn launch_planned_intent_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        planned: PlannedLaunch,
+        root: AttemptId,
+        members: Vec<AttemptId>,
+        team_ref: Option<String>,
+        at: u64,
+    ) -> Result<PlannedIntentView> {
+        let PlannedLaunch { key, mut row } = planned;
+        row.phase = IntentPhase::Launched;
+        row.root_attempt = Some(root);
+        row.member_attempts = members;
+        row.team_ref = team_ref;
+        row.updated_at = at;
+        INTENTS.put(&self.vault.store, wtxn, &key, &row)?;
+        Ok(row.view(SpawnPhase::Launched))
+    }
+
+    /// Keeps a launch's refusal under an intent still planned, as a
+    /// placement or planner refusal is kept. An intent another call
+    /// launched or refused meanwhile answers what it kept.
+    pub(super) fn refuse_planned_launch(
+        &self,
+        planned: &PlannedLaunch,
+        refusal: String,
+        at: u64,
+    ) -> Result<PlannedIntentView> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let row = INTENTS
+            .get(&self.vault.store, &txn, &planned.key)?
+            .ok_or_else(|| invalid(CUSTODY_LOST))?;
+        let PlannedLaunch { key, mut row } = match launch_stand(planned.key, row)? {
+            LaunchStand::Planned(current) => *current,
+            LaunchStand::Settled(view) => return Ok(*view),
+        };
+        row.phase = IntentPhase::Refused;
+        row.refusal = Some(refusal);
+        row.updated_at = at;
+        INTENTS.put(&self.vault.store, &mut txn, &key, &row)?;
+        txn.commit()?;
+        Ok(row.view(SpawnPhase::Refused))
     }
 }
 
@@ -350,15 +506,31 @@ fn ask_digest(request: &PlannedSpawnRequest) -> Result<[u8; 32]> {
     Ok(*hasher.finalize().as_bytes())
 }
 
+/// Where a stored intent stands for its launch: planned, or settled with
+/// what it kept. One in flight or in doubt has not planned.
+fn launch_stand(key: [u8; 32], row: PlannedIntent) -> Result<LaunchStand> {
+    let settled = match row.phase {
+        IntentPhase::Planned => None,
+        IntentPhase::Launched => Some(SpawnPhase::Launched),
+        IntentPhase::Refused => Some(SpawnPhase::Refused),
+        IntentPhase::InFlight | IntentPhase::InDoubt => return Err(invalid(CUSTODY_LOST)),
+    };
+    Ok(match settled {
+        Some(phase) => LaunchStand::Settled(Box::new(row.view(phase))),
+        None => LaunchStand::Planned(Box::new(PlannedLaunch { key, row })),
+    })
+}
+
 fn fresh_fence() -> [u8; 16] {
     let mut fence = [0; 16];
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut fence);
     fence
 }
 
-/// A placement or planner refusal, which the intent keeps. A storage fault
-/// is no answer: the intent stays in flight, so the next ask finds it in
-/// doubt, or resumes it under its keyed adapter.
-fn retained(error: &Error) -> bool {
+/// A placement, planner or launch refusal, which the intent keeps. A
+/// storage fault is no answer: the intent stays in flight, so the next ask
+/// finds it in doubt, or resumes it under its keyed adapter; a launch's
+/// stays planned.
+pub(super) fn retained(error: &Error) -> bool {
     !matches!(error, Error::Storage(_) | Error::Io(_) | Error::MapFull)
 }

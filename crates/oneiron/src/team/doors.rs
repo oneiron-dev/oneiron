@@ -25,7 +25,7 @@ use crate::llm::ReasoningEffort;
 use crate::llm::decision::{DecisionRung, ProviderPin};
 use crate::memory::{MemoryError, MemoryResult};
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
-use crate::team::{PatternSkillRef, TeamAxis, TeamPattern};
+use crate::team::{PatternSkillRef, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
 
 /// The highest version an authored tree may carry: the learning cell's type
@@ -160,18 +160,6 @@ pub struct TaskTypeTreeReadReply {
 #[serde(deny_unknown_fields)]
 pub struct PlannedSpawnRead {
     pub spawn_ref: EntityId,
-}
-
-/// Where a spawn stands. The read answers `launched` only: it reads an
-/// attempt the queue holds. The other phases are a planned intent's, before
-/// or around its launch.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum SpawnPhase {
-    Reserved,
-    Planned,
-    Launched,
-    InDoubt,
 }
 
 /// A coordination pattern by its word, as a plan, a team start or a team
