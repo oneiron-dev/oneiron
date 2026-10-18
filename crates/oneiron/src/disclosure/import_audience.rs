@@ -82,8 +82,10 @@ impl Vault {
     /// as the topic's `disclosure.import_audience` CLAIM and the cluster is marked
     /// settled, in one transaction. The ask must still be the frozen one (question,
     /// contract, owner target and the topic as its correlation), answered by a person as
-    /// the owner, with one of the frozen options. `None` while the topic is clear or its
-    /// ask is unanswered; a settled topic returns its rule again.
+    /// the owner, with one of the frozen options. An answer whose answerer was erased
+    /// since settles nothing: that authority ended with the erase, and the answer stays
+    /// on its ask. `None` while the topic is clear or its ask is unanswered; a settled
+    /// topic returns its rule again.
     pub fn settle_import_audience(&self, topic: &EntityId) -> Result<Option<EntityId>> {
         self.with_write_txn_grouped(|txn| {
             let Some(mut cluster) = self.import_audience_cluster_in_txn(txn, topic)? else {
@@ -114,6 +116,13 @@ impl Vault {
             };
             if answer.role != AskRole::Owner || answer.kind != HolderKind::Person {
                 return Err(invalid());
+            }
+            // An erased answerer's authority ended with its erase: its answer
+            // stays on the ask and settles no rule (FIX 3520).
+            if answer.by.id().is_none() {
+                return Err(Error::InvalidClaimBody(
+                    "disclosure.import_audience answerer was erased",
+                ));
             }
             let DecisionAnswer::Choice(label) = answer.answer else {
                 return Err(invalid());

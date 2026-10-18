@@ -368,6 +368,10 @@ export class Oneiron {
       apply: (input: Facade.ShapeApplyRequest): Facade.ShapeApplyReceipt => this.#call(() => this.#client.vaultShapeApply(input) as Facade.ShapeApplyReceipt),
     },
     fanout: {
+      /** Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree. */
+      spawn: (input: Facade.LiveRunRequest<Facade.FanoutBatchInput>): Facade.FanoutBatchView => this.#call(() => this.#client.vaultFanoutSpawn(input) as Facade.FanoutBatchView),
+      /** Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree. */
+      slots: (input: Facade.FanoutLaunchRequest): Facade.FanoutBatchView | null => this.#call(() => this.#client.vaultFanoutSlots(input) as Facade.FanoutBatchView | null),
       /** One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none. */
       launch: (input: Facade.FanoutLaunchRequest): Facade.FanoutLaunchView | null => this.#call(() => this.#client.vaultFanoutLaunch(input) as Facade.FanoutLaunchView | null),
       /** The owner rules on a held fan-out launch by the digest they saw: approve once, approve and remember under a cap, or deny, which keeps the hold visible. */
