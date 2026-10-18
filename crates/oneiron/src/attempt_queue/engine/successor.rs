@@ -33,8 +33,9 @@ impl AttemptQueue<'_> {
     /// # Errors
     ///
     /// An invalid transition when the predecessor is missing or not
-    /// `Failed`, or when another pending row holds its dedupe key; an id
-    /// collision; storage errors. The caller aborts its transaction then.
+    /// `Failed`, when a row of its run is already `retry_of` it, or when
+    /// another pending row holds its dedupe key; an id collision; storage
+    /// errors. The caller aborts its transaction then.
     pub(crate) fn successor_of_failed_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -51,6 +52,17 @@ impl AttemptQueue<'_> {
         let source = decode_record(&raw, predecessor)?;
         if source.state != AttemptState::Failed {
             return Err(invalid_transition(SUCCESSOR_ACTION, source.state.as_str()));
+        }
+        // A retry that already took the failed row's place is its live try,
+        // or its history: a second successor would fork the chain.
+        if let Some(run_id) = source.run_id.as_deref() {
+            let superseded = self
+                .list_run_in_txn(txn, run_id)?
+                .iter()
+                .any(|record| record.retry_of == Some(predecessor));
+            if superseded {
+                return Err(invalid_transition(SUCCESSOR_ACTION, "superseded"));
+            }
         }
         // The failed row gave its entry up when it settled; a pending row
         // that took the key since owns it now.
