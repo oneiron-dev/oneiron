@@ -104,11 +104,14 @@ pub enum EngineLimit {
     /// Stored cells one workbook import writes into a live office body,
     /// every sheet together. Past it the workbook is imported whole.
     ImportXlsxLiveCells,
+    /// Bytes of the judge's rubric (the active shared `judge` skill's text)
+    /// one judgment or label re-check reads. Past it the rubric is read whole.
+    JudgeRubricBytes,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -132,6 +135,7 @@ impl EngineLimit {
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
         Self::ImportXlsxLiveCells,
+        Self::JudgeRubricBytes,
     ];
 
     /// The config key that sets the row.
@@ -160,6 +164,7 @@ impl EngineLimit {
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
             Self::ImportXlsxLiveCells => "limits.import_xlsx_live_cells",
+            Self::JudgeRubricBytes => "limits.judge_rubric_bytes",
         }
     }
 
@@ -190,6 +195,9 @@ impl EngineLimit {
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
             Self::ImportXlsxLiveCells => 200_000,
+            // The shipped rubric is about 1 KiB; the judgment's state holds
+            // at most 64 KiB in all.
+            Self::JudgeRubricBytes => 8_192,
         }
     }
 }

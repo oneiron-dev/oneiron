@@ -260,6 +260,7 @@ impl LimitsConfig {
             import_decoded_bytes,
             signature_decode_bytes,
             import_xlsx_live_cells,
+            judge_rubric_bytes,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -321,6 +322,7 @@ impl LimitsConfig {
             (EngineLimit::ImportDecodedBytes, import_decoded_bytes),
             (EngineLimit::SignatureDecodeBytes, signature_decode_bytes),
             (EngineLimit::ImportXlsxLiveCells, import_xlsx_live_cells),
+            (EngineLimit::JudgeRubricBytes, judge_rubric_bytes),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);
@@ -452,4 +454,5 @@ pub(super) struct LimitsConfigOverride {
     pub(super) import_decoded_bytes: Option<u64>,
     pub(super) signature_decode_bytes: Option<u64>,
     pub(super) import_xlsx_live_cells: Option<u64>,
+    pub(super) judge_rubric_bytes: Option<u64>,
 }
