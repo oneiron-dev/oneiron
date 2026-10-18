@@ -70,6 +70,7 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -1225,7 +1226,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.voices.render_consent"
         | "vault.voices.targets.provision"
         | "vault.voices.targets.evict"
-        | "vault.voices.inspect" => owner_proof(auth, server, verb).map(drop),
+        | "vault.voices.inspect"
+        | "ai.voice.start"
+        | "ai.voice.audio"
+        | "ai.voice.events"
+        | "ai.voice.ack"
+        | "ai.voice.usage"
+        | "ai.voice.tool"
+        | "ai.voice.end"
+        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"

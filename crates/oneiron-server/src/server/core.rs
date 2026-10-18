@@ -104,6 +104,7 @@ pub struct SyncServer {
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
     pub(crate) note_editors: super::NoteEditors,
+    pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -394,6 +395,7 @@ impl SyncServer {
         super::desktop_seats::clear_stale_asks(&vault);
         Ok(Self {
             note_editors: super::NoteEditors::default(),
+            live_voice: Default::default(),
             lens_frames,
             retained,
             presence,

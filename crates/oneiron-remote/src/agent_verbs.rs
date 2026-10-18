@@ -1130,6 +1130,30 @@ impl OneironClient {
                 "vault.receipts.context" => remote_agent_verb_output::<
                     Option<oneiron::receipt::ContextEmitReceipt>,
                 >(client, verb, &input),
+                "ai.voice.start" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceSession,
+                >(client, verb, &input),
+                "ai.voice.audio" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.voice.events" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceEvents,
+                >(client, verb, &input),
+                "ai.voice.ack" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.voice.usage" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceUsage,
+                >(client, verb, &input),
+                "ai.voice.tool" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceToolReply,
+                >(client, verb, &input),
+                "ai.voice.end" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
+                "ai.voice.close" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::LiveVoiceProcessed,
+                >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
                 ),
@@ -5985,6 +6009,102 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.receipts.context", value)
+    }
+    pub fn ai_voice_start(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceStartRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceSession, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.start", value)
+    }
+    pub fn ai_voice_audio(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceAudioRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.audio", value)
+    }
+    pub fn ai_voice_events(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceEventsRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceEvents, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.events", value)
+    }
+    pub fn ai_voice_ack(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceAckRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.ack", value)
+    }
+    pub fn ai_voice_usage(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceUsageRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceUsage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.usage", value)
+    }
+    pub fn ai_voice_tool(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceToolRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceToolReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.tool", value)
+    }
+    pub fn ai_voice_end(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceSessionRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.end", value)
+    }
+    pub fn ai_voice_close(
+        &self,
+        input: &oneiron::task_verb::sdk::LiveVoiceSessionRequest,
+    ) -> Result<oneiron::task_verb::sdk::LiveVoiceProcessed, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.voice.close", value)
     }
     pub fn ai_options(
         &self,

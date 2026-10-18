@@ -3287,6 +3287,54 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_voice_start(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.start", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_audio(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.audio", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_events(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.events", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_ack(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.ack", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_usage(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.usage", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_tool(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.tool", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_end(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.end", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn ai_voice_close(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.voice.close", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.options", input)

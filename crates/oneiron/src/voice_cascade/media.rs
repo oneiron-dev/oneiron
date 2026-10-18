@@ -307,6 +307,9 @@ pub trait VoiceMediaQueue {
 /// What the worker hands back to the host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum VoiceMediaOutput {
+    /// The cancelled epoch's queued speech and in-flight future are dropped.
+    /// This is a server boundary, not a client playout acknowledgement.
+    Cancelled { generation: GenerationEpoch },
     /// One spoken sentence's audio. Pass it through the session's
     /// `filter_pcm` at enqueue AND at playback; a stale epoch is dropped.
     Pcm { submission: u64, frame: PcmFrame },
@@ -346,6 +349,7 @@ pub fn voice_media_channel(capacity: usize) -> (VoiceMediaSender, VoiceMediaWork
             queued,
             pending: VecDeque::new(),
             cancelled: BTreeSet::new(),
+            retired: Vec::new(),
         },
     )
 }
@@ -392,6 +396,7 @@ pub struct VoiceMediaWorker {
     queued: Arc<AtomicUsize>,
     pending: VecDeque<VoiceMediaWork>,
     cancelled: BTreeSet<GenerationEpoch>,
+    retired: Vec<GenerationEpoch>,
 }
 
 impl VoiceMediaWorker {
@@ -407,6 +412,9 @@ impl VoiceMediaWorker {
     ) {
         loop {
             self.drain();
+            for generation in self.retired.drain(..) {
+                deliver(VoiceMediaOutput::Cancelled { generation });
+            }
             let work = match self.pending.pop_front() {
                 Some(work) => work,
                 None => match self.next().await {
@@ -532,7 +540,9 @@ impl VoiceMediaWorker {
     /// waits its turn.
     fn take(&mut self, work: VoiceMediaWork) {
         if let VoiceMediaWork::Cancel { generation } = work {
-            self.cancelled.insert(generation);
+            if self.cancelled.insert(generation) {
+                self.retired.push(generation);
+            }
             self.pending.retain(|queued| {
                 !matches!(queued, VoiceMediaWork::Speech { generation: of, .. } if *of == generation)
             });
