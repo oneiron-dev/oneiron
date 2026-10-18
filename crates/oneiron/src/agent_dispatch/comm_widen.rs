@@ -53,16 +53,6 @@ pub(crate) enum CommWidenState {
     Declined,
 }
 
-impl CommWidenState {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Pending => "pending",
-            Self::Approved => "approved",
-            Self::Declined => "declined",
-        }
-    }
-}
-
 /// The question one ask round carries: ids and time reserved before its
 /// witness, so a retry lands the same question.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
