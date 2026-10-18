@@ -161,6 +161,39 @@ pub struct ServeArgs {
     #[arg(long = "models-file")]
     pub models_file: Option<PathBuf>,
 
+    /// Managed mode: this vault's e-sign seal key, an absolute path to its
+    /// PKCS#8 file (PEM or DER), in place of `ONEIRON_SEAL_KEY`, which
+    /// managed mode never reads (FIX 3487).
+    #[arg(long = "seal-key-file")]
+    pub seal_key_file: Option<PathBuf>,
+
+    /// Managed mode: the seal key's certificate chain, an absolute path to
+    /// its PEM file, the signer first (`ONEIRON_SEAL_CHAIN`).
+    #[arg(long = "seal-chain-file")]
+    pub seal_chain_file: Option<PathBuf>,
+
+    /// Managed mode: the seal's trust anchors, an absolute path to a PEM
+    /// file (`ONEIRON_SEAL_TRUST`); the chain's last certificate without it.
+    #[arg(long = "seal-trust-file")]
+    pub seal_trust_file: Option<PathBuf>,
+
+    /// Managed mode: the seal's timestamp authority URL (`ONEIRON_SEAL_TSA`):
+    /// a B-T seal, B-B without one.
+    #[arg(long = "seal-tsa-url")]
+    pub seal_tsa_url: Option<String>,
+
+    /// Managed mode: the signing page seal evidence names
+    /// (`ONEIRON_SEAL_URL`); the sign page at the vault's public origin
+    /// without it.
+    #[arg(long = "seal-signing-url")]
+    pub seal_signing_url: Option<String>,
+
+    /// Managed mode: the seal organ's program, an absolute path
+    /// (`ONEIRON_SEAL_ORGAN`), in place of the build an installed pack
+    /// carries.
+    #[arg(long = "seal-organ")]
+    pub seal_organ: Option<PathBuf>,
+
     /// Host address to bind to.
     #[arg(long)]
     pub host: Option<String>,
@@ -399,6 +432,12 @@ impl fmt::Debug for ServeArgs {
             .field("maximum_tier", &self.maximum_tier)
             .field("artifact_http_socket", &self.artifact_http_socket)
             .field("models_file", &self.models_file)
+            .field("seal_key_file", &self.seal_key_file)
+            .field("seal_chain_file", &self.seal_chain_file)
+            .field("seal_trust_file", &self.seal_trust_file)
+            .field("seal_tsa_url", &self.seal_tsa_url)
+            .field("seal_signing_url", &self.seal_signing_url)
+            .field("seal_organ", &self.seal_organ)
             .field("host", &self.host)
             .field("port", &self.port)
             .field("artifact_port", &self.artifact_port)
