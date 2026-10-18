@@ -27347,6 +27347,7 @@
      "purpose": "Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708)",
      "surface": {
       "crate-vis": 2,
+      "fn": 1,
       "re-export": 3
      }
     },
@@ -51385,7 +51386,7 @@
      "path": "src/task_verb/consult_result.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "struct": 7
      }
@@ -53401,7 +53402,7 @@
      "path": "src/task_verb/terminal_state.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 4,
       "struct": 1
@@ -79924,6 +79925,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/consult_settle.rs",
+     "purpose": "Consult settlement on every housekeeping pass (DOOR-063), on every substrate",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/cooperative_deletion.rs",
      "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
      "surface": {
@@ -81418,7 +81429,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81490,7 +81501,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 758,
+   "source_files": 759,
    "test_files": 182
   },
   "oneiron-spawn": {
