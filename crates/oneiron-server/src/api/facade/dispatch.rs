@@ -1104,6 +1104,30 @@ async fn vault_export(
         rows: Some(rows),
     })
 }
+async fn self_credential_attenuate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    facade_scoped_credential(auth)?;
+    facade_outside_room_turn(call, "self.credential.attenuate")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.credential.attenuate", &value)?;
+    let hooks = facade_hooks_pre(server, call, "self.credential.attenuate", value).await?;
+    let (output, listed) = super::host_doors::self_credential_attenuate(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_scope_ceiling(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11787,6 +11811,7 @@ pub(crate) async fn call_verb(
         "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
         "vault.recall" => vault_recall(server, call, input).await,
         "vault.export" => vault_export(server, call, input).await,
+        "self.credential.attenuate" => self_credential_attenuate(server, call, input).await,
         "vault.scope.ceiling" => vault_scope_ceiling(server, call, input).await,
         "vault.export.scoped" => vault_export_scoped(server, call, input).await,
         "vault.receipts" => vault_receipts(server, call, input).await,

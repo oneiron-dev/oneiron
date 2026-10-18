@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 503 facade rows, 1905 declarations.
-Inputs: 453 of 503 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 447 of 503 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 504 facade rows, 1908 declarations.
+Inputs: 454 of 504 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 448 of 504 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -1615,6 +1615,21 @@ class Scope(TypedDict):
     audience: NotRequired[ScopeAxis[ScopeId]]
     verbs: NotRequired[ScopeAxis[str]]
     sensitivity: NotRequired[SensitivityCeiling]
+class SlipCaveat(TypedDict):
+    scope: NotRequired[Scope | None]
+    expires_at: NotRequired[int | None]
+    ttl_secs: NotRequired[int | None]
+    single_use: bool
+    records: NotRequired[list[str] | None]
+    channels: NotRequired[list[str] | None]
+    pact: NotRequired[tuple[ScopeId, list[int]] | None]
+class CredentialAttenuationRequest(TypedDict):
+    holder_seed: list[int]
+    caveat: SlipCaveat
+    next_binding_key: NotRequired[list[int] | None]
+class CredentialAttenuated(TypedDict):
+    token: str
+    binding_key: list[int]
 class CredentialCeiling(TypedDict):
     kind: Literal["ceiling"]
     scope: Scope

@@ -231,6 +231,11 @@ export_facade! {
     let output = client.vault_export(format.as_deref())?;
     crate::codec::lift_record("vault.export", &output)
 };
+"self.credential.attenuate" => fn self_credential_attenuate(&self, input: CredentialAttenuationRequest) -> CredentialAttenuated = |client| {
+    let input: oneiron::task_verb::sdk::CredentialAttenuationRequest = crate::codec::lower_record("self.credential.attenuate", input)?;
+    let output = client.self_credential_attenuate(&input)?;
+    crate::codec::lift_record("self.credential.attenuate", &output)
+};
 "vault.scope.ceiling" => fn vault_scope_ceiling(&self) -> CredentialCeiling = |client| {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.scope.ceiling")?;
     let output = client.vault_scope_ceiling(&input)?;
