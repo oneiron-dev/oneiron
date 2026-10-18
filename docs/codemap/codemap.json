@@ -16211,7 +16211,7 @@
      "path": "src/conversation/visibility.rs",
      "purpose": "The audience predicate shared by all ScopedRead paths",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -31174,7 +31174,7 @@
      "path": "src/memory/witness/session.rs",
      "purpose": "Session overlay landing: journal staging from the door's authorized values, room-shell claim",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 3
      }
     },
@@ -51440,7 +51440,17 @@
      "path": "src/workspace_roster/rooms/audience.rs",
      "purpose": "Private thread audiences (FIX 2951)",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/audience_overlay.rs",
+     "purpose": "A thread turn a session overlay stages (FIX 3122, the rest of FIX 2951)",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -51511,7 +51521,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
@@ -54444,7 +54454,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 89,
+     "files": 90,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54467,7 +54477,7 @@
    },
    "over_bar": 185,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3310,
+   "source_files": 3311,
    "test_files": 902
   },
   "oneiron-android": {
