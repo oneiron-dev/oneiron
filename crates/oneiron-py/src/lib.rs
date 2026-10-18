@@ -5430,6 +5430,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_notes_bless_brief_kind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.bless_brief_kind")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.bless_brief_kind", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_author_brief(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.author_brief")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.author_brief", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_notes_follow_citation(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.notes.follow_citation")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.notes.follow_citation", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_notes_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.notes.create")?;
         let output = py

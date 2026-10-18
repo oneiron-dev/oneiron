@@ -3336,6 +3336,20 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.notes.bless_brief_kind",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.notes.author_brief",
+                crate::code_run::vault_read::request_schema::<crate::note::AuthorBriefRequest>(),
+            ),
+            (
+                "vault.notes.follow_citation",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BriefCitationFollowRequest,
+                >(),
+            ),
+            (
                 "vault.notes.create",
                 crate::code_run::vault_read::request_schema::<CreateNoteRequest>(),
             ),
@@ -3944,6 +3958,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.summaries.proposals.merge",
     "vault.summaries.proposals.switch",
     "vault.summaries.proposals.reject",
+    "vault.notes.bless_brief_kind",
+    "vault.notes.author_brief",
+    "vault.notes.follow_citation",
     "vault.notes.author_take",
     "vault.notes.read",
     "vault.notes.history",
@@ -4770,6 +4787,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.summaries.proposals.reject" => crate::code_run::vault_read::request_schema::<
             crate::scope_summary::SummaryProposalView,
+        >(),
+        "vault.notes.bless_brief_kind" => {
+            crate::code_run::vault_read::request_schema::<crate::note::BriefKindStamp>()
+        }
+        "vault.notes.author_brief" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
+        "vault.notes.follow_citation" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefCitation>>,
         >(),
         "vault.notes.author_take" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
@@ -9141,6 +9167,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.bless_brief_kind" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.author_brief" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.follow_citation" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11563,6 +11610,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.summaries.proposals.reject" => {
             let _input: crate::scope_summary::SummaryProposalRequest = decode(value.clone())?;
         }
+        "vault.notes.bless_brief_kind" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.notes.author_brief" => {
+            let _input: crate::note::AuthorBriefRequest = decode(value.clone())?;
+        }
+        "vault.notes.follow_citation" => {
+            let _input: crate::task_verb::sdk::BriefCitationFollowRequest = decode(value.clone())?;
+        }
         "vault.notes.create" => {
             let _input: CreateNoteRequest = decode(value.clone())?;
         }
@@ -12933,6 +12989,13 @@ pub fn invoke(
         }
         "vault.summaries.proposals.reject" => {
             encode(vault_summaries_proposals_reject(memory, decode(value)?)?)
+        }
+        "vault.notes.bless_brief_kind" => {
+            encode(vault_notes_bless_brief_kind(memory, decode(value)?)?)
+        }
+        "vault.notes.author_brief" => encode(vault_notes_author_brief(memory, decode(value)?)?),
+        "vault.notes.follow_citation" => {
+            encode(vault_notes_follow_citation(memory, decode(value)?)?)
         }
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.author_take" => encode(vault_notes_author_take(memory, decode(value)?)?),
@@ -18359,6 +18422,38 @@ pub fn vault_summaries_proposals_reject(
     input: crate::scope_summary::SummaryProposalRequest,
 ) -> MemoryResult<crate::scope_summary::SummaryProposalView> {
     memory.settle_summary_proposal(&input, crate::entity_doc::SettleVerb::Reject)
+}
+pub fn vault_notes_bless_brief_kind(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::note::BriefKindStamp> {
+    Ok(memory.bless_brief_kind()?.into())
+}
+pub fn vault_notes_author_brief(
+    memory: &Memory<'_>,
+    input: crate::note::AuthorBriefRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.notes.author_brief",
+        &input,
+        &["/markdown"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.author_brief",
+        &input,
+        &["/citations/*/claim_ref", "/citations/*/document_ref"],
+    )?;
+    let landed = memory.author_citing_brief(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_notes_follow_citation(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BriefCitationFollowRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefCitation>>> {
+    crate::task_verb::sdk::follow_brief_citation_as_caller(memory, input)
 }
 pub fn vault_notes_create(
     memory: &Memory<'_>,

@@ -1562,6 +1562,9 @@ fn mcp_agent_verb_input(
         "vault.summaries.proposals.merge" => a.spec.clone().ok_or_else(invalid),
         "vault.summaries.proposals.switch" => a.spec.clone().ok_or_else(invalid),
         "vault.summaries.proposals.reject" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.bless_brief_kind" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.author_brief" => a.spec.clone().ok_or_else(invalid),
+        "vault.notes.follow_citation" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.create" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.author_take" => a.spec.clone().ok_or_else(invalid),
         "vault.notes.from_entity" => a.spec.clone().ok_or_else(invalid),
@@ -3515,6 +3518,15 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.summaries.proposals.reject" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.bless_brief_kind" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.author_brief" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.notes.follow_citation" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.notes.create" => {
@@ -13063,6 +13075,41 @@ async fn execute_agent_verb_row(
                     input,
                 )
                 .await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.bless_brief_kind" => {
+            let input: oneiron::task_verb::sdk::EmptyRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_bless_brief_kind(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.author_brief" => {
+            let input: oneiron::note::AuthorBriefRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_notes_author_brief(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.notes.follow_citation" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.notes.follow_citation", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::BriefCitationFollowRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_notes_follow_citation(server, auth, input)
+                    .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

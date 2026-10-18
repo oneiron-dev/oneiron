@@ -13935,6 +13935,74 @@ async fn vault_summaries_proposals_reject(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_notes_bless_brief_kind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.bless_brief_kind",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_author_brief(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.author_brief",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_follow_citation(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.notes.follow_citation")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.notes.follow_citation", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.notes.follow_citation", value).await?;
+    let (output, listed) = super::host_doors::vault_notes_follow_citation(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_notes_create(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16179,6 +16247,9 @@ pub(crate) async fn call_verb(
         "vault.summaries.proposals.reject" => {
             vault_summaries_proposals_reject(server, call, input).await
         }
+        "vault.notes.bless_brief_kind" => vault_notes_bless_brief_kind(server, call, input).await,
+        "vault.notes.author_brief" => vault_notes_author_brief(server, call, input).await,
+        "vault.notes.follow_citation" => vault_notes_follow_citation(server, call, input).await,
         "vault.notes.create" => vault_notes_create(server, call, input).await,
         "vault.notes.author_take" => vault_notes_author_take(server, call, input).await,
         "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,

@@ -10736,6 +10736,62 @@
       "host_door_caller": true
     },
     {
+      "name": "vault.notes.bless_brief_kind",
+      "description": "A verified person stamps the brief kind policy seed; it grants no sharing or extraction authority.",
+      "input": "EmptyRequest",
+      "output": "crate::note::BriefKindStamp",
+      "call": "memory.bless_brief_kind()?.into()",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
+    },
+    {
+      "name": "vault.notes.author_brief",
+      "description": "Authors markdown with supporting claim citations, capturing source NOTE pins and rechecking their live read authority in the brief write transaction.",
+      "prose_links": [
+        "/markdown"
+      ],
+      "input": "crate::note::AuthorBriefRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory.author_citing_brief(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true,
+      "refs": [
+        "/citations/*/claim_ref",
+        "/citations/*/document_ref"
+      ]
+    },
+    {
+      "name": "vault.notes.follow_citation",
+      "description": "Follows returned share and claim references under the caller live read scope; revocation stops resolution and hidden citations disclose no quote or lifecycle.",
+      "input": "crate::task_verb::sdk::BriefCitationFollowRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefCitation>>",
+      "call": "crate::task_verb::sdk::follow_brief_citation_as_caller(memory, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.notes.create",
       "description": "Creates a NOTE of a registered kind, its first authored text as its birth.",
       "prose_links": [
