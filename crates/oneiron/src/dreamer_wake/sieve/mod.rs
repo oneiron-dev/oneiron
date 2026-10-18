@@ -367,6 +367,30 @@ pub(crate) fn erase_turn_in_txn(
     Ok(())
 }
 
+/// Takes a TURN a window demotion removes out of the sieve's working state,
+/// in the remover's transaction (OF-534): its queued spans, its reading, the
+/// read it goes on with, its wait for a grant and any read it was owed. The
+/// turn is not erased, so its spans' history and every audit stay: a
+/// pending audit still reads what the cheap path saw. A promotion that
+/// brings the turn back owes it a read; the cursor has passed it.
+#[cfg(feature = "sync")]
+pub(crate) fn demote_turn_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    turn: &EntityId,
+) -> Result<()> {
+    let spans = SPANS.scan_keys(store, txn, turn.as_bytes())?;
+    for (_, key) in &spans {
+        QUEUE.delete(store, txn, key)?;
+    }
+    SPANS.delete_from(store, txn, turn.as_bytes())?;
+    READ.delete(store, txn, turn)?;
+    CONTINUE.delete(store, txn, turn)?;
+    WITHHELD.delete(store, txn, turn)?;
+    OWED.delete(store, txn, turn)?;
+    Ok(())
+}
+
 /// One bounded pass, in the caller's transaction: a read the text bound
 /// stopped reads on first, then the turns owed a read, then any turn that
 /// landed in the cursor's own second behind it, then new turns past the
