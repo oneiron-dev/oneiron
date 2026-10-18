@@ -1,17 +1,19 @@
 //! Held-out scoring releases a counted cohort. Binding is a separate owner act.
 use std::collections::BTreeSet;
 
+use serde::{Deserialize, Serialize};
+
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::llm::manifest::{ModelRole, TeacherProbeApproval};
+use crate::llm::manifest::{ModelBinding, ModelManifest, ModelRole, TeacherProbeApproval};
 use crate::skill_optimize::{EvalExposure, EvalExposureKind, EvalSeat};
 
 use super::custody::read_pin;
 use super::{
     HeldOutResult, PinnedCheckpoint, ROLES, RUNS, RoleSwapReceipt, SWAPS, SourcePin, SplitSide,
-    SwapChoice, TrainingRun, TrainingState, invalid, run_in_txn,
+    SwapChoice, TrainingRun, TrainingState, hash_json, invalid, run_in_txn,
 };
 
 #[derive(Debug)]
@@ -22,8 +24,80 @@ pub struct TrainingEvalInput {
     pub held_out_jsonl: Vec<u8>,
 }
 
+/// What a swap of one run binds against: the run's spec, exported
+/// checkpoint and stored evaluation, and the role's model it replaces. An
+/// approval taken under it refuses once any of them moved, so an old choice
+/// never overwrites a newer one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwapExpectation {
+    pub spec_blake3: [u8; 32],
+    /// The exported checkpoint's full load-set hash.
+    pub checkpoint_blake3: [u8; 32],
+    /// The stored `HeldOutResult`'s hash; an unscored run hashes its absence.
+    pub evaluation_blake3: [u8; 32],
+    pub incumbent: Option<ModelBinding>,
+}
+
+impl SwapExpectation {
+    /// What a swap of `run` binds against while `manifest` stands.
+    /// # Errors
+    /// A run whose checkpoint has not returned, or a pin that does not encode.
+    pub fn of(run: &TrainingRun, manifest: Option<&ModelManifest>) -> Result<Self> {
+        let result = run
+            .result
+            .as_ref()
+            .ok_or_else(|| invalid("training checkpoint has not returned"))?;
+        Ok(Self {
+            spec_blake3: run.spec_blake3,
+            checkpoint_blake3: result.exported_checkpoint.content_hash()?,
+            evaluation_blake3: hash_json(&run.evaluation)?,
+            incumbent: manifest
+                .and_then(|manifest| manifest.roles.get(&run.plan.role))
+                .cloned(),
+        })
+    }
+}
+
+/// What the owner's direct swap door did with the result they viewed.
+#[derive(Debug)]
+pub enum ViewedSwap {
+    /// The role binds the run's checkpoint, now or already.
+    Bound(Box<RoleSwapReceipt>),
+    /// The run's spec or returned checkpoint is not the one viewed; nothing
+    /// changed.
+    Stale,
+    /// An embedder's swap stages a re-embed through a space move, so this
+    /// door binds nothing.
+    Embedder,
+}
+
 fn role_key(role: ModelRole) -> Result<String> {
     serde_json::to_string(&role).map_err(|_| invalid("training role encoding failed"))
+}
+
+/// Every training run as `txn` reads it, in id order. Read-only.
+pub(crate) fn training_runs_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<TrainingRun>> {
+    RUNS.iter_from(&vault.store, txn, &[])?
+        .map(|row| row.map(|(_, run)| run))
+        .collect()
+}
+
+/// One training run as `txn` reads it. Read-only.
+pub(crate) fn training_run_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<TrainingRun>> {
+    RUNS.get(&vault.store, txn, id)
+}
+
+/// The receipt of the swap that last bound `role`, if any. Read-only.
+pub(crate) fn role_swap_receipt_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    role: ModelRole,
+) -> Result<Option<RoleSwapReceipt>> {
+    ROLES.get(&vault.store, txn, &role_key(role)?)
 }
 
 fn validate_eval(run: &TrainingRun, eval: &HeldOutResult) -> Result<()> {
@@ -176,22 +250,120 @@ impl Vault {
         teacher_approval: Option<&TeacherProbeApproval>,
     ) -> Result<RoleSwapReceipt> {
         self.recheck_owner(owner)?;
-        let promotion_exposure = if matches!(&choice, SwapChoice::Evaluated) {
-            let run = self
-                .training_run(id)?
-                .ok_or_else(|| invalid("training run not found"))?;
-            if !run.can_propose_swap() {
-                return Err(invalid("training checks block a swap proposal"));
+        self.with_write_txn_grouped(|txn| {
+            self.approve_training_role_swap_in_txn(txn, owner, id, choice, teacher_approval, None)
+        })
+    }
+
+    /// The owner's direct swap of the result they viewed (OF-577). In one
+    /// writer the expectation is taken from the run and the manifest as they
+    /// stand, the viewed spec and checkpoint must be the run's, and the swap
+    /// binds against it; the run's open swap asks are cut Stale in the same
+    /// commit. An explicit override is chosen only here, never asked.
+    pub fn approve_viewed_training_role_swap(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        choice: SwapChoice,
+        spec_blake3: &[u8; 32],
+        checkpoint_blake3: &[u8; 32],
+    ) -> Result<ViewedSwap> {
+        self.recheck_owner(owner)?;
+        self.with_write_txn_grouped(|txn| {
+            let run = run_in_txn(self, txn, id)?;
+            if run.plan.role == ModelRole::RetrievalEmbedder {
+                return Ok(ViewedSwap::Embedder);
             }
-            let result = run
-                .result
-                .as_ref()
-                .ok_or_else(|| invalid("training checkpoint has not returned"))?;
+            let manifest = crate::llm::manifest::read_manifest(&self.store, txn)?;
+            let expected = SwapExpectation::of(&run, manifest.as_ref())?;
+            if expected.spec_blake3 != *spec_blake3
+                || expected.checkpoint_blake3 != *checkpoint_blake3
+            {
+                return Ok(ViewedSwap::Stale);
+            }
+            let receipt = self.approve_training_role_swap_in_txn(
+                txn,
+                owner,
+                id,
+                choice,
+                None,
+                Some(&expected),
+            )?;
+            let now = self.store.clock.now_recorded_at();
+            crate::task_verb::void_training_swap_asks_in(self, txn, id, None, now)?;
+            Ok(ViewedSwap::Bound(Box::new(receipt)))
+        })
+    }
+
+    /// The swap under the caller's writer: the counted Promotion exposure,
+    /// the manifest, the receipt and `Bound` commit or roll back together.
+    /// With `expected`, a run or role binding that moved since it was taken
+    /// refuses. The same run already bound returns its receipt, serving no
+    /// exposure.
+    pub(crate) fn approve_training_role_swap_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        choice: SwapChoice,
+        teacher_approval: Option<&TeacherProbeApproval>,
+        expected: Option<&SwapExpectation>,
+    ) -> Result<RoleSwapReceipt> {
+        let actor = owner.revalidate_in_txn(self, txn)?;
+        let mut run = run_in_txn(self, txn, id)?;
+        match &choice {
+            SwapChoice::Evaluated if !run.can_propose_swap() => {
+                return Err(invalid(
+                    "training export, overlap or held-out checks block a swap proposal",
+                ));
+            }
+            SwapChoice::ExplicitOverride { reason } if reason.trim().is_empty() => {
+                return Err(invalid(
+                    "an explicit checkpoint choice records the owner's reason",
+                ));
+            }
+            _ => {}
+        }
+        let result = run
+            .result
+            .as_ref()
+            .ok_or_else(|| invalid("training checkpoint has not returned"))?;
+        result.exported_checkpoint.verify(self, txn)?;
+        let mut manifest =
+            crate::llm::manifest::read_manifest(&self.store, txn)?.ok_or_else(|| {
+                invalid("configure the model manifest before binding a trained checkpoint")
+            })?;
+        if let Some(expected) = expected
+            && *expected != SwapExpectation::of(&run, Some(&manifest))?
+        {
+            return Err(invalid(
+                "the training result or the role's model moved since this swap was asked",
+            ));
+        }
+        let role = run.plan.role;
+        let key = role_key(role)?;
+        if let Some(current) = ROLES.get(&self.store, txn, &key)?
+            && current.run == *id
+            && manifest.roles.get(&role) == Some(&current.binding)
+        {
+            return Ok(current);
+        }
+        let previous = manifest.roles.get(&role).cloned();
+        if previous
+            .as_ref()
+            .is_some_and(|binding| binding.slot != run.plan.output_binding.slot)
+        {
+            return Err(invalid(
+                "a trained checkpoint cannot move its role to another slot",
+            ));
+        }
+        let promotion_exposure = if matches!(&choice, SwapChoice::Evaluated) {
             let candidate = blake3::Hash::from(result.exported_checkpoint.content_hash()?)
                 .to_hex()
                 .to_string();
             Some(
-                self.open_eval_cohort(
+                self.open_eval_cohort_in_txn(
+                    txn,
                     &run.corpus.cohort.id,
                     EvalExposureKind::Promotion,
                     &run.admission_ref(),
@@ -203,71 +375,41 @@ impl Vault {
         } else {
             None
         };
-        self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_in_txn(self, txn)?;
-            let mut run = run_in_txn(self, txn, id)?;
-            match &choice {
-                SwapChoice::Evaluated if !run.can_propose_swap() => {
-                    return Err(invalid(
-                        "training export, overlap or held-out checks block a swap proposal",
-                    ));
-                }
-                SwapChoice::ExplicitOverride { reason } if reason.trim().is_empty() => {
-                    return Err(invalid(
-                        "an explicit checkpoint choice records the owner's reason",
-                    ));
-                }
-                _ => {}
-            }
-            let result = run
-                .result
-                .as_ref()
-                .ok_or_else(|| invalid("training checkpoint has not returned"))?;
-            result.exported_checkpoint.verify(self, txn)?;
-            let mut manifest =
-                crate::llm::manifest::read_manifest(&self.store, txn)?.ok_or_else(|| {
-                    invalid("configure the model manifest before binding a trained checkpoint")
-                })?;
-            let role = run.plan.role;
-            let key = role_key(role)?;
-            if let Some(current) = ROLES.get(&self.store, txn, &key)?
-                && current.run == *id
-                && manifest.roles.get(&role) == Some(&current.binding)
-            {
-                return Ok(current);
-            }
-            let previous = manifest.roles.get(&role).cloned();
-            if previous
-                .as_ref()
-                .is_some_and(|binding| binding.slot != run.plan.output_binding.slot)
-            {
-                return Err(invalid(
-                    "a trained checkpoint cannot move its role to another slot",
-                ));
-            }
-            manifest.roles.insert(role, run.plan.output_binding.clone());
-            self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
-            let receipt = RoleSwapReceipt {
-                id: self.store.clock.entity_id()?,
-                run: *id,
-                owner: actor,
-                at: self.store.clock.now_recorded_at(),
-                role,
-                previous,
-                binding: run.plan.output_binding.clone(),
-                checkpoint: result.exported_checkpoint.clone(),
-                evaluation: run.evaluation.clone(),
-                checks: result.checks.clone(),
-                exact_hash_overlaps: run.corpus.exact_hash_overlaps,
-                promotion_exposure: promotion_exposure.clone(),
-                choice,
-            };
-            SWAPS.put(&self.store, txn, &receipt.id, &receipt)?;
-            ROLES.put(&self.store, txn, &key, &receipt)?;
-            run.state = TrainingState::Bound;
-            RUNS.put(&self.store, txn, id, &run)?;
-            Ok(receipt)
-        })
+        manifest.roles.insert(role, run.plan.output_binding.clone());
+        self.write_model_manifest_in_txn(txn, &manifest, teacher_approval, None)?;
+        let receipt = RoleSwapReceipt {
+            id: self.store.clock.entity_id()?,
+            run: *id,
+            owner: actor,
+            at: self.store.clock.now_recorded_at(),
+            role,
+            previous,
+            binding: run.plan.output_binding.clone(),
+            checkpoint: result.exported_checkpoint.clone(),
+            evaluation: run.evaluation.clone(),
+            checks: result.checks.clone(),
+            exact_hash_overlaps: run.corpus.exact_hash_overlaps,
+            promotion_exposure,
+            choice,
+        };
+        SWAPS.put(&self.store, txn, &receipt.id, &receipt)?;
+        ROLES.put(&self.store, txn, &key, &receipt)?;
+        run.state = TrainingState::Bound;
+        RUNS.put(&self.store, txn, id, &run)?;
+        Ok(receipt)
+    }
+
+    /// Every swap receipt that bound `run`, oldest first.
+    pub fn training_run_swap_receipts(&self, run: &EntityId) -> Result<Vec<RoleSwapReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        let mut receipts = SWAPS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, receipt)| receipt)
+            .filter(|receipt| receipt.run == *run)
+            .collect::<Vec<_>>();
+        receipts.sort_by_key(|receipt| (receipt.at, receipt.id));
+        Ok(receipts)
     }
 
     /// Host loader seam. An unrelated manifest edit makes the old custody

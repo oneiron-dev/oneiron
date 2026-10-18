@@ -200,9 +200,13 @@ impl Memory<'_> {
             body::body_in(vault, txn, event.container)?;
             // A project room keeps its own rule: a PERSON enters it through
             // its roster, and a speaker enters it asked nothing.
-            let project =
-                crate::workspace_roster::project_room_audience_in(vault, txn, event.container, &[])?
-                    .is_some();
+            let project = crate::workspace_roster::project_room_audience_in(
+                vault,
+                txn,
+                event.container,
+                &[],
+            )?
+            .is_some();
             if project && matches!(event.attendee, ContainerAttendee::Person(_)) {
                 return Ok(None);
             }
