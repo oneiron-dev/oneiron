@@ -296,6 +296,8 @@ pub enum AgentVerb {
     VaultWorkflowsUpdate,
     VaultWorkflowsDispatch,
     VaultWorkflowsStatus,
+    VaultTaskTypesPin,
+    VaultTaskTypesGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -858,6 +860,8 @@ impl AgentVerb {
         Self::VaultWorkflowsUpdate,
         Self::VaultWorkflowsDispatch,
         Self::VaultWorkflowsStatus,
+        Self::VaultTaskTypesPin,
+        Self::VaultTaskTypesGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -1429,6 +1433,8 @@ impl AgentVerb {
             Self::VaultWorkflowsUpdate => "vault.workflows.update",
             Self::VaultWorkflowsDispatch => "vault.workflows.dispatch",
             Self::VaultWorkflowsStatus => "vault.workflows.status",
+            Self::VaultTaskTypesPin => "vault.task_types.pin",
+            Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -1994,6 +2000,8 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultWorkflowsStatus
+                | Self::VaultTaskTypesPin
+                | Self::VaultTaskTypesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2563,6 +2571,8 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultWorkflowsStatus
+                | Self::VaultTaskTypesPin
+                | Self::VaultTaskTypesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3181,6 +3191,8 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultWorkflowsStatus
+                | Self::VaultTaskTypesPin
+                | Self::VaultTaskTypesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3614,6 +3626,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
+                | Self::VaultTaskTypesPin
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
@@ -4101,6 +4114,8 @@ impl AgentVerb {
             Self::VaultWorkflowsUpdate => &["spec"],
             Self::VaultWorkflowsDispatch => &["spec"],
             Self::VaultWorkflowsStatus => &["spec"],
+            Self::VaultTaskTypesPin => &["spec"],
+            Self::VaultTaskTypesGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4664,6 +4679,8 @@ impl AgentVerb {
             Self::VaultWorkflowsUpdate => &["spec"],
             Self::VaultWorkflowsDispatch => &["spec"],
             Self::VaultWorkflowsStatus => &["spec"],
+            Self::VaultTaskTypesPin => &["spec"],
+            Self::VaultTaskTypesGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -5779,6 +5796,12 @@ impl AgentVerb {
             }
             Self::VaultWorkflowsStatus => {
                 "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."
+            }
+            Self::VaultTaskTypesPin => {
+                "The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."
+            }
+            Self::VaultTaskTypesGet => {
+                "The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."
             }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."

@@ -939,6 +939,12 @@ impl OneironClient {
                 "vault.workflows.status" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkflowRunView,
                 >(client, verb, &input),
+                "vault.task_types.pin" => remote_agent_verb_output::<
+                    oneiron::team::doors::TaskTypeTreePinReceipt,
+                >(client, verb, &input),
+                "vault.task_types.get" => remote_agent_verb_output::<
+                    oneiron::team::doors::TaskTypeTreeReadReply,
+                >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
                 >(client, verb, &input),
@@ -5252,6 +5258,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.workflows.status", value)
+    }
+    pub fn vault_task_types_pin(
+        &self,
+        input: &oneiron::team::doors::TaskTypeTreePin,
+    ) -> Result<oneiron::team::doors::TaskTypeTreePinReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.task_types.pin", value)
+    }
+    pub fn vault_task_types_get(
+        &self,
+        input: &oneiron::team::doors::TaskTypeTreeRead,
+    ) -> Result<oneiron::team::doors::TaskTypeTreeReadReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.task_types.get", value)
     }
     pub fn vault_workspace_establish(
         &self,

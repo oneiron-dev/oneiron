@@ -1143,6 +1143,12 @@ export class Oneiron {
       /** The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result. */
       status: (input: Facade.WorkflowRunRequest): Facade.WorkflowRunView => this.#call(() => this.#client.vaultWorkflowsStatus(input) as Facade.WorkflowRunView),
     },
+    task_types: {
+      /** The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force. */
+      pin: (input: Facade.TaskTypeTreePin): Facade.TaskTypeTreePinReceipt => this.#call(() => this.#client.vaultTaskTypesPin(input) as Facade.TaskTypeTreePinReceipt),
+      /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */
+      get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
+    },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
       establish: (input: Facade.WorkspacePresetRequest): Facade.WorkspacePresetReceipt => this.#call(() => this.#client.vaultWorkspaceEstablish(input) as Facade.WorkspacePresetReceipt),

@@ -1461,6 +1461,16 @@ export_facade! {
     let output = client.vault_workflows_status(&input)?;
     crate::codec::lift_record("vault.workflows.status", &output)
 };
+"vault.task_types.pin" => fn vault_task_types_pin(&self, input: TaskTypeTreePin) -> TaskTypeTreePinReceipt = |client| {
+    let input: oneiron::team::doors::TaskTypeTreePin = crate::codec::lower_record("vault.task_types.pin", input)?;
+    let output = client.vault_task_types_pin(&input)?;
+    crate::codec::lift_record("vault.task_types.pin", &output)
+};
+"vault.task_types.get" => fn vault_task_types_get(&self, input: TaskTypeTreeRead) -> TaskTypeTreeReadReply = |client| {
+    let input: oneiron::team::doors::TaskTypeTreeRead = crate::codec::lower_record("vault.task_types.get", input)?;
+    let output = client.vault_task_types_get(&input)?;
+    crate::codec::lift_record("vault.task_types.get", &output)
+};
 "vault.workspace.establish" => fn vault_workspace_establish(&self, input: WorkspacePresetRequest) -> WorkspacePresetReceipt = |client| {
     let input: oneiron::task_verb::sdk::WorkspacePresetRequest = crate::codec::lower_record("vault.workspace.establish", input)?;
     let output = client.vault_workspace_establish(&input)?;

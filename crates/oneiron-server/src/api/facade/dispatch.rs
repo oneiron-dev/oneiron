@@ -6804,6 +6804,48 @@ async fn vault_workflows_status(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_task_types_pin(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.task_types.pin")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.task_types.pin", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.task_types.pin", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_task_types_pin(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_task_types_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.task_types.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.task_types.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.task_types.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_task_types_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_workspace_establish(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12477,6 +12519,8 @@ pub(crate) async fn call_verb(
         "vault.workflows.update" => vault_workflows_update(server, call, input).await,
         "vault.workflows.dispatch" => vault_workflows_dispatch(server, call, input).await,
         "vault.workflows.status" => vault_workflows_status(server, call, input).await,
+        "vault.task_types.pin" => vault_task_types_pin(server, call, input).await,
+        "vault.task_types.get" => vault_task_types_get(server, call, input).await,
         "vault.workspace.establish" => vault_workspace_establish(server, call, input).await,
         "vault.workspace.members.onboard" => {
             vault_workspace_members_onboard(server, call, input).await

@@ -1590,6 +1590,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.task_types.pin",
+                crate::code_run::vault_read::request_schema::<crate::team::doors::TaskTypeTreePin>(
+                ),
+            ),
+            (
+                "vault.task_types.get",
+                crate::code_run::vault_read::request_schema::<crate::team::doors::TaskTypeTreeRead>(
+                ),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -3073,6 +3083,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workflows.update",
     "vault.workflows.dispatch",
     "vault.workflows.status",
+    "vault.task_types.pin",
+    "vault.task_types.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3447,6 +3459,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.workflows.status" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowRunView>()
         }
+        "vault.task_types.pin" => crate::code_run::vault_read::request_schema::<
+            crate::team::doors::TaskTypeTreePinReceipt,
+        >(),
+        "vault.task_types.get" => crate::code_run::vault_read::request_schema::<
+            crate::team::doors::TaskTypeTreeReadReply,
+        >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
         >(),
@@ -5726,6 +5744,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.workflows.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.task_types.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.task_types.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8304,6 +8336,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.workflows.status" => {
             let _input: crate::task_verb::sdk::WorkflowRunRequest = decode(value.clone())?;
         }
+        "vault.task_types.pin" => {
+            let _input: crate::team::doors::TaskTypeTreePin = decode(value.clone())?;
+        }
+        "vault.task_types.get" => {
+            let _input: crate::team::doors::TaskTypeTreeRead = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -9678,6 +9716,8 @@ pub fn invoke(
         "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
         "vault.workflows.dispatch" => encode(vault_workflows_dispatch(memory, decode(value)?)?),
         "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
+        "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
+        "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -12639,6 +12679,26 @@ pub fn vault_workflows_status(
     crate::task_verb::sdk::read_workflow_run_as(
         memory.vault(),
         &memory.embedded_owner("vault.workflows.status")?,
+        input,
+    )
+}
+pub fn vault_task_types_pin(
+    memory: &Memory<'_>,
+    input: crate::team::doors::TaskTypeTreePin,
+) -> MemoryResult<crate::team::doors::TaskTypeTreePinReceipt> {
+    crate::team::doors::pin_tree_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.task_types.pin")?,
+        input,
+    )
+}
+pub fn vault_task_types_get(
+    memory: &Memory<'_>,
+    input: crate::team::doors::TaskTypeTreeRead,
+) -> MemoryResult<crate::team::doors::TaskTypeTreeReadReply> {
+    crate::team::doors::read_tree_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.task_types.get")?,
         input,
     )
 }

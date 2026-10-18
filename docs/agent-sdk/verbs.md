@@ -298,6 +298,8 @@ both bindings and their export-census tests in one change.
 - `vault.workflows.update`
 - `vault.workflows.dispatch`
 - `vault.workflows.status`
+- `vault.task_types.pin`
+- `vault.task_types.get`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`

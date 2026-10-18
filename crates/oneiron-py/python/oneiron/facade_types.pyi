@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 516 facade rows, 1906 declarations.
-Inputs: 466 of 516 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 460 of 516 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 518 facade rows, 1914 declarations.
+Inputs: 468 of 518 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 462 of 518 fully typed, 56 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -5665,6 +5665,37 @@ class WorkflowRunView(TypedDict):
     results: list[WorkflowStepRun]
 class WorkflowRunRequest(TypedDict):
     root_attempt_ref: EntityId
+class TaskTypeNodeSpec(TypedDict):
+    node_id: str
+    parent: NotRequired[str | None]
+    name: str
+class TaskTypeTreePin(TypedDict):
+    fork_ref: EntityId
+    tree_version: int
+    nodes: list[TaskTypeNodeSpec]
+class TypeStamp(TypedDict):
+    node_id: str
+    tree_version: int
+class TaskTypeNodeView(TypedDict):
+    node_id: str
+    parent: NotRequired[str | None]
+    name: str
+    live: bool
+class TaskTypeTreeView(TypedDict):
+    tree_version: int
+    root: TypeStamp
+    nodes: list[TaskTypeNodeView]
+class TaskTypeTreePinReceipt(TypedDict):
+    fork_ref: EntityId
+    stored: TaskTypeTreeView
+    in_force: bool
+class TaskTypeTreeRead(TypedDict):
+    project_ref: NotRequired[EntityId | None]
+    tree_version: NotRequired[int | None]
+class TaskTypeTreeReadReply(TypedDict):
+    project_ref: NotRequired[EntityId | None]
+    in_force_skill_ref: NotRequired[EntityId | None]
+    tree: NotRequired[TaskTypeTreeView | None]
 class WorkspaceRosterPreset(TypedDict):
     workspace_ref: str
     workspace_vault_id: str

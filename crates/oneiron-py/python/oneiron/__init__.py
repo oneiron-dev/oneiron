@@ -699,6 +699,9 @@ class Oneiron:
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
             return Oneiron._VaultWorkflowsVerbs(self._client)
         @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs":
+            return Oneiron._VaultTaskTypesVerbs(self._client)
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
         @property
@@ -2123,6 +2126,15 @@ class Oneiron:
         def status(self, spec):
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
             return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
+    class _VaultTaskTypesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pin(self, spec):
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_pin(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

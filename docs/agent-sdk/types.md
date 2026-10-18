@@ -1032,6 +1032,8 @@ class Oneiron:
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
         @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs": ...
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
@@ -1842,6 +1844,11 @@ class Oneiron:
             """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
         def status(self, spec: Facade.WorkflowRunRequest) -> Facade.WorkflowRunView:
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
+    class _VaultTaskTypesVerbs:
+        def pin(self, spec: Facade.TaskTypeTreePin) -> Facade.TaskTypeTreePinReceipt:
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+        def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
