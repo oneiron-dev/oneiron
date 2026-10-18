@@ -24,7 +24,7 @@ use oneiron::skill_hub::{
     HubAdmissionReceipt, HubAskSurface, HubFile, HubImportReceipt, HubPin, HubRef,
     HubSyncDisposition, HubSyncPolicy, TrackedHubRef,
 };
-use oneiron::task_verb::sdk::HubHookBindingRow;
+use oneiron::task_verb::sdk::{HubHookBindingRow, PackFileInput, decode_pack_files};
 use serde::{Deserialize, Serialize};
 
 use oneiron::lens::{GeneratedUiCard, GeneratedUiStateSnapshot};
@@ -89,21 +89,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct PackFile {
-    /// Relative to the pack folder, `/`-separated.
-    path: String,
-    text: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct PutPack {
     /// An absolute folder on this host.
     #[serde(default)]
     path: Option<PathBuf>,
-    /// The folder's files, when the caller sends them instead.
+    /// The folder's files, when the caller sends them instead: each as text
+    /// or as standard base64 bytes, the input `vault.packs.put` takes.
     #[serde(default)]
-    files: Option<Vec<PackFile>>,
+    files: Option<Vec<PackFileInput>>,
 }
 
 /// What one put did.
@@ -139,10 +132,9 @@ async fn put(
     let put = blocking(move || {
         let files = match (request.path, request.files) {
             (Some(path), None) => read_folder(&path)?,
-            (None, Some(files)) => files
-                .into_iter()
-                .map(|file| HubFile::new(file.path, file.text.into_bytes()))
-                .collect(),
+            (None, Some(files)) => {
+                decode_pack_files(files).map_err(|error| OwnerError::Invalid(error.to_string()))?
+            }
             _ => {
                 return Err(OwnerError::Invalid(
                     "send exactly one of path or files".to_owned(),

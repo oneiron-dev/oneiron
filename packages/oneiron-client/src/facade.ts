@@ -1906,7 +1906,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.packs.hooks.grant.set": { description: "The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.hooks.grant.get": { description: "Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.hooks.qualify": { description: "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks.", scope: "Write", proposes: false, hostDoor: true, section: false },
-  "vault.packs.put": { description: "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.packs.put": { description: "The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.connector.prepare": { description: "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.packs.connector.get": { description: "Reads a connector pack source, resolved manifest, advisory evidence, qualification and owner-stampable capability rows.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.packs.connector.qualify": { description: "Runs the real connector probes bound to the exact pack source and protocol; qualification grants nothing without the owner slate and actor grant.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -3043,7 +3043,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
           qualify: (input: Facade.HubHookQualifyRequest, options?: O): FacadeReturns<"vault.packs.hooks.qualify">[K] => invoke("vault.packs.hooks.qualify", input, options, newInvocation()),
         },
-        /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
+        /** The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks. */
         put: (input: Facade.PackPutRequest, options?: O): FacadeReturns<"vault.packs.put">[K] => invoke("vault.packs.put", input, options, newInvocation()),
         connector: {
           /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */

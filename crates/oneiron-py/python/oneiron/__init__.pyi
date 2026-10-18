@@ -1010,7 +1010,7 @@ class Oneiron:
         @property
         def hooks(self) -> "Oneiron._VaultPacksHooksVerbs": ...
         def put(self, spec: Facade.PackPutRequest) -> Facade.PackPutReceipt:
-            """The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."""
+            """The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks."""
         @property
         def connector(self) -> "Oneiron._VaultPacksConnectorVerbs": ...
         def remove(self, spec: Facade.PackRemoveRequest) -> Facade.PackInstallReceipt:

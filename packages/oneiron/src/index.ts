@@ -675,7 +675,7 @@ export class Oneiron {
         /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
         qualify: (input: Facade.HubHookQualifyRequest): Facade.HubHookQualificationReceipt => this.#call(() => this.#client.vaultPacksHooksQualify(input) as Facade.HubHookQualificationReceipt),
       },
-      /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
+      /** The owner installs a pack folder, or replaces the pack installed under its name, each file sent as text or as content_base64 bytes; the put is the consent for its hooks. */
       put: (input: Facade.PackPutRequest): Facade.PackPutReceipt => this.#call(() => this.#client.vaultPacksPut(input) as Facade.PackPutReceipt),
       connector: {
         /** Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate. */

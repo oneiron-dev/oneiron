@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 846 facade rows, 2921 declarations.
+Census: 846 facade rows, 2923 declarations.
 Inputs: 794 of 846 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 762 of 846 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 100; unread shapes: 0.
@@ -4063,9 +4063,13 @@ class HubHookReplay(TypedDict):
 class HubHookQualificationReceipt(TypedDict):
     put: PackPutReceipt
     replays: list[HubHookReplay]
-class PackFileInput(TypedDict):
+class PackTextFile(TypedDict):
     path: str
     text: str
+class PackBytesFile(TypedDict):
+    path: str
+    content_base64: str
+PackFileInput = PackTextFile | PackBytesFile
 class PackPutRequest(TypedDict):
     files: list[PackFileInput]
 class SlatePackSource(TypedDict):

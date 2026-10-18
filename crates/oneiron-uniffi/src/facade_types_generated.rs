@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 846 facade rows, 2888 generated types.
+// UniFFI census: 846 facade rows, 2890 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 802.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), GoalAxisReport.offline (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SkillEditPreflight.offline (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
@@ -12271,14 +12271,32 @@ pub struct HubHookQualificationReceipt {
     pub replays: Vec<HubHookReplay>,
 }
 
-/// `oneiron::task_verb::sdk_host::PackFileInput`.
+/// `oneiron::task_verb::sdk_host::PackTextFile`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
-pub struct PackFileInput {
+pub struct PackTextFile {
     #[serde(rename = "path")]
     pub path: String,
     #[serde(rename = "text")]
     pub text: String,
+}
+
+/// `oneiron::task_verb::sdk_host::PackBytesFile`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PackBytesFile {
+    #[serde(rename = "path")]
+    pub path: String,
+    #[serde(rename = "content_base64")]
+    pub content_base64: String,
+}
+
+/// `oneiron::task_verb::sdk_host::PackFileInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(untagged)]
+pub enum PackFileInput {
+    Text(PackTextFile),
+    Bytes(PackBytesFile),
 }
 
 /// `oneiron::task_verb::sdk_host::PackPutRequest`.
