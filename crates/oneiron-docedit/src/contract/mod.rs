@@ -424,6 +424,10 @@ pub enum Reply {
     XlsxBook {
         book: XlsxBook,
     },
+    /// The workbook written, and what the projection adapted as Excel would.
+    XlsxProjected {
+        effects: Vec<String>,
+    },
     Recalculated {
         engine: String,
         version: String,
@@ -849,7 +853,7 @@ const OPS: &[OpSpec] = &[
     },
     OpSpec {
         name: "xlsx.project",
-        summary: "Write cell and defined-name changes; formulas land without cached values.",
+        summary: "Write cell and defined-name changes; formulas land without cached values. The reply names what the projection adapted.",
         inputs: &[("source", XLSX, false)],
         outputs: &[("workbook", XLSX_MEDIA_TYPE)],
         port: None,

@@ -23,6 +23,11 @@ struct NoteProse<'a> {
     markdown: &'a str,
 }
 
+/// The row and field a NOTE's unlinked prose is receipted under, whichever
+/// writer lands it.
+const NOTE_PROSE_ROW: &str = "memory.author_note";
+const NOTE_PROSE_FIELD: &str = "/markdown";
+
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
@@ -93,11 +98,11 @@ impl Memory<'_> {
         // is written only once the NOTE has landed (landed speech only).
         let unlinked_prose = unlinked_prose_links(
             self,
-            "memory.author_note",
+            NOTE_PROSE_ROW,
             &NoteProse {
                 markdown: &envelope.markdown,
             },
-            &["/markdown"],
+            &[NOTE_PROSE_FIELD],
         )?;
         let (target_id, link, target_must_be_claim) = match (&envelope.kind, envelope.scope) {
             (NoteKind::OpinionTake, NoteScope::About(TakeTarget::Subject(id))) => {
@@ -266,7 +271,9 @@ impl Memory<'_> {
 /// a diary, `NoteKind::Diary` under `NoteScope::ActorPrivate { owner_ref }`
 /// with `owner_ref` the agent: the agent authors it and owns it, the NOTE
 /// links `About` its owner, and the actor content writer checks the agent's
-/// standing at each effect. Only offer settlement calls it.
+/// standing at each effect. Its markdown passes prose admission once, here,
+/// whoever calls (OF-063, FIX 3417): read through a txn-bound check, its
+/// receipt written in this same write once the entry has staged.
 pub(crate) fn append_agent_diary_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -281,6 +288,7 @@ pub(crate) fn append_agent_diary_in_txn(
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
         .ok_or(crate::error::Error::CorruptedIndex("diary owner header"))?;
     crate::provenance::validate_actor_class(header.entity_type, agent.actor_class())?;
+    let unlinked = unlinked_prose_in_txn(vault, txn, agent, &markdown)?;
     let body = encode_note_body(&NoteBody {
         kind: NoteKind::Diary,
         author_ref: owner_ref,
@@ -308,5 +316,72 @@ pub(crate) fn append_agent_diary_in_txn(
             ),
     )?;
     content.finish()?;
+    crate::receipt::record_reference_refusals_in_txn(vault, txn, unlinked.as_slice())?;
     Ok(note_id)
+}
+
+/// The `unlinked` fact an AI-written NOTE's `markdown` earns inside its
+/// writer's open `txn` (OF-063, FIX 3417), as [`unlinked_prose_links`] reads
+/// the slot through a lane of its own: every `oneiron://` link must name, by
+/// 32-hex id or by a short ref this snapshot resolves, a record `writer`'s
+/// own scoped read admits in it. A human writer's text is not read.
+fn unlinked_prose_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    writer: WriteActor,
+    markdown: &str,
+) -> crate::error::Result<Option<crate::receipt::ReferenceRefusalFacts>> {
+    let links = crate::gate::record_references::parse_record_links(markdown);
+    if writer.actor_class() == crate::EdgeActorClass::Human || links.is_empty() {
+        return Ok(None);
+    }
+    let unlinked = crate::receipt::ReferenceRefusalFacts {
+        actor: writer.entity_ref(),
+        actor_class: writer.actor_class(),
+        row: NOTE_PROSE_ROW,
+        field: NOTE_PROSE_FIELD.to_owned(),
+        outcome: crate::receipt::ReferenceOutcome::Unlinked,
+    };
+    let mut ids = Vec::with_capacity(links.len());
+    for link in &links {
+        match link_target_in_txn(vault, txn, &link.reference)? {
+            Some(id) => ids.push(id),
+            None => return Ok(Some(unlinked)),
+        }
+    }
+    let key = crate::claim::ScopedReadActorKey::with_actor_class(
+        writer.entity_ref().to_hex(),
+        writer.actor_class().gate_actor_class(),
+    )
+    .ok_or(crate::error::Error::InvariantViolation(
+        "a NOTE writer cannot be used as a scoped read key",
+    ))?
+    .require_access_grants(Some(writer.entity_ref()));
+    let linked = vault
+        .scoped_read(key)
+        .with_claim_status(crate::claim::ClaimReadStatus::Recorded)
+        .entities_readable_in_txn(txn, &ids)?
+        .into_iter()
+        .all(|readable| readable);
+    Ok((!linked).then_some(unlinked))
+}
+
+/// The record a prose link's `reference` names in `txn`, as a facade ref
+/// resolves: a 32-hex id, or a short ref this snapshot resolves; `None` for
+/// one that names nothing.
+fn link_target_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    reference: &str,
+) -> crate::error::Result<Option<crate::EntityId>> {
+    let reference = reference.trim();
+    if reference.len() == 32 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(crate::EntityId::from_hex(reference).ok());
+    }
+    match crate::entity_id::parse_short_ref_syntax(reference) {
+        Ok((short_id, content_hash)) => Ok(vault
+            .hydrate_short_id_in(txn, short_id, content_hash)?
+            .map(|entry| entry.id)),
+        Err(_) => Ok(None),
+    }
 }
