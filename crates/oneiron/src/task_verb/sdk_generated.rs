@@ -3003,6 +3003,72 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<OutboundScheduleRequest>(),
             ),
             (
+                "vault.summaries.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryCreateRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryReadRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryStatusRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.keep",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryKeepRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryEditRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.patch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryPatchRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.regenerate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryRegenerateRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.proposals.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryProposalRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.proposals.merge",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryProposalRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.proposals.switch",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryProposalRequest,
+                >(),
+            ),
+            (
+                "vault.summaries.proposals.reject",
+                crate::code_run::vault_read::request_schema::<
+                    crate::scope_summary::SummaryProposalRequest,
+                >(),
+            ),
+            (
                 "vault.notes.create",
                 crate::code_run::vault_read::request_schema::<CreateNoteRequest>(),
             ),
@@ -3436,6 +3502,17 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.delivery_window.policy.list",
     "vault.delivery_window.policy.retract",
     "vault.delivery_window.evaluate",
+    "vault.summaries.create",
+    "vault.summaries.read",
+    "vault.summaries.status",
+    "vault.summaries.keep",
+    "vault.summaries.edit",
+    "vault.summaries.patch",
+    "vault.summaries.regenerate",
+    "vault.summaries.proposals.read",
+    "vault.summaries.proposals.merge",
+    "vault.summaries.proposals.switch",
+    "vault.summaries.proposals.reject",
     "vault.notes.read",
     "vault.notes.history",
     "vault.notes.fork",
@@ -4045,6 +4122,39 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.delivery_window.evaluate" => crate::code_run::vault_read::request_schema::<
             crate::memory::channel_doors::DeliveryWindowPreview,
+        >(),
+        "vault.summaries.create" => {
+            crate::code_run::vault_read::request_schema::<crate::scope_summary::SummaryQueued>()
+        }
+        "vault.summaries.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::scope_summary::SummaryReadView>>,
+        >(),
+        "vault.summaries.status" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::ScopeSummaryStatus,
+        >(),
+        "vault.summaries.keep" => {
+            crate::code_run::vault_read::request_schema::<crate::scope_summary::SummaryKeepResult>()
+        }
+        "vault.summaries.edit" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryProposalView,
+        >(),
+        "vault.summaries.patch" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryMutationResult,
+        >(),
+        "vault.summaries.regenerate" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryMutationResult,
+        >(),
+        "vault.summaries.proposals.read" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryProposalView,
+        >(),
+        "vault.summaries.proposals.merge" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryProposalView,
+        >(),
+        "vault.summaries.proposals.switch" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryProposalView,
+        >(),
+        "vault.summaries.proposals.reject" => crate::code_run::vault_read::request_schema::<
+            crate::scope_summary::SummaryProposalView,
         >(),
         "vault.notes.read" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
@@ -7892,6 +8002,83 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.summaries.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.keep" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.edit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.patch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.regenerate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.proposals.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.proposals.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.proposals.switch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.summaries.proposals.reject" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -9995,6 +10182,39 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "connector.outbound.schedule" => {
             let _input: OutboundScheduleRequest = decode(value.clone())?;
         }
+        "vault.summaries.create" => {
+            let _input: crate::scope_summary::SummaryCreateRequest = decode(value.clone())?;
+        }
+        "vault.summaries.read" => {
+            let _input: crate::scope_summary::SummaryReadRequest = decode(value.clone())?;
+        }
+        "vault.summaries.status" => {
+            let _input: crate::scope_summary::SummaryStatusRequest = decode(value.clone())?;
+        }
+        "vault.summaries.keep" => {
+            let _input: crate::scope_summary::SummaryKeepRequest = decode(value.clone())?;
+        }
+        "vault.summaries.edit" => {
+            let _input: crate::scope_summary::SummaryEditRequest = decode(value.clone())?;
+        }
+        "vault.summaries.patch" => {
+            let _input: crate::scope_summary::SummaryPatchRequest = decode(value.clone())?;
+        }
+        "vault.summaries.regenerate" => {
+            let _input: crate::scope_summary::SummaryRegenerateRequest = decode(value.clone())?;
+        }
+        "vault.summaries.proposals.read" => {
+            let _input: crate::scope_summary::SummaryProposalRequest = decode(value.clone())?;
+        }
+        "vault.summaries.proposals.merge" => {
+            let _input: crate::scope_summary::SummaryProposalRequest = decode(value.clone())?;
+        }
+        "vault.summaries.proposals.switch" => {
+            let _input: crate::scope_summary::SummaryProposalRequest = decode(value.clone())?;
+        }
+        "vault.summaries.proposals.reject" => {
+            let _input: crate::scope_summary::SummaryProposalRequest = decode(value.clone())?;
+        }
         "vault.notes.create" => {
             let _input: CreateNoteRequest = decode(value.clone())?;
         }
@@ -11033,6 +11253,25 @@ pub fn invoke(
         }
         "connector.outbound.schedule" => {
             encode(connector_outbound_schedule(memory, decode(value)?)?)
+        }
+        "vault.summaries.create" => encode(vault_summaries_create(memory, decode(value)?)?),
+        "vault.summaries.read" => encode(vault_summaries_read(memory, decode(value)?)?),
+        "vault.summaries.status" => encode(vault_summaries_status(memory, decode(value)?)?),
+        "vault.summaries.keep" => encode(vault_summaries_keep(memory, decode(value)?)?),
+        "vault.summaries.edit" => encode(vault_summaries_edit(memory, decode(value)?)?),
+        "vault.summaries.patch" => encode(vault_summaries_patch(memory, decode(value)?)?),
+        "vault.summaries.regenerate" => encode(vault_summaries_regenerate(memory, decode(value)?)?),
+        "vault.summaries.proposals.read" => {
+            encode(vault_summaries_proposals_read(memory, decode(value)?)?)
+        }
+        "vault.summaries.proposals.merge" => {
+            encode(vault_summaries_proposals_merge(memory, decode(value)?)?)
+        }
+        "vault.summaries.proposals.switch" => {
+            encode(vault_summaries_proposals_switch(memory, decode(value)?)?)
+        }
+        "vault.summaries.proposals.reject" => {
+            encode(vault_summaries_proposals_reject(memory, decode(value)?)?)
         }
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
@@ -12903,7 +13142,11 @@ pub fn vault_evals_inventory(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::EvalInventoryWire,
 ) -> MemoryResult<crate::skill_optimize::EvalAuthoringInventory> {
-    crate::task_verb::sdk::host_only(memory, "vault.evals.inventory", &input)
+    crate::task_verb::sdk::eval_inventory_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.evals.inventory")?,
+        input,
+    )
 }
 pub fn vault_evals_cohorts_setup(
     memory: &Memory<'_>,
@@ -15733,7 +15976,10 @@ pub fn vault_consolidation_evidence(
 ) -> MemoryResult<
     crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>,
 > {
-    crate::task_verb::sdk::host_only(memory, "vault.consolidation.evidence", &input)
+    memory.consolidation_evidence_as_owner(
+        &memory.embedded_owner("vault.consolidation.evidence")?,
+        &input,
+    )
 }
 pub fn vault_claims_vet(
     memory: &Memory<'_>,
@@ -15745,7 +15991,7 @@ pub fn vault_claims_vetting(
     memory: &Memory<'_>,
     input: crate::memory::ClaimProposalReviewRequest,
 ) -> MemoryResult<crate::memory::ClaimProposalReview> {
-    crate::task_verb::sdk::host_only(memory, "vault.claims.vetting", &input)
+    memory.claim_vetting_review_as_owner(&memory.embedded_owner("vault.claims.vetting")?, &input)
 }
 pub fn vault_memory_signal_extraction(
     memory: &Memory<'_>,
@@ -15909,6 +16155,72 @@ pub fn connector_outbound_schedule(
         &["/content_ref"],
     )?;
     crate::task_verb::sdk::connector_outbound_schedule_draft(memory, input)
+}
+pub fn vault_summaries_create(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryCreateRequest,
+) -> MemoryResult<crate::scope_summary::SummaryQueued> {
+    memory.create_summary(&input)
+}
+pub fn vault_summaries_read(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::scope_summary::SummaryReadView>>> {
+    memory.read_summary(&input)
+}
+pub fn vault_summaries_status(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryStatusRequest,
+) -> MemoryResult<crate::scope_summary::ScopeSummaryStatus> {
+    memory.summary_status(&input)
+}
+pub fn vault_summaries_keep(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryKeepRequest,
+) -> MemoryResult<crate::scope_summary::SummaryKeepResult> {
+    memory.set_summary_keep(&input)
+}
+pub fn vault_summaries_edit(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryEditRequest,
+) -> MemoryResult<crate::scope_summary::SummaryProposalView> {
+    memory.edit_summary(&input)
+}
+pub fn vault_summaries_patch(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryPatchRequest,
+) -> MemoryResult<crate::scope_summary::SummaryMutationResult> {
+    memory.patch_summary(&input)
+}
+pub fn vault_summaries_regenerate(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryRegenerateRequest,
+) -> MemoryResult<crate::scope_summary::SummaryMutationResult> {
+    memory.regenerate_summary(&input)
+}
+pub fn vault_summaries_proposals_read(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryProposalRequest,
+) -> MemoryResult<crate::scope_summary::SummaryProposalView> {
+    memory.read_summary_proposal(&input)
+}
+pub fn vault_summaries_proposals_merge(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryProposalRequest,
+) -> MemoryResult<crate::scope_summary::SummaryProposalView> {
+    memory.settle_summary_proposal(&input, crate::entity_doc::SettleVerb::Merge)
+}
+pub fn vault_summaries_proposals_switch(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryProposalRequest,
+) -> MemoryResult<crate::scope_summary::SummaryProposalView> {
+    memory.settle_summary_proposal(&input, crate::entity_doc::SettleVerb::Switch)
+}
+pub fn vault_summaries_proposals_reject(
+    memory: &Memory<'_>,
+    input: crate::scope_summary::SummaryProposalRequest,
+) -> MemoryResult<crate::scope_summary::SummaryProposalView> {
+    memory.settle_summary_proposal(&input, crate::entity_doc::SettleVerb::Reject)
 }
 pub fn vault_notes_create(
     memory: &Memory<'_>,

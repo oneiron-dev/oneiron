@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 566 facade rows, 2169 declarations.
-Inputs: 516 of 566 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 499 of 566 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 577 facade rows, 2202 declarations.
+Inputs: 527 of 577 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 510 of 577 fully typed, 67 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 89; unread shapes: 0.
 """
 
@@ -10187,22 +10187,23 @@ class OfficeBodyForkOpenRequest(TypedDict):
     artifact_ref: str
     run_root_ref: NotRequired[str | None]
     proposal_ref: NotRequired[str | None]
+BodyActor = str
 class ForkStateOpen(TypedDict):
     state: Literal["open"]
 class ForkStateMerged(TypedDict):
     state: Literal["merged"]
-    by: EntityId
+    by: BodyActor
     at: int
     head: list[int]
 class ForkStateDiscarded(TypedDict):
     state: Literal["discarded"]
-    by: EntityId
+    by: BodyActor
     at: int
 ForkState = ForkStateOpen | ForkStateMerged | ForkStateDiscarded
 class OfficeBodyFork(TypedDict):
     id: EntityId
     artifact: EntityId
-    opener: EntityId
+    opener: BodyActor
     base: list[int]
     commits: int
     opened_at: int
@@ -10242,13 +10243,13 @@ class OfficeBodyProposalRequest(TypedDict):
 class ProposalHeader(TypedDict):
     proposal: EntityId
     artifact: EntityId
-    opener: EntityId
+    opener: BodyActor
     run_root: NotRequired[EntityId | None]
     opened_at: int
 MemberVerdict = Literal["waiting", "landed", "rejected", "let_go"]
 class AnsweringAuthorityWord(TypedDict):
     kind: Literal["word"]
-    person: EntityId
+    person: BodyActor
 class AnsweringAuthorityGrant(TypedDict):
     kind: Literal["grant"]
     grant_ref: str
@@ -10256,14 +10257,14 @@ class AnsweringAuthorityGrant(TypedDict):
 AnsweringAuthority = AnsweringAuthorityWord | AnsweringAuthorityGrant
 class MemberAnswer(TypedDict):
     by: AnsweringAuthority
-    caller: EntityId
+    caller: BodyActor
     head: list[int]
     fork_head: list[int]
     landed: NotRequired[list[int] | None]
     at: int
 class ProposalMember(TypedDict):
     fork: EntityId
-    opener: EntityId
+    opener: BodyActor
     run_root: NotRequired[EntityId | None]
     verdict: MemberVerdict
     answer: NotRequired[MemberAnswer | None]
@@ -10317,7 +10318,7 @@ class OfficeBodyExportRecord(TypedDict):
     version: int
     frontier: list[int]
     source_version: int
-    actor: EntityId
+    actor: BodyActor
     author: str
     at: int
     changes: int
@@ -10912,6 +10913,180 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
+class SummaryPathBranch(TypedDict):
+    branch: str
+class SummaryPathBranchSpanBody(TypedDict):
+    after: str
+    through: str
+class SummaryPathBranchSpan(TypedDict):
+    branch_span: SummaryPathBranchSpanBody
+class SummaryPathSubSession(TypedDict):
+    sub_session: str
+SummaryPath = Literal["canonical"] | SummaryPathBranch | SummaryPathBranchSpan | SummaryPathSubSession
+class SummaryScope(TypedDict):
+    conversation_ref: str
+    path: SummaryPath
+    session: NotRequired[str | None]
+    include_forks: NotRequired[bool]
+class SummaryCreateRequest(TypedDict):
+    scope: SummaryScope
+    purpose: NotRequired[str | None]
+    land_on: NotRequired[str | None]
+    as_record: NotRequired[bool]
+class SummaryQueued(TypedDict):
+    attempt: str
+    status: str
+    coalesced: bool
+class SummarySpan(TypedDict):
+    start: int
+    end: int
+class SummaryReadRequest(TypedDict):
+    summary_ref: str
+    spans: NotRequired[list[SummarySpan]]
+class SummaryPurpose(TypedDict):
+    id: str
+    description: str
+class SummarySourceVersion(TypedDict):
+    id: str
+    entity_type: NotRequired[int | None]
+    learned_at: NotRequired[int | None]
+    revision: NotRequired[list[int] | None]
+    record_hash: NotRequired[list[int] | None]
+    frontier: NotRequired[list[int] | None]
+    projected_text: NotRequired[list[int] | None]
+class SummaryDerivation(TypedDict):
+    request: list[int]
+    trigger: list[int]
+    content_hash: list[int]
+    params_hash: list[int]
+    instruction: str
+    model: str
+    policy_frontier: list[int]
+    sources: list[SummarySourceVersion]
+    previous: NotRequired[str | None]
+    recorded_at: int
+    generated_text_hash: list[int]
+    generated_keep_hash: list[int]
+class ScopeSummaryMetadata(TypedDict):
+    purpose: SummaryPurpose
+    keep: str
+    derivation: SummaryDerivation
+class TextAnchor(TypedDict):
+    entity: str
+    frontier: list[int]
+    start: list[int]
+    end: list[int]
+    quote: str
+    hash: list[int]
+class Birth(TypedDict):
+    entity: str
+    actor: str
+    at: int
+class SummaryReadView(TypedDict):
+    summary_ref: str
+    document: str
+    frontier: list[int]
+    text: str
+    metadata: ScopeSummaryMetadata
+    covers: list[str]
+    read_refs: list[str]
+    anchors: list[TextAnchor]
+    birth: Birth
+class SummaryStatusRequest(TypedDict):
+    attempt: str
+class ScopeSummaryResult(TypedDict):
+    summary: str
+    claim: NotRequired[str | None]
+    record: NotRequired[str | None]
+class ScopeSummaryStatus(TypedDict):
+    attempt: str
+    requester: str
+    current_attempt: str
+    state: str
+    result: NotRequired[ScopeSummaryResult | None]
+    failure: NotRequired[str | None]
+    retry_at: NotRequired[int | None]
+    updated_at: int
+class SummaryKeepRequest(TypedDict):
+    summary_ref: str
+    frontier: list[int]
+    keep: str
+class SummaryKeepResult(TypedDict):
+    summary_ref: str
+    frontier: list[int]
+    keep: str
+class SummaryEditAppendToSection(TypedDict):
+    kind: Literal["append_to_section"]
+    section: TextAnchor
+    text: str
+class SummaryEditReplaceQuotedSpan(TypedDict):
+    kind: Literal["replace_quoted_span"]
+    span: TextAnchor
+    text: str
+class SummaryEditInsertAfterAnchor(TypedDict):
+    kind: Literal["insert_after_anchor"]
+    anchor: TextAnchor
+    text: str
+SummaryEdit = SummaryEditAppendToSection | SummaryEditReplaceQuotedSpan | SummaryEditInsertAfterAnchor
+class SummaryEditRequest(TypedDict):
+    summary_ref: str
+    base: list[int]
+    edits: list[SummaryEdit]
+DocActor = str
+ForkStatus = Literal["Pending", "Merged", "Switched", "Rejected"]
+class ForkRecord(TypedDict):
+    fork: str
+    proposal: str
+    entity: str
+    parent_document: str
+    base: list[int]
+    actor: DocActor
+    opened_at: int
+    rewrite: bool
+    status: ForkStatus
+    read_refs: list[str]
+    keep: NotRequired[str | None]
+class ProposalBundle(TypedDict):
+    proposal: str
+    author: DocActor
+    forks: list[ForkRecord]
+    settled: bool
+class SummaryForkView(TypedDict):
+    record: ForkRecord
+    text: NotRequired[str | None]
+SettleVerb = Literal["Merge", "Switch", "Reject"]
+class TextReceipt(TypedDict):
+    receipt: str
+    proposal: str
+    fork: str
+    entity: str
+    actor: DocActor
+    verb: SettleVerb
+    at: int
+    before: list[int]
+    after: list[int]
+    read_refs: list[str]
+class SummaryProposalView(TypedDict):
+    bundle: ProposalBundle
+    forks: list[SummaryForkView]
+    receipts: list[TextReceipt]
+class SummaryPatchRequest(TypedDict):
+    summary_ref: str
+    base: list[int]
+    keep: str
+    edits: list[SummaryEdit]
+    read_refs: list[str]
+class SummaryMutationResult(TypedDict):
+    proposal: SummaryProposalView
+    read_refs: list[str]
+class SummaryRegenerateRequest(TypedDict):
+    summary_ref: str
+    base: list[int]
+    keep: str
+    text: str
+    read_refs: list[str]
+class SummaryProposalRequest(TypedDict):
+    proposal_ref: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

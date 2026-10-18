@@ -42,7 +42,7 @@ pub struct ForkRequest {
 }
 
 /// A consume-once fork's durable state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum ForkStatus {
     Pending,
     Merged,
@@ -50,7 +50,7 @@ pub enum ForkStatus {
     Rejected,
 }
 /// Explicit settle verbs. Only SWITCH has a stale-base refusal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum SettleVerb {
     Merge,
     Switch,
@@ -58,7 +58,7 @@ pub enum SettleVerb {
 }
 
 /// Durable fork identity and provenance, recorded at the moment it joins a set.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ForkRecord {
     pub fork: String,
@@ -70,10 +70,14 @@ pub struct ForkRecord {
     pub opened_at: u64,
     pub rewrite: bool,
     pub status: ForkStatus,
+    /// Sources read for a generated SUMMARY change, admitted at its opening.
+    pub read_refs: Vec<String>,
+    /// The SUMMARY editor memo this generation read, not a new memo.
+    pub keep: Option<String>,
 }
 
 /// One review bundle, never inferred from author or time proximity.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProposalBundle {
     pub proposal: String,
@@ -91,7 +95,7 @@ impl ProposalBundle {
 }
 
 /// A durable receipt minted in the same transaction as the head or verdict.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextReceipt {
     pub receipt: String,
@@ -103,6 +107,8 @@ pub struct TextReceipt {
     pub at: u64,
     pub before: Vec<u8>,
     pub after: Vec<u8>,
+    /// Sources retained from the fork at the time of its settlement.
+    pub read_refs: Vec<String>,
 }
 
 /// Durable identity/provenance/status of one open or settled document fork.
@@ -341,78 +347,12 @@ impl Vault {
         authorization: &DocAuthorization<'_>,
         at: u64,
     ) -> Result<ProposalBundle> {
-        if requests.is_empty() || requests.len() > 50 {
-            return Err(invalid("proposal requires 1 to 50 forks"));
-        }
-        if requests.iter().map(|req| req.edits.len()).sum::<usize>() > 50 {
-            return Err(invalid("at most 50 text operations are allowed"));
-        }
-        for req in requests {
-            super::verbs::validate_edits(&req.edits)?;
-            if req.rewrite.is_some() && !req.edits.is_empty() {
-                return Err(invalid("rewrite cannot contain anchored edits"));
-            }
-            if req.edits.iter().any(|op| op.actor != Some(req.actor)) {
-                return Err(invalid("fork operation actor mismatch"));
-            }
-        }
         let mut registry = self
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         let out = self.with_write_txn_grouped(|txn| {
-            for req in requests {
-                validate_actor(self, txn, req.actor)?;
-                let h = storage::head(&self.store, txn, &req.entity)?;
-                let live = storage::load(&self.store, txn, &h)?;
-                let mut fork = live.fork(&req.base)?;
-                bind_actor(self, txn, &fork, req.actor, at)?;
-                // A handle of a key the live text's lift marked writes its
-                // value again (OF-067).
-                let lifted = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-                    &self.store,
-                    txn,
-                    [live.text()],
-                )?;
-                if let Some(text) = &req.rewrite {
-                    crate::batch::secret_scan::scan_content_in_txn(
-                        &self.store,
-                        txn,
-                        text.as_bytes(),
-                    )?;
-                    let resolved = lifted.resolved(text);
-                    let text = resolved.as_deref().unwrap_or(text);
-                    fork.edit_as(req.actor, at, |body| {
-                        body.delete(0, body.len_unicode())
-                            .map_err(|_| invalid("fork rewrite delete"))?;
-                        body.insert(0, text)
-                            .map_err(|_| invalid("fork rewrite insert"))
-                    })?;
-                } else {
-                    for op in &req.edits {
-                        let secrets = secret_scan_mode_in_txn(&self.store, txn)?;
-                        super::verbs::apply(&mut fork, req.entity, op, at, secrets, &lifted)?;
-                    }
-                }
-                let id = EntityId::now();
-                retain_fork(
-                    self,
-                    txn,
-                    *proposal,
-                    id,
-                    req,
-                    &h,
-                    &fork,
-                    ForkStatus::Pending,
-                    at,
-                )?;
-                if req.rewrite.is_none()
-                    && covered(self, txn, authorization, &req.entity, req.actor)?
-                {
-                    settle_one(self, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
-                }
-            }
-            read_bundle(&self.store, txn, proposal)
+            open_proposal_in_txn(self, txn, proposal, requests, authorization, at)
         })?;
         registry.clear();
         Ok(out)
@@ -469,6 +409,7 @@ impl Vault {
             for fork in bundle.pending() {
                 let entity = EntityId::from_hex(&fork.entity)?;
                 authorize(self, txn, authorization, &entity, actor)?;
+                self.authorize_shared_content_write_in_txn(txn, entity, &actor)?;
                 settle_one(self, txn, &fork.fork, verb, actor, at)?;
             }
             let mut bundle = read_bundle(&self.store, txn, proposal)?;
@@ -485,6 +426,83 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         receipts(&self.store, &txn, entity)
     }
+}
+
+pub(super) fn open_proposal_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    proposal: &EntityId,
+    requests: &[ForkRequest],
+    authorization: &DocAuthorization<'_>,
+    at: u64,
+) -> Result<ProposalBundle> {
+    if requests.is_empty() || requests.len() > 50 {
+        return Err(invalid("proposal requires 1 to 50 forks"));
+    }
+    if requests.iter().map(|req| req.edits.len()).sum::<usize>() > 50 {
+        return Err(invalid("at most 50 text operations are allowed"));
+    }
+    for req in requests {
+        super::verbs::validate_edits(&req.edits)?;
+        if req.rewrite.is_some() && !req.edits.is_empty() {
+            return Err(invalid("rewrite cannot contain anchored edits"));
+        }
+        if req.edits.iter().any(|op| op.actor != Some(req.actor)) {
+            return Err(invalid("fork operation actor mismatch"));
+        }
+    }
+    for req in requests {
+        validate_actor(vault, txn, req.actor)?;
+        let h = storage::head(&vault.store, txn, &req.entity)?;
+        let live = storage::load(&vault.store, txn, &h)?;
+        let mut fork = live.fork(&req.base)?;
+        bind_actor(vault, txn, &fork, req.actor, at)?;
+        // A handle of a key the live text's lift marked writes its
+        // value again (OF-067).
+        let lifted = crate::batch::secret_scan::LiftedKeys::of_in_txn(
+            &vault.store,
+            txn,
+            [live.text()],
+        )?;
+        if let Some(text) = &req.rewrite {
+            crate::batch::secret_scan::scan_content_in_txn(
+                &vault.store,
+                txn,
+                text.as_bytes(),
+            )?;
+            let resolved = lifted.resolved(text);
+            let text = resolved.as_deref().unwrap_or(text);
+            fork.edit_as(req.actor, at, |body| {
+                body.delete(0, body.len_unicode())
+                    .map_err(|_| invalid("fork rewrite delete"))?;
+                body.insert(0, text)
+                    .map_err(|_| invalid("fork rewrite insert"))
+            })?;
+        } else {
+            for op in &req.edits {
+                let secrets = secret_scan_mode_in_txn(&vault.store, txn)?;
+                super::verbs::apply(&mut fork, req.entity, op, at, secrets, &lifted)?;
+            }
+        }
+        let id = EntityId::now();
+        retain_fork(
+            vault,
+            txn,
+            *proposal,
+            id,
+            req,
+            &h,
+            &fork,
+            ForkStatus::Pending,
+            at,
+        )?;
+        if req.rewrite.is_none()
+            && covered(vault, txn, authorization, &req.entity, req.actor)?
+        {
+            settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
+        }
+    }
+    read_bundle(&vault.store, txn, proposal)
 }
 
 pub(super) fn read_bundle(
@@ -538,6 +556,8 @@ pub(super) fn retain_fork(
         opened_at: at,
         rewrite: req.rewrite.is_some(),
         status,
+        read_refs: Vec::new(),
+        keep: None,
     };
     ENTITY_DOC_FORK.put(&vault.store, txn, &id.to_hex(), &record)?;
     // A fork is its own shallow document, not a second complete history copy.
@@ -685,6 +705,9 @@ pub(super) fn write_receipt(
         at,
         before: before.to_vec(),
         after: after.to_vec(),
+        read_refs: ENTITY_DOC_FORK
+            .get(&vault.store, txn, &fork.to_hex())?
+            .map_or_else(Vec::new, |record| record.read_refs),
     };
     ENTITY_DOC_RECEIPT.put(
         &vault.store,
