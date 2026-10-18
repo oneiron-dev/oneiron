@@ -11,9 +11,10 @@
 //!   blanks to a multiple of 16. The outer body rides E0 envelopes under that key
 //!   (purpose `SealedVaultBundle`), sized so the whole frame lands on the size
 //!   step; the padding is inside the ciphertext.
-//! - Inside: the publishing machine and its signature, the owner work request it
-//!   published for, if any (`publication`), the base section, then the catalog
-//!   of world sections. Each section is sealed again under a key derived
+//! - Inside: the publishing machine and its signature, the base section, then the
+//!   catalog of world sections, the world capsules and, last, the owner work
+//!   request it published for, if any (`publication`). Each section is sealed
+//!   again under a key derived
 //!   from its world's key and filed under a tag only a holder of that key can
 //!   compute, so a reader of the outer layer opens only the worlds it holds keys
 //!   for. A publisher carries a section it cannot read unchanged.
@@ -94,6 +95,8 @@ const SEALED_KEY_PADS_STEP_BYTES: usize = 64 * 1024;
 const SLOT_STEP: usize = 16;
 
 const FRAME_VERSION: u8 = 1;
+/// The byte before an upload's owner work request in a bundle body.
+const REQUEST_TAG: u8 = 1;
 const SLOT_LABEL: &[u8] = b"oneiron/sealed-vault-slot/v1\0";
 const PART_LABEL: &[u8] = b"oneiron/sealed-vault-part/v1\0";
 const BUNDLE_LABEL: &[u8] = b"oneiron/sealed-vault-bundle/v1\0";
@@ -1593,10 +1596,13 @@ fn parse_envelope(
     Ok(envelope)
 }
 
-/// label ‖ vault (32) ‖ generation (24) ‖ publisher (16) ‖ signature (64) ‖
-/// request (1: 0, or 1 and the request's entry hash, 32) ‖ base length (8) ‖
-/// base ‖ section count (4) ‖ sections. The signature covers vault,
-/// generation, publisher and everything after it; the zeros after are padding.
+/// label ‖ vault (32) ‖ generation (24) ‖ publisher (16) ‖ signature (64) ‖ base
+/// length (8) ‖ base ‖ section count (4) ‖ sections ‖ capsule count (4) ‖
+/// capsules, then, for an upload published on the owner's request, 1 ‖ the
+/// request's entry hash (32). The signature covers vault, generation, publisher
+/// and everything after it; the zeros after are padding, so a body with no
+/// request ends at its capsules, as every generation sealed before the field
+/// existed does.
 fn encode_bundle_body(
     plan: &SealPlan,
     generation: SealedBundleGeneration,
@@ -1612,13 +1618,6 @@ fn encode_bundle_body(
     let signature_at = body.len();
     body.extend_from_slice(&[0u8; 64]);
     let content_at = body.len();
-    match plan.request {
-        None => body.push(0),
-        Some(request) => {
-            body.push(1);
-            body.extend_from_slice(&request);
-        }
-    }
     body.extend_from_slice(&(base.len() as u64).to_be_bytes());
     body.extend_from_slice(base);
     let count = u32::try_from(sections.len()).map_err(|_| refused("too many sections"))?;
@@ -1630,6 +1629,10 @@ fn encode_bundle_body(
     body.extend_from_slice(&count.to_be_bytes());
     for capsule in authorities {
         capsule.encode(&mut body)?;
+    }
+    if let Some(request) = plan.request {
+        body.push(REQUEST_TAG);
+        body.extend_from_slice(&request);
     }
     let digest = signed_digest(
         &plan.vault_id,
@@ -1658,11 +1661,6 @@ fn decode_bundle_body(
         EntityId::from_bytes(cursor.array().ok_or_else(malformed)?).map_err(|_| malformed())?;
     let signature: [u8; 64] = cursor.array().ok_or_else(malformed)?;
     let content_at = cursor.at;
-    let request = match cursor.array::<1>().ok_or_else(malformed)? {
-        [0] => None,
-        [1] => Some(cursor.array().ok_or_else(malformed)?),
-        _ => return Err(malformed()),
-    };
     let base_len = u64::from_be_bytes(cursor.array().ok_or_else(malformed)?);
     let base = usize::try_from(base_len)
         .ok()
@@ -1680,11 +1678,23 @@ fn decode_bundle_body(
         sections.push(section);
     }
     let authorities = SealedWorldAuthority::parse_all(&mut cursor)?;
+    // The request, when the content names one; a padding zero, or the body's
+    // end, is none, and is not signed content.
+    let mut content_end = cursor.at;
+    let request = match cursor.take(1) {
+        None | Some([0]) => None,
+        Some([REQUEST_TAG]) => {
+            let request = cursor.array().ok_or_else(malformed)?;
+            content_end = cursor.at;
+            Some(request)
+        }
+        Some(_) => return Err(malformed()),
+    };
     let signed = signed_digest(
         vault_id,
         generation,
         publisher,
-        &body[content_at..cursor.at],
+        &body[content_at..content_end],
     );
     if !cursor.rest_is_zero() {
         return Err(malformed());
