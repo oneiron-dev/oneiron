@@ -97,6 +97,15 @@ outputs and the observed environment, which matches
 later run; the command above shows the invocation shape, not a reusable output
 path.
 
+## Live deck export gate (`pptx-live-v1`)
+
+`deck_gate.py` is the Office half of the OF-510 gate run: it opens the
+candidates `deck-gate-cases` exported through the current projector (case set:
+`pptx-live-v1.json`) with this oracle, under the shared lock, and writes the
+receipt `vault.artifacts.body.deck.oracle` records. The fixture matrix above
+calibrates the oracle; it never opens the gate. Commands:
+[`docs/ops/deck-gate.md`](../../docs/ops/deck-gate.md).
+
 ## PPTArena preservation matrix
 
 `pptarena.json` pins all 100 case names, source/ground-truth paths, SHA-256

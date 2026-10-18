@@ -15,6 +15,7 @@
 mod convert;
 pub mod deck_export;
 mod held;
+pub mod oracle_run;
 pub mod pptx;
 mod reshape;
 

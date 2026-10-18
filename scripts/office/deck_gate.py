@@ -1,0 +1,625 @@
+#!/usr/bin/env python3
+"""OF-510 deck gate, Office half (pptx-live-v1).
+
+The engine half (`deck-gate-cases`, crates/oneiron-docedit) writes a run
+directory: the candidates it exported through the current projector, each
+pinned by SHA-256 with the checks PowerPoint owes it, the adversarial
+calibration fixtures, the engine outcome of all eight steps, and a copy of
+this script with deck_oracle.py and its pinned environment. This script opens
+every candidate in the approved PowerPoint (deck_oracle's custody, staging,
+environment pin and refusal rules, under the shared Office lock), inspects
+PowerPoint's save-back for the intended change, and joins its outcomes to the
+engine's into the OracleReceipt that `vault.artifacts.body.deck.oracle`
+records. docs/ops/deck-gate.md has the commands.
+
+  acquire REPO CORPUS  fetch the selected PPTArena originals; never opens one
+  plan RUN             verify a run directory and say what `office` would open
+  office RUN           Mac mini only: open everything serially, then assemble
+  assemble RUN         join the Office results to the engine's; no Office
+
+An unrun, timed-out or unsupported case is inconclusive, never a pass.
+"""
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import xml.etree.ElementTree as ET
+import zipfile
+
+ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+import deck_oracle as oracle_mod  # noqa: E402  (beside this file, in the repo and in a run)
+
+RUN_SCHEMA = 'oneiron.deck-gate-run/1'
+PROFILE = 'pptx-live-v1'
+CASE_MANIFEST = 'scripts/office/pptx-live-v1.json'
+ORACLE, NON_PDF, REGRESSION = 6, 7, 8
+OFFICE_STEPS = (ORACLE, NON_PDF, REGRESSION)
+LOCK = Path.home() / 'w7-oracle' / 'lock'
+NAMED_CASES = 4
+RANK = {'passed': 0, 'inconclusive': 1, 'failed': 2}
+
+P = '{http://schemas.openxmlformats.org/presentationml/2006/main}'
+A = '{http://schemas.openxmlformats.org/drawingml/2006/main}'
+R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
+REL = '{http://schemas.openxmlformats.org/package/2006/relationships}'
+P188 = '{http://schemas.microsoft.com/office/powerpoint/2018/8/main}'
+COMMENT_REL = 'http://schemas.microsoft.com/office/2018/10/relationships/comments'
+SHAPES = {P + 'sp', P + 'pic', P + 'graphicFrame', P + 'cxnSp', P + 'grpSp'}
+
+
+# ---- step outcomes, in the gate's JSON shape -------------------------------
+
+def outcome(kind: str, detail: str = ''):
+    """`"passed"`, `{"failed": why}` or `{"inconclusive": why}`: StepOutcome."""
+    return 'passed' if kind == 'passed' else {kind: detail}
+
+
+def split(value) -> tuple[str, str]:
+    if value == 'passed':
+        return 'passed', ''
+    if value == 'not_run':
+        return 'inconclusive', 'not run'
+    if isinstance(value, dict) and len(value) == 1:
+        kind, detail = next(iter(value.items()))
+        if kind in ('failed', 'inconclusive'):
+            return kind, str(detail)
+    return 'failed', f'unreadable step outcome {value!r}'
+
+
+def aggregate(rows: list[tuple[str, tuple[str, str]]]):
+    """A step's Office half: every case passed, else the failures, else the open cases."""
+    if not rows:
+        return outcome('inconclusive', 'no Office case')
+    for kind in ('failed', 'inconclusive'):
+        named = [f'{case}: {detail}' for case, (verdict, detail) in rows if verdict == kind]
+        if named:
+            more = f' (+{len(named) - NAMED_CASES} more)' if len(named) > NAMED_CASES else ''
+            return outcome(kind, '; '.join(named[:NAMED_CASES]) + more)
+    return outcome('passed')
+
+
+def worst(engine, office):
+    (ek, ed), (ok, od) = split(engine), split(office)
+    if ek == ok == 'passed':
+        return outcome('passed')
+    kind = ek if RANK[ek] >= RANK[ok] else ok
+    details = [f'{side}: {detail}' for side, k, detail in (('engine', ek, ed), ('office', ok, od)) if k == kind]
+    return outcome(kind, '; '.join(details))
+
+
+# ---- the run directory -----------------------------------------------------
+
+def load_run(run: Path) -> dict:
+    return json.loads((run / 'manifest.json').read_text())
+
+
+def verify(run: Path, manifest: dict) -> list[str]:
+    """Every pinned file of the run is present with its bytes; nothing is opened."""
+    problems = []
+    if manifest.get('schema') != RUN_SCHEMA:
+        problems.append(f"schema {manifest.get('schema')!r} is not {RUN_SCHEMA}")
+    if manifest.get('profile') != PROFILE:
+        problems.append(f"profile {manifest.get('profile')!r} is not {PROFILE}")
+    if [step.get('step') for step in manifest.get('steps', [])] != list(range(1, 9)):
+        problems.append('the manifest does not hold the eight steps in canon order')
+    entries = manifest.get('candidates', []) + manifest.get('calibration', [])
+    ids = [entry['id'] for entry in manifest.get('candidates', [])]
+    if len(ids) != len(set(ids)):
+        problems.append('candidate ids repeat')
+    for entry in entries:
+        path = run / entry['file']
+        if not path.is_file():
+            problems.append(f"{entry['id']}: {entry['file']} is missing")
+        elif path.stat().st_size != entry['bytes'] or oracle_mod.digest(path) != entry['sha256']:
+            problems.append(f"{entry['id']}: {entry['file']} does not match its pin")
+    for script in manifest.get('office', {}).get('scripts', []):
+        path = run / script['path']
+        if not path.is_file() or oracle_mod.digest(path) != script['sha256']:
+            problems.append(f"{script['path']} does not match its pin")
+    return problems
+
+
+# ---- PowerPoint's save-back ------------------------------------------------
+
+def resolve(source: str, target: str) -> str:
+    if target.startswith('/'):
+        return target[1:]
+    parts = (source.rsplit('/', 1)[0].split('/') if '/' in source else []) + target.split('/')
+    out: list[str] = []
+    for part in parts:
+        if part == '..':
+            if out:
+                out.pop()
+        elif part and part != '.':
+            out.append(part)
+    return '/'.join(out)
+
+
+def rels_name(source: str) -> str:
+    if not source:
+        return '_rels/.rels'
+    folder, _, name = source.rpartition('/')
+    return f'{folder}/_rels/{name}.rels' if folder else f'_rels/{name}.rels'
+
+
+class SaveBack:
+    """The reference .pptx PowerPoint saved: what PowerPoint itself read."""
+
+    def __init__(self, path: Path):
+        self.zip = zipfile.ZipFile(path)
+        presentation = next(target for kind, target in self.rels('').values()
+                            if kind.endswith('/officeDocument'))
+        tree = ET.fromstring(self.zip.read(presentation))
+        rels = self.rels(presentation)
+        listed = tree.find(P + 'sldIdLst')
+        self.slides = [rels[entry.get(R + 'id')][1] for entry in (listed if listed is not None else [])]
+
+    def rels(self, source: str) -> dict:
+        try:
+            data = self.zip.read(rels_name(source))
+        except KeyError:
+            return {}
+        out = {}
+        for rel in ET.fromstring(data).iter(REL + 'Relationship'):
+            target = rel.get('Target', '')
+            external = rel.get('TargetMode') == 'External'
+            out[rel.get('Id')] = (rel.get('Type', ''), target if external else resolve(source, target))
+        return out
+
+    def part(self, slide: int) -> str:
+        if slide < 1:
+            raise IndexError(f'slide {slide}')
+        return self.slides[slide - 1]
+
+    def tree(self, slide: int):
+        return ET.fromstring(self.zip.read(self.part(slide)))
+
+    def markup(self, slide: int) -> str:
+        return self.zip.read(self.part(slide)).decode('utf-8', 'replace')
+
+    def text(self, slide: int) -> str:
+        return '\n'.join(''.join(run.text or '' for run in paragraph.iter(A + 't'))
+                         for paragraph in self.tree(slide).iter(A + 'p'))
+
+    def shapes(self, slide: int) -> dict:
+        found = {}
+        for element in self.tree(slide).iter():
+            if element.tag not in SHAPES or not len(element):
+                continue
+            props = element[0].find(P + 'cNvPr')
+            if props is not None and (props.get('id') or '').isdigit():
+                found[int(props.get('id'))] = element
+        return found
+
+    @staticmethod
+    def offset(element):
+        for path in (P + 'spPr/' + A + 'xfrm', P + 'xfrm', P + 'grpSpPr/' + A + 'xfrm'):
+            frame = element.find(path)
+            if frame is not None and frame.find(A + 'off') is not None:
+                off = frame.find(A + 'off')
+                return int(off.get('x')), int(off.get('y'))
+        return None
+
+    def comments(self, slide: int) -> list[str]:
+        texts = []
+        for kind, target in self.rels(self.part(slide)).values():
+            if kind != COMMENT_REL:
+                continue
+            for comment in ET.fromstring(self.zip.read(target)).iter(P188 + 'cm'):
+                texts.append(''.join(run.text or '' for run in comment.iter(A + 't')))
+        return texts
+
+    def timing(self, slide: int, spid: int) -> tuple[bool, list[tuple[int, int]]]:
+        found, ranges = False, []
+        for target in self.tree(slide).iter(P + 'spTgt'):
+            if target.get('spid') != str(spid):
+                continue
+            found = True
+            span = target.find(P + 'txEl/' + P + 'pRg')
+            if span is not None:
+                ranges.append((int(span.get('st')), int(span.get('end'))))
+        return found, ranges
+
+
+def evaluate(check: dict, deck: SaveBack, receipt: dict) -> str | None:
+    """None when PowerPoint's save-back shows what the check says; else why not."""
+    kind = check['check']
+    try:
+        if kind == 'pages':
+            return None if receipt.get('pages') == check['count'] else \
+                f"PDFKit rasterized {receipt.get('pages')} pages, {check['count']} expected"
+        if kind == 'slides':
+            return None if len(deck.slides) == check['count'] else \
+                f"PowerPoint saved {len(deck.slides)} slides, {check['count']} expected"
+        slide = check['slide']
+        if kind == 'text':
+            return None if check['contains'] in deck.text(slide) else \
+                f"slide {slide} lost the text {check['contains']!r}"
+        if kind == 'no_text':
+            return None if check['absent'] not in deck.text(slide) else \
+                f"slide {slide} still shows {check['absent']!r}"
+        if kind == 'markup':
+            return None if check['contains'] in deck.markup(slide) else \
+                f"slide {slide} markup lacks {check['contains']!r}"
+        if kind in ('shape', 'no_shape'):
+            element = deck.shapes(slide).get(check['id'])
+            if kind == 'no_shape':
+                return None if element is None else f"slide {slide} still holds shape {check['id']}"
+            if element is None:
+                return f"slide {slide} lost shape {check['id']}"
+            wanted = check.get('offset')
+            if wanted is not None and deck.offset(element) != tuple(wanted):
+                return f"shape {check['id']} sits at {deck.offset(element)}, {tuple(wanted)} expected"
+            return None
+        if kind == 'comment':
+            return None if any(check['text'] in text for text in deck.comments(slide)) else \
+                f'slide {slide} lost its modern comment'
+        if kind == 'timing':
+            found, ranges = deck.timing(slide, check['spid'])
+            if not found:
+                return f"slide {slide} lost the build on shape {check['spid']}"
+            wanted = check.get('paragraphs')
+            if wanted is not None and tuple(wanted) not in ranges:
+                return f"the build targets paragraphs {ranges}, {tuple(wanted)} expected"
+            return None
+        return f'unknown check {kind!r}'
+    except (IndexError, KeyError, ValueError, TypeError, ET.ParseError) as exc:
+        return f'{kind}: the save-back does not read: {exc}'
+
+
+# ---- judging one Office receipt -------------------------------------------
+
+def bound(receipt: dict, sha256: str, status: str) -> str | None:
+    """deck_oracle's binding rules: the receipt and its staged copy are this file."""
+    if (receipt.get('input') or {}).get('sha256') != sha256:
+        return 'the receipt is for other bytes'
+    staged = receipt.get('staged_input_sha256')
+    if (staged is not None and staged != sha256) or (staged is None and status != 'unsupported'):
+        return 'the staged copy is not the candidate'
+    return None
+
+
+def judge(entry: dict, output: Path, office_run: dict | None) -> tuple[str, str, str | None]:
+    path = output / 'receipt.json'
+    if not path.exists():
+        why = 'not run'
+        if entry['trust'] == 'untrusted' and not (office_run or {}).get('isolated_account'):
+            why = 'not run: untrusted candidates open only in the isolated test account'
+        return 'inconclusive', why, None
+    receipt = json.loads(path.read_text())
+    status = receipt.get('status', 'unsupported')
+    problem = bound(receipt, entry['sha256'], status)
+    if problem:
+        return 'failed', problem, status
+    mismatch = oracle_mod.environment_mismatch(receipt.get('environment'))
+    if mismatch:
+        return ('inconclusive' if status in ('unsupported', 'timed_out') else 'failed'), mismatch, status
+    if status in ('timed_out', 'unsupported'):
+        return 'inconclusive', f"{status}: {receipt.get('detail', '')}", status
+    if status != 'clean':
+        return 'failed', f"{status}: {receipt.get('detail', '')}", status
+    try:
+        deck = SaveBack(output / 'reference.pptx')
+    except (OSError, KeyError, StopIteration, ValueError, zipfile.BadZipFile, ET.ParseError) as exc:
+        return 'failed', f'the save-back does not read: {exc}', status
+    failures = [problem for problem in (evaluate(check, deck, receipt) for check in entry['checks']) if problem]
+    return ('failed', '; '.join(failures), status) if failures else ('passed', '', status)
+
+
+def judge_calibration(entry: dict, output: Path) -> tuple[str, str]:
+    path = output / 'receipt.json'
+    if not path.exists():
+        return 'inconclusive', 'not run'
+    receipt = json.loads(path.read_text())
+    status = receipt.get('status', 'unsupported')
+    problem = bound(receipt, entry['sha256'], status)
+    if problem:
+        return 'failed', problem
+    mismatch = oracle_mod.environment_mismatch(receipt.get('environment'))
+    if mismatch:
+        return ('inconclusive' if status in ('unsupported', 'timed_out') else 'failed'), mismatch
+    if status == entry['expected_oracle']:
+        return 'passed', ''
+    if status in ('unsupported', 'timed_out'):
+        return 'inconclusive', f"{status}: {receipt.get('detail', '')}"
+    return 'failed', f"PowerPoint gave {status}, {entry['expected_oracle']} expected"
+
+
+# ---- assembling the receipt ------------------------------------------------
+
+def assemble(run: Path, manifest: dict, results: Path) -> int:
+    office_path = results / 'office-run.json'
+    office_run = json.loads(office_path.read_text()) if office_path.exists() else None
+    environment = (office_run or {}).get('environment') or {}
+    verdicts = {entry['id']: judge(entry, results / entry['id'], office_run)
+                for entry in manifest['candidates']}
+    calibration = {entry['id']: judge_calibration(entry, results / 'calibration' / entry['id'])
+                   for entry in manifest['calibration']}
+    office_steps = {}
+    for step in OFFICE_STEPS:
+        rows = [(entry['id'], verdicts[entry['id']][:2]) for entry in manifest['candidates']
+                if step in entry['steps']]
+        if step == REGRESSION:
+            rows += [(f'calibration.{case}', verdict) for case, verdict in calibration.items()]
+            fonts = (office_run or {}).get('font_versions') or []
+            if not fonts or any(line.startswith('font versions unavailable') for line in fonts):
+                rows.append(('font versions', ('inconclusive', 'font versions were not recorded')))
+        office_steps[step] = aggregate(rows)
+    steps = [worst(record['engine'], office_steps[record['step']]) if record['office'] else record['engine']
+             for record in manifest['steps']]
+    clean = bool(verdicts) and all(status == 'clean' for _, _, status in verdicts.values())
+    receipt = {
+        'profile': manifest['profile'],
+        'powerpoint_version': environment.get('powerpoint', 'unknown'),
+        'macos_version': f"{environment.get('macos', 'unknown')} ({environment.get('macos_build', 'unknown')})",
+        'font_versions': (office_run or {}).get('font_versions') or [],
+        'steps': steps,
+        'clean': clean,
+    }
+    is_open = clean and len(steps) == 8 and all(step == 'passed' for step in steps)
+    request = {'receipt': receipt}
+    (results / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+    (results / 'oracle-request.json').write_text(json.dumps(request, indent=2) + '\n')
+    evidence = {
+        'run': str(run), 'source': manifest.get('source'), 'projector': manifest.get('projector'),
+        'profile': manifest['profile'], 'gate_opens': is_open, 'office_run': office_run,
+        'engine_steps': [record['engine'] for record in manifest['steps']],
+        'office_steps': {str(step): value for step, value in office_steps.items()},
+        'candidates': {case: {'verdict': v, 'detail': d, 'status': s} for case, (v, d, s) in verdicts.items()},
+        'calibration': {case: {'verdict': v, 'detail': d} for case, (v, d) in calibration.items()},
+    }
+    (results / 'gate-evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
+    for record, step in zip(manifest['steps'], steps):
+        kind, detail = split(step)
+        print(f"step {record['step']} {record['name']}: {kind}{(' ' + detail) if detail else ''}")
+    print(f"clean={str(clean).lower()} candidates={len(verdicts)} "
+          f"ran={sum(1 for _, _, status in verdicts.values() if status)}")
+    print('## DECK-GATE-REQUEST ' + json.dumps(request, separators=(',', ':')))
+    print(f"## DECK-GATE open={str(is_open).lower()} profile={manifest['profile']} "
+          f"projector={manifest.get('projector')} source={manifest.get('source')} "
+          f"request={results / 'oracle-request.json'}")
+    return 0 if is_open else 1
+
+
+# ---- the Office pass -------------------------------------------------------
+
+def take_lock(owner: str) -> None:
+    LOCK.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        LOCK.mkdir()
+    except FileExistsError:
+        holder = (LOCK / 'owner').read_text().strip() if (LOCK / 'owner').exists() else 'unknown'
+        raise SystemExit(f'REFUSED: the shared Office lock {LOCK} is held ({holder}); one Office session at a time')
+    (LOCK / 'owner').write_text(owner + '\n')
+
+
+def release_lock() -> None:
+    owner = LOCK / 'owner'
+    if owner.exists():
+        owner.unlink()
+    LOCK.rmdir()
+
+
+def run_one(candidate: Path, output: Path, observer: str, timeout: int) -> str | None:
+    """One serial oracle run; the reason to stop the pass, if any."""
+    if (output / 'receipt.json').exists():
+        print(f'{output.name}: kept from an earlier pass', flush=True)
+        return None
+    if output.exists():
+        shutil.rmtree(output)  # an earlier pass stopped before writing its receipt
+    output.parent.mkdir(parents=True, exist_ok=True)
+    receipt = oracle_mod.oracle(candidate, output, observer=observer, timeout=timeout)
+    print(f"{output.name}: {receipt['status']} - {receipt['detail']}", flush=True)
+    if receipt.get('cleanup_warning'):
+        return f"cleanup: {receipt['cleanup_warning']}"
+    if receipt['status'] == 'unsupported':
+        return f"unsupported: {receipt['detail']}"
+    return None
+
+
+def font_families(paths: list[Path]) -> set[str]:
+    """Latin typefaces the candidates name (themes and runs; theme references excluded)."""
+    faces = set()
+    for path in paths:
+        try:
+            with zipfile.ZipFile(path) as archive:
+                for name in archive.namelist():
+                    if name.endswith('.xml') and (name.startswith('ppt/theme/') or name.startswith('ppt/slides/')):
+                        for element in ET.fromstring(archive.read(name)).iter(A + 'latin'):
+                            face = element.get('typeface', '')
+                            if face and not face.startswith('+'):
+                                faces.add(face)
+        except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError):
+            continue
+    return faces
+
+
+def font_versions(run: Path, manifest: dict, environment: dict) -> list[str]:
+    """Canon: PowerPoint, macOS and font versions on every receipt (step 8)."""
+    lines = [f"font inventory sha256 {environment.get('font_inventory_sha256')}"]
+    families = font_families([run / entry['file'] for entry in manifest['candidates'] if entry['trust'] == 'fixture'])
+    try:
+        out = subprocess.run(['system_profiler', '-json', 'SPFontsDataType'], capture_output=True,
+                             text=True, timeout=900, check=True).stdout
+        installed: dict[str, set[str]] = {}
+        for font in json.loads(out).get('SPFontsDataType', []):
+            for face in font.get('typefaces') or []:
+                family = face.get('family') or face.get('_name')
+                if family:
+                    installed.setdefault(family, set()).add(face.get('version') or 'unversioned')
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return lines + [f'font versions unavailable: {exc}']
+    for family in sorted(families):
+        versions = installed.get(family)
+        lines.append(f"{family} {', '.join(sorted(versions))}" if versions else f'{family} not installed')
+    return lines
+
+
+def cmd_office(args) -> int:
+    run = args.run.resolve()
+    manifest = load_run(run)
+    problems = verify(run, manifest)
+    if problems:
+        print('REFUSED: the run directory does not match its manifest', file=sys.stderr)
+        for problem in problems:
+            print(f'  {problem}', file=sys.stderr)
+        return 2
+    if sys.platform != 'darwin' or not oracle_mod.APP.exists():
+        print('REFUSED: PowerPoint for Mac is not installed here; the Office half runs on the Mac mini', file=sys.stderr)
+        return 2
+    office = manifest['office']
+    observer = args.observer or office['observer']
+    timeout = args.timeout or office['timeout_seconds']
+    user = getpass.getuser()
+    if args.isolated_account and user in office['owner_accounts']:
+        print(f'REFUSED: {user} is an owner account; untrusted decks open only in the isolated test account', file=sys.stderr)
+        return 2
+    # The approved pin's locale is empty, as the recorded Mac mini runs were.
+    for name in list(os.environ):
+        if name == 'LANG' or name.startswith('LC_'):
+            del os.environ[name]
+    reason = oracle_mod.observer_status(observer)
+    environment = oracle_mod.env_pin(observer) if not reason else None
+    reason = reason or oracle_mod.environment_mismatch(environment)
+    if reason:
+        print(f'REFUSED: {reason}', file=sys.stderr)
+        return 2
+    if oracle_mod.app_pid() and oracle_mod.presentations():
+        print('REFUSED: PowerPoint has open presentations; close them first, never ours to close', file=sys.stderr)
+        return 2
+    results = (args.results or run / 'office-results').resolve()
+    results.mkdir(parents=True, exist_ok=True)
+    take_lock(f'deck-gate {manifest.get("source")} {run}')
+    already_running = oracle_mod.app_pid() is not None
+    stopped = quit_error = None
+    started = time.time()
+    try:
+        for entry in manifest['candidates']:
+            if entry['trust'] == 'untrusted' and not args.isolated_account:
+                continue
+            stopped = run_one(run / entry['file'], results / entry['id'], observer, timeout)
+            if stopped:
+                break
+        for entry in [] if stopped else manifest['calibration']:
+            stopped = run_one(run / entry['file'], results / 'calibration' / entry['id'], observer,
+                              entry['timeout_seconds'])
+            if stopped:
+                break
+    finally:
+        if not already_running:
+            try:
+                oracle_mod.quit_if_empty()
+            except (RuntimeError, subprocess.TimeoutExpired) as exc:
+                quit_error = str(exc)
+        retained = bool(stopped and stopped.startswith('cleanup')) or quit_error is not None
+        if retained:
+            print(f'LOCK RETAINED at {LOCK}: PowerPoint custody is uncertain ({stopped or quit_error}); '
+                  'check the Mac mini, then remove the lock by hand', file=sys.stderr)
+        else:
+            release_lock()
+    office_run = {
+        'environment': environment, 'user': user, 'isolated_account': bool(args.isolated_account),
+        'observer': observer, 'timeout_seconds': timeout, 'started_at': started,
+        'finished_at': time.time(), 'stopped': stopped, 'quit_error': quit_error,
+        'lock_retained': retained, 'font_versions': font_versions(run, manifest, environment),
+    }
+    (results / 'office-run.json').write_text(json.dumps(office_run, indent=2) + '\n')
+    if stopped:
+        print(f'STOPPED: {stopped}', file=sys.stderr)
+    return assemble(run, manifest, results)
+
+
+def cmd_assemble(args) -> int:
+    run = args.run.resolve()
+    manifest = load_run(run)
+    problems = verify(run, manifest)
+    if problems:
+        print('REFUSED: the run directory does not match its manifest', file=sys.stderr)
+        for problem in problems:
+            print(f'  {problem}', file=sys.stderr)
+        return 2
+    return assemble(run, manifest, (args.results or run / 'office-results').resolve())
+
+
+def cmd_plan(args) -> int:
+    run = args.run.resolve()
+    manifest = load_run(run)
+    problems = verify(run, manifest)
+    print(f"run {run}: profile {manifest.get('profile')}, projector {manifest.get('projector')}, "
+          f"source {manifest.get('source')}")
+    for record in manifest.get('steps', []):
+        kind, detail = split(record['engine'])
+        office = ' (+ the Office half)' if record['office'] else ''
+        print(f"step {record['step']} {record['name']}: engine {kind}{(' ' + detail) if detail else ''}{office}")
+    fixture = [entry for entry in manifest['candidates'] if entry['trust'] == 'fixture']
+    untrusted = [entry for entry in manifest['candidates'] if entry['trust'] == 'untrusted']
+    timeout = manifest['office']['timeout_seconds']
+    print(f"{len(fixture)} fixture candidates, {len(untrusted)} untrusted candidates (isolated account only), "
+          f"{len(manifest['calibration'])} calibration fixtures; at most "
+          f"{(len(fixture) + len(untrusted) + len(manifest['calibration'])) * timeout // 60} min of PowerPoint "
+          f"at {timeout} s each")
+    for problem in problems:
+        print(f'PROBLEM {problem}')
+    return 1 if problems else 0
+
+
+def cmd_acquire(args) -> int:
+    repo, corpus = args.repo.resolve(), args.corpus.resolve()
+    spec = json.loads((repo / CASE_MANIFEST).read_text())['regression']['pptarena']
+    arena = json.loads((repo / spec['manifest']).read_text())
+    excluded = {rule['id'] for rule in spec.get('exclude', [])}
+    cases = [case for case in arena['cases']
+             if (spec['select'] == 'all' or case['id'] in spec.get('cases', [])) and case['id'] not in excluded]
+    corpus.mkdir(parents=True, exist_ok=True)
+    failures = 0
+    for case in cases:
+        destination = corpus / case['id']
+        original = destination / 'original.pptx'
+        if original.is_file() and oracle_mod.digest(original) == case['original']['sha256']:
+            print(f"{case['id']}: kept", flush=True)
+            continue
+        if destination.exists():
+            shutil.rmtree(destination)
+        try:
+            oracle_mod.acquire(case['id'], destination)
+            print(f"{case['id']}: acquired", flush=True)
+        except Exception as exc:  # one failed pair leaves its case inconclusive, not the run
+            failures += 1
+            print(f"{case['id']}: FAILED {exc}", file=sys.stderr, flush=True)
+    print(f'{len(cases) - failures} of {len(cases)} PPTArena originals ready in {corpus}')
+    return 1 if failures else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest='command', required=True)
+    acquire = sub.add_parser('acquire', help='fetch the selected PPTArena originals (never opens them)')
+    acquire.add_argument('repo', type=Path, help='repository root holding scripts/office/pptx-live-v1.json')
+    acquire.add_argument('corpus', type=Path, help='corpus directory: <corpus>/<case>/original.pptx')
+    plan = sub.add_parser('plan', help='verify a run directory; no Office')
+    plan.add_argument('run', type=Path)
+    for name, helptext in (('office', 'Mac mini only: open every candidate serially, then assemble'),
+                           ('assemble', 'join the Office results to the engine outcomes; no Office')):
+        command = sub.add_parser(name, help=helptext)
+        command.add_argument('run', type=Path)
+        command.add_argument('--results', type=Path, help='Office results (default: RUN/office-results)')
+        if name == 'office':
+            command.add_argument('--isolated-account', action='store_true',
+                                 help='this is the isolated test account: also open untrusted candidates')
+            command.add_argument('--observer', choices=('cua', 'system-events'))
+            command.add_argument('--timeout', type=int, help='seconds per candidate (default: the run manifest)')
+    args = parser.parse_args()
+    return {'acquire': cmd_acquire, 'plan': cmd_plan, 'office': cmd_office,
+            'assemble': cmd_assemble}[args.command](args)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

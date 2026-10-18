@@ -21,6 +21,7 @@ stemma = { path = "vendor/stemma-engine", version = "0.6.0" }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10" # the deck gate runner pins candidates by SHA-256, as the Office oracle does
 # The engine's own diff: a body's mark changes align to the text it keeps.
 similar = "2.6"
 
