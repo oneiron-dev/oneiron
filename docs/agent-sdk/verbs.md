@@ -6,6 +6,8 @@ not a claim that every engine-internal method is a public SDK verb.
 Names are stable: a new export or rename must update the engine catalog,
 both bindings and their export-census tests in one change.
 
+- `fetch`
+- `crawl`
 - `report`
 - `feedback.preview`
 - `feedback.send`
@@ -78,6 +80,13 @@ both bindings and their export-census tests in one change.
 - `vault.tagging.history`
 - `vault.tagging.mentions`
 - `vault.affect.claims.consolidate`
+- `vault.affect.coping.record`
+- `vault.affect.coping.update`
+- `vault.affect.coping.aggregate`
+- `vault.affect.wellness.policy.get`
+- `vault.affect.wellness.policy.configure`
+- `vault.affect.wellness.derive`
+- `vault.affect.wellness.get`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
 - `vault.retrieval.run`
@@ -95,6 +104,8 @@ both bindings and their export-census tests in one change.
 - `vault.receipts`
 - `vault.images.view`
 - `vault.receipts.get`
+- `self.admission.status`
+- `self.admission.receipts`
 - `vault.explain.memory`
 - `vault.explain.gate`
 - `vault.kv.get`
@@ -604,6 +615,10 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.availability`
+- `vault.booking.book`
+- `vault.booking.reschedule`
+- `vault.booking.cancel`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `calendar.invite`

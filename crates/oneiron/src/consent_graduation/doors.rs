@@ -368,9 +368,8 @@ pub(crate) fn accept_graduation_offer_in_txn(
             "op kind does not ride the propose lane; there is nothing to graduate",
         )));
     }
-    if crate::edit_distance::graduation::scope_is_manual_pinned_in_txn(
-        &vault.store, &*wtxn, scope,
-    )? {
+    if crate::edit_distance::graduation::scope_is_manual_pinned_in_txn(&vault.store, &*wtxn, scope)?
+    {
         return Err(Error::Gate(GateError::InvalidConsentBound(
             "unpin this scope in settings before accepting graduation",
         )));

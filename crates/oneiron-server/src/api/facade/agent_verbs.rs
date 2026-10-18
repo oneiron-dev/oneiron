@@ -2,6 +2,8 @@
 use super::*;
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new()
+        .route("/fetch", post(facade_route))
+        .route("/crawl", post(facade_route))
         .route("/report", post(facade_route))
         .route("/feedback.preview", post(facade_route))
         .route("/feedback.send", post(facade_route))
@@ -104,6 +106,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.receipts", post(facade_route))
         .route("/vault.images.view", post(facade_route))
         .route("/vault.receipts.get", post(facade_route))
+        .route("/self.admission.status", post(facade_route))
+        .route("/self.admission.receipts", post(facade_route))
         .route("/vault.explain.memory", post(facade_route))
         .route("/vault.explain.gate", post(facade_route))
         .route("/vault.kv.get", post(facade_route))
@@ -664,6 +668,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.remember", post(facade_route))
         .route("/vault.claims.retract", post(facade_route))
         .route("/vault.forget", post(facade_route))
+        .route("/vault.booking.availability", post(facade_route))
+        .route("/vault.booking.book", post(facade_route))
+        .route("/vault.booking.reschedule", post(facade_route))
+        .route("/vault.booking.cancel", post(facade_route))
         .route("/vault.booking.constraint_turn", post(facade_route))
         .route("/vault.booking.page_token", post(facade_route))
         .route("/calendar.invite", post(facade_route))

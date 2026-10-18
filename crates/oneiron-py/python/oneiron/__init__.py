@@ -279,6 +279,12 @@ class Oneiron:
         return json.loads(_translate(lambda: self._client.close_lens_frame(card_id)))
 
     # BEGIN GENERATED FACADE VERBS
+    def fetch(self, spec):
+        """Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links."""
+        return json.loads(_translate(lambda: self._client.fetch(json.dumps(spec))))
+    def crawl(self, spec):
+        """Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion."""
+        return json.loads(_translate(lambda: self._client.crawl(json.dumps(spec))))
     def report(self, spec):
         """Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor."""
         return json.loads(_translate(lambda: self._client.report(json.dumps(spec))))
@@ -3193,6 +3199,18 @@ class Oneiron:
     class _VaultBookingVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def availability(self, spec):
+            """Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."""
+            return json.loads(_translate(lambda: self._client.vault_booking_availability(json.dumps(spec))))
+        def book(self, spec):
+            """Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."""
+            return json.loads(_translate(lambda: self._client.vault_booking_book(json.dumps(spec))))
+        def reschedule(self, spec):
+            """Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."""
+            return json.loads(_translate(lambda: self._client.vault_booking_reschedule(json.dumps(spec))))
+        def cancel(self, spec):
+            """Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."""
+            return json.loads(_translate(lambda: self._client.vault_booking_cancel(json.dumps(spec))))
         def constraint_turn(self, spec):
             """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
             return json.loads(_translate(lambda: self._client.vault_booking_constraint_turn(json.dumps(spec))))
@@ -3641,6 +3659,9 @@ class Oneiron:
         def credential(self) -> "Oneiron._SelfCredentialVerbs":
             return Oneiron._SelfCredentialVerbs(self._client)
         @property
+        def admission(self) -> "Oneiron._SelfAdmissionVerbs":
+            return Oneiron._SelfAdmissionVerbs(self._client)
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
         @property
@@ -3793,6 +3814,15 @@ class Oneiron:
         def attenuate(self, spec):
             """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
             return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
+    class _SelfAdmissionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work."""
+            return json.loads(_translate(lambda: self._client.self_admission_status(json.dumps(spec))))
+        def receipts(self, spec):
+            """Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay."""
+            return json.loads(_translate(lambda: self._client.self_admission_receipts(json.dumps(spec))))
     class _SelfOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

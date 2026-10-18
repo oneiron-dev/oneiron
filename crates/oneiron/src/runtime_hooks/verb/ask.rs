@@ -264,17 +264,20 @@ pub(super) fn retry(
     if row.verb != call.verb || row.actor != call.actor || row.class != call.class {
         return skipped("this invocation belongs to another call");
     }
-    // A call saved with a resume target (its sitting and room, or its
+    // A call saved with a resume target (its plain caller, or its
     // credential's instrument and door) resumes only for that target, open or
     // used. One saved with none resumes on its caller's retry.
-    if row.resume.is_some() && row.resume.as_ref() != resume {
+    let same = resume.is_some_and(|resume| {
+        row.resume
+            .as_ref()
+            .is_some_and(|saved| saved.same_target(resume))
+    });
+    if row.resume.is_some() && !same {
         return skipped("this invocation belongs to another call");
     }
     if row.state == VerbAskState::Consumed {
-        return match (&row.outcome, resume) {
-            (Some(outcome), Some(resume)) if row.resume.as_ref() == Some(resume) => {
-                Ok(Retry::Stop(completed(call.invocation, outcome)?))
-            }
+        return match &row.outcome {
+            Some(outcome) if same => Ok(Retry::Stop(completed(call.invocation, outcome)?)),
             _ => skipped(USED),
         };
     }
@@ -437,9 +440,10 @@ pub(super) fn open(
         .then(credential::witness_on_thread)
         .flatten();
     // The row, its credential's witness pinned beside it when the host keeps
-    // one.
+    // one, or the authority a plain call is asked under read in this write.
     let save = |txn: &mut heed::RwTxn<'_>, ask: EntityId| -> Result<()> {
         let resume = credential::retain_in_txn(vault, txn, key, ask, resume, witness.as_ref())?;
+        let resume = super::plain_resume::retain_in_txn(vault, txn, call, resume);
         ASKS.put(&vault.store, txn, &key, &row(ask, resume)?)
     };
     let opened = author_memory(vault, binding.author_id(), binding.author_class(), turn)
