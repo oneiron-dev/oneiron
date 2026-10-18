@@ -6,7 +6,9 @@
 //! a yes is `by: Owner` with `answer` = the request.
 //!
 //! `/v1/owner/worlds/privacy/widen-unanimity`: the vault's "widen needs every
-//! owner" setting and its per-world overrides.
+//! owner" setting and its per-world overrides. Any one owner turns it on; a
+//! change that turns it off while it is on waits for every owner's yes, which
+//! the other owners give or refuse at `.../widen-unanimity/off/confirm|decline`.
 
 use std::sync::Arc;
 
@@ -17,7 +19,8 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::policy_model::{
-    WidenUnanimity, WorldPrivacyAnswer, WorldPrivacyReceipt, WorldPrivacyRequest,
+    WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome, WorldPrivacyAnswer,
+    WorldPrivacyReceipt, WorldPrivacyRequest,
 };
 use serde::Deserialize;
 
@@ -38,6 +41,18 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route(
             "/worlds/privacy/widen-unanimity",
             get(unanimity).post(set_unanimity),
+        )
+        .route(
+            "/worlds/privacy/widen-unanimity/requests",
+            get(unanimity_requests),
+        )
+        .route(
+            "/worlds/privacy/widen-unanimity/off/confirm",
+            post(confirm_off),
+        )
+        .route(
+            "/worlds/privacy/widen-unanimity/off/decline",
+            post(decline_off),
         )
 }
 
@@ -169,15 +184,17 @@ async fn unanimity(
 }
 
 /// `POST /v1/owner/worlds/privacy/widen-unanimity`: an owner sets the vault's
-/// setting, or a world's override.
+/// setting, or a world's override. It lands at once (`set`, the row), unless
+/// it turns the setting off somewhere while it is on: then it waits for every
+/// owner's yes (`pending`, the turn-off request with the yeses so far).
 async fn set_unanimity(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<SetUnanimity>, JsonRejection>,
-) -> OwnerReply<WidenUnanimity> {
+) -> OwnerReply<WidenUnanimityOutcome> {
     let owner = owner(&auth, &server)?;
     let body = json_payload(payload)?;
-    let row = blocking(move || -> OwnerResult<WidenUnanimity> {
+    let outcome = blocking(move || -> OwnerResult<WidenUnanimityOutcome> {
         let world = body
             .world
             .as_deref()
@@ -188,5 +205,61 @@ async fn set_unanimity(
             .set_widen_needs_every_owner(&owner, world, body.on)?)
     })
     .await?;
-    Ok(Json(row))
+    Ok(Json(outcome))
+}
+
+/// `GET /v1/owner/worlds/privacy/widen-unanimity/requests[?pending=true]`:
+/// the turn-offs of the setting, newest first.
+async fn unanimity_requests(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<RequestPage>, QueryRejection>,
+) -> OwnerReply<Vec<WidenUnanimityOffRequest>> {
+    owner(&auth, &server)?;
+    let page = query_params(query)?;
+    let requests = blocking(move || -> OwnerResult<Vec<WidenUnanimityOffRequest>> {
+        Ok(server
+            .vault()
+            .widen_unanimity_off_requests(page.pending.unwrap_or(false))?)
+    })
+    .await?;
+    Ok(Json(requests))
+}
+
+/// `POST /v1/owner/worlds/privacy/widen-unanimity/off/confirm`: an owner's
+/// yes to a pending turn-off; the yes that completes every owner's lands it.
+async fn confirm_off(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<AnswerRequest>, JsonRejection>,
+) -> OwnerReply<WidenUnanimityOutcome> {
+    answer_off(auth, server, payload, true).await
+}
+
+/// `POST /v1/owner/worlds/privacy/widen-unanimity/off/decline`: an owner
+/// declines a pending turn-off; the setting stays as it is.
+async fn decline_off(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<AnswerRequest>, JsonRejection>,
+) -> OwnerReply<WidenUnanimityOutcome> {
+    answer_off(auth, server, payload, false).await
+}
+
+async fn answer_off(
+    auth: CoreAuth,
+    server: Arc<SyncServer>,
+    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    yes: bool,
+) -> OwnerReply<WidenUnanimityOutcome> {
+    let owner = owner(&auth, &server)?;
+    let body = json_payload(payload)?;
+    let answered = blocking(move || -> OwnerResult<WidenUnanimityOutcome> {
+        let request = entity_id("request", &body.request)?;
+        Ok(server
+            .vault()
+            .answer_widen_unanimity_off(&owner, request, yes)?)
+    })
+    .await?;
+    Ok(Json(answered))
 }

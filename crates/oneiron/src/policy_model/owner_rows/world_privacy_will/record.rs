@@ -250,6 +250,21 @@ impl Vault {
         holders: &[EntityId],
         detail: &str,
     ) -> Result<()> {
+        self.notify_holders_in_txn(txn, kind, about, &[world], holders, detail)
+    }
+
+    /// The same notice path with its subjects named: `subjects` is empty for
+    /// a vault-wide setting such as a pending "widen needs every owner"
+    /// turn-off.
+    pub(super) fn notify_holders_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        kind: NotificationKind,
+        about: &str,
+        subjects: &[EntityId],
+        holders: &[EntityId],
+        detail: &str,
+    ) -> Result<()> {
         let at = self.instant_in_txn(txn)?.secs();
         for holder in holders {
             self.record_notification_in_txn(
@@ -263,7 +278,7 @@ impl Vault {
                         detail: Some(detail.to_owned()),
                         ..NotificationSource::default()
                     },
-                    subject_refs: vec![world],
+                    subject_refs: subjects.to_vec(),
                     recipient: Some(*holder),
                     created_at: at,
                     origin_conversation: None,
