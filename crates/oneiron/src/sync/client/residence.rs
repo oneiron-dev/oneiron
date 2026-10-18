@@ -4,13 +4,10 @@
 mod authority;
 mod bundle;
 mod index;
-mod sealed;
 pub(crate) use authority::{catch_up_authority, pinned_checkpoint_pending};
 pub use bundle::SealedBundleRelay;
 pub(crate) use bundle::relay_sealed_bundle;
 pub use index::ResidenceIndexWindow;
-pub use sealed::SealedRelay;
-pub(crate) use sealed::relay_sealed_windows;
 
 use std::collections::HashSet;
 use std::time::Duration;
@@ -356,7 +353,7 @@ const RETAIN_REFUSED_PREFIX: &str = "rr:w:";
 
 /// Asks the home again to retain each window it refused, on an opened
 /// machine; returns how many it retains now. Off the live sync loop, on the
-/// window manager and a client config alone, like [`relay_sealed_windows`].
+/// window manager and a client config alone, like [`relay_sealed_bundle`].
 pub(crate) async fn retry_refused_retains(
     manager: &std::sync::Arc<crate::sync::manager::WindowManager>,
     config: &SyncClientConfig,
@@ -619,9 +616,9 @@ impl SyncClient {
         Ok(())
     }
 
-    /// The sealed packets this machine took in while `window` stood
+    /// The bundle sections this machine took in while `window` stood
     /// unpromoted wait in its mirror: the promoted window holds their rows
-    /// now. A failure leaves them there for the next packet's import.
+    /// now. A failure leaves them there for the next take.
     fn materialize_sealed_mirror(&self, window: &WindowKey) {
         let Some(world) = window.world() else {
             return;
@@ -903,7 +900,7 @@ fn read_thin_item(
 }
 
 /// Home results when reachable; offline results are explicitly local-only.
-/// On the vault and a client config alone, like [`relay_sealed_windows`], so
+/// On the vault and a client config alone, like [`relay_sealed_bundle`], so
 /// a query door asks the home without a sync client.
 pub(crate) async fn search_resident(
     vault: &crate::Vault,

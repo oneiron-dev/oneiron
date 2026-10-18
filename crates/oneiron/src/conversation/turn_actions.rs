@@ -562,7 +562,9 @@ impl Memory<'_> {
     /// MESSAGE a stream generated, authored by a readable agent, with a user
     /// turn before it. No stream may be open on the MESSAGE, and Continue
     /// needs it incomplete. Retry on a project room's indexed turn is judged
-    /// by its room regeneration permit, once its agent is known.
+    /// by its room regeneration permit, once its agent is known. The
+    /// transcript of a conversation with a roster is read as its current
+    /// audience reads it (FIX 1389): the reply goes out into that room.
     fn resolve_turn_action(
         &self,
         action: TurnAction,
@@ -570,7 +572,7 @@ impl Memory<'_> {
         history: usize,
     ) -> MemoryResult<Resolved> {
         let vault = self.vault();
-        let conversation = {
+        let (conversation, roomed) = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             crate::memory::verify_actor_binding_in_txn(
                 vault,
@@ -605,9 +607,24 @@ impl Memory<'_> {
                     &[],
                 ));
             }
-            conversation
+            let roster = crate::context_board::room_roster_in(vault, &txn, conversation)?;
+            (
+                conversation,
+                roster.is_some_and(|members| !members.is_empty()),
+            )
         };
-        let walk = self.walk_to_turn(&conversation, &assistant_turn, history)?;
+        // The history the model reads meets the room's current audience, as a
+        // new turn's does: its roster, their met worlds and clearance, every
+        // other member's own read and each member's entry cut, with no P7,
+        // which binds a turn. A room the actor no longer reads refuses as
+        // unknown. With no roster, no one but the actor reads the reply.
+        let walk = if roomed {
+            self.for_room_projection(conversation)?
+                .memory()
+                .walk_to_turn(&conversation, &assistant_turn, history)?
+        } else {
+            self.walk_to_turn(&conversation, &assistant_turn, history)?
+        };
         let turn = walk
             .turn
             .ok_or_else(|| MemoryError::not_found("turn not found"))?;

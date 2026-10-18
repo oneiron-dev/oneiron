@@ -1,5 +1,6 @@
 //! Sync server state and maintenance jobs, split by concern.
 mod board_publisher;
+mod browser_seats;
 mod connector_events;
 mod connector_sends;
 mod cooperative_deletion;
@@ -28,6 +29,7 @@ mod tagging;
 mod wave_door;
 mod windows;
 
+pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats};
 pub(crate) use self::core::BroadcastPayload;
 pub use self::core::{SyncServer, TaskWorkTurn};
 pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
