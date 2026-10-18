@@ -548,6 +548,8 @@ class Oneiron:
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
         @property
+        def slim(self) -> "Oneiron._VaultSlimVerbs": ...
+        @property
         def mesh(self) -> "Oneiron._VaultMeshVerbs": ...
         @property
         def inspection(self) -> "Oneiron._VaultInspectionVerbs": ...
@@ -614,6 +616,10 @@ class Oneiron:
         @property
         def task_types(self) -> "Oneiron._VaultTaskTypesVerbs": ...
         @property
+        def tasks(self) -> "Oneiron._VaultTasksVerbs": ...
+        @property
+        def runs(self) -> "Oneiron._VaultRunsVerbs": ...
+        @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs": ...
         @property
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
@@ -679,8 +685,6 @@ class Oneiron:
         def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
         @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
-        @property
-        def tasks(self) -> "Oneiron._VaultTasksVerbs": ...
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
             """One page of the people the caller reads, in handle order."""
@@ -967,6 +971,17 @@ class Oneiron:
             """Every saved authority handoff fork alarm, for the owner."""
         def acknowledge(self, spec: Facade.HandoffAlarmRequest) -> Facade.AuthorityHandoffAlarm:
             """The owner acknowledges one saved handoff fork alarm."""
+    class _VaultSlimVerbs:
+        def policy(self, spec: Facade.EmptyRequest) -> Facade.SlimIdlePolicy:
+            """Reads the serving host idle policy: the long outbound wait, no exit on idle and lazy heap rebuild."""
+        def state(self, spec: Facade.EmptyRequest) -> Facade.SlimStateSnapshot:
+            """Observes FULL or SLIM atomically with this process id and the retained journaled resume pointer, without waking the vault."""
+        def resume_step(self, spec: Facade.SlimResumeStepRequest) -> Facade.SavedResumeStep:
+            """Reads a saved model checkpoint or outbound intent by its retained identity, including after FULL or restart, without reissuing it."""
+        def drop_heavy(self, spec: Facade.SlimDropRequest) -> Facade.SlimDropReceipt:
+            """Drops rebuildable heap in process and returns the completed engine transition, drop counts or typed refusal; one journaled outbound step is required."""
+        def resume(self, spec: Facade.EmptyRequest) -> Facade.SlimResumeReceipt:
+            """Resumes logical FULL in the same process and returns its completion receipt; indexes rebuild lazily and no saved outbound step is reissued."""
     class _VaultMeshVerbs:
         def path_receipts(self, spec: Facade.MeshPathReceiptsRequest) -> list[Facade.MeshPathReceipt]:
             """The newest path receipts this machine's paired-machine mesh left, newest first and bounded: direct or relayed, admitted, refused or failed, for the owner."""
@@ -1353,6 +1368,8 @@ class Oneiron:
         def review_slides(self, request: Facade.SlideReviewSubmit) -> Facade.SlideReviewOutcome: ...
         def ask(self, spec: Facade.ArtifactAskSubmit) -> Facade.ArtifactAskOutcome:
             """Asks one typed question over an artifact's sheet rows, paragraphs or folder items through the host's decision ladder and holds the answers as one proposal for Keep or Discard."""
+        def inspect_deck(self, spec: Facade.DeckInspectRequest) -> Facade.DeckInspectionView:
+            """Inspects one PPTX version for native edit targets and comment identities without minting ids."""
         def propose_deck(self, request: Facade.DeckProposeRequest) -> Facade.DeckProposeOutcome: ...
         def propose_output(self, request: Facade.NativeOutputRequest) -> Facade.PendingProposalView: ...
         def keep(self, request: Facade.ProposalSettleRequest) -> Facade.KeptProposal: ...
@@ -1519,6 +1536,27 @@ class Oneiron:
             """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
         def get(self, spec: Facade.TaskTypeTreeRead) -> Facade.TaskTypeTreeReadReply:
             """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
+    class _VaultTasksVerbs:
+        def cancel_force(self, spec: Facade.CancelForceRequest) -> Facade.CancelForceReceipt:
+            """The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."""
+        @property
+        def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
+    class _VaultTasksLinearVerbs:
+        @property
+        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
+        def provenance(self, spec: Facade.LinearProvenanceRequest) -> Facade.LinearProvenancePage:
+            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
+    class _VaultTasksLinearMappingVerbs:
+        def __call__(self, spec: Facade.LinearMappingRequest) -> Facade.LinearMappingView:
+            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
+        def edit(self, spec: Facade.LinearMappingEdit) -> Facade.LinearMappingEditReceipt:
+            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
+    class _VaultRunsVerbs:
+        @property
+        def branches(self) -> "Oneiron._VaultRunsBranchesVerbs": ...
+    class _VaultRunsBranchesVerbs:
+        def get(self, spec: Facade.RunBranchesRequest) -> Facade.RunBranchesView:
+            """The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
@@ -1868,19 +1906,6 @@ class Oneiron:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""
         def close(self, spec: Facade.NoteEditorCloseRequest) -> Facade.NoteEditorClosed:
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
-    class _VaultTasksVerbs:
-        @property
-        def linear(self) -> "Oneiron._VaultTasksLinearVerbs": ...
-    class _VaultTasksLinearVerbs:
-        @property
-        def mapping(self) -> "Oneiron._VaultTasksLinearMappingVerbs": ...
-        def provenance(self, spec: Facade.LinearProvenanceRequest) -> Facade.LinearProvenancePage:
-            """One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts."""
-    class _VaultTasksLinearMappingVerbs:
-        def __call__(self, spec: Facade.LinearMappingRequest) -> Facade.LinearMappingView:
-            """One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events."""
-        def edit(self, spec: Facade.LinearMappingEdit) -> Facade.LinearMappingEditReceipt:
-            """Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key."""
     class _TasksVerbs:
         def create(self, spec: Facade.TaskCreateRequest) -> Facade.TaskCreateReceipt:
             """Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway."""

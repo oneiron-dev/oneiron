@@ -419,6 +419,21 @@ impl OneironClient {
                 "vault.authority.history.import" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::AuthorityHistoryImported,
                 >(client, verb, &input),
+                "vault.slim.policy" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimIdlePolicy,
+                >(client, verb, &input),
+                "vault.slim.state" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimStateSnapshot,
+                >(client, verb, &input),
+                "vault.slim.resume_step" => remote_agent_verb_output::<
+                    oneiron::slim::public::SavedResumeStep,
+                >(client, verb, &input),
+                "vault.slim.drop_heavy" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimDropReceipt,
+                >(client, verb, &input),
+                "vault.slim.resume" => remote_agent_verb_output::<
+                    oneiron::slim::public::SlimResumeReceipt,
+                >(client, verb, &input),
                 "vault.mesh.path_receipts" => remote_agent_verb_output::<
                     Vec<oneiron::sync::mesh_path::MeshPathReceipt>,
                 >(client, verb, &input),
@@ -1038,6 +1053,12 @@ impl OneironClient {
                 "vault.agents.spawn.get" => remote_agent_verb_output::<
                     oneiron::team::doors::PlannedSpawnObservation,
                 >(client, verb, &input),
+                "vault.tasks.cancel_force" => remote_agent_verb_output::<
+                    oneiron::task_verb::run_doors::CancelForceReceipt,
+                >(client, verb, &input),
+                "vault.runs.branches.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::run_doors::RunBranchesView,
+                >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
                 >(client, verb, &input),
@@ -1070,6 +1091,9 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.critic.review" => remote_agent_verb_output::<
                     oneiron::critic::review::CriticReviewOutcome,
+                >(client, verb, &input),
+                "vault.artifacts.inspect_deck" => remote_agent_verb_output::<
+                    oneiron::blob_artifact::DeckInspectionView,
                 >(client, verb, &input),
                 "vault.artifacts.propose_deck" => remote_agent_verb_output::<
                     oneiron::blob_artifact::DeckProposeOutcome,
@@ -3326,6 +3350,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.authority.history.import", value)
+    }
+    pub fn vault_slim_policy(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::slim::public::SlimIdlePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.policy", value)
+    }
+    pub fn vault_slim_state(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::slim::public::SlimStateSnapshot, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.state", value)
+    }
+    pub fn vault_slim_resume_step(
+        &self,
+        input: &oneiron::slim::public::SlimResumeStepRequest,
+    ) -> Result<oneiron::slim::public::SavedResumeStep, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.resume_step", value)
+    }
+    pub fn vault_slim_drop_heavy(
+        &self,
+        input: &oneiron::slim::public::SlimDropRequest,
+    ) -> Result<oneiron::slim::public::SlimDropReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.drop_heavy", value)
+    }
+    pub fn vault_slim_resume(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::slim::public::SlimResumeReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.slim.resume", value)
     }
     pub fn vault_mesh_path_receipts(
         &self,
@@ -5773,6 +5857,30 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.agents.spawn.get", value)
     }
+    pub fn vault_tasks_cancel_force(
+        &self,
+        input: &oneiron::task_verb::run_doors::CancelForceRequest,
+    ) -> Result<oneiron::task_verb::run_doors::CancelForceReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.tasks.cancel_force", value)
+    }
+    pub fn vault_runs_branches_get(
+        &self,
+        input: &oneiron::task_verb::run_doors::RunBranchesRequest,
+    ) -> Result<oneiron::task_verb::run_doors::RunBranchesView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runs.branches.get", value)
+    }
     pub fn vault_workspace_establish(
         &self,
         input: &oneiron::task_verb::sdk::WorkspacePresetRequest,
@@ -5910,6 +6018,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.critic.review", value)
+    }
+    pub fn vault_artifacts_inspect_deck(
+        &self,
+        input: &oneiron::blob_artifact::DeckInspectRequest,
+    ) -> Result<oneiron::blob_artifact::DeckInspectionView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.artifacts.inspect_deck", value)
     }
     /// Runs one native deck transaction over the head and holds the proposal for Keep.
     pub fn vault_artifacts_propose_deck(

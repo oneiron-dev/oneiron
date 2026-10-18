@@ -152,6 +152,11 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultSlimPolicy(input: unknown): unknown
+vaultSlimState(input: unknown): unknown
+vaultSlimResumeStep(input: unknown): unknown
+vaultSlimDropHeavy(input: unknown): unknown
+vaultSlimResume(input: unknown): unknown
 vaultMeshPathReceipts(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
@@ -355,6 +360,8 @@ vaultWorkflowsStatus(input: unknown): unknown
 vaultTaskTypesPin(input: unknown): unknown
 vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
+vaultTasksCancelForce(input: unknown): unknown
+vaultRunsBranchesGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown
@@ -366,6 +373,7 @@ vaultArtifactsReleaseWait(requestJson: string): string
 vaultArtifactsReviewSlides(requestJson: string): string
 vaultArtifactsAsk(input: unknown): unknown
 vaultCriticReview(input: unknown): unknown
+vaultArtifactsInspectDeck(input: unknown): unknown
 vaultArtifactsProposeDeck(requestJson: string): string
 vaultArtifactsProposeOutput(requestJson: string): string
 vaultArtifactsKeep(requestJson: string): string

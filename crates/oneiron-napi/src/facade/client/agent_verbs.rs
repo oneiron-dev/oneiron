@@ -1087,6 +1087,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_slim_policy(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.slim.policy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_slim_state(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.slim.state", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_slim_resume_step(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.slim.resume_step", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_slim_drop_heavy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.slim.drop_heavy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_slim_resume(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.slim.resume", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_mesh_path_receipts(
         &self,
         input: serde_json::Value,
@@ -2912,6 +2948,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_tasks_cancel_force(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.cancel_force", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runs_branches_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runs.branches.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_workspace_establish(
         &self,
         input: serde_json::Value,
@@ -3080,6 +3134,15 @@ impl NativeClient {
     pub fn vault_critic_review(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.critic.review", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_artifacts_inspect_deck(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.artifacts.inspect_deck", input)
             .map_err(facade_error)
     }
     #[napi]

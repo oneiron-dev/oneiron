@@ -1907,7 +1907,7 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "fn": 4
      }
     },
@@ -5659,6 +5659,28 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DeckCommentInspection",
+      "DeckInspectRequest",
+      "DeckInspectionView",
+      "DeckProposeRejection",
+      "DeckRejectionCheck",
+      "DeckRejectionReport",
+      "DeckRejectionSheet",
+      "DeckRejectionSheetDependency",
+      "DeckRejectionSummary"
+     ],
+     "path": "src/blob_artifact/deck_doors.rs",
+     "purpose": "The native deck edit door's typed wire (DOOR-142 A, ARCH-0077 \"Edit target choice\")…",
+     "surface": {
+      "enum": 1,
+      "fn": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/blob_artifact/esign/artifact_actor.rs",
      "purpose": "Vault-local machine identity for capability uploads and verified seal output",
@@ -6227,7 +6249,7 @@
      "surface": {
       "crate-vis": 13,
       "mod": 1,
-      "re-export": 8
+      "re-export": 10
      }
     },
     {
@@ -21628,6 +21650,8 @@
      "kind": "src",
      "notable": [
       "DeckEditContext",
+      "DeckEditOutcome",
+      "DeckEditRejection",
       "DeckRender",
       "DeckRenderSide",
       "DeckSettleEvidence"
@@ -21636,9 +21660,9 @@
      "purpose": "Native deck edits (ARCH-0077, \"Edit in place with passthrough\"): one docedit deck transaction over the exact…",
      "surface": {
       "crate-vis": 9,
-      "enum": 1,
+      "enum": 2,
       "fn": 3,
-      "struct": 3
+      "struct": 4
      }
     },
     {
@@ -21781,7 +21805,7 @@
      "surface": {
       "crate-vis": 4,
       "mod": 6,
-      "re-export": 14
+      "re-export": 15
      }
     },
     {
@@ -30483,6 +30507,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ModelStepCheckpoint",
       "ModelStepFailure",
       "ModelStepFailureClass",
       "ModelStepReceipt",
@@ -30494,10 +30519,10 @@
      "path": "src/llm/step/public.rs",
      "purpose": "Owner-submitted durable model steps over the engine's existing step executor",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 2,
-      "struct": 5
+      "struct": 6
      }
     },
     {
@@ -45305,6 +45330,7 @@
       "crate-vis": 2,
       "enum": 6,
       "fn": 3,
+      "mod": 1,
       "re-export": 1,
       "struct": 2
      }
@@ -45321,6 +45347,32 @@
       "crate-vis": 1,
       "fn": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SavedIntentState",
+      "SavedResumeStep",
+      "SlimDropOutcome",
+      "SlimDropReceipt",
+      "SlimDropRequest",
+      "SlimIdlePolicy",
+      "SlimResidueView",
+      "SlimResumeOutcome",
+      "SlimResumeReceipt",
+      "SlimResumeStep",
+      "SlimResumeStepRequest",
+      "SlimStateSnapshot",
+      "SlimStateView"
+     ],
+     "path": "src/slim/public.rs",
+     "purpose": "Typed lifecycle observations and completion receipts over the SLIM controller",
+     "surface": {
+      "enum": 7,
+      "fn": 2,
+      "struct": 6
      }
     },
     {
@@ -49521,7 +49573,7 @@
      "surface": {
       "crate-vis": 36,
       "fn": 1,
-      "mod": 2,
+      "mod": 3,
       "re-export": 25
      }
     },
@@ -49720,6 +49772,23 @@
       "crate-vis": 2,
       "enum": 5,
       "fn": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CancelForceReceipt",
+      "CancelForceRequest",
+      "RunBranchView",
+      "RunBranchesRequest",
+      "RunBranchesView"
+     ],
+     "path": "src/task_verb/run_doors.rs",
+     "purpose": "The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)…",
+     "surface": {
+      "fn": 2,
       "struct": 5
      }
     },
@@ -50133,7 +50202,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 607
+      "fn": 615
      }
     },
     {
@@ -55813,7 +55882,7 @@
      "purpose": "—"
     },
     "blob_artifact": {
-     "files": 54,
+     "files": 55,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57010,7 +57079,7 @@
      "purpose": "Deterministic static skill scanning and the activation risk consult"
     },
     "slim": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -57080,7 +57149,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 159,
+     "files": 160,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57250,7 +57319,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3487,
+   "source_files": 3490,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61791,7 +61860,7 @@
       "crate-vis": 3,
       "enum": 3,
       "fn": 1,
-      "mod": 1,
+      "mod": 2,
       "re-export": 2,
       "struct": 6
      }
@@ -61968,6 +62037,27 @@
       "fn": 15,
       "struct": 10,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "DeckIdentityAmbiguity",
+      "DeckInspection",
+      "DeckNativeRefusal",
+      "DeckShapeInspection",
+      "DeckShapeKind",
+      "DeckSlideInspection",
+      "DeckStepRefusal",
+      "DeckTransactionRefusal"
+     ],
+     "path": "src/edit/wire.rs",
+     "purpose": "Owned wire forms for the deck edit door (ARCH-0077, \"Identities\" and \"The 23 named refusals\"): the native…",
+     "surface": {
+      "enum": 5,
+      "fn": 2,
+      "struct": 3
      }
     },
     {
@@ -62840,7 +62930,7 @@
      "purpose": "The DOCX face of a live office body (ARCH-0075, \"the body is the truth, the file is a projection\")"
     },
     "edit": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -62933,7 +63023,7 @@
    },
    "over_bar": 10,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 89,
+   "source_files": 90,
    "test_files": 14
   },
   "oneiron-driver": {
@@ -65717,7 +65807,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 557
+      "fn": 565
      }
     },
     {
@@ -66766,7 +66856,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 558
+      "fn": 566
      }
     },
     {
@@ -69799,7 +69889,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 5
      }
     },
     {
@@ -69979,7 +70069,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 107
+      "crate-vis": 108
      }
     },
     {
@@ -70260,6 +70350,16 @@
      "purpose": "Selected-message conversion and the owner's skill library, through the same facade and MCP doors",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/slim_doors.rs",
+     "purpose": "Owner-bound lifecycle doors; each transport reaches the same engine transaction",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -75596,7 +75696,7 @@
      "path": "src/models/outbound_wait.rs",
      "purpose": "Server policy for shedding during a long journaled model wait",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -77539,7 +77639,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 366,
+     "files": 367,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77954,7 +78054,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 696,
+   "source_files": 697,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -78185,6 +78285,7 @@
       "AgentPackExport",
       "AgentPackExportFile",
       "AgentPackExportRequest",
+      "AgentRunStatus",
       "AgentScopeInput",
       "AgentSkillInput",
       "AgentSpawnInput",
@@ -78260,13 +78361,17 @@
       "AskTo",
       "AsofScrubberAtom",
       "AssetRef",
+      "AttemptCancelPressure",
       "AttemptCancelReceipt",
       "AttemptCancelReceiptKind",
+      "AttemptCancelState",
+      "AttemptCancellation",
       "AttemptHandle",
       "AttemptId",
       "AttemptLanding",
       "AttemptLandingReserve",
       "AttemptResumePoint",
+      "AttemptState",
       "AttemptView",
       "AuthoringStrategyPin",
       "AuthorityAuditEventKind",
@@ -78356,6 +78461,9 @@
       "CampaignSplitWire",
       "CampaignSplits",
       "CampaignTaste",
+      "CancelForceReceipt",
+      "CancelForceRequest",
+      "CancelMode",
       "CancelRejectionPathology",
       "CancelStanding",
       "CandidateLabel",
@@ -78621,12 +78729,18 @@
       "DecisionRung",
       "DecisionTime",
       "DeckBodyView",
+      "DeckCommentInspection",
       "DeckDiff",
+      "DeckEditContext",
       "DeckExportRequest",
       "DeckExportView",
       "DeckForkMergeRequest",
       "DeckGateRequest",
       "DeckGateView",
+      "DeckIdentityAmbiguity",
+      "DeckInspectRequest",
+      "DeckInspectionView",
+      "DeckNativeRefusal",
       "DeckNodeView",
       "DeckOp",
       "DeckOracleRequest",
@@ -78634,8 +78748,23 @@
       "DeckPreviewRequest",
       "DeckPreviewSlide",
       "DeckProposeOutcome",
+      "DeckProposeRejection",
       "DeckProposeRequest",
+      "DeckRejectionCheck",
+      "DeckRejectionReport",
+      "DeckRejectionSheet",
+      "DeckRejectionSheetDependency",
+      "DeckRejectionSummary",
+      "DeckRender",
+      "DeckRenderSide",
       "DeckReviewView",
+      "DeckShapeInspection",
+      "DeckShapeKind",
+      "DeckSlideInspection",
+      "DeckStep",
+      "DeckStepRefusal",
+      "DeckTransaction",
+      "DeckTransactionRefusal",
       "DeclaredMaximum",
       "DelegatedGrant",
       "DelegatedGrantScope",
@@ -78848,6 +78977,7 @@
       "GuestSlipMintRequest",
       "GuestSlipMinted",
       "HandoffAlarmRequest",
+      "HeapDropReport",
       "HeldAttempt",
       "HeldMedia",
       "HeldOutCall",
@@ -78900,6 +79030,7 @@
       "HybridSearchHit",
       "HybridSearchRequest",
       "HybridTemporalQuery",
+      "IdMarks",
       "IdentityActNow",
       "IdentityActNowRequest",
       "IdentityAnswerRequest",
@@ -79120,6 +79251,7 @@
       "MintConnectGrant",
       "ModelLocality",
       "ModelSlot",
+      "ModelStepCheckpoint",
       "ModelStepFailure",
       "ModelStepFailureClass",
       "ModelStepReceipt",
@@ -79255,6 +79387,7 @@
       "OfficeBodyReadRequest",
       "OfficeBodyReviewedFork",
       "OfficeBodyView",
+      "OfficeFormat",
       "OmittedKnowledge",
       "OpaqueChange",
       "OpenSpendLeaseRequest",
@@ -79379,6 +79512,9 @@
       "PolicySkipReason",
       "PolicyVerdictCategory",
       "PostmarkAtom",
+      "PptxInspection",
+      "PptxShapeIdentity",
+      "PptxSlideIdentity",
       "Preset",
       "PriorOrigin",
       "PriorRung",
@@ -79657,11 +79793,20 @@
       "RsiSettlement",
       "RsiSpendPurpose",
       "Run",
+      "RunAsk",
+      "RunAskAnswer",
+      "RunAskAnswerKind",
+      "RunAskQuestion",
       "RunAttachRequest",
       "RunAttached",
+      "RunBranchSignal",
+      "RunBranchView",
+      "RunBranchesRequest",
+      "RunBranchesView",
       "RunRungSettlement",
       "RunSettlementsRequest",
       "RunSettlementsView",
+      "RunSignalKind",
       "RunSignalState",
       "RunTree",
       "RunTreeEvent",
@@ -79671,6 +79816,8 @@
       "RunTreeRepair",
       "RunTreeStatus",
       "RunTreeTimestamps",
+      "SavedIntentState",
+      "SavedResumeStep",
       "ScheduledBackfill",
       "Scope",
       "ScopeAxisInputString",
@@ -79826,6 +79973,8 @@
       "SharedVaultChange",
       "SharedVaultDeletion",
       "SharedVaultRequest",
+      "ShedBlocker",
+      "ShedCause",
       "SignalExtractionClaim",
       "SignalExtractionMessage",
       "SignalExtractionRequest",
@@ -79886,6 +80035,17 @@
       "SlideReviewUnitInput",
       "SlideUnitRefused",
       "SliderControl",
+      "SlimDropOutcome",
+      "SlimDropReceipt",
+      "SlimDropRequest",
+      "SlimIdlePolicy",
+      "SlimResidueView",
+      "SlimResumeOutcome",
+      "SlimResumeReceipt",
+      "SlimResumeStep",
+      "SlimResumeStepRequest",
+      "SlimStateSnapshot",
+      "SlimStateView",
       "SlipCaveat",
       "SmartArtNode",
       "SourceTrust",
@@ -79919,8 +80079,13 @@
       "SteerReceipt",
       "SteerRequest",
       "StepAssetKind",
+      "StepCell",
       "StepOutcome",
+      "StepPreset",
       "StepProgression",
+      "StepSequence",
+      "StepTarget",
+      "StepXfrm",
       "StopCause",
       "StoredShapeSeed",
       "SufficiencyCard",
@@ -80187,8 +80352,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 530,
-      "struct": 1505
+      "enum": 556,
+      "struct": 1544
      }
     },
     {
