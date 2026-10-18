@@ -47,7 +47,9 @@ use super::widen_record::invalid;
 
 /// One rung of the planner ladder. Cheap rungs handle the easy cases; the
 /// strong rung is reserved for xhigh/max care or big plans.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PlannerRung {
     /// A cheap classifier: the deterministic floor plus, at most, a local
@@ -150,7 +152,7 @@ impl PlanBudget {
 /// The cost envelope every plan states before launch (OF-393, OF-532):
 /// agent count, expected spend and the hard spend cap. The runtime
 /// enforces only the cap, a BudgetGuard lease.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CostEnvelope {
     pub agent_count: u32,
     pub expected_spend_units: u64,
@@ -262,7 +264,7 @@ pub struct ShapeQuote {
 }
 
 /// The resolved plan: what will actually launch.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TeamPlan {
     pub shape: TeamShape,
     pub model: ModelId,

@@ -51,6 +51,8 @@ pub(crate) use weave_lens::{
 };
 mod weave_report;
 mod weave_serve;
+mod weave_trigger;
+pub use weave_trigger::WeaveDigestRendered;
 pub(crate) use claim_admission::ClaimReadStatus;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};

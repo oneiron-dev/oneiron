@@ -7,7 +7,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use super::super::cohort::{CohortRetirement, MAX_REASON_BYTES};
-use super::super::cut_audit::{AuditProvenance, EvalCutAuthor, prepare_cut_audit};
+use super::super::cut_audit::{
+    AuditProvenance, EvalCutAuthor, prepare_cut_audit, prepare_cut_audit_listing,
+};
 use super::super::{
     DerivationKind, EvalCaseDraft, EvalLabel, EvalSeat, FamilyPurpose, MAX_NAME_BYTES,
     MAX_REF_BYTES, invalid,
@@ -121,6 +123,114 @@ pub fn setup_eval_cohorts(
     };
     cut_cohorts(vault, &plan, &provenance, now, &mut report)?;
     Ok(report)
+}
+
+impl Vault {
+    /// [`setup_eval_cohorts`], beside the rows its cut audits read text from
+    /// (`vault.evals.cohorts.setup`'s list), from those same reads: every
+    /// TURN whose text a near-copy audit compared, each MESSAGE child that
+    /// text joined, and every finalized proposal artifact it read. The
+    /// inventory, families, cases, labels, cohorts and audits it reads and
+    /// writes are side rows, which the report counts or names by ref. A setup
+    /// that cuts nothing audits no text and lists none; a refusal keeps the
+    /// rows read before it.
+    ///
+    /// # Errors
+    /// As [`setup_eval_cohorts`].
+    pub fn setup_eval_cohorts_listing(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        setup: EvalCohortSetup,
+        now: u64,
+    ) -> (Result<EvalAuthoringReport>, Vec<EntityId>) {
+        let mut rows = Vec::new();
+        let answer = setup_listing(self, owner, setup, now, &mut rows);
+        rows.sort_unstable();
+        rows.dedup();
+        (answer, rows)
+    }
+}
+
+/// [`setup_eval_cohorts`]'s steps, each cut audited by
+/// [`prepare_cut_audit_listing`] into `rows`.
+fn setup_listing(
+    vault: &Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    setup: EvalCohortSetup,
+    now: u64,
+    rows: &mut Vec<EntityId>,
+) -> Result<EvalAuthoringReport> {
+    let person = owner.revalidate_person(vault)?;
+    if setup.inventory_at > now {
+        return Err(invalid("a cohort setup cannot read a future inventory"));
+    }
+    let inventory = super::eval_authoring_inventory(vault, setup.inventory_at)?;
+    let plan = EvalAuthoringPlan {
+        inventory_digest: setup.inventory_digest,
+        families: setup.families,
+        cases: setup.cases,
+        cuts: setup.cuts,
+        cohorts: Vec::new(),
+    };
+    validate(&plan, &inventory)?;
+    let mut report = EvalAuthoringReport::default();
+    assign_families(vault, &plan, &inventory, now, &mut report)?;
+    record_cases(vault, &plan, &inventory, now, &mut report)?;
+    let provenance = AuditProvenance {
+        author: EvalCutAuthor::Owner { person },
+        inventory_digest: inventory.inventory_digest,
+    };
+    cut_cohorts_listing(vault, &plan, &provenance, now, &mut report, rows)?;
+    Ok(report)
+}
+
+/// [`cut_cohorts`], each audit listing into `rows` the rows whose text it
+/// compared ([`prepare_cut_audit_listing`]).
+fn cut_cohorts_listing(
+    vault: &Vault,
+    plan: &EvalAuthoringPlan,
+    provenance: &AuditProvenance,
+    now: u64,
+    report: &mut EvalAuthoringReport,
+    rows: &mut Vec<EntityId>,
+) -> Result<()> {
+    if plan.cuts.is_empty() {
+        return Ok(());
+    }
+    let lineage = LineageReader::read(vault)?;
+    for cut in &plan.cuts {
+        let item = format!("cut {}..{}", cut.from, cut.until);
+        let Some(audit) = prepare_cut_audit_listing(
+            vault,
+            &lineage,
+            &cut.seat,
+            (cut.from, cut.until),
+            provenance.clone(),
+            rows,
+        )?
+        else {
+            report.skip(item, "no whole sealed family falls in this window");
+            continue;
+        };
+        match vault.cut_eval_cohort(
+            &cut.seat,
+            cut.from,
+            cut.until,
+            cut.rubric_revision.trim(),
+            cut.reference,
+            &audit,
+            now,
+        ) {
+            Ok(cohort) => {
+                if !audit.complete() {
+                    report.cuts_with_coverage_gaps += 1;
+                }
+                report.cohorts_cut.push(cohort.id);
+            }
+            Err(error) => report.skip(item, refusal(error)?),
+        }
+    }
+    Ok(())
 }
 
 /// One decision a door or the inventory did not let through.

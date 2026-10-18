@@ -96,7 +96,7 @@ const OUTCOME_ALLOW: &str = "allow";
 const OUTCOME_DENY: &str = "deny";
 
 /// What a campaign improves, and so which ruler it is bound to.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchTarget {
     /// A governed skill. Its authenticated goal is the ruler, and a promotion
@@ -108,7 +108,7 @@ pub enum ResearchTarget {
 }
 
 /// The goal record a skill campaign was bound under.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchGoalPin {
     pub goal_id: EntityId,
@@ -119,7 +119,7 @@ pub struct ResearchGoalPin {
 
 /// The sealed cohort a campaign confirms on: OF-578's exposure ledger, not a
 /// campaign twin.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchConfirmationSeat {
     pub seat: EvalSeat,
@@ -128,7 +128,7 @@ pub struct ResearchConfirmationSeat {
 
 /// A candidate configuration the sandbox wrote: a content reference and the
 /// digest of its bytes. The loop never reads or runs the config itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CandidateRef {
     pub config_ref: String,
@@ -138,7 +138,7 @@ pub struct CandidateRef {
 /// The agents the host runs a campaign's work with (FIX 886). Each is an
 /// AGENT_DEF running its own workflow skill; each answers with one JSON
 /// object and never writes the campaign record itself.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchExecution {
     /// Writes one candidate configuration in its own sandbox.
@@ -154,7 +154,7 @@ pub struct ResearchExecution {
 }
 
 /// The bound ruler and resources of one campaign. Written once.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchBinding {
     pub root: AttemptId,
@@ -193,7 +193,7 @@ pub struct ResearchBindRequest {
     pub execution: Option<ResearchExecution>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExperimentKind {
     /// The incumbent the campaign starts from.
@@ -207,7 +207,7 @@ pub enum ExperimentKind {
 }
 
 /// Search-split evidence for one node: the selection signal.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchEvidence {
     /// Scores on the campaign's search split under its pinned metric set.
@@ -236,7 +236,7 @@ impl SearchEvidence {
 }
 
 /// Held-out evidence for one node, recorded once and read only by promotion.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HeldOutEvidence {
     pub measurement: Measurement,
@@ -245,7 +245,7 @@ pub struct HeldOutEvidence {
 }
 
 /// A buggy node: kept as evidence, eligible for debug children.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InvalidReceipt {
     pub reason: String,
@@ -255,7 +255,7 @@ pub struct InvalidReceipt {
 
 /// Why a branch stopped being explored. There is deliberately no surprise
 /// variant: surprise only picks the next experiment.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PruneReason {
     /// Another measured branch beats it on search reward.
@@ -268,7 +268,7 @@ pub enum PruneReason {
     Stopped { by: EntityId },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PruneReceipt {
     pub reason: PruneReason,
@@ -277,7 +277,7 @@ pub struct PruneReceipt {
 }
 
 /// The lineage receipt of a weave: its parents are on the node.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveReceipt {
     pub common_ancestor: AttemptId,
@@ -302,7 +302,7 @@ pub enum WeaveWriter {
 }
 
 /// One experiment: an existing attempt annotated with its campaign record.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExperimentNode {
     pub attempt: AttemptId,
@@ -347,7 +347,7 @@ pub struct WeaveInput {
 }
 
 /// What one selection round chose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchStep {
     Fork { parent: AttemptId, stagnation: bool },
@@ -358,7 +358,7 @@ pub enum ResearchStep {
 }
 
 /// The evidence one branch contributed to a round.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BranchSnapshot {
     pub attempt: AttemptId,
@@ -370,7 +370,7 @@ pub struct BranchSnapshot {
 }
 
 /// The durable receipt of one selection round.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelectionReceipt {
     pub root: AttemptId,
@@ -656,7 +656,8 @@ pub(crate) fn binding_in_txn(
     txn: &heed::RoTxn<'_>,
     root: AttemptId,
 ) -> Result<ResearchBinding> {
-    BINDING.get(&vault.store, txn, root.as_bytes())?
+    BINDING
+        .get(&vault.store, txn, root.as_bytes())?
         .ok_or(invalid("no campaign is bound to this root"))
 }
 

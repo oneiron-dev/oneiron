@@ -86,8 +86,8 @@ pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
-pub(crate) use super::feedback_doors::*;
 pub(crate) use super::federation_connect_doors::*;
+pub(crate) use super::feedback_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 pub(crate) use super::skill_doors::*;
@@ -97,6 +97,7 @@ pub(crate) use super::support_grant_doors::*;
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
+pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
@@ -134,8 +135,8 @@ pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
-pub(crate) use super::origin_doors::*;
 pub(crate) use super::checkout_doors::*;
+pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
@@ -177,6 +178,8 @@ pub(crate) use super::code_doors::*;
 pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
 pub(crate) use super::code_wait_doors::*;
+// The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
+pub(crate) use super::hook_regen_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1089,8 +1092,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.runs.step"
         | "vault.runs.checkpoint"
         | "ai.reply"
+        | "calendar.connector.configure"
+        | "calendar.connector.get"
+        | "calendar.connector.kill"
+        | "calendar.connector.pull"
+        | "calendar.connector.write"
+        | "calendar.imip.configure"
+        | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
+        | "vault.companions.access_requests.answer"
+        | "vault.personas.preview"
+        | "vault.personas.export"
+        | "vault.personas.edit"
         | "vault.packs.put"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"
@@ -1139,6 +1153,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
+        | "vault.hooks.regen.due"
+        | "vault.hooks.regen.get"
+        | "vault.hooks.regen.adopt"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
         | "vault.packs.setup.prepare"
@@ -1158,6 +1175,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.residence.open"
         | "vault.residence.index"
         | "vault.residence.prune"
+        | "vault.residence.directives"
         | "vault.courtesy_delete.send"
         | "vault.courtesy_delete.sent"
         | "vault.courtesy_delete.incoming"
@@ -1297,6 +1315,14 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.projects.confirm"
         | "vault.weave.owner.link.wrong"
         | "vault.weave.owner.item.wrong"
+        | "vault.weave.enqueue"
+        | "vault.weave.schedules.list"
+        | "vault.weave.schedules.put"
+        | "vault.weave.schedules.clear"
+        | "vault.weave.owner.digest.render"
+        | "vault.inbox.concerns.review"
+        | "vault.inbox.lens"
+        | "vault.inbox.groups"
         | "vault.budgets.lease.open"
         | "vault.budgets.lease"
         | "vault.budgets.lease.top_up"
@@ -1312,6 +1338,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"
         | "vault.code.proposal_submit"
+        | "vault.code.conflict_record"
+        | "vault.code.conflict_view"
+        | "vault.code.proposal_resolve"
+        | "vault.code.proposal_review"
+        | "vault.code.proposal_settle"
+        | "vault.code.proposal_settlement"
         | "vault.code.oplog"
         | "vault.results.status"
         | "vault.results.recover"

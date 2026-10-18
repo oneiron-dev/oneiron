@@ -832,8 +832,13 @@ impl Vault {
         let mine = fold.trusted_machine(secret.machine).is_some_and(|trusted| {
             trusted.profile.machine_key == signing.verifying_key().to_bytes()
         });
+        // The owner's recipient choice: only a machine he marked "yours"
+        // opens a world's key to seal it, never a rule on who decides.
         if !mine {
-            return Err(refused("this machine is not one of the owner's here"));
+            return Err(refused(
+                "the owner-selected world read policy excludes this destination; use an allowed \
+                 holder",
+            ));
         }
         for (key, _) in keys {
             let world = key.id().world;

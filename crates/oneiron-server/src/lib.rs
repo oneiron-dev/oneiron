@@ -29,6 +29,7 @@ mod big_rung;
 mod broadcast;
 mod builtin_host;
 mod byte_line;
+mod calendar_host;
 mod campaign_enrollment;
 pub mod cli;
 mod code_consent_host;

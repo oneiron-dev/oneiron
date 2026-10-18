@@ -7,7 +7,7 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use super::bound::{ActorBound, GrantBound};
 use super::codec::GRANTS;
 use super::effect::{
-    ApproveOnceAuthorization, CATASTROPHE_FLOOR_V1, CatastropheClass, ComposedEffect,
+    ApproveOnceAuthorization, CATASTROPHE_FLOOR_V2, CatastropheClass, ComposedEffect,
     ConsentDecision, EffectDigest,
 };
 use super::grant::{
@@ -298,7 +298,7 @@ impl AuthenticatedOwner {
     /// The credential slip this proof was carried under, and that slip's
     /// parent, or the host root a host action acts under (FIX 2222). An
     /// offer refuses an answer from the lineage that opened it.
-    pub(super) fn credential_lineage(&self) -> Vec<[u8; 32]> {
+    pub(crate) fn credential_lineage(&self) -> Vec<[u8; 32]> {
         let mut lineage = self
             .credential
             .as_ref()
@@ -677,9 +677,9 @@ impl Vault {
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
         let mutation_recorded_at = crate::ports::recorded_at_in_txn(&self.store, wtxn)?;
-        if bound_catastrophe_class(&bound).is_some() {
+        if let Some(class) = bound_catastrophe_class(&bound) {
             return Err(Error::Gate(GateError::ConsentCatastropheNotRememberable(
-                "the catastrophe floor is non-rememberable; no standing grant may cover it",
+                crate::gate::consent_floor_refusal(class),
             )));
         }
         let grant = StandingConsentGrant::from_bound(bound)?;
@@ -1182,7 +1182,7 @@ pub struct ConsentEvaluation {
 #[must_use]
 pub fn bound_catastrophe_class(bound: &GrantBound) -> Option<CatastropheClass> {
     let class = bound.class().as_str();
-    CATASTROPHE_FLOOR_V1
+    CATASTROPHE_FLOOR_V2
         .into_iter()
         .find(|catastrophe| catastrophe.as_str() == class)
 }

@@ -619,10 +619,7 @@ pub struct SkillGovernanceView {
     pub optimizable: bool,
 }
 
-fn governance_view(
-    vault: &Vault,
-    entity: &EntityId,
-) -> MemoryResult<SkillGovernanceView> {
+fn governance_view(vault: &Vault, entity: &EntityId) -> MemoryResult<SkillGovernanceView> {
     let record = skill(vault, entity)?;
     let verdict = crate::skill_optimize::skill_governance_tier(vault, entity)?;
     let tier = verdict.tier();
@@ -668,16 +665,13 @@ pub fn skill_governance_set_as_owner(
     owner: &AuthenticatedOwner,
     input: &SkillGovernanceSetRequest,
 ) -> MemoryResult<SkillGovernanceView> {
-    let tier = match input.tier.as_deref() {
-        None => None,
-        Some(value) => Some(
-            crate::skill::SkillGovernanceTier::parse(value).ok_or_else(|| {
-                MemoryError::bad_request(
-                    "tier must be identity, alignment or standard",
-                )
-            })?,
-        ),
-    };
+    let tier =
+        match input.tier.as_deref() {
+            None => None,
+            Some(value) => Some(crate::skill::SkillGovernanceTier::parse(value).ok_or_else(
+                || MemoryError::bad_request("tier must be identity, alignment or standard"),
+            )?),
+        };
     vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &input.entity)?.is_live() {
@@ -757,17 +751,12 @@ pub fn skill_optimize_start_as_owner(
     let outcome = vault.with_write_txn_grouped(|txn| {
         owner.revalidate_in_txn(vault, txn)?;
         if let Some(skill_entity) = input.skill {
-            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &skill_entity)?.is_live()
-            {
+            if !crate::vault::live_entity_row_in_txn(&vault.store, txn, &skill_entity)?.is_live() {
                 return Err(Error::EntityNotFound);
             }
             let record = vault.read_skill_record_in_txn(txn, &skill_entity)?;
-            let verdict = crate::skill_optimize::tier_verdict_in_txn(
-                vault,
-                &*txn,
-                &skill_entity,
-                &record,
-            )?;
+            let verdict =
+                crate::skill_optimize::tier_verdict_in_txn(vault, &*txn, &skill_entity, &record)?;
             if !verdict.optimizable() {
                 return Ok(None);
             }
@@ -836,7 +825,10 @@ fn attempt_state_name(state: crate::attempt_queue::AttemptState) -> String {
 }
 
 fn parse_attempt_ref(job_ref: &str) -> MemoryResult<crate::attempt_queue::AttemptId> {
-    let reference = job_ref.trim().strip_prefix("job:").unwrap_or(job_ref.trim());
+    let reference = job_ref
+        .trim()
+        .strip_prefix("job:")
+        .unwrap_or(job_ref.trim());
     if reference.len() != 32 || !reference.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err(MemoryError::bad_request(format!(
             "attempt ref {job_ref:?} is not a 32-hex attempt id"
@@ -916,9 +908,7 @@ impl SkillOptimizeResultView {
     }
 }
 
-fn verdict_view(
-    verdict: crate::skill_optimize::HeldOutVerdict,
-) -> SkillOptimizeVerdictView {
+fn verdict_view(verdict: crate::skill_optimize::HeldOutVerdict) -> SkillOptimizeVerdictView {
     SkillOptimizeVerdictView {
         id: verdict.id,
         proposal: verdict.proposal,
@@ -970,7 +960,9 @@ fn proposal_for_attempt(
             };
             let field = |name: &str| {
                 fields.iter().find_map(|(key, value)| {
-                    (key.as_str() == Some(name)).then(|| value.as_str()).flatten()
+                    (key.as_str() == Some(name))
+                        .then(|| value.as_str())
+                        .flatten()
                 })
             };
             if field(crate::skill_convert::PROVENANCE_BIRTH_KEY)
@@ -1018,53 +1010,51 @@ pub fn skill_optimize_result_as_owner(
         None => (None, None, None, None),
     };
     let proposal = input.proposal.or(found_proposal);
-    let (skill, proposal_lifecycle, incumbent_lifecycle, governance, verdicts) =
-        match proposal {
-            Some(proposal_entity) => {
-                let verdicts =
-                    crate::skill_optimize::skill_edit_verdicts_for_proposal(
-                        vault,
-                        &proposal_entity,
-                    )?;
-                let skill_entity = verdicts.last().map(|verdict| verdict.skill).or_else(|| {
-                    vault.get_skill_record(&proposal_entity).ok().flatten().and_then(|record| {
+    let (skill, proposal_lifecycle, incumbent_lifecycle, governance, verdicts) = match proposal {
+        Some(proposal_entity) => {
+            let verdicts =
+                crate::skill_optimize::skill_edit_verdicts_for_proposal(vault, &proposal_entity)?;
+            let skill_entity = verdicts.last().map(|verdict| verdict.skill).or_else(|| {
+                vault
+                    .get_skill_record(&proposal_entity)
+                    .ok()
+                    .flatten()
+                    .and_then(|record| {
                         let rmpv::Value::Map(fields) = &record.provenance else {
                             return None;
                         };
                         fields.iter().find_map(|(key, value)| {
                             (key.as_str()
-                                == Some(
-                                    crate::skill_optimize::PROVENANCE_OPTIMIZE_OF_ENTITY_KEY,
-                                ))
+                                == Some(crate::skill_optimize::PROVENANCE_OPTIMIZE_OF_ENTITY_KEY))
                             .then(|| value.as_str())
                             .flatten()
                             .and_then(|hex| EntityId::from_hex(hex).ok())
                         })
                     })
-                });
-                let proposal_lifecycle = vault
-                    .get_skill_record(&proposal_entity)?
-                    .map(|record| record.lifecycle_status.into());
-                let incumbent_lifecycle = match skill_entity {
-                    Some(skill_entity) => vault
-                        .get_skill_record(&skill_entity)?
-                        .map(|record| record.lifecycle_status.into()),
-                    None => None,
-                };
-                let governance = match skill_entity {
-                    Some(skill_entity) => Some(governance_view(vault, &skill_entity)?),
-                    None => None,
-                };
-                (
-                    skill_entity,
-                    proposal_lifecycle,
-                    incumbent_lifecycle,
-                    governance,
-                    verdicts.into_iter().map(verdict_view).collect::<Vec<_>>(),
-                )
-            }
-            None => (None, None, None, None, Vec::new()),
-        };
+            });
+            let proposal_lifecycle = vault
+                .get_skill_record(&proposal_entity)?
+                .map(|record| record.lifecycle_status.into());
+            let incumbent_lifecycle = match skill_entity {
+                Some(skill_entity) => vault
+                    .get_skill_record(&skill_entity)?
+                    .map(|record| record.lifecycle_status.into()),
+                None => None,
+            };
+            let governance = match skill_entity {
+                Some(skill_entity) => Some(governance_view(vault, &skill_entity)?),
+                None => None,
+            };
+            (
+                skill_entity,
+                proposal_lifecycle,
+                incumbent_lifecycle,
+                governance,
+                verdicts.into_iter().map(verdict_view).collect::<Vec<_>>(),
+            )
+        }
+        None => (None, None, None, None, Vec::new()),
+    };
     Ok(SkillOptimizeResultView {
         verdict: verdicts.last().cloned(),
         job_ref: input.job_ref.clone(),
