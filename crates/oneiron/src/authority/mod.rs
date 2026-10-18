@@ -54,6 +54,7 @@ mod fold_project;
 mod fold_resume;
 mod fold_schedule;
 mod fold_state;
+mod forwarded_caller;
 mod guest_revoke;
 mod handoff_equivocation;
 mod history_coverage;
@@ -160,6 +161,10 @@ pub use checkpoint_image::*;
 pub use checkpoint_policy::*;
 pub use fold_engine::*;
 pub use fold_state::*;
+pub use forwarded_caller::{
+    ForwardedCallerProof, ForwardedRequest, ForwardingDevice, ForwardingMachineProof,
+    VerifiedForwardedCaller, forwarded_request_transcript,
+};
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };

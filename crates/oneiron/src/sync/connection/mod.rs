@@ -382,19 +382,6 @@ impl SyncConnection {
         self.client()?.refresh_residence_index(now_secs).await
     }
 
-    /// Relay this machine's sealed private-world windows through the home
-    /// (OF-534 G7). See [`crate::sync::SyncClient::relay_sealed_windows`].
-    pub async fn relay_sealed_windows(
-        &self,
-    ) -> Result<crate::sync::SealedRelay, crate::sync::TransportError> {
-        if self.config.client_config.federation_peer.is_some() {
-            return Err(crate::sync::TransportError::InvalidPayload(
-                "a federation lane relays no sealed window",
-            ));
-        }
-        self.client()?.relay_sealed_windows().await
-    }
-
     /// Take in the signed authority entries the home holds and this machine
     /// lacks (OF-469). See [`crate::sync::SyncClient::catch_up_authority`].
     pub async fn catch_up_authority(&self) -> Result<usize, crate::sync::TransportError> {
