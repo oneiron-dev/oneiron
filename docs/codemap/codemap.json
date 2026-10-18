@@ -31571,7 +31571,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 9,
+      "mod": 10,
       "re-export": 43
      }
     },
@@ -31940,6 +31940,53 @@
       "crate-vis": 4,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/result_doors/mod.rs",
+     "purpose": "Retained result doors",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ResultBodyKind",
+      "ResultBodyStatus",
+      "ResultByteSelection",
+      "ResultCard",
+      "ResultEffectRecord",
+      "ResultLineCursor",
+      "ResultLineSelection",
+      "ResultOccurrenceManifest",
+      "ResultOccurrenceRequest",
+      "ResultReadRefusal",
+      "ResultReadView",
+      "ResultRetainedBody",
+      "ResultRunRequest",
+      "ResultRunStatus",
+      "ResultSliceContent",
+      "ResultSlicePage",
+      "ResultSliceRequest",
+      "ResultSliceScanning",
+      "ResultSliceSelection",
+      "ResultSliceView",
+      "ResultTaint",
+      "ResultTaintReference",
+      "ResultTaintState",
+      "ResultWithheld"
+     ],
+     "path": "src/memory/result_doors/types.rs",
+     "purpose": "Typed projections of retained result manifests and the existing reader",
+     "surface": {
+      "enum": 6,
+      "struct": 18
      }
     },
     {
@@ -49934,7 +49981,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 575
+      "fn": 579
      }
     },
     {
@@ -56243,7 +56290,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 167,
+     "files": 169,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -56924,7 +56971,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3469,
+   "source_files": 3471,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65352,7 +65399,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 525
+      "fn": 529
      }
     },
     {
@@ -66401,7 +66448,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 526
+      "fn": 530
      }
     },
     {
@@ -69614,7 +69661,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 102
+      "crate-vis": 103
      }
     },
     {
@@ -69763,6 +69810,16 @@
      "notable": [],
      "path": "src/api/facade/residence_doors.rs",
      "purpose": "The host doors of the owner's residence rows (OF-534, FIX 531): `vault.residence.mode`, `.open`, `.index`…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/result_doors.rs",
+     "purpose": "Owner-authenticated retained-result reads",
      "surface": {
       "crate-vis": 4
      }
@@ -77093,7 +77150,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 361,
+     "files": 362,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77508,7 +77565,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 688,
+   "source_files": 689,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79044,6 +79101,31 @@
       "ResolveRecordRefRequest",
       "ResolvedRole",
       "ResponseFormat",
+      "ResultBodyKind",
+      "ResultBodyStatus",
+      "ResultByteSelection",
+      "ResultCard",
+      "ResultEffectRecord",
+      "ResultFacet",
+      "ResultLineCursor",
+      "ResultLineSelection",
+      "ResultOccurrenceManifest",
+      "ResultOccurrenceRequest",
+      "ResultReadRefusal",
+      "ResultReadView",
+      "ResultRetainedBody",
+      "ResultRunRequest",
+      "ResultRunStatus",
+      "ResultSliceContent",
+      "ResultSlicePage",
+      "ResultSliceRequest",
+      "ResultSliceScanning",
+      "ResultSliceSelection",
+      "ResultSliceView",
+      "ResultTaint",
+      "ResultTaintReference",
+      "ResultTaintState",
+      "ResultWithheld",
       "RetentionDefault",
       "RetrievalBlendWeights",
       "RetrievalScoreComponent",
@@ -79590,8 +79672,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 497,
-      "struct": 1387
+      "enum": 504,
+      "struct": 1405
      }
     },
     {
