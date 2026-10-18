@@ -9,13 +9,14 @@
 //! that depends on order or provenance, and any field added later. A
 //! narrowing the comparator cannot prove reads as a widening and waits for
 //! the owner.
-use super::PolicyManifestResolution;
+use super::{CommOptOutPosture, PolicyManifestResolution};
 use crate::gate::ceiling::{
     ActorCeiling, PolicyApprovalCeiling, PolicyAxes, PolicyCriticality, PolicyPack,
     PolicySensitivity,
 };
 use crate::gate::class_policy::{ActPolicyTable, ActPosture, ClassPolicyPrecedence};
 use crate::gate::fanout_policy::merge_controls;
+use crate::gate::policy_values::{PolicyPrecedence, PolicyRowScope, PolicyValue, PolicyValueRow};
 
 /// `probe` takes `before`'s value where `narrower(before, after)` holds.
 fn settle<T: Clone>(probe: &mut T, before: &T, after: &T, narrower: impl FnOnce(&T, &T) -> bool) {
@@ -94,6 +95,34 @@ fn act_rows_narrow(before: &ActPolicyTable, after: &ActPolicyTable) -> bool {
             && row.holder_ref.is_none()
             && matches!(row.precedence, ClassPolicyPrecedence::NestedNarrowing)
     })
+}
+
+/// A new value row under nested narrowing: a world or project proposal
+/// threshold meets its parents, and a vault opt-out or max wait at its
+/// restrictive pole caps every fallback. An override releases a parent, a
+/// precedence row can switch to most-specific, and any other new vault
+/// value replaces a fallback this does not order.
+fn value_row_narrows(row: &PolicyValueRow) -> bool {
+    use PolicyRowScope::{Project, Vault, World};
+    !row.override_parent
+        && match (row.value, row.scope) {
+            (PolicyValue::ProposalCheckThreshold(_), World(_) | Project(_)) => true,
+            (PolicyValue::CommOptOutPosture(posture), Vault) => {
+                posture == CommOptOutPosture::Escalate
+            }
+            (PolicyValue::ProviderCooldownMaxWaitSeconds(wait), Vault) => wait == 0,
+            _ => false,
+        }
+}
+
+/// New value rows, each [`value_row_narrows`] in a slot `before` left empty.
+fn value_rows_narrow(before: &[PolicyValueRow], after: &[PolicyValueRow]) -> bool {
+    let held = |row: &PolicyValueRow| {
+        before
+            .iter()
+            .any(|old| (old.key, old.scope) == (row.key, row.scope))
+    };
+    adds_only(before, after, |row| value_row_narrows(row) && !held(row))
 }
 
 /// Whether `after` is no wider than `before` on every axis. A fail-closed
@@ -176,5 +205,11 @@ pub(crate) fn manifest_resolution_narrows(
     axis!(packs, |b, a| adds_only(b, a, pack_narrows));
     axis!(actor_ceilings, |b, a| adds_only(b, a, ceiling_narrows));
     axis!(act_policy, act_rows_narrow);
+    // A new scoped row meets its parents only under nested narrowing; under
+    // most-specific it can release one.
+    let nested = [before, after]
+        .iter()
+        .all(|side| side.scope_precedence().0 == PolicyPrecedence::NestedNarrowing);
+    axis!(policy_values, |b, a| nested && value_rows_narrow(b, a));
     probe == *before
 }
