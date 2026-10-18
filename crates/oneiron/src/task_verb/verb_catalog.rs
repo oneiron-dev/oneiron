@@ -361,6 +361,22 @@ pub enum AgentVerb {
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
     VaultClaimsSeed,
+    VaultChannelIdentitiesProvision,
+    VaultChannelIdentitiesBind,
+    VaultChannelIdentitiesFulfill,
+    VaultChannelIdentitiesRotate,
+    VaultChannelIdentitiesRelease,
+    VaultChannelIdentitiesRouteInbound,
+    VaultChannelIdentitiesGet,
+    VaultChannelIdentitiesSelectionRules,
+    VaultChannelIdentitiesSelectionUpdate,
+    VaultChannelIdentitiesSelect,
+    VaultChannelIdentitiesPassportsGet,
+    VaultChannelIdentitiesPassportsList,
+    VaultDeliveryWindowPolicyPut,
+    VaultDeliveryWindowPolicyList,
+    VaultDeliveryWindowPolicyRetract,
+    VaultDeliveryWindowEvaluate,
     ConnectorOutboundSchedule,
     VaultNotesCreate,
     VaultNotesFromEntity,
@@ -738,6 +754,22 @@ impl AgentVerb {
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
         Self::VaultClaimsSeed,
+        Self::VaultChannelIdentitiesProvision,
+        Self::VaultChannelIdentitiesBind,
+        Self::VaultChannelIdentitiesFulfill,
+        Self::VaultChannelIdentitiesRotate,
+        Self::VaultChannelIdentitiesRelease,
+        Self::VaultChannelIdentitiesRouteInbound,
+        Self::VaultChannelIdentitiesGet,
+        Self::VaultChannelIdentitiesSelectionRules,
+        Self::VaultChannelIdentitiesSelectionUpdate,
+        Self::VaultChannelIdentitiesSelect,
+        Self::VaultChannelIdentitiesPassportsGet,
+        Self::VaultChannelIdentitiesPassportsList,
+        Self::VaultDeliveryWindowPolicyPut,
+        Self::VaultDeliveryWindowPolicyList,
+        Self::VaultDeliveryWindowPolicyRetract,
+        Self::VaultDeliveryWindowEvaluate,
         Self::ConnectorOutboundSchedule,
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
@@ -1122,6 +1154,26 @@ impl AgentVerb {
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
             Self::VaultClaimsSeed => "vault.claims.seed",
+            Self::VaultChannelIdentitiesProvision => "vault.channel_identities.provision",
+            Self::VaultChannelIdentitiesBind => "vault.channel_identities.bind",
+            Self::VaultChannelIdentitiesFulfill => "vault.channel_identities.fulfill",
+            Self::VaultChannelIdentitiesRotate => "vault.channel_identities.rotate",
+            Self::VaultChannelIdentitiesRelease => "vault.channel_identities.release",
+            Self::VaultChannelIdentitiesRouteInbound => "vault.channel_identities.route_inbound",
+            Self::VaultChannelIdentitiesGet => "vault.channel_identities.get",
+            Self::VaultChannelIdentitiesSelectionRules => {
+                "vault.channel_identities.selection.rules"
+            }
+            Self::VaultChannelIdentitiesSelectionUpdate => {
+                "vault.channel_identities.selection.update"
+            }
+            Self::VaultChannelIdentitiesSelect => "vault.channel_identities.select",
+            Self::VaultChannelIdentitiesPassportsGet => "vault.channel_identities.passports.get",
+            Self::VaultChannelIdentitiesPassportsList => "vault.channel_identities.passports.list",
+            Self::VaultDeliveryWindowPolicyPut => "vault.delivery_window.policy.put",
+            Self::VaultDeliveryWindowPolicyList => "vault.delivery_window.policy.list",
+            Self::VaultDeliveryWindowPolicyRetract => "vault.delivery_window.policy.retract",
+            Self::VaultDeliveryWindowEvaluate => "vault.delivery_window.evaluate",
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
@@ -1458,6 +1510,22 @@ impl AgentVerb {
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesGet
+                | Self::VaultChannelIdentitiesSelectionRules
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultChannelIdentitiesSelect
+                | Self::VaultChannelIdentitiesPassportsGet
+                | Self::VaultChannelIdentitiesPassportsList
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyList
+                | Self::VaultDeliveryWindowPolicyRetract
+                | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -1842,6 +1910,22 @@ impl AgentVerb {
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesGet
+                | Self::VaultChannelIdentitiesSelectionRules
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultChannelIdentitiesSelect
+                | Self::VaultChannelIdentitiesPassportsGet
+                | Self::VaultChannelIdentitiesPassportsList
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyList
+                | Self::VaultDeliveryWindowPolicyRetract
+                | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -2288,6 +2372,22 @@ impl AgentVerb {
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesGet
+                | Self::VaultChannelIdentitiesSelectionRules
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultChannelIdentitiesSelect
+                | Self::VaultChannelIdentitiesPassportsGet
+                | Self::VaultChannelIdentitiesPassportsList
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyList
+                | Self::VaultDeliveryWindowPolicyRetract
+                | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -2522,6 +2622,15 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyRetract
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -2923,6 +3032,22 @@ impl AgentVerb {
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
+            Self::VaultChannelIdentitiesProvision => &["spec"],
+            Self::VaultChannelIdentitiesBind => &["spec"],
+            Self::VaultChannelIdentitiesFulfill => &["spec"],
+            Self::VaultChannelIdentitiesRotate => &["spec"],
+            Self::VaultChannelIdentitiesRelease => &["spec"],
+            Self::VaultChannelIdentitiesRouteInbound => &["spec"],
+            Self::VaultChannelIdentitiesGet => &["spec"],
+            Self::VaultChannelIdentitiesSelectionRules => &["spec"],
+            Self::VaultChannelIdentitiesSelectionUpdate => &["spec"],
+            Self::VaultChannelIdentitiesSelect => &["spec"],
+            Self::VaultChannelIdentitiesPassportsGet => &["spec"],
+            Self::VaultChannelIdentitiesPassportsList => &["spec"],
+            Self::VaultDeliveryWindowPolicyPut => &["spec"],
+            Self::VaultDeliveryWindowPolicyList => &["spec"],
+            Self::VaultDeliveryWindowPolicyRetract => &["spec"],
+            Self::VaultDeliveryWindowEvaluate => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -3301,6 +3426,22 @@ impl AgentVerb {
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
+            Self::VaultChannelIdentitiesProvision => &["spec"],
+            Self::VaultChannelIdentitiesBind => &["spec"],
+            Self::VaultChannelIdentitiesFulfill => &["spec"],
+            Self::VaultChannelIdentitiesRotate => &["spec"],
+            Self::VaultChannelIdentitiesRelease => &["spec"],
+            Self::VaultChannelIdentitiesRouteInbound => &["spec"],
+            Self::VaultChannelIdentitiesGet => &["spec"],
+            Self::VaultChannelIdentitiesSelectionRules => &["spec"],
+            Self::VaultChannelIdentitiesSelectionUpdate => &["spec"],
+            Self::VaultChannelIdentitiesSelect => &["spec"],
+            Self::VaultChannelIdentitiesPassportsGet => &["spec"],
+            Self::VaultChannelIdentitiesPassportsList => &["spec"],
+            Self::VaultDeliveryWindowPolicyPut => &["spec"],
+            Self::VaultDeliveryWindowPolicyList => &["spec"],
+            Self::VaultDeliveryWindowPolicyRetract => &["spec"],
+            Self::VaultDeliveryWindowEvaluate => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -4299,6 +4440,54 @@ impl AgentVerb {
             }
             Self::VaultClaimsSeed => {
                 "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
+            }
+            Self::VaultChannelIdentitiesProvision => {
+                "Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."
+            }
+            Self::VaultChannelIdentitiesBind => {
+                "Bind a requested identity or an existing delegated account with transaction-verified custody."
+            }
+            Self::VaultChannelIdentitiesFulfill => {
+                "Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated."
+            }
+            Self::VaultChannelIdentitiesRotate => {
+                "Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate."
+            }
+            Self::VaultChannelIdentitiesRelease => {
+                "Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule."
+            }
+            Self::VaultChannelIdentitiesRouteInbound => {
+                "Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds."
+            }
+            Self::VaultChannelIdentitiesGet => {
+                "Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send."
+            }
+            Self::VaultChannelIdentitiesSelectionRules => {
+                "Read the compiled relationship selection law and authenticated writer provenance."
+            }
+            Self::VaultChannelIdentitiesSelectionUpdate => {
+                "Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer."
+            }
+            Self::VaultChannelIdentitiesSelect => {
+                "Select a live channel identity under relationship rules, retaining an existing thread passport mask."
+            }
+            Self::VaultChannelIdentitiesPassportsGet => {
+                "Read one receiving identity and Message-ID passport through the caller credential."
+            }
+            Self::VaultChannelIdentitiesPassportsList => {
+                "Read canonical thread passports and the sticky identity, actor and facet mask."
+            }
+            Self::VaultDeliveryWindowPolicyPut => {
+                "The owner writes one typed interrupt-only delivery-window policy through the gated claim writer."
+            }
+            Self::VaultDeliveryWindowPolicyList => {
+                "Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance."
+            }
+            Self::VaultDeliveryWindowPolicyRetract => {
+                "The owner retracts a delivery-window policy through the existing claim lifecycle door."
+            }
+            Self::VaultDeliveryWindowEvaluate => {
+                "Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect."
             }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."

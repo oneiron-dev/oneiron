@@ -89,6 +89,7 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
+pub(crate) use super::channel_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.

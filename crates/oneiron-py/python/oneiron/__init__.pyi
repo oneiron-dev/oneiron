@@ -596,6 +596,10 @@ class Oneiron:
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
+        def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs": ...
+        @property
+        def delivery_window(self) -> "Oneiron._VaultDeliveryWindowVerbs": ...
+        @property
         def notes(self) -> "Oneiron._VaultNotesVerbs": ...
     class _VaultPeopleVerbs:
         def list(self, spec: Facade.PeopleListRequest) -> Facade.PeoplePage:
@@ -1191,6 +1195,49 @@ class Oneiron:
             """Enqueues one consolidation attempt and returns its durable job reference."""
         def status(self, spec: Facade.ConsolidationStatusRequest) -> Facade.DreamerAttemptView | None:
             """Reads the status of one consolidation attempt by its durable job reference."""
+    class _VaultChannelIdentitiesVerbs:
+        def provision(self, spec: Facade.ChannelIdentityProvisionRequest) -> Facade.ChannelIdentityLifecycleReceipt:
+            """Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."""
+        def bind(self, spec: Facade.ChannelIdentityBindRequest) -> Facade.ChannelIdentityLifecycleReceipt:
+            """Bind a requested identity or an existing delegated account with transaction-verified custody."""
+        def fulfill(self, spec: Facade.ChannelIdentityRequest) -> Facade.ChannelIdentityLifecycleReceipt:
+            """Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated."""
+        def rotate(self, spec: Facade.ChannelIdentityRequest) -> Facade.ChannelIdentityLifecycleReceipt:
+            """Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate."""
+        def release(self, spec: Facade.ChannelIdentityReleaseRequest) -> Facade.ChannelIdentityLifecycleReceipt:
+            """Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule."""
+        def route_inbound(self, spec: Facade.ChannelIdentityRequest) -> Facade.ChannelIdentityLifecycleReceipt:
+            """Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds."""
+        def get(self, spec: Facade.ChannelIdentityRequest) -> Facade.ChannelIdentityView:
+            """Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send."""
+        @property
+        def selection(self) -> "Oneiron._VaultChannelIdentitiesSelectionVerbs": ...
+        def select(self, spec: Facade.ChannelSelectionRequest) -> Facade.ChannelSelectionView:
+            """Select a live channel identity under relationship rules, retaining an existing thread passport mask."""
+        @property
+        def passports(self) -> "Oneiron._VaultChannelIdentitiesPassportsVerbs": ...
+    class _VaultChannelIdentitiesSelectionVerbs:
+        def rules(self, spec: Facade.EmptyRequest) -> Facade.ChannelIdentitySelectionRuleSet:
+            """Read the compiled relationship selection law and authenticated writer provenance."""
+        def update(self, spec: Facade.ChannelSelectionUpdateRequest) -> Facade.ChannelIdentitySelectionRuleSet:
+            """Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer."""
+    class _VaultChannelIdentitiesPassportsVerbs:
+        def get(self, spec: Facade.ThreadPassportRequest) -> Facade.ThreadPassportLookup:
+            """Read one receiving identity and Message-ID passport through the caller credential."""
+        def list(self, spec: Facade.ThreadPassportsRequest) -> Facade.ThreadPassportsView:
+            """Read canonical thread passports and the sticky identity, actor and facet mask."""
+    class _VaultDeliveryWindowVerbs:
+        @property
+        def policy(self) -> "Oneiron._VaultDeliveryWindowPolicyVerbs": ...
+        def evaluate(self, spec: Facade.DeliveryWindowEvaluateRequest) -> Facade.DeliveryWindowPreview:
+            """Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect."""
+    class _VaultDeliveryWindowPolicyVerbs:
+        def put(self, spec: Facade.DeliveryWindowPolicyPutRequest) -> Facade.CommitReceipt:
+            """The owner writes one typed interrupt-only delivery-window policy through the gated claim writer."""
+        def list(self, spec: Facade.DeliveryWindowPolicyRequest) -> Facade.DeliveryWindowPolicies:
+            """Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance."""
+        def retract(self, spec: Facade.DeliveryWindowPolicyRetractRequest) -> Facade.CommitReceipt:
+            """The owner retracts a delivery-window policy through the existing claim lifecycle door."""
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
