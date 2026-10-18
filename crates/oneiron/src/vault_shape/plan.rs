@@ -371,6 +371,7 @@ impl Vault {
                 door,
             });
         }
+        self.classify_shape_manifests(&mut items)?;
         let summary = ShapePlanSummary::of(&items);
         let named: BTreeSet<ShapeTarget> = seed.rows.iter().map(ShapeRow::target).collect();
         let undeclared = live
