@@ -10,6 +10,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
     > = std::sync::LazyLock::new(|| {
         std::collections::HashMap::from([
             (
+                "fetch",
+                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebFetchRequest>(),
+            ),
+            (
+                "crawl",
+                crate::code_run::vault_read::request_schema::<crate::web_fetch::WebCrawlRequest>(),
+            ),
+            (
                 "report",
                 crate::code_run::vault_read::request_schema::<crate::feedback::ReportRequest>(),
             ),
@@ -3368,6 +3376,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ForgetRequest>(),
             ),
             (
+                "vault.booking.availability",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingAvailabilityRequest,
+                >(),
+            ),
+            (
+                "vault.booking.book",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingBookRequest,
+                >(),
+            ),
+            (
+                "vault.booking.reschedule",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingRescheduleRequest,
+                >(),
+            ),
+            (
+                "vault.booking.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingCancelRequest,
+                >(),
+            ),
+            (
                 "vault.booking.constraint_turn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::BookingConstraintTurnRequest,
@@ -4447,6 +4479,8 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "fetch",
+    "crawl",
     "feedback.preview",
     "feedback.send",
     "vault.reports.disclosure",
@@ -4772,6 +4806,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.booking.availability",
+    "vault.booking.book",
+    "vault.booking.reschedule",
+    "vault.booking.cancel",
     "vault.booking.constraint_turn",
     "vault.booking.page_token",
     "calendar.invite",
@@ -4890,6 +4928,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "fetch" => crate::code_run::vault_read::request_schema::<crate::web_fetch::FetchResult>(),
+        "crawl" => crate::code_run::vault_read::request_schema::<crate::web_fetch::CrawlResult>(),
         "feedback.preview" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::FeedbackSubjectPreview,
         >(),
@@ -5879,6 +5919,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
+        "vault.booking.availability" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.book" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.reschedule" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.cancel" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
         "vault.booking.constraint_turn" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BookingConstraintTurnResponse,
         >(),
@@ -6250,6 +6302,20 @@ pub fn mcp_arguments_schema_from_input(
 ) -> Option<serde_json::Value> {
     let mut properties = serde_json::Map::new();
     let required: &[&str] = match verb {
+        "fetch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "crawl" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "report" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10526,6 +10592,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.booking.availability" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.book" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.reschedule" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.booking.constraint_turn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11808,6 +11902,14 @@ pub fn mcp_arguments_schema_from_input(
 }
 pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> {
     match verb {
+        "fetch" => {
+            let _input: crate::web_fetch::WebFetchRequest = decode(value.clone())?;
+        }
+        "crawl" => {
+            let input: crate::web_fetch::WebCrawlRequest = decode(value.clone())?;
+            crate::web_fetch::CrawlPageBudget::new(input.page_budget)
+                .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        }
         "report" => {
             let input: crate::feedback::ReportRequest = decode(value.clone())?;
             input.validate().map_err(MemoryError::from)?;
@@ -13870,6 +13972,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.forget" => {
             let _input: ForgetRequest = decode(value.clone())?;
         }
+        "vault.booking.availability" => {
+            let _input: crate::task_verb::sdk::BookingAvailabilityRequest = decode(value.clone())?;
+        }
+        "vault.booking.book" => {
+            let _input: crate::task_verb::sdk::BookingBookRequest = decode(value.clone())?;
+        }
+        "vault.booking.reschedule" => {
+            let _input: crate::task_verb::sdk::BookingRescheduleRequest = decode(value.clone())?;
+        }
+        "vault.booking.cancel" => {
+            let _input: crate::task_verb::sdk::BookingCancelRequest = decode(value.clone())?;
+        }
         "vault.booking.constraint_turn" => {
             let _input: crate::task_verb::sdk::BookingConstraintTurnRequest =
                 decode(value.clone())?;
@@ -14667,6 +14781,8 @@ pub fn invoke(
     }
     // The row's one verb-hook boundary (ARCH-0080 §3).
     crate::task_verb::verb_hook_boundary::row(memory, verb, value, |value| match verb {
+        "fetch" => encode(fetch(memory, decode(value)?)?),
+        "crawl" => encode(crawl(memory, decode(value)?)?),
         "report" => encode(report(memory, decode(value)?)?),
         "feedback.preview" => encode(feedback_preview(memory, decode(value)?)?),
         "feedback.send" => encode(feedback_send(memory, decode(value)?)?),
@@ -15712,6 +15828,10 @@ pub fn invoke(
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
+        "vault.booking.availability" => encode(vault_booking_availability(memory, decode(value)?)?),
+        "vault.booking.book" => encode(vault_booking_book(memory, decode(value)?)?),
+        "vault.booking.reschedule" => encode(vault_booking_reschedule(memory, decode(value)?)?),
+        "vault.booking.cancel" => encode(vault_booking_cancel(memory, decode(value)?)?),
         "vault.booking.constraint_turn" => {
             encode(vault_booking_constraint_turn(memory, decode(value)?)?)
         }
@@ -16283,6 +16403,20 @@ pub fn invoke_browser(
         }
     };
     output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string()))
+}
+pub fn fetch(
+    memory: &Memory<'_>,
+    input: crate::web_fetch::WebFetchRequest,
+) -> MemoryResult<crate::web_fetch::FetchResult> {
+    crate::task_verb::sdk::host_only(memory, "fetch", &input)
+}
+pub fn crawl(
+    memory: &Memory<'_>,
+    input: crate::web_fetch::WebCrawlRequest,
+) -> MemoryResult<crate::web_fetch::CrawlResult> {
+    crate::web_fetch::CrawlPageBudget::new(input.page_budget)
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    crate::task_verb::sdk::host_only(memory, "crawl", &input)
 }
 pub fn report(
     memory: &Memory<'_>,
@@ -21342,6 +21476,30 @@ pub fn vault_forget(
         &["/claim_ref"],
     )?;
     memory_requests::forget_claims(memory, input)
+}
+pub fn vault_booking_availability(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingAvailabilityRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.availability", &input)
+}
+pub fn vault_booking_book(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingBookRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.book", &input)
+}
+pub fn vault_booking_reschedule(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingRescheduleRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.reschedule", &input)
+}
+pub fn vault_booking_cancel(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingCancelRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.cancel", &input)
 }
 pub fn vault_booking_constraint_turn(
     memory: &Memory<'_>,

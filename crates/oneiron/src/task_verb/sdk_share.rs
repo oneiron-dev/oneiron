@@ -215,11 +215,7 @@ pub fn view_shared_brief_as_caller(
     input: ShareViewRequest,
 ) -> MemoryResult<ScopedReadResult<Option<SharedBriefView>>> {
     let share_id = share_ref(&input.share_ref)?;
-    let narrowing = input
-        .narrowing
-        .as_ref()
-        .map(viewer_narrowing)
-        .transpose()?;
+    let narrowing = input.narrowing.as_ref().map(viewer_narrowing).transpose()?;
     render_shared_brief(memory, &share_id, narrowing.as_ref())
 }
 

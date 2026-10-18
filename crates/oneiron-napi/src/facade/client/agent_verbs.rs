@@ -7,6 +7,14 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn fetch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("fetch", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn crawl(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("crawl", input).map_err(facade_error)
+    }
+    #[napi]
     pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("report", input).map_err(facade_error)
     }
@@ -5336,6 +5344,39 @@ impl NativeClient {
     pub fn vault_forget(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.forget", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_availability(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.availability", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_book(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.book", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_reschedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.reschedule", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_booking_cancel(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.booking.cancel", input)
             .map_err(facade_error)
     }
     #[napi]

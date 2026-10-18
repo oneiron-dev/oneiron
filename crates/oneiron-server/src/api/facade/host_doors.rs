@@ -103,6 +103,7 @@ pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
 // The share doors past create (OF-491), likewise.
@@ -133,9 +134,9 @@ pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::consent_doors::*;
-pub(crate) use super::graduation_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::graduation_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::checkout_doors::*;
@@ -164,8 +165,8 @@ pub(crate) use super::critic_review_doors::*;
 pub(crate) use super::affect_doors::*;
 pub(crate) use super::aging_doors::*;
 pub(crate) use super::campaign_split_doors::*;
-pub(crate) use super::research_doors::*;
 pub(crate) use super::coach_offer_doors::*;
+pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
@@ -1086,11 +1087,13 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.booking.constraint_turn" => {
-            crate::api::host_action::require_host_owner_act(server, auth)
-                .map(drop)
-                .map_err(|error| super::FacadeApiError::from(error).into_memory_error())
-        }
+        "vault.booking.constraint_turn"
+        | "vault.booking.availability"
+        | "vault.booking.book"
+        | "vault.booking.reschedule"
+        | "vault.booking.cancel" => crate::api::host_action::require_host_owner_act(server, auth)
+            .map(drop)
+            .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
         | "vault.runs.step"
@@ -1504,6 +1507,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"
         | "vault.fanout.resume_as" => super::decision_ask_doors::holder(auth, verb).map(drop),
+        "fetch" | "crawl" => super::facade_actor(server, auth)
+            .map(drop)
+            .map_err(super::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)

@@ -35,6 +35,12 @@ impl OneironClient {
         match &self.backend {
             Backend::Embedded(client) => client.invoke(verb, input),
             Backend::Remote(client) => match verb {
+                "fetch" => remote_agent_verb_output::<oneiron::web_fetch::FetchResult>(
+                    client, verb, &input,
+                ),
+                "crawl" => remote_agent_verb_output::<oneiron::web_fetch::CrawlResult>(
+                    client, verb, &input,
+                ),
                 "report" => remote_agent_verb_output::<oneiron::feedback::ReportReceipt>(
                     client, verb, &input,
                 ),
@@ -1896,6 +1902,18 @@ impl OneironClient {
                 "vault.forget" => remote_agent_verb_output::<Vec<oneiron::memory::CommitReceipt>>(
                     client, verb, &input,
                 ),
+                "vault.booking.availability" => remote_agent_verb_output::<
+                    oneiron::booking::agent_api::BookingOperationResponse,
+                >(client, verb, &input),
+                "vault.booking.book" => remote_agent_verb_output::<
+                    oneiron::booking::agent_api::BookingOperationResponse,
+                >(client, verb, &input),
+                "vault.booking.reschedule" => remote_agent_verb_output::<
+                    oneiron::booking::agent_api::BookingOperationResponse,
+                >(client, verb, &input),
+                "vault.booking.cancel" => remote_agent_verb_output::<
+                    oneiron::booking::agent_api::BookingOperationResponse,
+                >(client, verb, &input),
                 "vault.booking.constraint_turn" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::BookingConstraintTurnResponse,
                 >(client, verb, &input),
@@ -2483,6 +2501,32 @@ impl OneironClient {
                 ))
             }
         }
+    }
+    pub fn fetch(
+        &self,
+        input: &oneiron::web_fetch::WebFetchRequest,
+    ) -> Result<oneiron::web_fetch::FetchResult, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("fetch", value)
+    }
+    pub fn crawl(
+        &self,
+        input: &oneiron::web_fetch::WebCrawlRequest,
+    ) -> Result<oneiron::web_fetch::CrawlResult, MemoryError> {
+        oneiron::web_fetch::CrawlPageBudget::new(input.page_budget)
+            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("crawl", value)
     }
     pub fn report(
         &self,
@@ -9891,6 +9935,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.forget", value)
+    }
+    pub fn vault_booking_availability(
+        &self,
+        input: &oneiron::task_verb::sdk::BookingAvailabilityRequest,
+    ) -> Result<oneiron::booking::agent_api::BookingOperationResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.booking.availability", value)
+    }
+    pub fn vault_booking_book(
+        &self,
+        input: &oneiron::task_verb::sdk::BookingBookRequest,
+    ) -> Result<oneiron::booking::agent_api::BookingOperationResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.booking.book", value)
+    }
+    pub fn vault_booking_reschedule(
+        &self,
+        input: &oneiron::task_verb::sdk::BookingRescheduleRequest,
+    ) -> Result<oneiron::booking::agent_api::BookingOperationResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.booking.reschedule", value)
+    }
+    pub fn vault_booking_cancel(
+        &self,
+        input: &oneiron::task_verb::sdk::BookingCancelRequest,
+    ) -> Result<oneiron::booking::agent_api::BookingOperationResponse, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.booking.cancel", value)
     }
     pub fn vault_booking_constraint_turn(
         &self,

@@ -139,6 +139,8 @@ pub struct SyncServer {
     pub(crate) desktop_seats: Arc<super::DesktopSeats>,
     /// The run browsers bound now, for the owner's takeover (CUA-001).
     pub(crate) browser_seats: Arc<super::BrowserSeats>,
+    /// Host-injected acquisition ladder, initialized to native readability on first use.
+    pub(crate) web_fetcher: std::sync::OnceLock<Arc<oneiron::web_fetch::WebFetcher>>,
     /// Actor/session read observations share the server lifetime, never a process global.
     pub(crate) memories_cursors: Mutex<crate::api::MemoriesCursorStore>,
     /// Host-resolved run briefs, keyed by authenticated actor and session.
@@ -273,12 +275,20 @@ impl SyncServer {
         // An empty configured secret mints nothing either: it carries no key
         // material, and every upgrade bearing it (or nothing) still 401s at
         // the auth door, so booting rootless here is fail-closed, not open.
-        if let Some(secret) = host_root_secret(&vault, &config) {
-            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
-            vault.ensure_host_root_slip(&issuer)?;
-            // The engine's MACHINE writers sign with host-held keys (ONE-1634).
-            vault.provision_engine_machine_identities(&issuer)?;
-        }
+        let issuer = match host_root_secret(&vault, &config) {
+            Some(secret) => {
+                let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+                vault.ensure_host_root_slip(&issuer)?;
+                // The engine's MACHINE writers sign with host-held keys (ONE-1634).
+                vault.provision_engine_machine_identities(&issuer)?;
+                Some(issuer)
+            }
+            None => None,
+        };
+        // This install's own machine profile, before any request is admitted,
+        // so it carries the owner's acts from its first start (FIX 4648):
+        // self-hosted and embedded serving alike. A start goes on without it.
+        vault.ensure_serving_install_profile_at_start(issuer.as_ref(), "serve");
 
         let root_doc = match server_state::load_root_from_state(&vault)? {
             Some(doc) => doc,
@@ -452,6 +462,7 @@ impl SyncServer {
             desktop_guest: None,
             desktop_seats: Arc::default(),
             browser_seats: Arc::default(),
+            web_fetcher: std::sync::OnceLock::new(),
             memories_cursors: Mutex::new(crate::api::MemoriesCursorStore::default()),
             self_brief_sessions: Mutex::new(BTreeMap::new()),
             deep_retrieval: None,

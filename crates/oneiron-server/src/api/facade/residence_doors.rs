@@ -309,5 +309,7 @@ pub(crate) async fn vault_residence_directives(
     auth: &CoreAuth,
     input: ResidenceDirectivesRequest,
 ) -> Listed<Vec<ResidenceDirectiveView>> {
-    naming(residence_directives(server, auth, input).await, |_| Vec::new())
+    naming(residence_directives(server, auth, input).await, |_| {
+        Vec::new()
+    })
 }
