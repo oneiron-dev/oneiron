@@ -5570,9 +5570,9 @@ class CodeProposalViewRequest(TypedDict):
     proposal_ref: str
 RepoProposalStatus = Literal["Proposed", "Approved", "Applied", "Failed"]
 class CodeProposedStamp(TypedDict):
-    actor_ref: str
-    session_ref: str
-    provenance_claim_ref: str
+    actor_ref: NotRequired[str | None]
+    session_ref: NotRequired[str | None]
+    provenance_claim_ref: NotRequired[str | None]
     turn_ref: NotRequired[str | None]
     activity_ref: NotRequired[str | None]
     intent_ref: NotRequired[str | None]
