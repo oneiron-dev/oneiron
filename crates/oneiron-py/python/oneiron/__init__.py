@@ -516,6 +516,9 @@ class Oneiron:
         def shared(self) -> "Oneiron._VaultSharedVerbs":
             return Oneiron._VaultSharedVerbs(self._client)
         @property
+        def org_admin(self) -> "Oneiron._VaultOrgAdminVerbs":
+            return Oneiron._VaultOrgAdminVerbs(self._client)
+        @property
         def members(self) -> "Oneiron._VaultMembersVerbs":
             return Oneiron._VaultMembersVerbs(self._client)
         @property
@@ -1955,9 +1958,27 @@ class Oneiron:
         def change(self, spec):
             """A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."""
             return json.loads(_translate(lambda: self._client.vault_shared_policy_change(json.dumps(spec))))
+    class _VaultOrgAdminVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def configure(self, spec):
+            """The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."""
+            return json.loads(_translate(lambda: self._client.vault_org_admin_configure(json.dumps(spec))))
+        def powers(self, spec):
+            """The caller reads only the organization's fixed named Admin powers that their own credential carries."""
+            return json.loads(_translate(lambda: self._client.vault_org_admin_powers(json.dumps(spec))))
     class _VaultMembersVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def reset_project_access(self, spec):
+            """An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."""
+            return json.loads(_translate(lambda: self._client.vault_members_reset_project_access(json.dumps(spec))))
+        def delegate(self, spec):
+            """A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."""
+            return json.loads(_translate(lambda: self._client.vault_members_delegate(json.dumps(spec))))
+        def projection(self, spec):
+            """Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."""
+            return json.loads(_translate(lambda: self._client.vault_members_projection(json.dumps(spec))))
         def add(self, spec):
             """An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."""
             return json.loads(_translate(lambda: self._client.vault_members_add(json.dumps(spec))))
@@ -4343,9 +4364,21 @@ class Oneiron:
     class _SelfFocusVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def wakes(self, spec):
+            """Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery."""
+            return json.loads(_translate(lambda: self._client.self_focus_wakes(json.dumps(spec))))
         @property
         def scratchpad(self) -> "Oneiron._SelfFocusScratchpadVerbs":
             return Oneiron._SelfFocusScratchpadVerbs(self._client)
+        def refresh(self, spec):
+            """Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw."""
+            return json.loads(_translate(lambda: self._client.self_focus_refresh(json.dumps(spec))))
+        def subscribe(self, spec):
+            """Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling."""
+            return json.loads(_translate(lambda: self._client.self_focus_subscribe(json.dumps(spec))))
+        def unsubscribe(self, spec):
+            """Unsubscribes the attached run's board STREAM connection from the named scopes."""
+            return json.loads(_translate(lambda: self._client.self_focus_unsubscribe(json.dumps(spec))))
     class _SelfFocusScratchpadVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

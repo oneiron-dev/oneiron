@@ -19,6 +19,7 @@ pub enum AgentVerb {
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
+    SelfFocusWakes,
     SelfFocusScratchpadRecall,
     SelfFocusScratchpadAppend,
     SelfFocusScratchpadSeal,
@@ -254,6 +255,11 @@ pub enum AgentVerb {
     VaultSharedReceipt,
     VaultSharedOutcomes,
     VaultSharedDeletion,
+    VaultOrgAdminConfigure,
+    VaultOrgAdminPowers,
+    VaultMembersResetProjectAccess,
+    VaultMembersDelegate,
+    VaultMembersProjection,
     VaultMembersAdd,
     VaultMembersInvitationSlip,
     VaultMembersChange,
@@ -992,6 +998,7 @@ impl AgentVerb {
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
+        Self::SelfFocusWakes,
         Self::SelfFocusScratchpadRecall,
         Self::SelfFocusScratchpadAppend,
         Self::SelfFocusScratchpadSeal,
@@ -1227,6 +1234,11 @@ impl AgentVerb {
         Self::VaultSharedReceipt,
         Self::VaultSharedOutcomes,
         Self::VaultSharedDeletion,
+        Self::VaultOrgAdminConfigure,
+        Self::VaultOrgAdminPowers,
+        Self::VaultMembersResetProjectAccess,
+        Self::VaultMembersDelegate,
+        Self::VaultMembersProjection,
         Self::VaultMembersAdd,
         Self::VaultMembersInvitationSlip,
         Self::VaultMembersChange,
@@ -1968,6 +1980,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
+            Self::SelfFocusWakes => "self.focus.wakes",
             Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfFocusScratchpadAppend => "self.focus.scratchpad.append",
             Self::SelfFocusScratchpadSeal => "self.focus.scratchpad.seal",
@@ -2203,6 +2216,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => "vault.shared.receipt",
             Self::VaultSharedOutcomes => "vault.shared.outcomes",
             Self::VaultSharedDeletion => "vault.shared.deletion",
+            Self::VaultOrgAdminConfigure => "vault.org_admin.configure",
+            Self::VaultOrgAdminPowers => "vault.org_admin.powers",
+            Self::VaultMembersResetProjectAccess => "vault.members.reset_project_access",
+            Self::VaultMembersDelegate => "vault.members.delegate",
+            Self::VaultMembersProjection => "vault.members.projection",
             Self::VaultMembersAdd => "vault.members.add",
             Self::VaultMembersInvitationSlip => "vault.members.invitation_slip",
             Self::VaultMembersChange => "vault.members.change",
@@ -2962,6 +2980,10 @@ impl AgentVerb {
                 | Self::VaultReportsDisclosure
                 | Self::VaultReportsRoute
                 | Self::VaultReportsOutbound
+                | Self::SelfFocusRefresh
+                | Self::SelfFocusSubscribe
+                | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -3197,6 +3219,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -3962,6 +3989,7 @@ impl AgentVerb {
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -4197,6 +4225,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -5080,6 +5113,7 @@ impl AgentVerb {
                 | Self::VaultReportsDisclosure
                 | Self::VaultReportsRoute
                 | Self::VaultReportsOutbound
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -5293,6 +5327,11 @@ impl AgentVerb {
                 | Self::VaultSharedReceipt
                 | Self::VaultSharedOutcomes
                 | Self::VaultSharedDeletion
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultOrgAdminPowers
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
+                | Self::VaultMembersProjection
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -6114,6 +6153,9 @@ impl AgentVerb {
                 | Self::VaultSharedProposeTransfer
                 | Self::VaultSharedProposeRemoveOwner
                 | Self::VaultSharedExecute
+                | Self::VaultOrgAdminConfigure
+                | Self::VaultMembersResetProjectAccess
+                | Self::VaultMembersDelegate
                 | Self::VaultMembersAdd
                 | Self::VaultMembersInvitationSlip
                 | Self::VaultMembersChange
@@ -6583,6 +6625,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusWakes => &["spec"],
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
@@ -6835,6 +6878,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
+            Self::VaultOrgAdminConfigure => &["spec"],
+            Self::VaultOrgAdminPowers => &["spec"],
+            Self::VaultMembersResetProjectAccess => &["spec"],
+            Self::VaultMembersDelegate => &["spec"],
+            Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
@@ -7574,6 +7622,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusWakes => &["spec"],
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
@@ -7809,6 +7858,11 @@ impl AgentVerb {
             Self::VaultSharedReceipt => &["spec"],
             Self::VaultSharedOutcomes => &["spec"],
             Self::VaultSharedDeletion => &[],
+            Self::VaultOrgAdminConfigure => &["spec"],
+            Self::VaultOrgAdminPowers => &["spec"],
+            Self::VaultMembersResetProjectAccess => &["spec"],
+            Self::VaultMembersDelegate => &["spec"],
+            Self::VaultMembersProjection => &["spec"],
             Self::VaultMembersAdd => &["spec"],
             Self::VaultMembersInvitationSlip => &["spec"],
             Self::VaultMembersChange => &["spec"],
@@ -8583,6 +8637,9 @@ impl AgentVerb {
             Self::SelfFocusUnsubscribe => {
                 "Unsubscribes the run's board stream from the named scopes."
             }
+            Self::SelfFocusWakes => {
+                "Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery."
+            }
             Self::SelfFocusScratchpadRecall => {
                 "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."
             }
@@ -9270,6 +9327,21 @@ impl AgentVerb {
             }
             Self::VaultSharedOutcomes => "The reader's own outcome notices for a shared vault.",
             Self::VaultSharedDeletion => "The executed delete-the-vault act, if any.",
+            Self::VaultOrgAdminConfigure => {
+                "The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured."
+            }
+            Self::VaultOrgAdminPowers => {
+                "The caller reads only the organization's fixed named Admin powers that their own credential carries."
+            }
+            Self::VaultMembersResetProjectAccess => {
+                "An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override."
+            }
+            Self::VaultMembersDelegate => {
+                "A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward."
+            }
+            Self::VaultMembersProjection => {
+                "Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority."
+            }
             Self::VaultMembersAdd => {
                 "An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending."
             }

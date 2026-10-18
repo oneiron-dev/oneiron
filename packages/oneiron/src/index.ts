@@ -973,7 +973,19 @@ export class Oneiron {
         change: (input: Facade.SharedActPolicyChangeRequest): Facade.SharedActPolicyChange => this.#call(() => this.#client.vaultSharedPolicyChange(input) as Facade.SharedActPolicyChange),
       },
     },
+    org_admin: {
+      /** The owner fixes an organization's Admin identities and closed named-power set once; no root or private-vault power can be configured. */
+      configure: (input: Facade.OrgAdminConfigureRequest): Facade.OrgAdminConfigured => this.#call(() => this.#client.vaultOrgAdminConfigure(input) as Facade.OrgAdminConfigured),
+      /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
+      powers: (input: Facade.OrgAdminPowersRequest): Facade.OrgAdminPowers => this.#call(() => this.#client.vaultOrgAdminPowers(input) as Facade.OrgAdminPowers),
+    },
     members: {
+      /** An Admin resets only a non-root shared project's signed access roster through the existing project-proof gate; it never changes a personal root or grants an unsigned override. */
+      reset_project_access: (input: Facade.SharedProjectAccessResetRequest): Facade.SharedProjectAccessReset => this.#call(() => this.#client.vaultMembersResetProjectAccess(input) as Facade.SharedProjectAccessReset),
+      /** A live parent Admin or Owner mints one explicit scope narrowing for a holder, bounded by policy and a server-clock expiry of at most 90 days; the Delegate cannot delegate onward. */
+      delegate: (input: Facade.FederationDelegateRequest): Facade.FederationMemberGrant => this.#call(() => this.#client.vaultMembersDelegate(input) as Facade.FederationMemberGrant),
+      /** Read a member's visible role grants, scopes, expiry and person/relationship through the caller's own scoped read; relationship labels confer no additional authority. */
+      projection: (input: Facade.SharedMemberRequest): Facade.MemberProjection => this.#call(() => this.#client.vaultMembersProjection(input) as Facade.MemberProjection),
       /** An Admin invites a live person into a shared vault at a non-root role; they join when they accept. Given the invitee's own device key, the host also mints the invitee a slip good only for this invitation while it is pending. */
       add: (input: Facade.SharedMemberAddRequest): Facade.SharedMemberInvited => this.#call(() => this.#client.vaultMembersAdd(input) as Facade.SharedMemberInvited),
       /** An Admin mints a pending invitation's slip for the public key the invitee generated on their own device: a founding invitation's, or one whose slip was lost. */
@@ -2330,6 +2342,8 @@ export class Oneiron {
   }
   readonly self = {
     focus: {
+      /** Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery. */
+      wakes: (input: Facade.LiveRunRequest<Facade.BoardWakeRequest>): Facade.BoardWakeReply => this.#call(() => this.#client.selfFocusWakes(input) as Facade.BoardWakeReply),
       scratchpad: {
         /** Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full. */
         recall: (input: Facade.ScratchpadRecallRequest): Facade.ScratchpadRecallReply => this.#call(() => this.#client.selfFocusScratchpadRecall(input) as Facade.ScratchpadRecallReply),
@@ -2338,6 +2352,12 @@ export class Oneiron {
         /** Seals the bound actor's session scratchpad, ending the run's pad; a session with no pad answers no pad. */
         seal: (input: Facade.ScratchpadSealRequest): Facade.ScratchpadWriteReply => this.#call(() => this.#client.selfFocusScratchpadSeal(input) as Facade.ScratchpadWriteReply),
       },
+      /** Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw. */
+      refresh: (input: Facade.LiveRunRequest<Facade.BoardRefreshRequest>): Facade.BoardFrameReply => this.#call(() => this.#client.selfFocusRefresh(input) as Facade.BoardFrameReply),
+      /** Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling. */
+      subscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusSubscribe(input) as Facade.BoardSubscriptionReply),
+      /** Unsubscribes the attached run's board STREAM connection from the named scopes. */
+      unsubscribe: (input: Facade.LiveRunRequest<Facade.BoardSubscriptionRequest>): Facade.BoardSubscriptionReply => this.#call(() => this.#client.selfFocusUnsubscribe(input) as Facade.BoardSubscriptionReply),
     },
     memory: {
       /** Writes one private entry in the bound actor's own diary, as an actor-private NOTE. */

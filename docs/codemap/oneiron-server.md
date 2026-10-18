@@ -170,6 +170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/artifact_hosting_doors.rs` | src | s | 13 crate-vis | — | Typed publication and private preview doors under each caller's own proof |
 | `src/api/facade/asr_doors.rs` | src | m | 5 crate-vis | — | The owner's host-enriched ASR door |
 | `src/api/facade/authority_history_doors.rs` | src | s | 2 crate-vis | — | Owner-authenticated signed authority history transfer |
+| `src/api/facade/board_stream_doors.rs` | src | s | 4 crate-vis | — | Public run-bound board STREAM doors: `self.focus.refresh`, `self.focus.subscribe`, `self.focus.unsubscribe`… |
 | `src/api/facade/booking_doors.rs` | src | s | 6 crate-vis | — | Typed booking-page discovery, published lifecycle and constraint front |
 | `src/api/facade/browser_doors.rs` | src | m | 20 crate-vis | — | Typed browser calls on the caller's own attached run and existing guest door |
 | `src/api/facade/budget_doors.rs` | src | s | 12 crate-vis | — | Credential-backed budget controls, beside the owner's held-run routes |
@@ -221,7 +222,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/guest_document_doors.rs` | src | s | 4 crate-vis | — | Guest document envelopes under the owner's or the recipient's own proof |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
 | `src/api/facade/hook_regen_doors.rs` | src | s | 3 crate-vis | — | Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one… |
-| `src/api/facade/host_doors.rs` | src | XL | 151 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 154 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/host_trigger_doors.rs` | src | s | 3 crate-vis | — | The owner's typed host triggers |
 | `src/api/facade/hub_doors.rs` | src | m | 19 crate-vis | — | Owner-proof facade doors for configured hubs and pinned foreign imports |
 | `src/api/facade/hyde_doors.rs` | src | s | 6 crate-vis | — | Typed host configuration, work and completion receipts for HydeExpander |
@@ -259,6 +260,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/setting_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's learned-setting rows: `vault.settings.learning`, `.put` and `.clear` |
 | `src/api/facade/share_doors.rs` | src | s | 3 crate-vis | — | The share doors past create (OF-491): the issuer or the vault's owner stops a share, and its recipient opens… |
 | `src/api/facade/shared_act_doors.rs` | src | m | 17 crate-vis | — | The host doors of the shared-vault rows (OF-158): the acts the shared preset waits on (`vault.shared.*`)… |
+| `src/api/facade/shared_admin_doors.rs` | src | s | 3 crate-vis | — | Typed named Admin policy/powers and the one-hop scoped Delegate mint |
 | `src/api/facade/shared_member_doors.rs` | src | m | 16 crate-vis | — | The host doors of the shared-vault invitation rows (OF-531 / OF-158), beside `shared_act_doors`: an invitee… |
 | `src/api/facade/shared_policy_doors.rs` | src | s | 4 crate-vis | — | The host doors of the shared-act policy rows (DOOR-129), beside `shared_act_doors`: a live Owner reads every… |
 | `src/api/facade/sieve_doors.rs` | src | s | 9 crate-vis | — | The owner's sieve doors: the interest queue and its retained spans, consumed-span receipts, the sieve and… |
@@ -274,6 +276,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/trusted_contact_doors.rs` | src | s | 10 crate-vis | — | The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors` |
 | `src/api/facade/ui_action_routes.rs` | src | s | 2 crate-vis | — | OF-181: a host-rendered lens card's events, against the frame this server holds for it… |
 | `src/api/facade/vault_shape_doors.rs` | src | s | 1 crate-vis | — | `vault.shape.apply` (ARCH-0070) as a host door: the gated landing of a shape plan |
+| `src/api/facade/vector_doors.rs` | src | s | 1 crate-vis | — | Full-row vector uploads under the caller's own owner proof and write gate |
 | `src/api/facade/voice_bank_doors.rs` | src | s | 5 crate-vis | — | The owner's voice-bank host doors (DOOR-143, e2e VOICE-02): `vault.voices.packs.put`, `.render_consent`… |
 | `src/api/facade/wave_doors.rs` | src | s | 1 crate-vis | — | The credential door of `tasks.wave` (OF-427) |
 | `src/api/facade/weave_doors.rs` | src | m | 15 crate-vis | — | The weave lens's host doors (OF-499): the one-tap wrong control a person uses on a link, claim, project or… |

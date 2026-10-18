@@ -75,6 +75,11 @@ export_facade! {
     let output = client.vault_reports_outbound(&input)?;
     crate::codec::lift_record("vault.reports.outbound", &output)
 };
+"self.focus.wakes" => fn self_focus_wakes(&self, input: LiveRunRequestBoardWakeRequest) -> BoardWakeReply = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardWakeRequest> = crate::codec::lower_record("self.focus.wakes", input)?;
+    let output = client.self_focus_wakes(&input)?;
+    crate::codec::lift_record("self.focus.wakes", &output)
+};
 "self.focus.scratchpad.recall" => fn self_focus_scratchpad_recall(&self, input: ScratchpadRecallRequest) -> ScratchpadRecallReply = |client| {
     let input: oneiron::task_verb::sdk::ScratchpadRecallRequest = crate::codec::lower_record("self.focus.scratchpad.recall", input)?;
     let output = client.self_focus_scratchpad_recall(&input)?;
@@ -1250,6 +1255,31 @@ export_facade! {
     let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.shared.deletion")?;
     let output = client.vault_shared_deletion(&input)?;
     crate::codec::lift_record("vault.shared.deletion", &output)
+};
+"vault.org_admin.configure" => fn vault_org_admin_configure(&self, input: OrgAdminConfigureRequest) -> OrgAdminConfigured = |client| {
+    let input: oneiron::task_verb::sdk::OrgAdminConfigureRequest = crate::codec::lower_record("vault.org_admin.configure", input)?;
+    let output = client.vault_org_admin_configure(&input)?;
+    crate::codec::lift_record("vault.org_admin.configure", &output)
+};
+"vault.org_admin.powers" => fn vault_org_admin_powers(&self, input: OrgAdminPowersRequest) -> OrgAdminPowers = |client| {
+    let input: oneiron::task_verb::sdk::OrgAdminPowersRequest = crate::codec::lower_record("vault.org_admin.powers", input)?;
+    let output = client.vault_org_admin_powers(&input)?;
+    crate::codec::lift_record("vault.org_admin.powers", &output)
+};
+"vault.members.reset_project_access" => fn vault_members_reset_project_access(&self, input: SharedProjectAccessResetRequest) -> SharedProjectAccessReset = |client| {
+    let input: oneiron::task_verb::sdk::SharedProjectAccessResetRequest = crate::codec::lower_record("vault.members.reset_project_access", input)?;
+    let output = client.vault_members_reset_project_access(&input)?;
+    crate::codec::lift_record("vault.members.reset_project_access", &output)
+};
+"vault.members.delegate" => fn vault_members_delegate(&self, input: FederationDelegateRequest) -> FederationMemberGrant = |client| {
+    let input: oneiron::task_verb::sdk::FederationDelegateRequest = crate::codec::lower_record("vault.members.delegate", input)?;
+    let output = client.vault_members_delegate(&input)?;
+    crate::codec::lift_record("vault.members.delegate", &output)
+};
+"vault.members.projection" => fn vault_members_projection(&self, input: SharedMemberRequest) -> MemberProjection = |client| {
+    let input: oneiron::task_verb::sdk::SharedMemberRequest = crate::codec::lower_record("vault.members.projection", input)?;
+    let output = client.vault_members_projection(&input)?;
+    crate::codec::lift_record("vault.members.projection", &output)
 };
 "vault.members.add" => fn vault_members_add(&self, input: SharedMemberAddRequest) -> SharedMemberInvited = |client| {
     let input: oneiron::task_verb::sdk::SharedMemberAddRequest = crate::codec::lower_record("vault.members.add", input)?;
@@ -4735,5 +4765,20 @@ export_facade! {
     let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::SkillCallInput> = crate::codec::lower_record("self.skills.call", input)?;
     let output = client.self_skills_call(&input)?;
     crate::codec::encode("self.skills.call", &output)
+};
+"self.focus.refresh" => fn self_focus_refresh(&self, input: LiveRunRequestBoardRefreshRequest) -> BoardFrameReply = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardRefreshRequest> = crate::codec::lower_record("self.focus.refresh", input)?;
+    let output = client.self_focus_refresh(&input)?;
+    crate::codec::lift_record("self.focus.refresh", &output)
+};
+"self.focus.subscribe" => fn self_focus_subscribe(&self, input: LiveRunRequestBoardSubscriptionRequest) -> BoardSubscriptionReply = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardSubscriptionRequest> = crate::codec::lower_record("self.focus.subscribe", input)?;
+    let output = client.self_focus_subscribe(&input)?;
+    crate::codec::lift_record("self.focus.subscribe", &output)
+};
+"self.focus.unsubscribe" => fn self_focus_unsubscribe(&self, input: LiveRunRequestBoardSubscriptionRequest) -> BoardSubscriptionReply = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardSubscriptionRequest> = crate::codec::lower_record("self.focus.unsubscribe", input)?;
+    let output = client.self_focus_unsubscribe(&input)?;
+    crate::codec::lift_record("self.focus.unsubscribe", &output)
 };
 }

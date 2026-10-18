@@ -50,6 +50,8 @@ use crate::server::{MediaRefusal, SyncServer};
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
 pub(crate) use super::authority_history_doors::*;
+// The run-bound board STREAM doors (DOOR-121), likewise.
+pub(crate) use super::board_stream_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
@@ -61,6 +63,7 @@ pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::shared_act_doors::*;
+pub(crate) use super::shared_admin_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The shared-act policy doors (DOOR-129) too.
@@ -1549,6 +1552,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
         | "vault.trusted_contacts.concern.propose"
+        | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"
@@ -1577,6 +1581,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.execute"
         | "vault.shared.receipt"
         | "vault.shared.outcomes"
+        | "vault.members.delegate"
         | "vault.members.add"
         | "vault.members.change"
         | "vault.members.remove"

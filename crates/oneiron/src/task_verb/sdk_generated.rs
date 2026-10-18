@@ -106,6 +106,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<BoardSubscriptionRequest>(),
             ),
             (
+                "self.focus.wakes",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardWakeRequest>,
+                >(),
+            ),
+            (
                 "self.focus.scratchpad.recall",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ScratchpadRecallRequest,
@@ -1252,6 +1258,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.shared.deletion",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.org_admin.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OrgAdminConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.org_admin.powers",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OrgAdminPowersRequest,
+                >(),
+            ),
+            (
+                "vault.members.reset_project_access",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedProjectAccessResetRequest,
+                >(),
+            ),
+            (
+                "vault.members.delegate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::FederationDelegateRequest,
+                >(),
+            ),
+            (
+                "vault.members.projection",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedMemberRequest,
+                >(),
             ),
             (
                 "vault.members.add",
@@ -5358,6 +5394,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.reports.disclosure",
     "vault.reports.route",
     "vault.reports.outbound",
+    "self.focus.wakes",
     "self.standing.get",
     "self.standing.list",
     "self.standing.edit",
@@ -5517,6 +5554,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.slim.resume_step",
     "vault.slim.drop_heavy",
     "vault.slim.resume",
+    "vault.org_admin.configure",
+    "vault.org_admin.powers",
+    "vault.members.reset_project_access",
+    "vault.members.delegate",
+    "vault.members.projection",
     "vault.shared.policy.get",
     "vault.shared.policy.propose",
     "vault.shared.policy.answer",
@@ -5947,6 +5989,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.browser.library.run",
     "self.browser.handover",
     "self.report_blocked",
+    "self.focus.refresh",
+    "self.focus.subscribe",
+    "self.focus.unsubscribe",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
@@ -5989,6 +6034,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.reports.outbound" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::ReportOutboundView,
         >(),
+        "self.focus.wakes" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::BoardWakeReply>()
+        }
         "self.standing.get" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::StandingBlockView,
         >(),
@@ -6463,6 +6511,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.slim.resume" => {
             crate::code_run::vault_read::request_schema::<crate::slim::public::SlimResumeReceipt>()
+        }
+        "vault.org_admin.configure" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OrgAdminConfigured,
+        >(),
+        "vault.org_admin.powers" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OrgAdminPowers>()
+        }
+        "vault.members.reset_project_access" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SharedProjectAccessReset,
+        >(),
+        "vault.members.delegate" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::FederationMemberGrant,
+        >(),
+        "vault.members.projection" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::MemberProjection>()
         }
         "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPoliciesView,
@@ -7776,7 +7839,32 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.report_blocked" => {
             crate::code_run::vault_read::request_schema::<crate::code_run::ReportBlockedOutput>()
         }
+        "self.focus.refresh" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::BoardFrameReply>()
+        }
+        "self.focus.subscribe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BoardSubscriptionReply,
+        >(),
+        "self.focus.unsubscribe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BoardSubscriptionReply,
+        >(),
         _ => return None,
+    })
+}
+/// The JSON schema of the input a verb's facade route takes; a board
+/// verb's host projection where it has one, else [`input_schema`].
+pub fn facade_input_schema(verb: &str) -> Option<serde_json::Value> {
+    Some(match verb {
+        "self.focus.refresh" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardRefreshRequest>,
+        >(),
+        "self.focus.subscribe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>,
+        >(),
+        "self.focus.unsubscribe" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>,
+        >(),
+        _ => return input_schema(verb).cloned(),
     })
 }
 /// The facade rows no transport keeps a call receipt of (DOOR-127): an
@@ -7935,6 +8023,13 @@ pub fn mcp_arguments_schema_from_input(
                 schema.pointer("/properties/scopes")?.clone(),
             );
             &["scopes"]
+        }
+        "self.focus.wakes" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
         }
         "self.focus.scratchpad.recall" => {
             if schema == &serde_json::Value::Bool(false) {
@@ -9623,6 +9718,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.deletion" => &[],
+        "vault.org_admin.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.org_admin.powers" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.reset_project_access" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.delegate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.members.projection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.members.add" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -14538,13 +14668,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::ReportOutboundRequest = decode(value.clone())?;
         }
         "self.focus.refresh" => {
-            let _input: BoardRefreshRequest = decode(value.clone())?;
+            if decode::<BoardRefreshRequest>(value.clone()).is_err() {
+                let _host: crate::task_verb::sdk::LiveRunRequest<
+                    crate::task_verb::sdk::BoardRefreshRequest,
+                > = decode(value.clone())?;
+            }
         }
         "self.focus.subscribe" => {
-            let _input: BoardSubscriptionRequest = decode(value.clone())?;
+            if decode::<BoardSubscriptionRequest>(value.clone()).is_err() {
+                let _host: crate::task_verb::sdk::LiveRunRequest<
+                    crate::task_verb::sdk::BoardSubscriptionRequest,
+                > = decode(value.clone())?;
+            }
         }
         "self.focus.unsubscribe" => {
-            let _input: BoardSubscriptionRequest = decode(value.clone())?;
+            if decode::<BoardSubscriptionRequest>(value.clone()).is_err() {
+                let _host: crate::task_verb::sdk::LiveRunRequest<
+                    crate::task_verb::sdk::BoardSubscriptionRequest,
+                > = decode(value.clone())?;
+            }
+        }
+        "self.focus.wakes" => {
+            let _input: crate::task_verb::sdk::LiveRunRequest<
+                crate::task_verb::sdk::BoardWakeRequest,
+            > = decode(value.clone())?;
         }
         "self.focus.scratchpad.recall" => {
             let _input: crate::task_verb::sdk::ScratchpadRecallRequest = decode(value.clone())?;
@@ -15315,6 +15462,22 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.shared.deletion" => {
             let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.org_admin.configure" => {
+            let _input: crate::task_verb::sdk::OrgAdminConfigureRequest = decode(value.clone())?;
+        }
+        "vault.org_admin.powers" => {
+            let _input: crate::task_verb::sdk::OrgAdminPowersRequest = decode(value.clone())?;
+        }
+        "vault.members.reset_project_access" => {
+            let _input: crate::task_verb::sdk::SharedProjectAccessResetRequest =
+                decode(value.clone())?;
+        }
+        "vault.members.delegate" => {
+            let _input: crate::task_verb::sdk::FederationDelegateRequest = decode(value.clone())?;
+        }
+        "vault.members.projection" => {
+            let _input: crate::task_verb::sdk::SharedMemberRequest = decode(value.clone())?;
         }
         "vault.members.add" => {
             let _input: crate::task_verb::sdk::SharedMemberAddRequest = decode(value.clone())?;
@@ -17887,6 +18050,7 @@ pub fn invoke(
         "vault.reports.disclosure" => encode(vault_reports_disclosure(memory, decode(value)?)?),
         "vault.reports.route" => encode(vault_reports_route(memory, decode(value)?)?),
         "vault.reports.outbound" => encode(vault_reports_outbound(memory, decode(value)?)?),
+        "self.focus.wakes" => encode(self_focus_wakes(memory, decode(value)?)?),
         "self.focus.scratchpad.recall" => {
             encode(self_focus_scratchpad_recall(memory, decode(value)?)?)
         }
@@ -18278,6 +18442,13 @@ pub fn invoke(
         "vault.shared.receipt" => encode(vault_shared_receipt(memory, decode(value)?)?),
         "vault.shared.outcomes" => encode(vault_shared_outcomes(memory, decode(value)?)?),
         "vault.shared.deletion" => encode(vault_shared_deletion(memory, decode(value)?)?),
+        "vault.org_admin.configure" => encode(vault_org_admin_configure(memory, decode(value)?)?),
+        "vault.org_admin.powers" => encode(vault_org_admin_powers(memory, decode(value)?)?),
+        "vault.members.reset_project_access" => {
+            encode(vault_members_reset_project_access(memory, decode(value)?)?)
+        }
+        "vault.members.delegate" => encode(vault_members_delegate(memory, decode(value)?)?),
+        "vault.members.projection" => encode(vault_members_projection(memory, decode(value)?)?),
         "vault.members.add" => encode(vault_members_add(memory, decode(value)?)?),
         "vault.members.invitation_slip" => {
             encode(vault_members_invitation_slip(memory, decode(value)?)?)
@@ -19507,6 +19678,22 @@ pub fn invoke(
         "self.agents.spawn" => encode(self_agents_spawn(memory, decode(value)?)?),
         "self.leader.split" => encode(self_leader_split(memory, decode(value)?)?),
         "self.skills.call" => encode(self_skills_call(memory, decode(value)?)?),
+        "self.focus.refresh" => encode(crate::task_verb::sdk::host_only::<
+            crate::task_verb::sdk::BoardFrameReply,
+            crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardRefreshRequest>,
+        >(memory, "self.focus.refresh", &decode(value)?)?),
+        "self.focus.subscribe" => encode(crate::task_verb::sdk::host_only::<
+            crate::task_verb::sdk::BoardSubscriptionReply,
+            crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>,
+        >(
+            memory, "self.focus.subscribe", &decode(value)?
+        )?),
+        "self.focus.unsubscribe" => encode(crate::task_verb::sdk::host_only::<
+            crate::task_verb::sdk::BoardSubscriptionReply,
+            crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>,
+        >(
+            memory, "self.focus.unsubscribe", &decode(value)?
+        )?),
         _ => Err(MemoryError::bad_request("unknown SDK agent verb")),
     })
 }
@@ -19912,6 +20099,12 @@ pub fn self_focus_unsubscribe<S: crate::board_verb::LiveBoardSource>(
             scopes: input.scopes,
         },
     )
+}
+pub fn self_focus_wakes(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardWakeRequest>,
+) -> MemoryResult<crate::task_verb::sdk::BoardWakeReply> {
+    crate::code_run::fold_api::host_required(memory, &input)
 }
 pub fn self_focus_scratchpad_recall(
     memory: &Memory<'_>,
@@ -21824,6 +22017,44 @@ pub fn vault_shared_deletion(
     _input: EmptyRequest,
 ) -> MemoryResult<Option<crate::federation::SharedVaultDeletion>> {
     crate::task_verb::sdk::read_shared_deletion(memory.vault())
+}
+pub fn vault_org_admin_configure(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OrgAdminConfigureRequest,
+) -> MemoryResult<crate::task_verb::sdk::OrgAdminConfigured> {
+    crate::task_verb::sdk::configure_org_admin_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.org_admin.configure")?,
+        input,
+    )
+}
+pub fn vault_org_admin_powers(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OrgAdminPowersRequest,
+) -> MemoryResult<crate::task_verb::sdk::OrgAdminPowers> {
+    crate::task_verb::sdk::read_org_admin_powers(memory, input)
+}
+pub fn vault_members_reset_project_access(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedProjectAccessResetRequest,
+) -> MemoryResult<crate::task_verb::sdk::SharedProjectAccessReset> {
+    crate::task_verb::sdk::reset_shared_project_access(memory, input)
+}
+pub fn vault_members_delegate(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::FederationDelegateRequest,
+) -> MemoryResult<crate::task_verb::sdk::FederationMemberGrant> {
+    crate::task_verb::sdk::create_federation_delegate_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.members.delegate")?,
+        input,
+    )
+}
+pub fn vault_members_projection(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedMemberRequest,
+) -> MemoryResult<crate::task_verb::sdk::MemberProjection> {
+    crate::task_verb::sdk::read_member_projection(memory, input)
 }
 pub fn vault_members_add(
     memory: &Memory<'_>,

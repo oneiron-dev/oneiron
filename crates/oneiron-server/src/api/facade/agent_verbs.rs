@@ -17,6 +17,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.reports.disclosure", post(facade_route))
         .route("/vault.reports.route", post(facade_route))
         .route("/vault.reports.outbound", post(facade_route))
+        .route("/self.focus.wakes", post(facade_route))
         .route("/self.focus.scratchpad.recall", post(facade_route))
         .route("/self.focus.scratchpad.append", post(facade_route))
         .route("/self.focus.scratchpad.seal", post(facade_route))
@@ -261,6 +262,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shared.receipt", post(facade_route))
         .route("/vault.shared.outcomes", post(facade_route))
         .route("/vault.shared.deletion", post(facade_route))
+        .route("/vault.org_admin.configure", post(facade_route))
+        .route("/vault.org_admin.powers", post(facade_route))
+        .route("/vault.members.reset_project_access", post(facade_route))
+        .route("/vault.members.delegate", post(facade_route))
+        .route("/vault.members.projection", post(facade_route))
         .route("/vault.members.add", post(facade_route))
         .route("/vault.members.invitation_slip", post(facade_route))
         .route("/vault.members.change", post(facade_route))
@@ -1026,6 +1032,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
+        .route("/self.focus.refresh", post(facade_route))
+        .route("/self.focus.subscribe", post(facade_route))
+        .route("/self.focus.unsubscribe", post(facade_route))
 }
 async fn vault_off_record_rooms_export_attachment(
     auth: CoreAuth,

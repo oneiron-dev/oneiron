@@ -45,6 +45,7 @@ feedbackSend(input: unknown): unknown
 vaultReportsDisclosure(input: unknown): unknown
 vaultReportsRoute(input: unknown): unknown
 vaultReportsOutbound(input: unknown): unknown
+selfFocusWakes(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -280,6 +281,11 @@ vaultSharedExecute(input: unknown): unknown
 vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
+vaultOrgAdminConfigure(input: unknown): unknown
+vaultOrgAdminPowers(input: unknown): unknown
+vaultMembersResetProjectAccess(input: unknown): unknown
+vaultMembersDelegate(input: unknown): unknown
+vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
@@ -977,6 +983,9 @@ selfReportBlocked(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown
+selfFocusRefresh(input: unknown): unknown
+selfFocusSubscribe(input: unknown): unknown
+selfFocusUnsubscribe(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

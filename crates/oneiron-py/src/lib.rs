@@ -405,6 +405,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_focus_wakes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.wakes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.wakes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_focus_scratchpad_recall(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.focus.scratchpad.recall")?;
         let output = py
@@ -2362,6 +2369,48 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.shared.deletion")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.shared.deletion", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_org_admin_configure(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.org_admin.configure")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.org_admin.configure", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_org_admin_powers(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.org_admin.powers")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.org_admin.powers", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_reset_project_access(
+        &self,
+        py: Python<'_>,
+        input_json: &str,
+    ) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.reset_project_access")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.members.reset_project_access", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_delegate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.delegate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.delegate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_members_projection(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.members.projection")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.members.projection", input))
             .map_err(raise)?;
         encode(&output)
     }
@@ -8318,6 +8367,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.skills.call")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.skills.call", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_focus_refresh(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.refresh")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.refresh", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_focus_subscribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.subscribe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.subscribe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_focus_unsubscribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.unsubscribe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.unsubscribe", input))
             .map_err(raise)?;
         encode(&output)
     }
