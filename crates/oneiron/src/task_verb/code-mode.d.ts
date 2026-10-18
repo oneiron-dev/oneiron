@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 562 code-mode rows (541 host rows, 21 run rows), 1975 declarations.
-// Replies: 495 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 580 code-mode rows (559 host rows, 21 run rows), 2037 declarations.
+// Replies: 513 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -224,7 +224,7 @@ declare namespace Sdk {
   type ComposerStamp = { seat: string; one_liner_digest: string; lens_refs?: EntityId[]; at: number };
   type QueueTaskBrief = { schema: number; type_ref: TypeRef; objective: string; intent: BriefIntent; constraints?: BriefConstraints; context?: BriefContext; success: DoneMeans; settled?: EntityId[]; escalation: EscalationRule; project_ref?: EntityId | null; composed?: ComposerStamp | null };
   type TaskTtl = { deadline_at: number };
-  type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null };
+  type TaskCreateRequest = { spec: unknown; label?: string | null; assignee?: TaskAssignee | null; intent_key?: string | null; brief?: QueueTaskBrief | null; ttl?: TaskTtl | null; parent_ref?: string | null };
   type TaskCreateReceipt = { task_ref?: EntityId | null; proposal_ref?: EntityId | null; approval: ClaimApprovalStatus; effected: boolean; route?: TaskRouteOutcome | null; task_record?: RecordRef | null; proposal_record?: RecordRef | null };
   type TaskWaveRequest = { epic_task_ref: string; planner_ref: string; objective: string; constraints?: unknown };
   type TaskWaveReceipt = { attempt_ref: string; state: string };
@@ -700,6 +700,12 @@ declare namespace Sdk {
   type GateSystemNoticeAction = { label: string; target: string };
   type GateSystemNoticeRecord = { notice_type: string; channel: string; voice: string; audience: string; body: string; row_ref?: string | null; setting_change_offer?: GateSystemNoticeAction | null; policy_plane?: string | null; policy_version?: string | null; docs_url?: string | null };
   type TrustedContactAuthorization = { ask_ref: string; yes: boolean; outcome: TrustedContactAuthorizationOutcome; system_notices: GateSystemNoticeRecord[] };
+  type TrustedContactConcernRequest = { content_ref: string };
+  type TrustedContactConcernFact = "fact_of_concern";
+  type TrustedContactConcernProposal = { action: string; fact?: TrustedContactConcernFact | null; gate_receipt_ref?: string | null; open_asks: TrustedContactAsk[]; system_notices: GateSystemNoticeRecord[] };
+  type TrustedContactDeliverRequest = Record<string, never>;
+  type TrustedContactNoticeAuthorization = { origin: "ask"; ask_ref: string } | { origin: "policy"; row_ref: string; tier: TrustedContactTier };
+  type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -709,6 +715,15 @@ declare namespace Sdk {
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
+  type SupportHolderClass = "human" | "agent";
+  type SupportGrantMintRequest = { holder: EntityId; holder_class: SupportHolderClass; holder_key: string; scope: Scope; records?: EntityId[]; ttl_secs?: number | null; purpose: string; ticket_ref?: string | null };
+  type SupportGrantStatus = "active" | "expired" | "revoked" | "ended";
+  type SupportGrantView = { grant_ref: string; holder: EntityId; holder_class: string; scope: Scope; records?: string[]; purpose: string; ticket_ref?: string | null; approved_by: string; approved_at: number; wall_expires_at: number; status: SupportGrantStatus; revoke_command: string };
+  type SupportGrantMintAnswer = { slip: string; grant: SupportGrantView; decision_ref: string };
+  type SupportGrantListRequest = { include_inactive?: boolean; limit?: number | null };
+  type SupportGrantList = { grants: SupportGrantView[] };
+  type SupportGrantRevokeRequest = { grant_ref: string };
+  type SupportGrantRevokeAnswer = { grant_ref: string; holder: EntityId; changed: boolean; revoked_at?: number | null; decision_ref?: string | null; delivered_recallable: boolean };
   type ResidenceModeName = "opened" | "all";
   type ResidenceModeRequest = { machine: EntityId; mode: ResidenceModeName };
   type ResidenceModeChanged = { mode: ResidenceModeName; retained: string[]; unsynced: string[]; pruned_items: number };
@@ -937,6 +952,58 @@ declare namespace Sdk {
   type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; family: EntityId; targets?: EntityId[]; author: string };
   type EmbeddingSpaceProbeDeleteRequest = { id: string };
   type EmbeddingSpaceProbeDeleted = { ok: boolean };
+  type PolicyOutputContract = "binary" | "category_json" | "rationale_json";
+  type PolicyPatternRole = "escalate" | "decide" | "log";
+  type PolicyPatternRule = { id: string; pattern: string; category: string; role?: PolicyPatternRole };
+  type OwnerPolicyConfiguration = { owner_policy_enabled?: boolean; owner_policy_document?: string | null; owner_policy_output_contract?: PolicyOutputContract | null; owner_policy_patterns?: PolicyPatternRule[] };
+  type OwnerPolicyConfigurationView = { manifest_ref: string; body_hash: string; read_frontier_hash: string; enabled: boolean; configuration: OwnerPolicyConfiguration };
+  type OwnerPolicyConfigureRequest = { expected_body_hash: string; configuration: OwnerPolicyConfiguration };
+  type OwnerPolicyConfigurationReceipt = { configuration: OwnerPolicyConfigurationView; receipt_ref: string };
+  type PolicyRowAction = "warn" | "reword" | "block" | "route_to_help";
+  type PolicyRowScope = "Vault" | { World: string } | { Project: string } | { WorldProject: { world: string; project: string } };
+  type PolicyRowChange = { Add: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope } } | { Edit: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope } } | { Remove: { row_ref: string; scope: PolicyRowScope } } | { AddWithWhy: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope; why: string } } | { EditWithWhy: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope; why: string } } | { DraftWhy: { row_ref: string; scope: PolicyRowScope; why: string } };
+  type PolicyRowChangeRequest = { change: PolicyRowChange };
+  type PolicyRowReceipt = { receipt_id: string; revision: number; author: string; change: PolicyRowChange; previous_receipt_id?: string | null; at: number };
+  type PolicyClassifySubject = "outbound_content" | "action";
+  type PolicyOutboundRequest = { subject: PolicyClassifySubject; content: string; world_ref?: string | null; project_ref?: string | null };
+  type PolicyEnforcementAction = "allow" | "warn" | "reword" | "block" | "route_to_help" | "hold" | "skipped";
+  type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "policy-moving";
+  type PolicyClassifyDecision = "allow" | "warn" | "reword" | "block" | "route-to-help" | "hold" | { skipped: PolicySkipReason };
+  type PolicyVerdictCategory = { category: "none" } | { category: "owner_policy"; sub: { row_ref: string } } | { category: "hosted_legal"; sub: { category: string; jurisdiction: string; policy_version: string; row_ref: string } };
+  type PolicyHedgeBucket = "certain" | "high" | "medium" | "low";
+  type PolicyConfidence = { calibrated: number; hedge_bucket: PolicyHedgeBucket };
+  type PolicyContentBinding = { content_hash: number[]; read_frontier_hash: number[] };
+  type RelayClassifierMode = "classify_all" | "pattern_gated";
+  type ImageBox = { top: number; bottom: number; left: number; right: number };
+  type ImagePoint = { x: number; y: number };
+  type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type DecisionBand = { low: number; high: number };
+  type EvidenceVersion = { id: string; body_hash: number[] };
+  type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
+  type StopCause = "done" | "deadline" | "provider_failure";
+  type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
+  type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
+  type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
+  type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
+  type HostRuleRef = { id: string; revision: number };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
+  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
+  type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
+  type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; typed_decisions?: TypedDecision[] };
+  type PolicyPlane = "owner_policy" | "hosted_legal";
+  type HostedOutagePolicy = "halt" | "proceed_receipted";
+  type HostedPlaneAttestation = { plane: PolicyPlane; policy_version: string; policy_hash: string; classifier_mode?: RelayClassifierMode | null; decision_binding?: string | null; outage_policy?: HostedOutagePolicy | null; degraded?: boolean | null };
+  type PolicyClassifyVerdict = { decision: PolicyClassifyDecision; category: PolicyVerdictCategory; confidence: PolicyConfidence; binding: PolicyContentBinding; safeguard_binding: string; classifier_mode?: RelayClassifierMode | null; decision_binding?: string | null; audit?: PolicyPassAudit | null; hosted_attestation?: HostedPlaneAttestation | null; plane_minted?: PolicyPlane | null };
+  type PolicyEnforcementVoice = "persona" | "system";
+  type PolicyHelpRouting = { category: PolicyVerdictCategory; message: string; diagnosis?: string | null; persona_present: boolean; resources?: GateSystemNoticeAction[] };
+  type PolicyRewordRequest = { row_ref: string; constraint: string; why?: string | null; rejected_binding: PolicyContentBinding };
+  type PolicyBargeInKill = { cancel_tts: boolean; flush_playout_buffer: boolean; cancel_llm: boolean };
+  type PolicyModelEnforcement = { action: PolicyEnforcementAction; verdict: PolicyClassifyVerdict; final_content?: string | null; outbound_halted: boolean; receipt_ref?: string | null; moderation_ref?: string | null; system_notice?: string | null; notice_voice?: PolicyEnforcementVoice | null; system_notices?: GateSystemNoticeRecord[]; help_routing?: PolicyHelpRouting | null; reword?: PolicyRewordRequest | null; classify_trace: PolicyClassifyVerdict[]; pre_display_block: boolean; barge_in_kill?: PolicyBargeInKill | null; custom_tier_skipped: boolean };
+  type RelayBoundaryDegrade = "safeguard_model_unavailable" | "safeguard_model_response_unusable" | "safeguard_model_tier_absent" | "output_contract_undeclared" | "policy_binding_moved_mid_pass";
+  type RelayResolution = "pattern_decided" | "model_decided" | "pattern_gated_allow" | "log_only" | "no_policy_in_play" | "vault_side_decided" | "unresolved";
+  type HostedPassEvidence = { version: string; policy_hash: string; verify_content_hash: number[] };
+  type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
   type PolicySensitivity = "normal" | "sensitive";
@@ -1200,22 +1267,6 @@ declare namespace Sdk {
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
   type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: unknown; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
-  type ImageBox = { top: number; bottom: number; left: number; right: number };
-  type ImagePoint = { x: number; y: number };
-  type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
-  type DecisionBand = { low: number; high: number };
-  type EvidenceVersion = { id: string; body_hash: number[] };
-  type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
-  type StopCause = "done" | "deadline" | "provider_failure";
-  type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
-  type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
-  type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
-  type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
-  type HostRuleRef = { id: string; revision: number };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
-  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
-  type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
   type UnitRefusal = { unit: unknown; reason: string };
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
@@ -1887,6 +1938,18 @@ declare namespace Sdk {
   type NoteAccessRequest = { note_ref: string; reason?: string | null };
   type NoteAuthorship = { operation: string; actor: string; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
+  type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
+  type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteEdit; reason?: string | null };
+  type NoteForkRecordView = { note_ref: string; fork_ref: string; parent: string; frontier: number[]; actor?: string | null; rewrite: boolean; proposal_ref?: string | null; decided: boolean };
+  type NoteForkView = { record: NoteForkRecordView; markdown?: string | null };
+  type NoteForkReadRequest = { note_ref: string; fork_ref: string; reason?: string | null };
+  type NoteProposalForkRef = { note_ref: string; fork_ref: string };
+  type NoteProposalOpenRequest = { forks: NoteProposalForkRef[]; explainer: string; reason?: string | null };
+  type NoteVerdict = "Merge" | "Switch" | "Reject";
+  type NoteLandingView = { receipt: string; note_ref: string; fork_ref: string; previous_head: string; head: string; verdict: NoteVerdict; actor?: string | null; at: number };
+  type NoteProposalView = { proposal_ref: string; waiting: NoteForkView[]; landed: NoteLandingView[]; explainer: string };
+  type NoteProposalRequest = { proposal_ref: string; reason?: string | null };
+  type NoteVersionTree = { version: NoteVersion; birth_author: string; born_at: number; forks: NoteForkRecordView[]; receipts: NoteLandingView[] };
   type NoteHistoryPurgeRequest = { note_ref: string };
   type NoteHistoryPurgeReceipt = { receipt: string; entity: string; document: string; actor?: string | null; requested: number[]; applied: number[]; at: number; live_text_hash: number[] };
   type NoteHistoryPurgeOutcome = { state: "erased"; receipt: NoteHistoryPurgeReceipt } | { state: "waiting"; note_ref: string; act_id: string };
@@ -1894,7 +1957,6 @@ declare namespace Sdk {
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
-  type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
   type EditNoteRequest = { note_ref: string; edit: NoteEdit };
   type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type NoteRefRequest = { note_ref: string };
@@ -2916,6 +2978,12 @@ declare const vault: Sdk.VaultHost & {
       /** Closes one live NOTE editor held by this caller; a binding id alone grants no authority. */
       close(input: Sdk.NoteEditorCloseRequest): Promise<Sdk.NoteEditorClosed | StoredResult>;
     };
+    /** Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head. */
+    fork(input: Sdk.NoteForkRequest): Promise<Sdk.NoteForkView | StoredResult>;
+    forks: {
+      /** Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE. */
+      read(input: Sdk.NoteForkReadRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteForkView | null> | StoredResult>;
+    };
     /** Creates a NOTE of a registered kind from an existing entity. */
     from_entity(input: Sdk.CreateNoteFromEntityRequest): Promise<Sdk.EntityRefReceipt | StoredResult>;
     /** Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented. */
@@ -2928,12 +2996,26 @@ declare const vault: Sdk.VaultHost & {
     history_purge_receipts(input: Sdk.NoteHistoryPurgeRequest): Promise<Sdk.NoteHistoryPurgeReceipt[] | StoredResult>;
     /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal, if it has one. */
     lifecycle(input: Sdk.NoteRefRequest): Promise<Sdk.NoteLifecycleView | StoredResult>;
+    proposals: {
+      /** Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts. */
+      merge(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants. */
+      open(input: Sdk.NoteProposalOpenRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable. */
+      read(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads. */
+      reject(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+      /** Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move. */
+      switch(input: Sdk.NoteProposalRequest): Promise<Sdk.NoteProposalView | StoredResult>;
+    };
     /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */
     read(input: Sdk.NoteReadRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteReadView | null> | StoredResult>;
     /** Seals one NOTE by its author or the owner: its document freezes at the current frontier, a later edit opens a fork, and the seal stays. */
     seal(input: Sdk.NoteRefRequest): Promise<Sdk.NoteSeal | StoredResult>;
     /** Sets the extraction, context and retention defaults one NOTE overrides over its kind's, by its author or the owner; empty overrides clear them. An override never widens a scope or grant check. */
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
+    /** Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts. */
+    version_tree(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteVersionTree | null> | StoredResult>;
   };
   off_record: {
     claims: {
@@ -3008,6 +3090,26 @@ declare const vault: Sdk.VaultHost & {
     get(input: Sdk.PersonRequest): Promise<Sdk.PersonRow | StoredResult>;
     /** One page of the people the caller reads, in handle order. */
     list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
+  };
+  policy: {
+    outbound: {
+      /** Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes. */
+      decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.PolicyModelEnforcement | StoredResult>;
+    };
+    owner: {
+      /** The owner configures or toggles content policy against the current manifest hash without changing other policy tables. */
+      configure(input: Sdk.OwnerPolicyConfigureRequest): Promise<Sdk.OwnerPolicyConfigurationReceipt | StoredResult>;
+      /** The owner reads the content-policy configuration, default manifest hash and effective off/on state. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.OwnerPolicyConfigurationView | StoredResult>;
+      row: {
+        /** The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt. */
+        change(input: Sdk.PolicyRowChangeRequest): Promise<Sdk.PolicyRowReceipt | StoredResult>;
+      };
+    };
+    relay: {
+      /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+      decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.HostedRelayDecision | StoredResult>;
+    };
   };
   productivity: {
     /** Creates one inert Goal, Milestone or Habit TASK under an optional checked parent; an illegal nesting refuses the whole write. */
@@ -3288,6 +3390,14 @@ declare const vault: Sdk.VaultHost & {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
   };
+  support_grants: {
+    /** The owner lists the vault's support grants, newest first, with each one's bounds, deadline, status and revoke command. */
+    list(input: Sdk.SupportGrantListRequest): Promise<Sdk.SupportGrantList | StoredResult>;
+    /** The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds. */
+    mint(input: Sdk.SupportGrantMintRequest): Promise<Sdk.SupportGrantMintAnswer | StoredResult>;
+    /** The owner revokes one support grant; what support already read is not recalled. */
+    revoke(input: Sdk.SupportGrantRevokeRequest): Promise<Sdk.SupportGrantRevokeAnswer | StoredResult>;
+  };
   tasks: {
     linear: {
       /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
@@ -3305,6 +3415,10 @@ declare const vault: Sdk.VaultHost & {
       asks(input: Sdk.TrustedContactAsksRequest): Promise<Sdk.TrustedContactAsk[] | StoredResult>;
       /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
       authorize(input: Sdk.TrustedContactAuthorizeRequest): Promise<Sdk.TrustedContactAuthorization | StoredResult>;
+      /** The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice. */
+      deliver(input: Sdk.TrustedContactDeliverRequest): Promise<Sdk.TrustedContactDeliveryReceipt | null | StoredResult>;
+      /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
+      propose(input: Sdk.TrustedContactConcernRequest): Promise<Sdk.TrustedContactConcernProposal | StoredResult>;
     };
     /** The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this. */
     consent(input: Sdk.TrustedContactConsentRequest): Promise<Sdk.TrustedContact | StoredResult>;

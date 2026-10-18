@@ -163,8 +163,19 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.trusted_contacts.concern.authorize",
             post(facade_route),
         )
+        .route(
+            "/vault.trusted_contacts.concern.propose",
+            post(facade_route),
+        )
+        .route(
+            "/vault.trusted_contacts.concern.deliver",
+            post(facade_route),
+        )
         .route("/vault.guests.revoke", post(facade_route))
         .route("/vault.guests.mint_slip", post(facade_route))
+        .route("/vault.support_grants.mint", post(facade_route))
+        .route("/vault.support_grants.list", post(facade_route))
+        .route("/vault.support_grants.revoke", post(facade_route))
         .route("/vault.residence.mode", post(facade_route))
         .route("/vault.residence.open", post(facade_route))
         .route("/vault.residence.index", post(facade_route))
@@ -226,6 +237,11 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.embedding_spaces.probes.list", post(facade_route))
         .route("/vault.embedding_spaces.probes.put", post(facade_route))
         .route("/vault.embedding_spaces.probes.delete", post(facade_route))
+        .route("/vault.policy.owner.get", post(facade_route))
+        .route("/vault.policy.owner.configure", post(facade_route))
+        .route("/vault.policy.owner.row.change", post(facade_route))
+        .route("/vault.policy.outbound.decide", post(facade_route))
+        .route("/vault.policy.relay.decide", post(facade_route))
         .route("/vault.gate.policy.get", post(facade_route))
         .route("/vault.gate.policy.put", post(facade_route))
         .route("/vault.gate.policy.propose", post(facade_route))
@@ -517,6 +533,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.from_entity", post(facade_route))
         .route("/vault.notes.read", post(facade_route))
         .route("/vault.notes.history", post(facade_route))
+        .route("/vault.notes.fork", post(facade_route))
+        .route("/vault.notes.forks.read", post(facade_route))
+        .route("/vault.notes.proposals.open", post(facade_route))
+        .route("/vault.notes.proposals.read", post(facade_route))
+        .route("/vault.notes.proposals.merge", post(facade_route))
+        .route("/vault.notes.proposals.switch", post(facade_route))
+        .route("/vault.notes.proposals.reject", post(facade_route))
+        .route("/vault.notes.version_tree", post(facade_route))
         .route("/vault.notes.history_purge", post(facade_route))
         .route("/vault.notes.history_purge_execute", post(facade_route))
         .route("/vault.notes.history_purge_receipts", post(facade_route))

@@ -43,6 +43,7 @@ mod connector_pack_doors;
 mod consolidation_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
+mod content_policy_doors;
 mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;
@@ -82,6 +83,7 @@ mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
 mod shared_policy_doors;
+mod support_grant_doors;
 #[cfg(test)]
 pub(super) mod tests;
 mod trusted_contact_doors;
