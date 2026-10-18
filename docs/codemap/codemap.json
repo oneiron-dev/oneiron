@@ -27118,7 +27118,7 @@
      "path": "src/graph_fs/mod.rs",
      "purpose": "Graph-FS read projection over the vault graph",
      "surface": {
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -27168,6 +27168,30 @@
       "crate-vis": 10,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/graph_fs/scoped_files.rs",
+     "purpose": "The same credential-gated file projection for point reads and indexed hydration",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsReference"
+     ],
+     "path": "src/graph_fs/snapshot.rs",
+     "purpose": "Historical file resolution over retained codebase snapshots",
+     "surface": {
+      "crate-vis": 6,
+      "enum": 1,
+      "fn": 2
      }
     },
     {
@@ -33101,6 +33125,44 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/graph_fs_doors/mod.rs",
+     "purpose": "Typed read-only file-face verbs",
+     "surface": {
+      "fn": 10,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsDirectoryView",
+      "GraphFsEncoding",
+      "GraphFsEntryView",
+      "GraphFsFindRequest",
+      "GraphFsGrepRequest",
+      "GraphFsHeadRequest",
+      "GraphFsKind",
+      "GraphFsLinkRequest",
+      "GraphFsLinkView",
+      "GraphFsLsRequest",
+      "GraphFsMountRequest",
+      "GraphFsMounted",
+      "GraphFsOutput",
+      "GraphFsPathRequest",
+      "GraphFsPlan"
+     ],
+     "path": "src/memory/graph_fs_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "enum": 3,
+      "struct": 12
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/hook_regen_doors/mod.rs",
      "purpose": "Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose…",
      "surface": {
@@ -33284,7 +33346,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 22,
+      "mod": 23,
       "re-export": 50
      }
     },
@@ -52788,7 +52850,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 957
+      "fn": 967
      }
     },
     {
@@ -59586,7 +59648,7 @@
      "purpose": "Engine-owned typed git subprocess boundary (ONE-1903, RC6/ARCH-0068)"
     },
     "graph_fs": {
-     "files": 12,
+     "files": 14,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59768,7 +59830,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 209,
+     "files": 211,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60449,7 +60511,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3687,
+   "source_files": 3691,
    "test_files": 902
   },
   "oneiron-android": {
@@ -69040,7 +69102,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 926
+      "fn": 936
      }
     },
     {
@@ -70103,7 +70165,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 927
+      "fn": 937
      }
     },
     {
@@ -76351,7 +76413,7 @@
      "surface": {
       "enum": 11,
       "fn": 3,
-      "re-export": 10,
+      "re-export": 11,
       "struct": 23
      }
     },
@@ -76365,6 +76427,19 @@
      "purpose": "Host-only deployment commands; neither opens a local vault",
      "surface": {
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "GraphFsCommand"
+     ],
+     "path": "src/cli/graph_fs_args.rs",
+     "purpose": "Named CLI bindings for the typed file-face rows, using the same paired credential and transport as `oneiron…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -81642,7 +81717,7 @@
      "purpose": "Campaign enrollment from saved queries (ARCH-0059, decide-host 1193)"
     },
     "cli": {
-     "files": 8,
+     "files": 9,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -82015,7 +82090,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 766,
+   "source_files": 767,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -83419,6 +83494,22 @@
       "GraphAskRequest",
       "GraphAskSelection",
       "GraphEdge",
+      "GraphFsDirectoryView",
+      "GraphFsEncoding",
+      "GraphFsEntryView",
+      "GraphFsFindRequest",
+      "GraphFsGrepRequest",
+      "GraphFsHeadRequest",
+      "GraphFsKind",
+      "GraphFsLinkRequest",
+      "GraphFsLinkView",
+      "GraphFsLsRequest",
+      "GraphFsMountRequest",
+      "GraphFsMounted",
+      "GraphFsOutput",
+      "GraphFsPathRequest",
+      "GraphFsPlan",
+      "GraphFsReference",
       "GraphNode",
       "GroundingContext",
       "GuestCopyState",
@@ -85365,8 +85456,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 772,
-      "struct": 2380
+      "enum": 776,
+      "struct": 2392
      }
     },
     {
