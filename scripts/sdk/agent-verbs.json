@@ -10964,6 +10964,79 @@
       "openapi": true
     },
     {
+      "name": "calendar.ics.configure",
+      "description": "Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent.",
+      "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest",
+      "output": "crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.configure\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.ics.poll",
+      "description": "Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence.",
+      "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedRequest",
+      "output": "crate::calendar::ingest::feed_door::CalendarIcsPollCompletion",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.poll\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "calendar.ics.status",
+      "description": "Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL.",
+      "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedRequest",
+      "output": "Option<crate::calendar::ingest::feed_door::CalendarIcsFeedStatus>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.status\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.passports.read",
+      "description": "Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence.",
+      "input": "crate::calendar::query::passport::CalendarPassportReadRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::calendar::query::passport::CalendarPassportRevision>>",
+      "call": "memory.calendar_passport_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.calendar.passports.history",
+      "description": "Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate.",
+      "input": "crate::calendar::query::passport::CalendarPassportReadRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::query::passport::CalendarPassportRevision>>",
+      "call": "memory.calendar_passport_history(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "calendar.connector.configure",
       "description": "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence.",
       "input": "crate::calendar::connectors::door::CalendarConnectorConfigureRequest",

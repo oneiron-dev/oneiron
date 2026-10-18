@@ -664,6 +664,11 @@ both bindings and their export-census tests in one change.
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `calendar.invite`
+- `calendar.ics.configure`
+- `calendar.ics.poll`
+- `calendar.ics.status`
+- `vault.calendar.passports.read`
+- `vault.calendar.passports.history`
 - `calendar.connector.configure`
 - `calendar.connector.get`
 - `calendar.connector.pull`

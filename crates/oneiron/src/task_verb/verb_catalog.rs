@@ -682,6 +682,11 @@ pub enum AgentVerb {
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
+    CalendarIcsConfigure,
+    CalendarIcsPoll,
+    CalendarIcsStatus,
+    VaultCalendarPassportsRead,
+    VaultCalendarPassportsHistory,
     CalendarConnectorConfigure,
     CalendarConnectorGet,
     CalendarConnectorPull,
@@ -1549,6 +1554,11 @@ impl AgentVerb {
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
+        Self::CalendarIcsConfigure,
+        Self::CalendarIcsPoll,
+        Self::CalendarIcsStatus,
+        Self::VaultCalendarPassportsRead,
+        Self::VaultCalendarPassportsHistory,
         Self::CalendarConnectorConfigure,
         Self::CalendarConnectorGet,
         Self::CalendarConnectorPull,
@@ -2437,6 +2447,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
+            Self::CalendarIcsConfigure => "calendar.ics.configure",
+            Self::CalendarIcsPoll => "calendar.ics.poll",
+            Self::CalendarIcsStatus => "calendar.ics.status",
+            Self::VaultCalendarPassportsRead => "vault.calendar.passports.read",
+            Self::VaultCalendarPassportsHistory => "vault.calendar.passports.history",
             Self::CalendarConnectorConfigure => "calendar.connector.configure",
             Self::CalendarConnectorGet => "calendar.connector.get",
             Self::CalendarConnectorPull => "calendar.connector.pull",
@@ -3287,6 +3302,11 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -4181,6 +4201,11 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -4481,6 +4506,8 @@ impl AgentVerb {
                 | Self::VaultExportScoped
                 | Self::ExecuteCode
                 | Self::VaultCommit
+                | Self::VaultCalendarPassportsRead
+                | Self::VaultCalendarPassportsHistory
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
@@ -5171,6 +5198,9 @@ impl AgentVerb {
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
+                | Self::CalendarIcsStatus
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorGet
                 | Self::CalendarConnectorPull
@@ -5739,6 +5769,8 @@ impl AgentVerb {
                 | Self::VaultBookingReschedule
                 | Self::VaultBookingCancel
                 | Self::CalendarInvite
+                | Self::CalendarIcsConfigure
+                | Self::CalendarIcsPoll
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorPull
                 | Self::CalendarConnectorWrite
@@ -6565,6 +6597,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
+            Self::CalendarIcsConfigure => &["spec"],
+            Self::CalendarIcsPoll => &["spec"],
+            Self::CalendarIcsStatus => &["spec"],
+            Self::VaultCalendarPassportsRead => &["spec"],
+            Self::VaultCalendarPassportsHistory => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
             Self::CalendarConnectorGet => &["spec"],
             Self::CalendarConnectorPull => &["spec"],
@@ -7433,6 +7470,11 @@ impl AgentVerb {
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
+            Self::CalendarIcsConfigure => &["spec"],
+            Self::CalendarIcsPoll => &["spec"],
+            Self::CalendarIcsStatus => &["spec"],
+            Self::VaultCalendarPassportsRead => &["spec"],
+            Self::VaultCalendarPassportsHistory => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
             Self::CalendarConnectorGet => &["spec"],
             Self::CalendarConnectorPull => &["spec"],
@@ -9573,6 +9615,21 @@ impl AgentVerb {
             }
             Self::CalendarInvite => {
                 "Schedules an iMIP REQUEST or CANCEL through the caller-bound outbound gate, preserving UID, SEQUENCE, vault-only hygiene and delivery dedupe."
+            }
+            Self::CalendarIcsConfigure => {
+                "Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent."
+            }
+            Self::CalendarIcsPoll => {
+                "Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence."
+            }
+            Self::CalendarIcsStatus => {
+                "Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL."
+            }
+            Self::VaultCalendarPassportsRead => {
+                "Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence."
+            }
+            Self::VaultCalendarPassportsHistory => {
+                "Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate."
             }
             Self::CalendarConnectorConfigure => {
                 "Installs one CalDAV seat under owner proof, with a custody reference, discovery endpoint and nonzero bounded poll cadence."
