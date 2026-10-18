@@ -244,6 +244,18 @@ impl WindowManager {
             tracing::warn!(window = %window, %error, "setup rows not retried after a move ended");
         }
     }
+
+    /// Drains `window`'s remat markers once: each row it holds back on a
+    /// dependency that may have landed since is tried again (FIX 3820).
+    pub(in crate::sync) fn retry_held_rows(&self, window: &WindowKey) -> crate::Result<()> {
+        super::super::quarantine::drain_remat_markers_of(
+            &self.vault,
+            &self.user_id,
+            &self.materializer,
+            window,
+        )?;
+        Ok(())
+    }
 }
 
 /// The mirror thread: takes every row queued so far and mirrors it, holding

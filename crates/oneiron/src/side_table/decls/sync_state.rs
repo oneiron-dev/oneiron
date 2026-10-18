@@ -221,6 +221,9 @@ side_tables! {
     /// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
     /// Key: hex32.
     GATE_MANIFEST_TRUSTED_ORIGIN: SyncState b"manifest:trusted:" Raw;
+    /// A target whose machine-claim history this machine is owed (FIX 3820): the windows its rows
+    /// came in by, where the home's paging stopped and what the last try found. Key: hex32.
+    SYNC_MACHINE_HISTORY_OWED: SyncState b"mh:owed:v1:" Named;
     /// One submitted `ai.video` job (FIX-LIST 465): its rung, provider handle and call, and its end
     /// once a poll saw it, so a restart takes it up again and an ended job answers every poll until
     /// its caller deletes it. Its clips' bytes sit beside it. Key: ticket (`job_` hex24), or ticket
