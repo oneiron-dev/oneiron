@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 677 code-mode rows (656 host rows, 21 run rows), 2406 declarations.
-// Replies: 598 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 678 code-mode rows (657 host rows, 21 run rows), 2408 declarations.
+// Replies: 599 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -384,10 +384,17 @@ declare namespace Sdk {
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
   type SensitivityCeiling = { kind: "bottom" } | { kind: "at_most"; value: Sensitivity };
   type Scope = { worlds?: ScopeAxis<ScopeId>; facets?: ScopeAxis<ScopeId>; bands?: ScopeAxis<number>; audience?: ScopeAxis<ScopeId>; verbs?: ScopeAxis<string>; sensitivity?: SensitivityCeiling };
-  type SlipCaveat = { scope?: Scope | null; expires_at?: number | null; ttl_secs?: number | null; single_use: boolean; records?: string[] | null; channels?: string[] | null; pact?: [ScopeId, number[]] | null };
-  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: SlipCaveat; next_binding_key?: number[] | null };
-  type CredentialAttenuated = { token: string; binding_key: number[] };
   type CredentialCeiling = { kind: "ceiling"; scope: Scope };
+  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
+  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
+  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
+  type CredentialPactCeiling = { grant_ref: ScopeId; ceiling: FederationDirectionScope };
+  type CredentialCaveat = { scope?: CredentialCeiling | null; expires_at?: number | null; ttl_secs?: number | null; single_use?: boolean; records?: string[] | null; channels?: string[] | null; pact?: CredentialPactCeiling | null };
+  type CredentialAttenuationRequest = { holder_seed: number[]; caveat: CredentialCaveat; next_binding_key?: number[] | null };
+  type CredentialAttenuated = { token: string; binding_key: number[] };
+  type RecordPositionRequest = { record_ref: string };
+  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
+  type RecordPosition = { kind: "position"; scope: Scope };
   type RecordSelector = { worlds?: RecallWorlds | null; facet_refs?: string[]; kinds?: string[]; project_refs?: string[] };
   type ScopeAxisInput<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeSensitivityBand = "public" | "private" | "sensitive" | "restricted";
@@ -395,7 +402,6 @@ declare namespace Sdk {
   type ChannelCeiling = { worlds?: ScopeAxisInput<string>; facets?: ScopeAxisInput<string>; bands?: ScopeAxisInput<number>; audience?: ScopeAxisInput<string>; verbs?: ScopeAxisInput<string>; sensitivity?: ScopeSensitivityInput };
   type ExportChannel = { channel_ref: string; scope: ChannelCeiling };
   type ScopedExportRequest = { selector: RecordSelector; channel: ExportChannel };
-  type RecordPosition = { kind: "position"; scope: Scope };
   type MadeByInputRole = "input" | "prompt";
   type MadeByInput = { row: string; role: MadeByInputRole };
   type MadeByClass = "stated" | "concluded";
@@ -752,9 +758,6 @@ declare namespace Sdk {
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
-  type TypeByteFamily = "Conversation" | "People" | "World" | "Content" | "AgentsAndSurfacing" | "CoreOverflow" | "AuthorityPolicyCustody" | "AuditObservability" | "OutboundCommunicationConsent" | "RegistriesDerived" | "Productivity" | "Code" | "Documents" | "Companion" | "PackOverflow";
-  type SelectorRange = "Semantic" | "Core" | "Maintenance" | { Family: TypeByteFamily };
-  type FederationDirectionScope = { worlds: ScopeAxis<ScopeId>; facets: ScopeAxis<ScopeId>; bands: ScopeAxis<SelectorRange> };
   type OfferConnect = { peer_vault: string; grant: string; outbound: FederationDirectionScope; inbound: FederationDirectionScope };
   type FederationPactScope = { lo_to_hi: FederationDirectionScope; hi_to_lo: FederationDirectionScope };
   type Offer = { pact: string; nonce: string; from: string; to: string; scope: FederationPactScope; signer: string; signature: string };
@@ -1247,7 +1250,6 @@ declare namespace Sdk {
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
-  type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
   type DisclosureOffered = { proposal_ref: string; owner_ref: string; created_at: number; expires_at: number };
   type RevealRequest = { handle: string; why: string };
@@ -3814,6 +3816,8 @@ declare const vault: Sdk.VaultHost & {
   scope: {
     /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
     ceiling(input: Sdk.EmptyRequest): Promise<Sdk.CredentialCeiling | StoredResult>;
+    /** Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt. */
+    position(input: Sdk.RecordPositionRequest): Promise<Sdk.ScopedReadResult<Sdk.RecordPosition | null> | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
     /** BM25 text search over the engine index; surfaceable claims only. */

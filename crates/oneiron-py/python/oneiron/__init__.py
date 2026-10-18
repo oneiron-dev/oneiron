@@ -1056,6 +1056,9 @@ class Oneiron:
     class _VaultScopeVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def position(self, spec):
+            """Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."""
+            return json.loads(_translate(lambda: self._client.vault_scope_position(json.dumps(spec))))
         def ceiling(self, spec=None):
             """Reads the caller credential ceiling as a typed ceiling, never as a record position."""
             return json.loads(_translate(lambda: self._client.vault_scope_ceiling(json.dumps({} if spec is None else spec))))

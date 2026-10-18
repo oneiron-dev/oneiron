@@ -1121,6 +1121,20 @@
       "openapi": true
     },
     {
+      "name": "vault.scope.position",
+      "description": "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt.",
+      "input": "crate::memory::RecordPositionRequest",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::RecordPosition>>",
+      "call": "memory.scope_position(&input)?",
+      "scope": "Read",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.scope.ceiling",
       "description": "Reads the caller credential ceiling as a typed ceiling, never as a record position.",
       "input": "EmptyRequest",

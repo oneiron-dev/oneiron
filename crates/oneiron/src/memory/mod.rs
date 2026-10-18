@@ -201,9 +201,9 @@ pub use result_attachment::{
 };
 pub use room_turn::RoomTurnHandle;
 pub use scoped_export::{
-    ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector,
-    ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord,
-    ScopedExportRequest,
+    ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordPositionRequest,
+    RecordSelector, ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport,
+    ScopedExportRecord, ScopedExportRequest,
 };
 pub use search_hybrid::{
     HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,

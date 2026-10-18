@@ -490,6 +490,8 @@ export class Oneiron {
       scoped: (input: Facade.ScopedExportRequest): Facade.ScopedExport => this.#call(() => this.#client.vaultExportScoped(input) as Facade.ScopedExport),
     }),
     scope: {
+      /** Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt. */
+      position: (input: Facade.RecordPositionRequest): Facade.ScopedReadResult<Facade.RecordPosition | null> => this.#call(() => this.#client.vaultScopePosition(input) as Facade.ScopedReadResult<Facade.RecordPosition | null>),
       /** Reads the caller credential ceiling as a typed ceiling, never as a record position. */
       ceiling: (input: Facade.EmptyRequest = {}): Facade.CredentialCeiling => this.#call(() => this.#client.vaultScopeCeiling(input) as Facade.CredentialCeiling),
     },

@@ -66,6 +66,7 @@ pub enum AgentVerb {
     VaultRetrievalReplay,
     VaultExport,
     SelfCredentialAttenuate,
+    VaultScopePosition,
     VaultScopeCeiling,
     VaultExportScoped,
     VaultReceipts,
@@ -734,6 +735,7 @@ impl AgentVerb {
         Self::VaultRetrievalReplay,
         Self::VaultExport,
         Self::SelfCredentialAttenuate,
+        Self::VaultScopePosition,
         Self::VaultScopeCeiling,
         Self::VaultExportScoped,
         Self::VaultReceipts,
@@ -1405,6 +1407,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => "vault.retrieval.replay",
             Self::VaultExport => "vault.export",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
+            Self::VaultScopePosition => "vault.scope.position",
             Self::VaultScopeCeiling => "vault.scope.ceiling",
             Self::VaultExportScoped => "vault.export.scoped",
             Self::VaultReceipts => "vault.receipts",
@@ -2088,6 +2091,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -2763,6 +2767,7 @@ impl AgentVerb {
                 | Self::VaultRetrievalReplay
                 | Self::VaultExport
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultReceipts
@@ -3413,6 +3418,7 @@ impl AgentVerb {
                 | Self::VaultRecall
                 | Self::VaultAffectAnnotationsPut
                 | Self::SelfCredentialAttenuate
+                | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
@@ -4581,6 +4587,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -5250,6 +5257,7 @@ impl AgentVerb {
             Self::VaultRetrievalReplay => &["spec"],
             Self::VaultExport => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
+            Self::VaultScopePosition => &["spec"],
             Self::VaultScopeCeiling => &["spec"],
             Self::VaultExportScoped => &["spec"],
             Self::VaultReceipts => &["spec"],
@@ -6037,6 +6045,9 @@ impl AgentVerb {
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
+            }
+            Self::VaultScopePosition => {
+                "Reads a positively stamped record position through the caller credential and existing read gate, with its narrowing receipt."
             }
             Self::VaultScopeCeiling => {
                 "Reads the caller credential ceiling as a typed ceiling, never as a record position."
