@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 3;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +43,8 @@ pub struct WholeVaultDocumentManifest {
     pub secrets_included: bool,
     /// OF-370: embedding setup the nulling pass withheld from this archive.
     pub embedding_setup_withheld: EmbeddingSetupWithheld,
+    /// FIX 2768: side rows this archive holds out, and why.
+    pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,17 +78,38 @@ impl WholeVaultDocumentManifest {
     }
 }
 
-/// An archive payload and its standalone validating manifest. Fields are private:
-/// only the serializer can produce the credential-nulling proof on this result.
+/// An export written to a caller's file (FIX 2766): the manifest it carries
+/// and the diaries it read. The archive is the caller's file; no byte of it
+/// is held here. Fields are private: only the serializer produces one.
 #[derive(Debug, Clone)]
-pub struct WholeVaultExport {
-    pub(crate) bytes: Vec<u8>,
+pub struct WholeVaultExportReceipt {
     pub(crate) manifest: WholeVaultDocumentManifest,
     /// OF-490: the diaries this export read, for the vault's own log.
     pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
     /// The rows the archive is derived from, as its snapshot read them
     /// (DEC-0005), for a host that judges it again before it leaves.
     pub(crate) sources: Vec<crate::entity_id::EntityId>,
+}
+
+impl WholeVaultExportReceipt {
+    pub fn diary_reads(&self) -> &[super::ExportDiaryRead] {
+        &self.diary_reads
+    }
+    pub fn manifest(&self) -> &WholeVaultDocumentManifest {
+        &self.manifest
+    }
+}
+
+/// An archive payload in memory and its standalone validating manifest, for a
+/// door that answers in one frame; it is built through a spool file (FIX
+/// 2766). Fields are private: only the serializer can produce the
+/// credential-nulling proof on this result.
+#[derive(Debug, Clone)]
+pub struct WholeVaultExport {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) manifest: WholeVaultDocumentManifest,
+    /// OF-490: the diaries this export read, for the vault's own log.
+    pub(crate) diary_reads: Vec<super::ExportDiaryRead>,
 }
 
 impl WholeVaultExport {
@@ -106,7 +129,7 @@ impl WholeVaultExport {
     }
 }
 
-/// Ten sections. Entities occur once. Derived evidence is an index into
+/// Eleven sections. Entities occur once. Derived evidence is an index into
 /// claim evidence, not a second authoritative body. Structural graph edges live
 /// beside the evidence ledger and carry full value metadata. The embedding
 /// setup is descriptors only (OF-370): no vector travels. Epoch floors carry a
@@ -130,6 +153,10 @@ pub struct WholeVaultDocument {
     /// Every session's epoch floor, in session order; empty outside a
     /// whole-vault export.
     pub epoch_floors: Vec<ExportEpochFloor>,
+    /// FIX 2768: the allowlisted side-table rows that index the records here
+    /// (blob versions, LFS objects, codebase snapshots, code revisions and
+    /// code-document history); empty outside a whole-vault export.
+    pub side_tables: Vec<super::ArchiveSideRow>,
 }
 
 /// Where one session's highest removed epoch summary left the count (OF-013):
@@ -309,6 +336,9 @@ pub struct WholeVaultImportReceipt {
     pub missing_secrets: Vec<crate::secret_custody::SecretCustodyMetadata>,
     /// What the archive's embedding setup did here (OF-370).
     pub embedding_setup: EmbeddingSetupImport,
+    /// FIX 2768: side rows written, and those already here unchanged.
+    pub restored_side_rows: usize,
+    pub unchanged_side_rows: usize,
 }
 
 impl WholeVaultDocument {
