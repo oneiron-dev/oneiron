@@ -360,8 +360,9 @@ impl Vault {
     ///
     /// # Errors
     /// The hold is no longer open, the allowing answerer was erased (the
-    /// hold stays asked), an event of the document awaits its owner's answer
-    /// (the next pass tries again), or the write failed.
+    /// hold stays asked, and its worker asks its role chain again), an event
+    /// of the document awaits its owner's answer (the next pass tries again),
+    /// or the write failed.
     pub fn settle_esign_hold(
         &self,
         document: &str,
