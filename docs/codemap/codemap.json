@@ -2941,9 +2941,9 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -59483,7 +59483,7 @@
       "const": 5,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -75391,7 +75391,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 19,
       "re-export": 2
      }
