@@ -4758,7 +4758,7 @@
      "path": "src/batch/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 32,
+      "crate-vis": 33,
       "mod": 1,
       "re-export": 3
      }
@@ -5346,7 +5346,7 @@
      "path": "src/batch/vad_postcommit.rs",
      "purpose": "Transaction-owner handoff for Dreamer VAD approvals and digest invalidation",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 16
      }
     },
     {
