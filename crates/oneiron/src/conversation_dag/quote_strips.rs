@@ -1,6 +1,8 @@
 //! Reply strips by quoted MESSAGE over one selected thread chain, or, for a
 //! room turn, over the room's own index of its threads (OF-460): each room
-//! thread's quotes, unquoted replies among them, join its own strips.
+//! thread's quotes, unquoted replies among them, join its own strips. An
+//! ordinary room's witness quotes open no thread, so the room itself names
+//! their room-wide strips.
 //!
 //! A strip hydrates from its pinned version, never the latest body and
 //! never a copied MESSAGE. Missing, edited and erased targets follow the
@@ -10,13 +12,14 @@
 use super::graph::{conversation_of, invalid, require_type};
 use super::quote::{
     QuoteAnchor, field, message_fields, owning_turn_in, read_pointer, scalar_slice,
+    witness_turn_quotes,
 };
 use super::thread_projection::selected_thread_in_txn;
 use crate::entity_doc::CursorResolution;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
@@ -32,7 +35,10 @@ const PAGE_LIMIT: usize = 256;
 pub struct ReplyStripsRequest {
     /// Room (conversation) holding the thread.
     pub room_ref: String,
-    /// Trunk record whose selected thread is read, as `Vault::thread` selects it.
+    /// Trunk record whose selected thread is read, as `Vault::thread` selects
+    /// it. For an ordinary room, the room itself (`room_ref` again) reads
+    /// every quote its TURNs hold, witness quotes included (CALLS OF-460
+    /// ordinary-room strips).
     pub thread_ref: String,
     /// The last strip's citer on a preceding page (its `next_after`): the
     /// citing MESSAGE, or a native append's TURN.
@@ -118,12 +124,22 @@ impl QuoteFact {
     }
 }
 
-/// A handle's quote replies and how they are read. `room` is `None` for a
-/// DAG chain, read under the caller's own read; for a room turn it is the
-/// thread its selection reads under, `Some(None)` for a trunk's every thread.
+/// A handle's quote replies and how they are read.
 struct QuoteSelection {
     facts: Vec<QuoteFact>,
-    room: Option<Option<EntityId>>,
+    read: SelectionRead,
+}
+
+/// Whose read a selection's rows pass.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectionRead {
+    /// A DAG chain, under the caller's own read.
+    Caller,
+    /// A room turn's threads: the thread its selection reads under, `None`
+    /// for a trunk's every thread.
+    Room(Option<EntityId>),
+    /// An ordinary room's every quote, under the room's own read.
+    Ordinary,
 }
 
 /// Every quote `trunk` selects, in one snapshot. A DAG record's are those
@@ -133,6 +149,9 @@ struct QuoteSelection {
 /// row, by `(at, reply id, message order, citer id)`.
 fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSelection> {
     let txn = vault.store.env.read_txn()?;
+    if trunk == room {
+        return ordinary_quote_facts(vault, &txn, room);
+    }
     if conversation_of(&vault.store, &txn, &trunk)? != room {
         return Err(invalid("thread is outside the room"));
     }
@@ -146,7 +165,10 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
         for reply in chain {
             facts.extend(dag_fact_in(vault, &txn, reply)?);
         }
-        return Ok(QuoteSelection { facts, room: None });
+        return Ok(QuoteSelection {
+            facts,
+            read: SelectionRead::Caller,
+        });
     };
     let mut facts = Vec::new();
     let mut selected = BTreeSet::new();
@@ -171,7 +193,48 @@ fn quote_facts(vault: &Vault, room: EntityId, trunk: EntityId) -> Result<QuoteSe
     facts.sort_by_key(|fact| (fact.at, fact.reply, fact.order, fact.citer));
     Ok(QuoteSelection {
         facts,
-        room: Some(indexed.root),
+        read: SelectionRead::Room(indexed.root),
+    })
+}
+
+/// Every quote an ordinary room's live TURNs hold (OF-460): a witness TURN's
+/// by its body's quotes, one per citing MESSAGE, else a native append's
+/// pointer, by `(at, reply id, message order, citer id)`. A project room's
+/// strips name one of its threads.
+fn ordinary_quote_facts(vault: &Vault, txn: &RoTxn<'_>, room: EntityId) -> Result<QuoteSelection> {
+    require_type(&vault.store, txn, &room, ENTITY_TYPE_CONVERSATION)?;
+    if crate::workspace_roster::room_project_in(vault, txn, room)?.is_some() {
+        return Err(invalid("a project room's reply strips name a thread"));
+    }
+    let mut facts = Vec::new();
+    for (_, reply) in vault.childof_turns_in(txn, &room)? {
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } = live_entity_row_in_txn(&vault.store, txn, &reply)?
+        else {
+            continue;
+        };
+        let quotes = witness_turn_quotes(&body)?;
+        if quotes.is_empty() {
+            facts.extend(dag_fact_in(vault, txn, reply)?);
+            continue;
+        }
+        let at = vault
+            .store
+            .port_entity_record(txn, &reply)?
+            .ok_or(Error::EntityNotFound)?
+            .occurred
+            .start;
+        for (citer, quote) in quotes {
+            let pointer = Some((quote.target_turn, quote.anchor));
+            facts.extend(fact_in(vault, txn, reply, citer, pointer, at)?);
+        }
+    }
+    facts.sort_by_key(|fact| (fact.at, fact.reply, fact.order, fact.citer));
+    Ok(QuoteSelection {
+        facts,
+        read: SelectionRead::Ordinary,
     })
 }
 
@@ -344,7 +407,9 @@ impl Memory<'_> {
     /// becomes the cursor, which names the strip's citer.
     /// A room turn's strips read its room's threads (OF-460) under the
     /// room's reader for a trunk's every thread, or one thread's own reader
-    /// for that thread, as a room history read does.
+    /// for that thread, as a room history read does. An ordinary room named
+    /// as its own thread reads every quote its TURNs hold under the room's
+    /// own read, for a caller whose grants admit the room's record.
     pub fn rooms_reply_strips(
         &self,
         request: &ReplyStripsRequest,
@@ -371,9 +436,20 @@ impl Memory<'_> {
         }
         let QuoteSelection {
             facts,
-            room: selection,
+            read: selection,
         } = quote_facts(self.vault(), room, trunk)?;
-        let mut ids = BTreeSet::from([trunk]);
+        // The room itself is no reply row: its own record decides the read.
+        let ordinary = selection == SelectionRead::Ordinary;
+        if ordinary && !self.room_record_readable(room)? {
+            return Err(MemoryError::bad_request_with(
+                "thread is outside the reader's scope",
+                &[],
+            ));
+        }
+        let mut ids = BTreeSet::new();
+        if !ordinary {
+            ids.insert(trunk);
+        }
         for fact in &facts {
             ids.insert(fact.reply);
             ids.extend(fact.reply_message());
@@ -382,9 +458,11 @@ impl Memory<'_> {
             }
         }
         let ids: Vec<_> = ids.into_iter().collect();
-        let reader = selection
-            .map(|root| self.room_selection_reader(room, root))
-            .transpose()?;
+        let reader = match selection {
+            SelectionRead::Caller => None,
+            SelectionRead::Room(root) => Some(self.room_selection_reader(room, root)?),
+            SelectionRead::Ordinary => Some(self.for_room_projection(room)?),
+        };
         let lane = match &reader {
             Some(reader) => reader
                 .memory()
@@ -409,7 +487,7 @@ impl Memory<'_> {
         // A trunk's every thread reads each private thread's (FIX 2951)
         // replies under that thread's own reader, for a reader in its
         // audience: the room's lane withholds them from everyone.
-        if selection == Some(None) {
+        if selection == SelectionRead::Room(None) {
             let mut private = std::collections::BTreeMap::<EntityId, Vec<EntityId>>::new();
             {
                 let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
@@ -447,7 +525,7 @@ impl Memory<'_> {
                 }
             }
         }
-        if !admitted.contains(&trunk) {
+        if !ordinary && !admitted.contains(&trunk) {
             return Err(MemoryError::bad_request_with(
                 "thread is outside the reader's scope",
                 &[],
