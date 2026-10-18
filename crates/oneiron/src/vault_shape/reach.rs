@@ -23,6 +23,7 @@ use crate::consent::{
 use crate::error::Result;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// The verb class an outbound send is consented under, as the send door
 /// composes it (`gate::effect::external_effect_action_requirement`).
@@ -381,7 +382,14 @@ impl ReachRows {
 
     /// These rows with every plan item in place, as though each landed. An
     /// item the rows cannot carry is named in `unresolved`, never guessed.
-    pub(super) fn with_plan(&self, items: &[ShapePlanItem], unresolved: &mut Vec<String>) -> Self {
+    /// `sends` is whether each sender may send once the plan's manifest
+    /// changes are in place, read under the projected policy.
+    pub(super) fn with_plan(
+        &self,
+        items: &[ShapePlanItem],
+        sends: Option<&BTreeMap<EntityId, bool>>,
+        unresolved: &mut Vec<String>,
+    ) -> Self {
         let mut rows = self.clone();
         for item in items {
             match (&item.target, item.change, item.after.as_ref()) {
@@ -436,10 +444,19 @@ impl ReachRows {
                     .push(format!(
                         "channel {channel} {address}: sends only once its provision is fulfilled"
                     )),
-                (ShapeTarget::Manifest { manifest_ref }, _, _) => unresolved.push(format!(
-                    "manifest {}: its send policy is not projected",
-                    label(manifest_ref)
-                )),
+                (ShapeTarget::Manifest { manifest_ref }, _, _) => match sends {
+                    Some(sends) => {
+                        for sender in &mut rows.senders {
+                            if let Some(may_send) = sends.get(&sender.entity) {
+                                sender.may_send = *may_send;
+                            }
+                        }
+                    }
+                    None => unresolved.push(format!(
+                        "manifest {}: the plan's manifest changes would not all land, so its send policy is not projected",
+                        label(manifest_ref)
+                    )),
+                },
                 // A new actor holds no sending identity yet; a world, mask,
                 // member, pack, skill or sync row opens no send path.
                 _ => {}
