@@ -283,7 +283,6 @@ impl<Q: VoxCpm2Queue> VoxCpm2Adapter<Q> {
             || self.target.as_ref() != Some(&audio.target)
             || audio.channels != 1
             || audio.bytes.is_empty()
-            || audio.bytes.len() as u64 > self.limits.max_pcm_bytes
             || !audio.bytes.len().is_multiple_of(2)
         {
             return Err(invalid("unmatched target, submission or PCM format"));
