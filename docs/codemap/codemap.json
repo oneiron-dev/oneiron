@@ -3142,7 +3142,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "Folds the owner's work requests and their results: which install is to do the key, custody or root work an…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -8331,6 +8331,25 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "CalendarIcsFeedConfigureRequest",
+      "CalendarIcsFeedRegistration",
+      "CalendarIcsFeedRequest",
+      "CalendarIcsFeedStatus",
+      "CalendarIcsPollCompletion",
+      "CalendarIcsPollResult"
+     ],
+     "path": "src/calendar/ingest/feed_door.rs",
+     "purpose": "Owner-installed ICS feeds and public observations of completed polls",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "CustodyDoorIcsFeedFetcher",
       "IcsFeedFetcher",
       "IcsFeedSource",
@@ -8356,7 +8375,7 @@
      "purpose": "ICS feed poll runner and imported-claim admission (CAL-02, ONE-1784)",
      "surface": {
       "crate-vis": 7,
-      "mod": 1,
+      "mod": 2,
       "re-export": 3
      }
     },
@@ -8374,6 +8393,7 @@
      "purpose": "ICS feed poll queue, cursor store, and poll runner",
      "surface": {
       "const": 1,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 7,
       "struct": 4
@@ -8679,6 +8699,7 @@
      "purpose": "Calendar EVENT query + projection core (CAL-09)",
      "surface": {
       "crate-vis": 4,
+      "mod": 1,
       "re-export": 4
      }
     },
@@ -8690,6 +8711,20 @@
      "purpose": "Windowed occurrences from lane-admitted calendar facts",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CalendarPassportReadRequest",
+      "CalendarPassportRevision"
+     ],
+     "path": "src/calendar/query/passport.rs",
+     "purpose": "Typed passport heads and recorded revisions through the caller's own read lane",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -14449,7 +14484,7 @@
      "purpose": "DREAM-008 (ONE-1250) compaction handoff validation — the fail-closed door a forked-compaction packet must…",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "enum": 1,
       "fn": 10,
       "mod": 1,
@@ -14500,7 +14535,7 @@
      "purpose": "RT-05 in-engine compaction backend, margin law, and single-flight driver",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 3,
       "fn": 24,
       "struct": 8,
@@ -14628,7 +14663,8 @@
      "purpose": "`host.compact` (ARCH-0080 §5) around one compaction pass",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "crate-vis": 1,
+      "fn": 4,
       "struct": 1
      }
     },
@@ -16814,7 +16850,7 @@
      "purpose": "The fluent ContextPackBuilder surface: search, filter, boost, hydration, budget and format configuration",
      "surface": {
       "crate-vis": 5,
-      "fn": 65,
+      "fn": 66,
       "struct": 1
      }
     },
@@ -21063,7 +21099,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 13,
       "mod": 1,
       "re-export": 11
      }
@@ -32585,7 +32621,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ForeignCodeApproval",
@@ -33051,6 +33087,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/hyde_host.rs",
+     "purpose": "Stable authority key for a host expansion's pending work, without storing credentials",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -33237,7 +33283,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RevertRunOutcome",
@@ -39752,9 +39798,36 @@
       "const": 3,
       "crate-vis": 2,
       "enum": 1,
-      "fn": 1,
+      "fn": 3,
+      "mod": 1,
       "struct": 6,
-      "trait": 1
+      "trait": 1,
+      "type": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HydeHostAnswer",
+      "HydeHostCandidate",
+      "HydeHostCompleteRequest",
+      "HydeHostConfig",
+      "HydeHostConfiguration",
+      "HydeHostConfigureRequest",
+      "HydeHostInput",
+      "HydeHostPendingRequest",
+      "HydeHostReceipt",
+      "HydeHostReceiptRequest",
+      "HydeHostStatus",
+      "HydeHostWork"
+     ],
+     "path": "src/query_expansion/host.rs",
+     "purpose": "Typed transport for a host that implements the HyDE expansion seam",
+     "surface": {
+      "enum": 3,
+      "fn": 1,
+      "struct": 9
      }
     },
     {
@@ -41904,7 +41977,7 @@
      "purpose": "Every hook has a grant (ARCH-0080 §6)",
      "surface": {
       "crate-vis": 2,
-      "fn": 3,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -41920,6 +41993,27 @@
       "const": 1,
       "fn": 2,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HostBudgetAccounting",
+      "HostBudgetHitRequest",
+      "HostBudgetHitResult",
+      "HostCompactRequest",
+      "HostCompactResult",
+      "HostWakeKind",
+      "HostWakeRequest",
+      "HostWakeResult"
+     ],
+     "path": "src/runtime_hooks/host_doors.rs",
+     "purpose": "Typed host triggers (ARCH-0080 §5)",
+     "surface": {
+      "enum": 1,
+      "fn": 5,
+      "struct": 7
      }
     },
     {
@@ -41947,7 +42041,7 @@
      "purpose": "Runtime hooks (ARCH-0080)",
      "surface": {
       "crate-vis": 5,
-      "mod": 2,
+      "mod": 3,
       "re-export": 11
      }
     },
@@ -45497,7 +45591,7 @@
      "purpose": "The `hooks/` folder a pack carries (ARCH-0053 §7; ARCH-0080 §8, PACK-HOOKS = A)",
      "surface": {
       "const": 1,
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 5,
       "fn": 6,
       "struct": 3
@@ -48541,6 +48635,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/sync/client/residence/bundle/publication.rs",
+     "purpose": "The owner's ask to publish the vault's sealed bundle (WILL L04 row 03), run by the install his counted…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/sync/client/residence/bundle/sweep.rs",
      "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
      "surface": {
@@ -49503,10 +49607,20 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 12,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/bundle/publication.rs",
+     "purpose": "The home's admission of the install the owner asked to publish the vault's sealed bundle here (WILL L04 row…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -51476,7 +51590,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecallDoor"
@@ -52106,7 +52220,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 862
+      "fn": 877
      }
     },
     {
@@ -52217,6 +52331,9 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "HookGrantRequest",
+      "HookGrantSetRequest",
+      "HookGrantView",
       "HubConsentOutcome",
       "HubConsentReceipt",
       "HubHookBindRequest",
@@ -52244,8 +52361,8 @@
      "purpose": "Typed owner doors over configured hubs, foreign publishers and pinned imports",
      "surface": {
       "enum": 2,
-      "fn": 18,
-      "struct": 20
+      "fn": 20,
+      "struct": 23
      }
     },
     {
@@ -55549,7 +55666,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "CrawlCompletion",
@@ -56835,6 +56952,17 @@
      "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed key wrap entries, sealed to the…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/world_keys/bundle/publication.rs",
+     "purpose": "Sealed bundle publication on the owner's ask (WILL L04 row 03): he asks on any surface he is authenticated…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 2
      }
     },
     {
@@ -58224,7 +58352,7 @@
      "purpose": "Explicit account-scoped immutable build results"
     },
     "calendar": {
-     "files": 65,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58931,7 +59059,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 196,
+     "files": 197,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59120,10 +59248,10 @@
      "purpose": "PsychProfile snapshot record substrate"
     },
     "query_expansion": {
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
      "largest_src_bucket": "s",
-     "layout": "file",
+     "layout": "file+dir",
      "purpose": "Host-injected HyDE query-expansion seam"
     },
     "reaction": {
@@ -59204,7 +59332,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 28,
+     "files": 29,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59414,7 +59542,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 183,
+     "files": 185,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59577,7 +59705,7 @@
     "web_fetch": {
      "files": 5,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file+dir",
      "purpose": "OF-444 web acquisition primitive: one HTTP(S) URL in, one fixed six-field [`FetchResult`] out, produced by a…"
     },
@@ -59596,7 +59724,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 31,
+     "files": 32,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59610,9 +59738,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 198,
+   "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3637,
+   "source_files": 3645,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59867,7 +59995,7 @@
      "path": "src/authority/owner_work.rs",
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
-      "const": 3,
+      "const": 4,
       "crate-vis": 6,
       "enum": 6,
       "fn": 14,
@@ -68156,7 +68284,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 831
+      "fn": 846
      }
     },
     {
@@ -69218,7 +69346,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 832
+      "fn": 847
      }
     },
     {
@@ -70739,7 +70867,7 @@
      "path": "src/ai_host/compaction.rs",
      "purpose": "Compaction for code mode's runs (agent-runtime-v1 §d7)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -70892,7 +71020,7 @@
      "path": "src/ai_host/mod.rs",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 22,
       "re-export": 1,
       "struct": 2
@@ -72225,13 +72353,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/calendar_doors.rs",
      "purpose": "Owner-authorized calendar file imports through the credential's own handle",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 12
      }
     },
     {
@@ -72681,7 +72809,17 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 140
+      "crate-vis": 142
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/host_trigger_doors.rs",
+     "purpose": "The owner's typed host triggers",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -72691,7 +72829,17 @@
      "path": "src/api/facade/hub_doors.rs",
      "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hyde_doors.rs",
+     "purpose": "Typed host configuration, work and completion receipts for HydeExpander",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -75249,7 +75397,7 @@
      "path": "src/calendar_host.rs",
      "purpose": "The calendar host's real CalDAV wire and iMIP submission transport",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -75258,6 +75406,16 @@
      "notable": [],
      "path": "src/calendar_host/caldav.rs",
      "purpose": "Real CalDAV discovery, sync-collection and conditional resource writes",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/calendar_host/ics.rs",
+     "purpose": "Conditional ICS GET at the secret-custody door",
      "surface": {
       "crate-vis": 2
      }
@@ -79674,6 +79832,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/recall_hyde.rs",
+     "purpose": "A host-backed HydeExpander: typed work is handed to the caller's own host, outside every vault transaction",
+     "surface": {
+      "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/recall_rerank.rs",
      "purpose": "The reranker recall at high, xhigh and max runs on: the `reranker` role's seat from `[models]` (ARCH-0036)…",
      "surface": {
@@ -80541,7 +80709,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 404,
+     "files": 406,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80583,7 +80751,7 @@
      "purpose": "Bytes in memory the work under one row may hold at once: the embedder endpoint's request bodies or answers…"
     },
     "calendar_host": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -80898,7 +81066,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 41,
+     "files": 42,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -80970,7 +81138,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 750,
+   "source_files": 754,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -81417,6 +81585,7 @@
       "BriefKindStamp",
       "BriefStamp",
       "BudgetDenied",
+      "BudgetExhaustionPolicy",
       "BudgetHoldNotice",
       "BudgetHoldRequest",
       "BudgetHoldState",
@@ -81440,8 +81609,14 @@
       "CalendarEventView",
       "CalendarFreebusyIntervalDto",
       "CalendarFreebusyRequest",
+      "CalendarIcsFeedConfigureRequest",
+      "CalendarIcsFeedRegistration",
+      "CalendarIcsFeedRequest",
+      "CalendarIcsFeedStatus",
       "CalendarIcsImportReceipt",
       "CalendarIcsImportRequest",
+      "CalendarIcsPollCompletion",
+      "CalendarIcsPollResult",
       "CalendarImipTransportConfig",
       "CalendarImportClaimReceipt",
       "CalendarImportedEvent",
@@ -81450,6 +81625,11 @@
       "CalendarInviteSurfaceMethod",
       "CalendarOccurrenceView",
       "CalendarOccurrencesRequest",
+      "CalendarPassportDirection",
+      "CalendarPassportPresence",
+      "CalendarPassportReadRequest",
+      "CalendarPassportRevision",
+      "CalendarPassportValue",
       "CalendarRangeDto",
       "CalendarReadRequest",
       "CalendarSearchRequest",
@@ -81678,6 +81858,7 @@
       "CollectionAtom",
       "CommReach",
       "CommandOutput",
+      "CompactionWindowMessage",
       "CompanionAccessRequestAnswer",
       "CompanionAccessRequestAnswerRequest",
       "CompanionAccessRequestAnswered",
@@ -82084,6 +82265,7 @@
       "EvidenceKind",
       "EvidenceRef",
       "EvidenceRow",
+      "EvidenceVerdict",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectInput",
@@ -82240,6 +82422,7 @@
       "GraphAskSelection",
       "GraphEdge",
       "GraphNode",
+      "GroundingContext",
       "GuestCopyState",
       "GuestDeletionRequestStatus",
       "GuestDocumentContext",
@@ -82267,6 +82450,10 @@
       "HookAuthor",
       "HookContractStamp",
       "HookGoldenDiff",
+      "HookGrant",
+      "HookGrantRequest",
+      "HookGrantSetRequest",
+      "HookGrantView",
       "HookOutcomeKind",
       "HookPhase",
       "HookRegenAdoptRequest",
@@ -82283,9 +82470,17 @@
       "HookReplayRow",
       "HookSelector",
       "HooksReplayRequest",
+      "HostBudgetAccounting",
+      "HostBudgetHitRequest",
+      "HostBudgetHitResult",
+      "HostCompactRequest",
+      "HostCompactResult",
       "HostPin",
       "HostPinKind",
       "HostRuleRef",
+      "HostWakeKind",
+      "HostWakeRequest",
+      "HostWakeResult",
       "HostedOutagePolicy",
       "HostedPassEvidence",
       "HostedPlaneAttestation",
@@ -82319,6 +82514,23 @@
       "HybridSearchHit",
       "HybridSearchRequest",
       "HybridTemporalQuery",
+      "HydeExpansion",
+      "HydeHostAnswer",
+      "HydeHostCandidate",
+      "HydeHostCompleteRequest",
+      "HydeHostConfig",
+      "HydeHostConfiguration",
+      "HydeHostConfigureRequest",
+      "HydeHostInput",
+      "HydeHostPendingRequest",
+      "HydeHostReceipt",
+      "HydeHostReceiptRequest",
+      "HydeHostStatus",
+      "HydeHostWork",
+      "HydeOptions",
+      "HydeRequest",
+      "IcsFeedCursorSnapshot",
+      "IcsFeedPollConfig",
       "IdMarks",
       "IdentityActNow",
       "IdentityActNowRequest",
@@ -83320,12 +83532,14 @@
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultCalendarPassportRevisionList",
       "ScopedReadResultCoachInspectionView",
       "ScopedReadResultConsolidationEvidenceSourceList",
       "ScopedReadResultDiagnosticEventViewList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
+      "ScopedReadResultOptionalCalendarPassportRevision",
       "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalDiagnosticEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
@@ -84010,8 +84224,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 696,
-      "struct": 2146
+      "enum": 705,
+      "struct": 2183
      }
     },
     {

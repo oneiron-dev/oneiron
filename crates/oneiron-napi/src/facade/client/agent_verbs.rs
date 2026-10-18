@@ -528,6 +528,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_retrieval_hyde_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_pending(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.pending", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_complete(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.complete", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_retrieval_hyde_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.retrieval.hyde.receipt", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_affect_annotations_put(
         &self,
         input: serde_json::Value,
@@ -1530,6 +1575,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.packs.hooks.list", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_hooks_grant_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.hooks.grant.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_packs_hooks_grant_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.packs.hooks.grant.get", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -3628,6 +3691,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn host_compact(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("host.compact", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn host_wake(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("host.wake", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn host_budget_hit(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("host.budget.hit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_hooks_replay(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.hooks.replay", input)
@@ -5692,6 +5773,45 @@ impl NativeClient {
     pub fn calendar_invite(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("calendar.invite", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_ics_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.ics.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_ics_poll(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.ics.poll", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn calendar_ics_status(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("calendar.ics.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_passports_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.passports.read", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_passports_history(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.passports.history", input)
             .map_err(facade_error)
     }
     #[napi]

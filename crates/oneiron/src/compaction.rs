@@ -111,7 +111,8 @@ pub use gate::{
 pub(crate) use gate::{
     compaction_input_tokens, compaction_pin_input_tokens, compaction_step_input_tokens,
 };
-pub use hooks::{CompactHooks, HOST_COMPACT, compact_invocation};
+pub use hooks::{CompactHooks, HOST_COMPACT, check_host_compact_rewrite, compact_invocation};
+pub(crate) use hooks::host_compact_as_owner;
 pub use packet_source::{CompactionHostLog, CompactionSource, admit_compaction_source};
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,

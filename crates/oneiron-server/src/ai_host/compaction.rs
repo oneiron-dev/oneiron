@@ -82,6 +82,17 @@ pub(super) struct LiveCompaction {
 }
 
 impl CodeModeCompaction {
+    /// The registered cheap route already used by code mode, for an
+    /// owner's explicit host compaction. An off route has no replacement.
+    pub(super) fn host_backend(&self) -> Option<(Arc<dyn CompactionBackend>, CompactionGatePolicy)> {
+        match self {
+            Self::Off(_) => None,
+            Self::Live(live) => live.served.first().map(|backend| {
+                (Arc::clone(backend) as Arc<dyn CompactionBackend>, live.policy)
+            }),
+        }
+    }
+
     /// On when `[models.code_mode.compaction]` leaves it on, a seat serves
     /// its role and `prompt_package` holds the compaction block. Call from
     /// the runtime its passes will block on.

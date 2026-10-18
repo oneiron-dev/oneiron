@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 831 facade rows, 2877 declarations.
-Inputs: 779 of 831 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 748 of 831 fully typed, 83 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 846 facade rows, 2921 declarations.
+Inputs: 794 of 846 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 762 of 846 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 100; unread shapes: 0.
 """
 
@@ -1962,6 +1962,76 @@ class RetrievalWeightsConfigureRequest(TypedDict):
 class RetrievalWeightsReceipt(TypedDict):
     configuration: RetrievalWeightsView
     receipt_ref: str
+class GroundingContext(TypedDict):
+    bindings: dict[str, str]
+class HydeOptions(TypedDict):
+    channel_limit: int
+    retry_once: bool
+class HydeHostConfig(TypedDict):
+    expander: str
+    grounding: GroundingContext
+    options: HydeOptions
+class HydeHostConfigureRequest(TypedDict):
+    binding: NotRequired[HydeHostConfig | None]
+class HydeHostConfiguration(TypedDict):
+    binding: NotRequired[HydeHostConfig | None]
+class HydeHostPendingRequest(TypedDict):
+    limit: NotRequired[int | None]
+class HydeRequest(TypedDict):
+    query: str
+    max_subqueries: int
+class HydeHostCandidate(TypedDict):
+    id: str
+    score: float
+    claim: NotRequired[ClaimView | None]
+class HydeHostInputExpansion(TypedDict):
+    stage: Literal["expansion"]
+    request: HydeRequest
+class HydeHostInputEvidence(TypedDict):
+    stage: Literal["evidence"]
+    query: str
+    candidates: list[HydeHostCandidate]
+HydeHostInput = HydeHostInputExpansion | HydeHostInputEvidence
+class HydeHostWork(TypedDict):
+    request_id: str
+    expander: str
+    requested_at_ms: int
+    deadline_at_ms: NotRequired[int | None]
+    input: HydeHostInput
+class HydeExpansion(TypedDict):
+    grounded_query: str
+    hypothetical_answer: str
+    embedding: list[float]
+    subqueries: list[str]
+class EvidenceVerdictInsufficientBody(TypedDict):
+    gaps: list[str]
+class EvidenceVerdictInsufficient(TypedDict):
+    Insufficient: EvidenceVerdictInsufficientBody
+EvidenceVerdict = Literal["Sufficient"] | EvidenceVerdictInsufficient
+class HydeHostAnswerExpansion(TypedDict):
+    stage: Literal["expansion"]
+    expansion: HydeExpansion
+class HydeHostAnswerEvidence(TypedDict):
+    stage: Literal["evidence"]
+    verdict: EvidenceVerdict
+class HydeHostAnswerFailed(TypedDict):
+    stage: Literal["failed"]
+    reason: str
+HydeHostAnswer = HydeHostAnswerExpansion | HydeHostAnswerEvidence | HydeHostAnswerFailed
+class HydeHostCompleteRequest(TypedDict):
+    request_id: str
+    answer: HydeHostAnswer
+HydeHostStatus = Literal["pending", "expired", "completed", "failed", "discarded_deadline", "cancelled"]
+class HydeHostReceipt(TypedDict):
+    request_id: str
+    expander: str
+    requested_at_ms: int
+    deadline_at_ms: NotRequired[int | None]
+    completed_at_ms: NotRequired[int | None]
+    status: HydeHostStatus
+    received_bytes: int
+class HydeHostReceiptRequest(TypedDict):
+    request_id: str
 VadAnnotationSource = Literal["model_inference", "user_self_report"]
 class AffectAnnotationPut(TypedDict):
     turn_ref: str
@@ -3934,9 +4004,23 @@ class PackHookBinding(TypedDict):
     selector: HookSelector
     enabled: bool
     author: HookAuthor
+class HookGrant(TypedDict):
+    reader: str
+    reader_class: HookActorClass
+    predicates: NotRequired[list[str]]
+    worlds: NotRequired[list[str]]
 class HubHookBindingRow(TypedDict):
     id: EntityId
     binding: PackHookBinding
+    grant: HookGrant
+class HookGrantSetRequest(TypedDict):
+    binding: EntityId
+    grant: HookGrant
+class HookGrantView(TypedDict):
+    binding: EntityId
+    grant: HookGrant
+class HookGrantRequest(TypedDict):
+    binding: EntityId
 class HubHookQualifyRequest(TypedDict):
     source: EntityId
 FactSource = Literal["claim_changelog", "settlement"]
@@ -7821,6 +7905,52 @@ class SharedBriefView(TypedDict):
     html: str
     citations: list[SharedBriefCitation]
     born_with: BornWith
+class CompactionWindowMessage(TypedDict):
+    message_id: EntityId
+    turn_id: EntityId
+    content: str
+    turn: int
+    tokens: int
+class HostCompactRequest(TypedDict):
+    session_ref: EntityId
+    window: list[CompactionWindowMessage]
+    keep_list: list[str]
+    token_ceiling: int
+class HostCompactResult(TypedDict):
+    epoch: int
+    summary: EntityId
+    text: str
+    keep_list: list[str]
+    first_turn: int
+    last_turn: int
+HostWakeKind = Literal["compaction", "session_end", "event", "timer"]
+class HostWakeRequest(TypedDict):
+    wake_kind: HostWakeKind
+    queue_head: list[EntityId]
+class HostWakeResult(TypedDict):
+    wake_kind: HostWakeKind
+    queue_head: list[EntityId]
+    attempt: str
+    already_queued: bool
+class BudgetExhaustionPolicySuspend(TypedDict):
+    kind: Literal["suspend"]
+class BudgetExhaustionPolicyContinueOnLocal(TypedDict):
+    kind: Literal["continue_on_local"]
+class BudgetExhaustionPolicyOverdraft(TypedDict):
+    kind: Literal["overdraft"]
+    cap: int
+BudgetExhaustionPolicy = BudgetExhaustionPolicySuspend | BudgetExhaustionPolicyContinueOnLocal | BudgetExhaustionPolicyOverdraft
+class HostBudgetHitRequest(TypedDict):
+    seat: str
+    policy: BudgetExhaustionPolicy
+class HostBudgetAccounting(TypedDict):
+    line: SpendScope
+    root: SpendScope
+    spend: SpendRead
+class HostBudgetHitResult(TypedDict):
+    seat: str
+    policy: BudgetExhaustionPolicy
+    accounting: HostBudgetAccounting
 class HooksReplayRequest(TypedDict):
     binding: str
     since: NotRequired[str | None]
@@ -11812,6 +11942,61 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
+class IcsFeedPollConfig(TypedDict):
+    secret_ref: str
+    system: str
+    cadence_min_seconds: int
+    cadence_max_seconds: int
+class CalendarIcsFeedConfigureRequest(TypedDict):
+    config: IcsFeedPollConfig
+class CalendarIcsPollResultReenqueued(TypedDict):
+    state: Literal["reenqueued"]
+    next_not_before: int
+class CalendarIcsPollResultPausedNeedsInput(TypedDict):
+    state: Literal["paused_needs_input"]
+    inbox_exception_ref: str
+CalendarIcsPollResult = CalendarIcsPollResultReenqueued | CalendarIcsPollResultPausedNeedsInput
+class IcsFeedCursorSnapshot(TypedDict):
+    etag: NotRequired[str | None]
+    last_complete_at: NotRequired[int | None]
+    paused: bool
+    last_screen_verdict: NotRequired[str | None]
+class CalendarIcsPollCompletion(TypedDict):
+    poll_ref: str
+    completed_at: int
+    result: CalendarIcsPollResult
+    cursor: NotRequired[IcsFeedCursorSnapshot | None]
+class CalendarIcsFeedRegistration(TypedDict):
+    config: IcsFeedPollConfig
+    last_poll: NotRequired[CalendarIcsPollCompletion | None]
+class CalendarIcsFeedRequest(TypedDict):
+    system: str
+class CalendarIcsFeedStatus(TypedDict):
+    config: IcsFeedPollConfig
+    cursor: NotRequired[IcsFeedCursorSnapshot | None]
+    last_poll: NotRequired[CalendarIcsPollCompletion | None]
+class CalendarPassportReadRequest(TypedDict):
+    event_ref: str
+    system: str
+    uid: str
+CalendarPassportDirection = Literal["inbound", "outbound", "two_way"]
+CalendarPassportPresence = Literal["live", "absent"]
+class CalendarPassportValue(TypedDict):
+    system: str
+    uid: str
+    last_sequence: int
+    content_hash: list[int]
+    direction: CalendarPassportDirection
+    last_seen_at: int
+    presence: CalendarPassportPresence
+class CalendarPassportRevision(TypedDict):
+    claim_ref: str
+    event_ref: str
+    recorded_at: int
+    approval: str
+    lifecycle: str
+    stale: bool
+    passport: CalendarPassportValue
 class CalendarConnectorSeatConfig(TypedDict):
     seat_ref: str
     secret_ref: str

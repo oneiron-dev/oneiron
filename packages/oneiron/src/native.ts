@@ -98,6 +98,11 @@ vaultRetrievalAgingGet(input: unknown): unknown
 vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
+vaultRetrievalHydeConfigure(input: unknown): unknown
+vaultRetrievalHydeGet(input: unknown): unknown
+vaultRetrievalHydePending(input: unknown): unknown
+vaultRetrievalHydeComplete(input: unknown): unknown
+vaultRetrievalHydeReceipt(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
 vaultTaggingStatus(input: unknown): unknown
 vaultTaggingTags(input: unknown): unknown
@@ -207,6 +212,8 @@ vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
 vaultPacksHooksList(input: unknown): unknown
+vaultPacksHooksGrantSet(input: unknown): unknown
+vaultPacksHooksGrantGet(input: unknown): unknown
 vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksConnectorPrepare(input: unknown): unknown
@@ -452,6 +459,9 @@ selfSecretsUse(input: unknown): unknown
 vaultSharesCreate(input: unknown): unknown
 vaultSharesRevoke(input: unknown): unknown
 vaultSharesView(input: unknown): unknown
+hostCompact(input: unknown): unknown
+hostWake(input: unknown): unknown
+hostBudgetHit(input: unknown): unknown
 vaultHooksReplay(input: unknown): unknown
 vaultHooksRegenDue(input: unknown): unknown
 vaultHooksRegenGet(input: unknown): unknown
@@ -678,6 +688,11 @@ vaultBookingCancel(input: unknown): unknown
 vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
 calendarInvite(input: unknown): unknown
+calendarIcsConfigure(input: unknown): unknown
+calendarIcsPoll(input: unknown): unknown
+calendarIcsStatus(input: unknown): unknown
+vaultCalendarPassportsRead(input: unknown): unknown
+vaultCalendarPassportsHistory(input: unknown): unknown
 calendarConnectorConfigure(input: unknown): unknown
 calendarConnectorGet(input: unknown): unknown
 calendarConnectorPull(input: unknown): unknown

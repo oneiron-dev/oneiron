@@ -374,6 +374,34 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.retrieval.hyde.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.hyde.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.hyde.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostPendingRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.hyde.complete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostCompleteRequest,
+                >(),
+            ),
+            (
+                "vault.retrieval.hyde.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::query_expansion::host::HydeHostReceiptRequest,
+                >(),
+            ),
+            (
                 "vault.affect.annotations.put",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::affect::AffectAnnotationPut,
@@ -890,6 +918,14 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.packs.hooks.list",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.packs.hooks.grant.set",
+                crate::code_run::vault_read::request_schema::<HookGrantSetRequest>(),
+            ),
+            (
+                "vault.packs.hooks.grant.get",
+                crate::code_run::vault_read::request_schema::<HookGrantRequest>(),
             ),
             (
                 "vault.packs.hooks.qualify",
@@ -2278,6 +2314,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "host.compact",
+                crate::code_run::vault_read::request_schema::<
+                    crate::runtime_hooks::host_doors::HostCompactRequest,
+                >(),
+            ),
+            (
+                "host.wake",
+                crate::code_run::vault_read::request_schema::<
+                    crate::runtime_hooks::host_doors::HostWakeRequest,
+                >(),
+            ),
+            (
+                "host.budget.hit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::runtime_hooks::host_doors::HostBudgetHitRequest,
+                >(),
+            ),
+            (
                 "vault.hooks.replay",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::HooksReplayRequest,
@@ -3595,6 +3649,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "calendar.ics.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest,
+                >(),
+            ),
+            (
+                "calendar.ics.poll",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+                >(),
+            ),
+            (
+                "calendar.ics.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.passports.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::passport::CalendarPassportReadRequest,
+                >(),
+            ),
+            (
+                "vault.calendar.passports.history",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::query::passport::CalendarPassportReadRequest,
+                >(),
+            ),
+            (
                 "calendar.connector.configure",
                 crate::code_run::vault_read::request_schema::<
                     crate::calendar::connectors::door::CalendarConnectorConfigureRequest,
@@ -4713,6 +4797,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
+    "vault.retrieval.hyde.configure",
+    "vault.retrieval.hyde.get",
+    "vault.retrieval.hyde.pending",
+    "vault.retrieval.hyde.complete",
+    "vault.retrieval.hyde.receipt",
     "vault.affect.annotations.put",
     "vault.tagging.status",
     "vault.tagging.tags",
@@ -4799,6 +4888,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.governance.set",
     "vault.packs.hooks.bind",
     "vault.packs.hooks.list",
+    "vault.packs.hooks.grant.set",
+    "vault.packs.hooks.grant.get",
     "vault.packs.hooks.qualify",
     "vault.packs.connector.prepare",
     "vault.packs.connector.get",
@@ -4935,6 +5026,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.secrets.renew",
     "self.secrets.teardown",
     "self.secrets.use",
+    "host.compact",
+    "host.wake",
+    "host.budget.hit",
     "vault.hooks.regen.due",
     "vault.hooks.regen.get",
     "vault.hooks.regen.adopt",
@@ -5050,6 +5144,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.booking.constraint_turn",
     "vault.booking.page_token",
     "calendar.invite",
+    "calendar.ics.configure",
+    "calendar.ics.poll",
+    "calendar.ics.status",
+    "vault.calendar.passports.read",
+    "vault.calendar.passports.history",
     "calendar.connector.configure",
     "calendar.connector.get",
     "calendar.connector.pull",
@@ -5263,6 +5362,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.retrieval.weights.configure" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::RetrievalWeightsReceipt,
+        >(),
+        "vault.retrieval.hyde.configure" => crate::code_run::vault_read::request_schema::<
+            crate::query_expansion::host::HydeHostConfiguration,
+        >(),
+        "vault.retrieval.hyde.get" => crate::code_run::vault_read::request_schema::<
+            crate::query_expansion::host::HydeHostConfiguration,
+        >(),
+        "vault.retrieval.hyde.pending" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::query_expansion::host::HydeHostWork>,
+        >(),
+        "vault.retrieval.hyde.complete" => crate::code_run::vault_read::request_schema::<
+            crate::query_expansion::host::HydeHostReceipt,
+        >(),
+        "vault.retrieval.hyde.receipt" => crate::code_run::vault_read::request_schema::<
+            Option<crate::query_expansion::host::HydeHostReceipt>,
         >(),
         "vault.affect.annotations.put" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
@@ -5524,6 +5638,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.packs.hooks.list" => crate::code_run::vault_read::request_schema::<
             Vec<crate::task_verb::sdk::HubHookBindingRow>,
         >(),
+        "vault.packs.hooks.grant.set" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HookGrantView>()
+        }
+        "vault.packs.hooks.grant.get" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::HookGrantView>()
+        }
         "vault.packs.hooks.qualify" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubHookQualificationReceipt,
         >(),
@@ -5942,6 +6062,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.secrets.use" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretUseAnswer>()
         }
+        "host.compact" => crate::code_run::vault_read::request_schema::<
+            crate::runtime_hooks::host_doors::HostCompactResult,
+        >(),
+        "host.wake" => crate::code_run::vault_read::request_schema::<
+            crate::runtime_hooks::host_doors::HostWakeResult,
+        >(),
+        "host.budget.hit" => crate::code_run::vault_read::request_schema::<
+            crate::runtime_hooks::host_doors::HostBudgetHitResult,
+        >(),
         "vault.hooks.regen.due" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
         }
@@ -6291,6 +6420,25 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "calendar.invite" => {
             crate::code_run::vault_read::request_schema::<crate::memory::OutboundIntentReceipt>()
         }
+        "calendar.ics.configure" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration,
+        >(),
+        "calendar.ics.poll" => crate::code_run::vault_read::request_schema::<
+            crate::calendar::ingest::feed_door::CalendarIcsPollCompletion,
+        >(),
+        "calendar.ics.status" => crate::code_run::vault_read::request_schema::<
+            Option<crate::calendar::ingest::feed_door::CalendarIcsFeedStatus>,
+        >(),
+        "vault.calendar.passports.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<
+                Option<crate::calendar::query::passport::CalendarPassportRevision>,
+            >,
+        >(),
+        "vault.calendar.passports.history" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<
+                Vec<crate::calendar::query::passport::CalendarPassportRevision>,
+            >,
+        >(),
         "calendar.connector.configure" => crate::code_run::vault_read::request_schema::<
             crate::calendar::connectors::door::CalendarConnectorRegistration,
         >(),
@@ -7216,6 +7364,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.retrieval.hyde.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.complete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.hyde.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.affect.annotations.put" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7973,6 +8156,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.packs.hooks.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.grant.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.packs.hooks.grant.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9628,6 +9825,27 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "host.compact" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "host.wake" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "host.budget.hit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.hooks.replay" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11242,6 +11460,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "calendar.ics.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.ics.poll" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "calendar.ics.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.passports.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.calendar.passports.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "calendar.connector.configure" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12780,6 +13033,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::policy_manifest_doors::RetrievalWeightsConfigureRequest =
                 decode(value.clone())?;
         }
+        "vault.retrieval.hyde.configure" => {
+            let _input: crate::query_expansion::host::HydeHostConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.pending" => {
+            let _input: crate::query_expansion::host::HydeHostPendingRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.complete" => {
+            let _input: crate::query_expansion::host::HydeHostCompleteRequest =
+                decode(value.clone())?;
+        }
+        "vault.retrieval.hyde.receipt" => {
+            let _input: crate::query_expansion::host::HydeHostReceiptRequest =
+                decode(value.clone())?;
+        }
         "vault.affect.annotations.put" => {
             let _input: crate::memory::affect::AffectAnnotationPut = decode(value.clone())?;
         }
@@ -13133,6 +13405,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.packs.hooks.list" => {
             let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.packs.hooks.grant.set" => {
+            let _input: HookGrantSetRequest = decode(value.clone())?;
+        }
+        "vault.packs.hooks.grant.get" => {
+            let _input: HookGrantRequest = decode(value.clone())?;
         }
         "vault.packs.hooks.qualify" => {
             let _input: HubHookQualifyRequest = decode(value.clone())?;
@@ -13936,6 +14214,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shares.view" => {
             let _input: crate::task_verb::sdk::ShareViewRequest = decode(value.clone())?;
         }
+        "host.compact" => {
+            let _input: crate::runtime_hooks::host_doors::HostCompactRequest =
+                decode(value.clone())?;
+        }
+        "host.wake" => {
+            let _input: crate::runtime_hooks::host_doors::HostWakeRequest = decode(value.clone())?;
+        }
+        "host.budget.hit" => {
+            let _input: crate::runtime_hooks::host_doors::HostBudgetHitRequest =
+                decode(value.clone())?;
+        }
         "vault.hooks.replay" => {
             let input: crate::task_verb::sdk::HooksReplayRequest = decode(value.clone())?;
             input.limit()?;
@@ -14733,6 +15022,26 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "calendar.invite" => {
             let _input: crate::memory::CalendarInviteSurfaceInput = decode(value.clone())?;
+        }
+        "calendar.ics.configure" => {
+            let _input: crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest =
+                decode(value.clone())?;
+        }
+        "calendar.ics.poll" => {
+            let _input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest =
+                decode(value.clone())?;
+        }
+        "calendar.ics.status" => {
+            let _input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest =
+                decode(value.clone())?;
+        }
+        "vault.calendar.passports.read" => {
+            let _input: crate::calendar::query::passport::CalendarPassportReadRequest =
+                decode(value.clone())?;
+        }
+        "vault.calendar.passports.history" => {
+            let _input: crate::calendar::query::passport::CalendarPassportReadRequest =
+                decode(value.clone())?;
         }
         "calendar.connector.configure" => {
             let _input: crate::calendar::connectors::door::CalendarConnectorConfigureRequest =
@@ -15613,6 +15922,19 @@ pub fn invoke(
         "vault.retrieval.weights.configure" => {
             encode(vault_retrieval_weights_configure(memory, decode(value)?)?)
         }
+        "vault.retrieval.hyde.configure" => {
+            encode(vault_retrieval_hyde_configure(memory, decode(value)?)?)
+        }
+        "vault.retrieval.hyde.get" => encode(vault_retrieval_hyde_get(memory, decode(value)?)?),
+        "vault.retrieval.hyde.pending" => {
+            encode(vault_retrieval_hyde_pending(memory, decode(value)?)?)
+        }
+        "vault.retrieval.hyde.complete" => {
+            encode(vault_retrieval_hyde_complete(memory, decode(value)?)?)
+        }
+        "vault.retrieval.hyde.receipt" => {
+            encode(vault_retrieval_hyde_receipt(memory, decode(value)?)?)
+        }
         "vault.affect.annotations.put" => {
             encode(vault_affect_annotations_put(memory, decode(value)?)?)
         }
@@ -15813,6 +16135,12 @@ pub fn invoke(
         }
         "vault.packs.hooks.bind" => encode(vault_packs_hooks_bind(memory, decode(value)?)?),
         "vault.packs.hooks.list" => encode(vault_packs_hooks_list(memory, decode(value)?)?),
+        "vault.packs.hooks.grant.set" => {
+            encode(vault_packs_hooks_grant_set(memory, decode(value)?)?)
+        }
+        "vault.packs.hooks.grant.get" => {
+            encode(vault_packs_hooks_grant_get(memory, decode(value)?)?)
+        }
         "vault.packs.hooks.qualify" => encode(vault_packs_hooks_qualify(memory, decode(value)?)?),
         "vault.packs.put" => encode(vault_packs_put(memory, decode(value)?)?),
         "vault.packs.connector.prepare" => {
@@ -16305,6 +16633,9 @@ pub fn invoke(
         "vault.shares.create" => encode(vault_shares_create(memory, decode(value)?)?),
         "vault.shares.revoke" => encode(vault_shares_revoke(memory, decode(value)?)?),
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
+        "host.compact" => encode(host_compact(memory, decode(value)?)?),
+        "host.wake" => encode(host_wake(memory, decode(value)?)?),
+        "host.budget.hit" => encode(host_budget_hit(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.hooks.regen.due" => encode(vault_hooks_regen_due(memory, decode(value)?)?),
         "vault.hooks.regen.get" => encode(vault_hooks_regen_get(memory, decode(value)?)?),
@@ -16655,6 +16986,15 @@ pub fn invoke(
         }
         "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
         "calendar.invite" => encode(calendar_invite(memory, decode(value)?)?),
+        "calendar.ics.configure" => encode(calendar_ics_configure(memory, decode(value)?)?),
+        "calendar.ics.poll" => encode(calendar_ics_poll(memory, decode(value)?)?),
+        "calendar.ics.status" => encode(calendar_ics_status(memory, decode(value)?)?),
+        "vault.calendar.passports.read" => {
+            encode(vault_calendar_passports_read(memory, decode(value)?)?)
+        }
+        "vault.calendar.passports.history" => {
+            encode(vault_calendar_passports_history(memory, decode(value)?)?)
+        }
         "calendar.connector.configure" => {
             encode(calendar_connector_configure(memory, decode(value)?)?)
         }
@@ -17811,6 +18151,36 @@ pub fn vault_retrieval_weights_configure(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_retrieval_hyde_configure(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostConfigureRequest,
+) -> MemoryResult<crate::query_expansion::host::HydeHostConfiguration> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.configure", &input)
+}
+pub fn vault_retrieval_hyde_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::query_expansion::host::HydeHostConfiguration> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.get", &_input)
+}
+pub fn vault_retrieval_hyde_pending(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostPendingRequest,
+) -> MemoryResult<Vec<crate::query_expansion::host::HydeHostWork>> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.pending", &input)
+}
+pub fn vault_retrieval_hyde_complete(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostCompleteRequest,
+) -> MemoryResult<crate::query_expansion::host::HydeHostReceipt> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.complete", &input)
+}
+pub fn vault_retrieval_hyde_receipt(
+    memory: &Memory<'_>,
+    input: crate::query_expansion::host::HydeHostReceiptRequest,
+) -> MemoryResult<Option<crate::query_expansion::host::HydeHostReceipt>> {
+    crate::task_verb::sdk::host_only(memory, "vault.retrieval.hyde.receipt", &input)
+}
 pub fn vault_affect_annotations_put(
     memory: &Memory<'_>,
     input: crate::memory::affect::AffectAnnotationPut,
@@ -18742,6 +19112,26 @@ pub fn vault_packs_hooks_list(
         memory.vault(),
         &memory.embedded_owner("vault.packs.hooks.list")?,
         &crate::task_verb::sdk::EmptyRequest {},
+    )
+}
+pub fn vault_packs_hooks_grant_set(
+    memory: &Memory<'_>,
+    input: HookGrantSetRequest,
+) -> MemoryResult<crate::task_verb::sdk::HookGrantView> {
+    crate::task_verb::sdk::hook_grant_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.hooks.grant.set")?,
+        &input,
+    )
+}
+pub fn vault_packs_hooks_grant_get(
+    memory: &Memory<'_>,
+    input: HookGrantRequest,
+) -> MemoryResult<crate::task_verb::sdk::HookGrantView> {
+    crate::task_verb::sdk::hook_grant_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.packs.hooks.grant.get")?,
+        &input,
     )
 }
 pub fn vault_packs_hooks_qualify(
@@ -20778,6 +21168,24 @@ pub fn vault_shares_view(
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::receipt::SharedBriefView>>> {
     crate::task_verb::sdk::view_shared_brief_as_caller(memory, input)
 }
+pub fn host_compact(
+    memory: &Memory<'_>,
+    input: crate::runtime_hooks::host_doors::HostCompactRequest,
+) -> MemoryResult<crate::runtime_hooks::host_doors::HostCompactResult> {
+    crate::task_verb::sdk::host_only(memory, "host.compact", &input)
+}
+pub fn host_wake(
+    memory: &Memory<'_>,
+    input: crate::runtime_hooks::host_doors::HostWakeRequest,
+) -> MemoryResult<crate::runtime_hooks::host_doors::HostWakeResult> {
+    crate::task_verb::sdk::host_only(memory, "host.wake", &input)
+}
+pub fn host_budget_hit(
+    memory: &Memory<'_>,
+    input: crate::runtime_hooks::host_doors::HostBudgetHitRequest,
+) -> MemoryResult<crate::runtime_hooks::host_doors::HostBudgetHitResult> {
+    crate::task_verb::sdk::host_only(memory, "host.budget.hit", &input)
+}
 pub fn vault_hooks_replay(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::HooksReplayRequest,
@@ -22643,6 +23051,42 @@ pub fn calendar_invite(
     input: crate::memory::CalendarInviteSurfaceInput,
 ) -> MemoryResult<crate::memory::OutboundIntentReceipt> {
     memory.calendar_invite(&input)
+}
+pub fn calendar_ics_configure(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest,
+) -> MemoryResult<crate::calendar::ingest::feed_door::CalendarIcsFeedRegistration> {
+    crate::task_verb::sdk::host_only(memory, "calendar.ics.configure", &input)
+}
+pub fn calendar_ics_poll(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+) -> MemoryResult<crate::calendar::ingest::feed_door::CalendarIcsPollCompletion> {
+    crate::task_verb::sdk::host_only(memory, "calendar.ics.poll", &input)
+}
+pub fn calendar_ics_status(
+    memory: &Memory<'_>,
+    input: crate::calendar::ingest::feed_door::CalendarIcsFeedRequest,
+) -> MemoryResult<Option<crate::calendar::ingest::feed_door::CalendarIcsFeedStatus>> {
+    crate::task_verb::sdk::host_only(memory, "calendar.ics.status", &input)
+}
+pub fn vault_calendar_passports_read(
+    memory: &Memory<'_>,
+    input: crate::calendar::query::passport::CalendarPassportReadRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<
+        Option<crate::calendar::query::passport::CalendarPassportRevision>,
+    >,
+> {
+    memory.calendar_passport_read(&input)
+}
+pub fn vault_calendar_passports_history(
+    memory: &Memory<'_>,
+    input: crate::calendar::query::passport::CalendarPassportReadRequest,
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Vec<crate::calendar::query::passport::CalendarPassportRevision>>,
+> {
+    memory.calendar_passport_history(&input)
 }
 pub fn calendar_connector_configure(
     memory: &Memory<'_>,

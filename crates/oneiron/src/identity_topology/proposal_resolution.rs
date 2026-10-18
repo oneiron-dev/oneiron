@@ -550,9 +550,17 @@ impl Vault {
             }
             _ => op.clone(),
         };
-        match self.apply_identity_topology_op_resolved_in_txn(wtxn, &op, &applied_write, seal, now)? {
+        match self.apply_identity_topology_op_resolved_in_txn(
+            wtxn,
+            &op,
+            &applied_write,
+            seal,
+            now,
+        )? {
             IdentityOpOutcome::Applied { event, .. } => Ok(event),
-            _ => Err(Error::InvariantViolation("an approved topology ruling must apply")),
+            _ => Err(Error::InvariantViolation(
+                "an approved topology ruling must apply",
+            )),
         }
     }
 
