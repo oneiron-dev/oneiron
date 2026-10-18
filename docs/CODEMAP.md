@@ -688,7 +688,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `hook_verdict` | file | 1 | s | `ai.verdict` for fact hooks (ARCH-0080 §4 Its shape): a hook that declares the generative class asks through… |
 | `http_listener` | file+dir | 2 | m | The TCP accept loop the server and the embedder endpoint serve through |
 | `idempotency` | file+dir | 2 | m | — |
-| `import_audience` | file | 1 | s | The import audience sweep (OF-492) |
+| `import_audience` | file | 1 | m | The import audience sweep (OF-492) |
 | `ladder_poll` | file | 1 | s | Polling an engine future whose decisions run on the host's ladder |
 | `lens_frames` | file | 1 | m | OF-181: the lens frames this server holds for the cards it rendered |
 | `linear_host` | file+dir | 4 | m | Opt-in scheduled Linear mirror over an authenticated host-owned bridge |
