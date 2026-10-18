@@ -948,12 +948,19 @@ impl Book {
             .package
             .part(&part)?
             .ok_or(refused("a workbook part is missing"))?;
-        let (indices, value) = write_formats(
+        let (indices, value, added) = write_formats(
             &bytes,
             self.package.limits().xml,
             formats,
             self.styles.len(),
         )?;
+        // Excel applies only a style the workbook has; the nearest it does
+        // not refuse is to add one, and the receipt says so.
+        for name in added {
+            self.effects.push(format!(
+                "cell_style_added: {name}; the workbook had no such style, so it was added with the look of the cell format it was first applied to"
+            ));
+        }
         if let Some(value) = value {
             self.package.replace_xml_part(&part, value)?;
             self.styles = styles(&parse(&self.package, &part)?)?;
