@@ -76,6 +76,9 @@ pub enum SelfCall {
     /// connector asked mid-call, sent through the bound door under the
     /// original call's grant and principal.
     ConnectorAnswer(crate::task_verb::sdk::ConnectorAnswerRequest),
+    /// `vault.worlds.privacy.set` (FIX 4480): the run's agent asks to change
+    /// a world's settings, within the owner's rules.
+    WorldPrivacySet(crate::policy_model::WorldPrivacySetInput),
     /// `self.fold`, `self.compact`, `self.unfold`, `self.folds` and
     /// `describe({fold})`: the run's own log (ARCH-0067 §2.2).
     Fold(crate::compaction::SelfFoldCall),
@@ -135,6 +138,7 @@ impl SelfCall {
             Self::WakePolicyWrite(_) => SelfEffect::WakePolicyWrite,
             Self::AgentVerb(_) => SelfEffect::AgentVerb,
             Self::ConnectorAnswer(_) => SelfEffect::ConnectorAnswer,
+            Self::WorldPrivacySet(_) => SelfEffect::WorldPrivacySet,
             Self::Fold(_) => SelfEffect::Fold,
             Self::ReaderSpawn(_) => SelfEffect::ReaderSpawn,
             Self::ReaderReport(_) => SelfEffect::ReaderReport,
@@ -212,6 +216,9 @@ pub enum SelfEffect {
     /// An answer to a connector's mid-call questions, sent by the host's
     /// bound verb door (ONE-2510).
     ConnectorAnswer,
+    /// A world-settings request of the run's agent, answered by the vault's
+    /// world-privacy door (FIX 4480).
+    WorldPrivacySet,
     /// A fold verb on the run's own log, answered by its fold ledger.
     Fold,
     /// A reader child queued over one of the run's results.
@@ -261,6 +268,7 @@ impl SelfEffect {
             Self::WakePolicyWrite => "dreamer.wake_policy.set",
             Self::AgentVerb => "self.verbs.call",
             Self::ConnectorAnswer => "connector.answer",
+            Self::WorldPrivacySet => "vault.worlds.privacy.set",
             Self::Fold => "self.fold",
             Self::ReaderSpawn => "self.spawn",
             Self::ReaderReport => "tasks.update",
@@ -303,7 +311,11 @@ impl SelfEffect {
             | Self::ReportBlocked
             | Self::InferenceDefaultsRead
             | Self::InferenceDefaultsReplace => None,
-            Self::WakePolicyWrite | Self::AgentVerb | Self::ConnectorAnswer | Self::Fold => None,
+            Self::WakePolicyWrite
+            | Self::AgentVerb
+            | Self::ConnectorAnswer
+            | Self::WorldPrivacySet
+            | Self::Fold => None,
             Self::ReaderSpawn | Self::ReaderReport | Self::TasksWaitSet | Self::Summarize => None,
             Self::Leader | Self::LeaderSplit => None,
             Self::Team => None,

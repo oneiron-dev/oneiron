@@ -45,6 +45,13 @@ const SAME_ASK_SCAN: usize = 4_096;
 /// The most project boards an ask's chain walks.
 const MAX_BOARD_WALK: usize = 64;
 
+/// The queue identity of a world-privacy widen ask (FIX 4480). Such an ask is
+/// answered only at the world-privacy door, which applies the settings as the
+/// answering holder's own act in the same commit
+/// ([`Vault::settle_world_privacy_ask_in_txn`]): no answer on this queue, no
+/// model answer and no remembered reason substitutes for that tap.
+pub(crate) const WORLD_PRIVACY_ASK_QUEUE: &str = "policy.world_privacy.widen";
+
 /// One ask the ladder queued for a role.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -430,6 +437,12 @@ impl Vault {
             let ask = ASKS
                 .get(&self.store, &txn, &seq)?
                 .ok_or_else(|| invalid("no such decision ask"))?;
+            if ask.queue_pin.model == WORLD_PRIVACY_ASK_QUEUE {
+                return Err(invalid(
+                    "a world-privacy widen ask is answered at the world-privacy door, which \
+                     applies it as the holder's own act",
+                ));
+            }
             answerer(&txn, &ask)?;
             ask
         };
@@ -478,6 +491,36 @@ impl Vault {
             ASKS.put(&self.store, txn, &seq, &held)?;
             Ok(held)
         })
+    }
+
+    /// The world-privacy door's settlement of its widen ask `seq` (FIX 4480),
+    /// in the writer that applied or declined the settings: the holder `by`
+    /// answered yes or no, as the owner role, a person. An ask no longer open
+    /// is left as it is. Its waiters see the answer on their next read.
+    pub(crate) fn settle_world_privacy_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        seq: u64,
+        by: EntityId,
+        yes: bool,
+    ) -> Result<()> {
+        let Some(mut ask) = ASKS.get(&self.store, &*txn, &seq)? else {
+            return Ok(());
+        };
+        if ask.queue_pin.model != WORLD_PRIVACY_ASK_QUEUE || !ask.is_open() {
+            return Ok(());
+        }
+        ask.answer = Some(AskAnswer {
+            answer: DecisionAnswer::Noul(yes),
+            answered_at: self.store.clock.now_recorded_at(),
+            by: AnswerActor::Actor(by),
+            role: AskRole::Owner,
+            kind: HolderKind::Person,
+            changed: false,
+            reason: None,
+            rule: None,
+        });
+        ASKS.put(&self.store, txn, &seq, &ask)
     }
 
     /// Moves an open ask to the next role on its chain with a live holder, up to its

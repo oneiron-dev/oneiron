@@ -63,6 +63,13 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
                     .map_err(|_| invalid_code_run_replay("connector answer does not encode"))?,
             ),
         )]),
+        SelfCall::WorldPrivacySet(input) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::to_string(input)
+                    .map_err(|_| invalid_code_run_replay("world privacy request does not encode"))?,
+            ),
+        )]),
         SelfCall::MemorySearch(call) => request_map(vec![
             ("query", Value::from(call.query.as_str())),
             ("limit", Value::from(call.limit as u64)),
@@ -691,6 +698,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "dreamer.wake_policy.set" => Ok(SelfEffect::WakePolicyWrite),
         "self.verbs.call" => Ok(SelfEffect::AgentVerb),
         "connector.answer" => Ok(SelfEffect::ConnectorAnswer),
+        "vault.worlds.privacy.set" => Ok(SelfEffect::WorldPrivacySet),
         "self.fold" => Ok(SelfEffect::Fold),
         "self.spawn" => Ok(SelfEffect::ReaderSpawn),
         "tasks.update" => Ok(SelfEffect::ReaderReport),

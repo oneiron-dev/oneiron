@@ -135,16 +135,87 @@ pub struct WorldPrivacyEdit {
 }
 
 impl WorldPrivacyEdit {
+    /// The edit's shape. An agent's act (`by: Agent`) is well formed here:
+    /// whether it stands is the fold's to judge against the settings at its
+    /// `seen` (FIX 4480: only a tighten or an equal change is ever an
+    /// agent's), since a lone edit cannot see the settings it changes.
     pub fn validate(&self) -> Result<()> {
         self.settings.validate()?;
         self.act
-            .validate_carried(OwnerActKind::WorldPrivacy, self.world)?;
-        // Only the owner's own say-so edits a world's settings until FIX
-        // 4480's agent door (mesh PR1c) relaxes this one line.
-        if self.act.by != ActBy::Owner {
-            return Err(invalid_authority());
-        }
-        Ok(())
+            .validate_carried(OwnerActKind::WorldPrivacy, self.world)
+    }
+}
+
+/// Which way a settings change moves a world (FIX 4480), judged against every
+/// live head of its current settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PrivacyDirection {
+    /// The change equals every live head: a no-op, receipted as any change.
+    Equal,
+    /// Every field is equal to or narrower than every live head, and some
+    /// field of some head moves: the world goes to no new place.
+    Tighten,
+    /// Anything else: a wider read or sealed-copy choice, any model-order
+    /// change, an incomparable one-machine pick, or a mixed change.
+    Widen,
+}
+
+/// Which way `next` moves a world whose current settings are the live
+/// `heads` (a world nobody edited has none, and stands at
+/// [`WorldPrivacy::default`]). Read narrows OneMachine < MyMachines <
+/// Everywhere, and one machine to another is incomparable: a machine id is
+/// compared for equality only, never by its derived order. Sealed copies
+/// narrow Off < MyMachines < CloudAndMyMachines. Any model-order change
+/// (Inherit to Ordered or back, or a reordering) counts as a widen: a route
+/// the world never used could read it (CALLS "FIX 4480 direction", open).
+#[must_use]
+pub fn privacy_direction<H: core::borrow::Borrow<WorldPrivacy>>(
+    heads: impl IntoIterator<Item = H>,
+    next: &WorldPrivacy,
+) -> PrivacyDirection {
+    let default = WorldPrivacy::default();
+    let held: Vec<H> = heads.into_iter().collect();
+    let heads: Vec<&WorldPrivacy> = if held.is_empty() {
+        vec![&default]
+    } else {
+        held.iter()
+            .map(<H as core::borrow::Borrow<WorldPrivacy>>::borrow)
+            .collect()
+    };
+    if heads.iter().all(|head| *head == next) {
+        return PrivacyDirection::Equal;
+    }
+    let narrower = heads.iter().all(|head| {
+        read_rank_le(next.read, head.read)
+            && sealed_rank(next.sealed) <= sealed_rank(head.sealed)
+            && next.models == head.models
+    });
+    if narrower {
+        PrivacyDirection::Tighten
+    } else {
+        PrivacyDirection::Widen
+    }
+}
+
+/// Whether read `next` is equal to or narrower than read `head`.
+fn read_rank_le(next: ReadLocation, head: ReadLocation) -> bool {
+    match (next, head) {
+        (ReadLocation::OneMachine(next), ReadLocation::OneMachine(head)) => next == head,
+        (ReadLocation::OneMachine(_), _)
+        | (ReadLocation::MyMachines, ReadLocation::MyMachines | ReadLocation::Everywhere)
+        | (ReadLocation::Everywhere, ReadLocation::Everywhere) => true,
+        (ReadLocation::MyMachines | ReadLocation::Everywhere, _) => false,
+    }
+}
+
+/// Sealed copies' place in the narrowing order, written out rather than read
+/// from the derived order.
+const fn sealed_rank(sealed: SealedCopies) -> u8 {
+    match sealed {
+        SealedCopies::Off => 0,
+        SealedCopies::MyMachines => 1,
+        SealedCopies::CloudAndMyMachines => 2,
     }
 }
 

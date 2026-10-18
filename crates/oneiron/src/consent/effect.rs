@@ -30,6 +30,11 @@ pub enum CatastropheClass {
     SecurityControlDisable,
     /// Bulk export of secrets or private scoped content.
     MassSecretExport,
+    /// Widening a world's privacy settings (FIX 4480): irreversible in
+    /// effect, since what reached a wider place cannot be called back. Like
+    /// erase, no bypass covers it, and no standing grant makes it automatic:
+    /// an agent's widen always asks a holder in the moment.
+    WorldPrivacyWiden,
 }
 
 impl CatastropheClass {
@@ -42,7 +47,16 @@ impl CatastropheClass {
             Self::VaultWideDestruction => "vault_wide_destruction",
             Self::SecurityControlDisable => "security_control_disable",
             Self::MassSecretExport => "mass_secret_export",
+            Self::WorldPrivacyWiden => "world_privacy_widen",
         }
+    }
+
+    /// Whether a scoped bypass grant may cover this class. Erase is no class
+    /// but is excluded the same way (`ComposedEffect::as_erase`); a world's
+    /// widen is excluded here (FIX 4480): like erase, no bypass covers it.
+    #[must_use]
+    pub const fn bypassable(self) -> bool {
+        !matches!(self, Self::WorldPrivacyWiden)
     }
 
     /// Parses a pinned catastrophe-class string.
@@ -54,6 +68,7 @@ impl CatastropheClass {
             "vault_wide_destruction" => Some(Self::VaultWideDestruction),
             "security_control_disable" => Some(Self::SecurityControlDisable),
             "mass_secret_export" => Some(Self::MassSecretExport),
+            "world_privacy_widen" => Some(Self::WorldPrivacyWiden),
             _ => None,
         }
     }
@@ -65,15 +80,28 @@ impl CatastropheClass {
 // consent.rs alone; the floor itself survives unchanged (catastrophe verbs sit
 // outside every ⊤ per OF-453 L9).
 /// Version of the closed catastrophe floor.
-pub const CATASTROPHE_FLOOR_VERSION: u16 = 1;
+pub const CATASTROPHE_FLOOR_VERSION: u16 = 2;
 
-/// The closed catastrophe floor, version 1 — the only always-gate.
+/// The closed catastrophe floor, version 1: superseded by
+/// [`CATASTROPHE_FLOOR_V2`]. No manifest row decodes to it, so no vault's
+/// floor lacks a world's widen.
 pub const CATASTROPHE_FLOOR_V1: [CatastropheClass; 5] = [
     CatastropheClass::WidenOwnAuthority,
     CatastropheClass::KeyRecovery,
     CatastropheClass::VaultWideDestruction,
     CatastropheClass::SecurityControlDisable,
     CatastropheClass::MassSecretExport,
+];
+
+/// The closed catastrophe floor, version 2 — the only always-gate. Version 2
+/// adds a world's privacy widen (FIX 4480).
+pub const CATASTROPHE_FLOOR_V2: [CatastropheClass; 6] = [
+    CatastropheClass::WidenOwnAuthority,
+    CatastropheClass::KeyRecovery,
+    CatastropheClass::VaultWideDestruction,
+    CatastropheClass::SecurityControlDisable,
+    CatastropheClass::MassSecretExport,
+    CatastropheClass::WorldPrivacyWiden,
 ];
 
 /// The policy-manifest key of the floor's default row.
@@ -96,7 +124,7 @@ impl CatastropheFloor {
     pub fn pinned() -> Self {
         Self {
             version: CATASTROPHE_FLOOR_VERSION,
-            members: CATASTROPHE_FLOOR_V1.to_vec(),
+            members: CATASTROPHE_FLOOR_V2.to_vec(),
         }
     }
 
@@ -171,7 +199,7 @@ impl CatastropheFloor {
             .map(|member| CatastropheClass::parse(member.as_str()?))
             .collect::<Option<Vec<_>>>()?;
         let pinned = match version {
-            1 => CATASTROPHE_FLOOR_V1.to_vec(),
+            2 => CATASTROPHE_FLOOR_V2.to_vec(),
             _ => return None,
         };
         let mut sorted = pinned.clone();

@@ -15,6 +15,7 @@ mod team_submit_output;
 mod team_verbs;
 mod verb_hooks;
 mod wake_policy;
+mod world_privacy_set;
 
 use std::cell::{Cell, RefCell};
 
@@ -560,6 +561,7 @@ impl<'a> HostSelfDispatcher<'a> {
             SelfCall::WakePolicyWrite(call) => self.dispatch_wake_policy_write(call),
             SelfCall::AgentVerb(call) => self.dispatch_agent_verb(call, site),
             SelfCall::ConnectorAnswer(request) => self.dispatch_connector_answer(request, site),
+            SelfCall::WorldPrivacySet(input) => self.dispatch_world_privacy_set(&input),
             SelfCall::Fold(call) => self.dispatch_fold(&call, site),
             SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),

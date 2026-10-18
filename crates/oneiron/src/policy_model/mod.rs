@@ -105,7 +105,10 @@ pub(crate) use notice::trusted_contact_notices;
 pub use owner_rows::{
     PolicyChangedEvent, PolicyNotificationFailure, PolicyNotificationMode, PolicyNotificationRule,
     PolicyNotificationTarget, PolicyProposalStatus, PolicyRowProposal, PolicyRowReceipt,
-    PolicyRowSubmission, SecretScanReceipt, WorldPrivacyReceipt, policy_row_grant_target,
+    PolicyRowSubmission, SecretScanReceipt, WORLD_PRIVACY_ROW_REF, WidenUnanimity,
+    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyReceipt, WorldPrivacyRequest,
+    WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
+    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput, policy_row_grant_target,
 };
 pub(crate) use owner_rows::{is_live_vault_owner_in_txn, owners_in_txn};
 mod notes;

@@ -163,6 +163,21 @@ impl ConsentPendingReason {
     }
 }
 
+/// The typed refusal of making a catastrophe-floor class automatic: a
+/// standing grant, a bypass or an agent's own act over it. A world's widen
+/// names its reason (FIX 4480): it is irreversible in effect, and like erase
+/// no bypass covers it.
+pub(crate) const fn consent_floor_refusal(class: crate::consent::CatastropheClass) -> &'static str {
+    match class {
+        crate::consent::CatastropheClass::WorldPrivacyWiden => {
+            "widening a world's privacy is irreversible in effect: what reaches a wider place \
+             cannot be called back. Like erase, no bypass covers it, and no standing grant makes \
+             it automatic; a holder says yes in the moment"
+        }
+        _ => "the catastrophe floor is non-rememberable; no standing grant may cover it",
+    }
+}
+
 /// Translates a consent verdict into Gate pending reasons.
 ///
 /// `Auto` contributes nothing (the op runs). `Ask` and `Hide` both hold the

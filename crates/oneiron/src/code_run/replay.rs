@@ -161,6 +161,11 @@ impl CodeRunBridgeCall {
             SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::ConnectorAnswer => {
                 Ok(())
             }
+            // `vault.worlds.privacy.set`'s answer is the world-privacy door's
+            // outcome, as a verb answer (FIX 4480).
+            SelfDispatchOutcome::AgentVerb(_) if self.effect == SelfEffect::WorldPrivacySet => {
+                Ok(())
+            }
             SelfDispatchOutcome::AgentVerb(_) if self.effect != SelfEffect::AgentVerb => Err(
                 invalid_code_run_replay("agent verb result belongs to another effect"),
             ),

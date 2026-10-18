@@ -94,9 +94,9 @@ pub use self::doors::{
 };
 pub(crate) use self::effect::CATASTROPHE_FLOOR_ROW_KEY;
 pub use self::effect::{
-    BULK_BLAST_RADIUS_FLOOR, CATASTROPHE_FLOOR_V1, CATASTROPHE_FLOOR_VERSION, CatastropheClass,
-    CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, EffectPlace,
-    ReversibilityClass, UndoFidelity,
+    BULK_BLAST_RADIUS_FLOOR, CATASTROPHE_FLOOR_V1, CATASTROPHE_FLOOR_V2, CATASTROPHE_FLOOR_VERSION,
+    CatastropheClass, CatastropheFloor, ComposedEffect, ConsentDecision, EffectDigest, EffectFacts,
+    EffectPlace, ReversibilityClass, UndoFidelity,
 };
 pub use self::grant::{
     ActionGrant, CONSENT_CONTENT_KIND, CONSENT_REASON_APPROVE_ONCE, CONSENT_REASON_BYPASS_CREATED,
