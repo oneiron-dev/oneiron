@@ -13,6 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `examples/emit_revision.rs` | src | s | — | — | Produce one deterministic tracked-change sample for the external Word oracle |
 | `examples/resolve_docx.rs` | src | s | — | — | Resolve a DOCX revision in the pinned fork for an application oracle case |
+| `src/bin/deck-gate-cases.rs` | src | s | — | — | `deck-gate-cases`: the engine half of the OF-510 deck gate runner |
 | `src/contract/mod.rs` | src | L | 39 struct · 7 enum · 1 trait · 11 fn · 6 const | AssetMedia, AssetOrigin, Call, ContractError, CreatedSlide, DeckAsset, DeckCreateArgs, DeckCreated +39 | The document engine's contract (ARCH-0075 section 2, "an organ crate with a hosted API"): one versioned… |
 | `src/contract/run.rs` | src | m | 1 crate-vis | — | The handlers behind [`super::execute`]: each op maps its args onto one native door and the door's refusals… |
 | `src/deck/animation.rs` | src | s | 3 struct · 2 enum · 2 fn · 1 crate-vis | AnimationIndex, AnimationTarget, Connection, TargetRole, TextRange | The animation and connector index |
@@ -68,7 +69,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/convert.rs` | src | m | 1 enum · 2 fn · 7 crate-vis | Conversion | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 11 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/held.rs` | src | m | 19 crate-vis | — | What a retained element is written as, in live-model terms: a shape's preset or custom geometry, a… |
-| `src/live/mod.rs` | src | s | 1 enum · 2 mod · 3 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
+| `src/live/mod.rs` | src | s | 1 enum · 3 mod · 3 re-export | LiveError | The live deck body (ARCH-0077, "Multiplayer: the target body shape"; OF-510), built last in the deck chain |
+| `src/live/oracle_run/assets.rs` | src | s | 3 crate-vis | — | The runner's one picture asset, generated rather than shipped |
+| `src/live/oracle_run/checks.rs` | src | m | 10 crate-vis | — | The engine-side checks: package corruption (step 5), the part diff and unknown-XML probes (step 2), the… |
+| `src/live/oracle_run/edits.rs` | src | m | 30 crate-vis | — | The path every exported edit takes: apply the operations to the import, project over the retained package… |
+| `src/live/oracle_run/merge.rs` | src | m | 3 crate-vis | — | Step 4: the concurrent cases, each merged in both landing orders through the review flow (fork, preflight… |
+| `src/live/oracle_run/mod.rs` | src | s | 2 struct · 1 fn | RunOptions, RunSummary | The OF-510 deck gate runner, engine half: the `pptx-live-v1` case set through the current projector… |
+| `src/live/oracle_run/nonpdf.rs` | src | m | 2 crate-vis | — | Step 7, the checks a PDF cannot show: a modern comment kept through edits of its slide (PowerPoint must… |
+| `src/live/oracle_run/recipes.rs` | src | m | 2 crate-vis | — | The live mutations step 2 exercises, each over the first slide and its first text shape: the operations, the… |
+| `src/live/oracle_run/record.rs` | src | m | 40 crate-vis | — | What a run writes: candidates with their hashes and owed Office checks, each step's engine cases, and the… |
+| `src/live/oracle_run/regression.rs` | src | s | 2 crate-vis | — | Step 8: the preservation corpus and the adversarial fixtures through the same path as the core set… |
+| `src/live/oracle_run/spec.rs` | src | s | 22 crate-vis | — | The `pptx-live-v1` case manifest and the two fixture manifests it names |
+| `src/live/oracle_run/suite.rs` | src | s | 3 crate-vis | — | One pinned baseline through steps 1 to 7: its no-op export, the probed variant and every mutation over it… |
+| `src/live/oracle_run/variants.rs` | src | s | 18 crate-vis | — | Fixture variants derived from a pinned baseline by narrow XML surgery: unknown-XML probes beside the mutated… |
 | `src/live/pptx.rs` | src | XL | 24 struct · 9 enum · 32 fn · 7 crate-vis | ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict, ConnectorEnd +25 | The live deck model: tree, text bodies, stamped operations, attribution, three-way forks and landing… |
 | `src/live/reshape.rs` | src | L | 8 crate-vis | — | Shape changes to a written table or chart at export (OF-510) |
 | `src/native_patch/chart.rs` | src | m | 3 struct · 1 fn · 4 crate-vis | ChartData, Sequence, SeriesData | Classic chart parts: creation from a dataset, the series model read from `c:ser`, point-wise cache rebuilds… |

@@ -168,11 +168,15 @@ impl LimitRow {
         Self::Engine(EngineLimit::PackScriptOutputBytes),
         Self::Engine(EngineLimit::PackScriptOutputRows),
         Self::Engine(EngineLimit::JudgeRubricBytes),
+        Self::Engine(EngineLimit::MaintenanceRowItems),
+        Self::Engine(EngineLimit::MaintenanceTextBytes),
+        Self::Engine(EngineLimit::MaintenanceScanRows),
         Self::Engine(EngineLimit::JudgeInstructionsBytes),
         Self::Engine(EngineLimit::JudgeReplayTextBytes),
         Self::Engine(EngineLimit::ContributionJudgeTaskBytes),
         Self::Engine(EngineLimit::ContributionJudgeAnswerBytes),
         Self::Engine(EngineLimit::CallableNestDepth),
+        Self::Engine(EngineLimit::EsignPdfBytes),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.
