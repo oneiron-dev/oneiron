@@ -572,11 +572,14 @@ pub(crate) struct McpCodeRun {
 
 /// What one MCP row's credential surface is built from beside its call
 /// context: where its TASKs are born, the invocation its hooks cross under,
-/// and a code-mode call's run.
+/// a code-mode call's run, and the task-work turn the row holds.
 struct McpRowSurface {
     position: oneiron::federation::record_scope::BirthPosition,
     invocation: oneiron::runtime_hooks::InvocationId,
     run: Option<McpCodeRun>,
+    /// The turn the dispatch awaited for a task-work row (Rule 5): every
+    /// surface built for the row runs on it and waits for no other.
+    task_work_turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 }
 
 impl McpRowSurface {
@@ -611,6 +614,10 @@ impl McpRowSurface {
         .with_invocation(self.invocation);
         let memory = match &self.run {
             Some(run) => memory.with_host_origin(run.origin.clone()),
+            None => memory,
+        };
+        let memory = match &self.task_work_turn {
+            Some(turn) => memory.with_task_work_turn(Arc::clone(turn)),
             None => memory,
         };
         // OF-063: the off-record session the request named; inside an anonymous
@@ -927,6 +934,7 @@ fn mcp_agent_verb_input(
         "vault.research.weave" => a.spec.clone().ok_or_else(invalid),
         "vault.research.measure_search" => a.spec.clone().ok_or_else(invalid),
         "vault.research.measure_held_out" => a.spec.clone().ok_or_else(invalid),
+        "vault.research.evaluate_split" => a.spec.clone().ok_or_else(invalid),
         "vault.research.mark_invalid" => a.spec.clone().ok_or_else(invalid),
         "vault.research.prune" => a.spec.clone().ok_or_else(invalid),
         "vault.research.select" => a.spec.clone().ok_or_else(invalid),
@@ -1640,6 +1648,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.measure_held_out" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.research.evaluate_split" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.research.mark_invalid" => {
@@ -2392,10 +2403,27 @@ async fn execute_agent_verb_listing(
     let invocation = actor
         .invocation
         .unwrap_or_else(oneiron::runtime_hooks::InvocationId::mint);
+    // Rule 5: a task-work row, or a row whose engine call produces task work,
+    // takes its one turn here, for MCP and code mode alike, binds it on the
+    // surface its row runs on and holds it through its hooks and its row.
+    let task_work_turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
+        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
+        || matches!(
+            tool,
+            "tasks.accept"
+                | "vault.projects.route_tradeoff"
+                | "vault.artifacts.body.fork.merge"
+                | "vault.artifacts.body.proposal.settle"
+        ) {
+        Some(Arc::new(server.admit_task_work(actor.actor_ref).await))
+    } else {
+        None
+    };
     let surface = McpRowSurface {
         position,
         invocation,
         run,
+        task_work_turn: task_work_turn.clone(),
     };
     // The direct caller's own proof, on the rows whose HTTP door binds it
     // outside a room turn (OF-417, OF-365).
@@ -2405,15 +2433,6 @@ async fn execute_agent_verb_listing(
         actor,
         surface.memory(server, actor, producers),
     )?;
-    // Rule 5: a task-work row takes its one turn here, for MCP and code mode
-    // alike, and holds it through its hooks and its row.
-    let _turn = if oneiron::task_verb::sdk::AgentVerb::from_name(tool)
-        .is_some_and(oneiron::task_verb::sdk::AgentVerb::is_task_work)
-    {
-        Some(server.admit_task_work(actor.actor_ref).await)
-    } else {
-        None
-    };
     let hooks = super::verb_hooks::mcp_row_hooks_pre(server, tool, actor, &memory, input).await?;
     let (output, source, carrier, epoch) = execute_agent_verb_row(
         server,
@@ -2429,6 +2448,8 @@ async fn execute_agent_verb_listing(
     let output = crate::api::facade::row_hooks_post(server, hooks, output)
         .await
         .map_err(mcp_facade_error)?;
+    // The row's turn ends after its post hooks.
+    drop(task_work_turn);
     Ok((output, source, carrier, epoch))
 }
 
@@ -3812,6 +3833,19 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_research_measure_held_out(&memory, input)
                 .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.research.evaluate_split" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.research.evaluate_split", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::CampaignSplitWire =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output =
+                crate::api::facade::host_doors::vault_research_evaluate_split(server, auth, input)
+                    .await
+                    .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }

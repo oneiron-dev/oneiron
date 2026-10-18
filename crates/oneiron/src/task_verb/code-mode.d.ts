@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 378 code-mode rows (358 host rows, 20 run rows), 1344 declarations.
-// Replies: 325 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 379 code-mode rows (359 host rows, 20 run rows), 1379 declarations.
+// Replies: 326 fully typed, 49 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 79; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -68,7 +68,9 @@ declare namespace Sdk {
   type AgentHealthCoachRoute = "skill_edit" | "prompt_inject" | "neither";
   type AgentHealthCoachDraft = { route: AgentHealthCoachRoute; diagnosis: string; proposal: string };
   type AgentHealthCoachAnswer = { at: number; pads: AgentHealthPadRead; draft?: AgentHealthCoachDraft | null };
-  type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; answer?: AgentHealthCoachAnswer | null };
+  type AgentHealthApplicationState = "pending" | "admitted" | "rejected";
+  type AgentHealthCoachApplication = { by: EntityId; at: number; skill: EntityId; version: string; instructions: string; candidate: EntityId; state: AgentHealthApplicationState; verdict?: EntityId | null; disposition?: string | null; updated_at: number };
+  type AgentHealthCoachAsk = { asked_by: EntityId; asked_at: number; diagnostic?: EntityId | null; attempt: string; answer?: AgentHealthCoachAnswer | null; application?: AgentHealthCoachApplication | null };
   type AgentHealthCard = { subject: EntityId; signal: AgentHealthSignal; task?: EntityId | null; attempt?: EntityId | null; tone: AgentHealthTone; tier: number; confidence: AgentHealthConfidence; diagnostics: EntityId[]; evidence: EntityId[]; window_from: number; window_to: number; measured: number; dial: number; counter_evidence: AgentHealthCounter[]; agent_blocked: boolean; confession?: EntityId | null; moves: AgentHealthMove[]; recipients: EntityId[]; owner_copy: boolean; outcome: AgentHealthOutcome; outcome_by?: EntityId | null; outcome_at?: number | null; watermark: number; opened_at: number; updated_at: number; coach?: AgentHealthCoachAsk | null };
   type RunTreeStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "abandoned";
   type RunTreeTimestamps = { created_at: number; updated_at: number };
@@ -550,6 +552,39 @@ declare namespace Sdk {
   type ResearchWeaveWire = { root: EntityId; parents: EntityId[]; child: EntityId; common_ancestor: EntityId; validation_overlap: number; candidate: CandidateRef; claim: EntityId };
   type ResearchSearchWire = { root: EntityId; attempt: EntityId; evidence: SearchEvidence };
   type ResearchHeldOutWire = { root: EntityId; attempt: EntityId; measurement: Measurement; receipt_refs: string[] };
+  type CampaignExecutableArm = "single_pass" | "tournament";
+  type CampaignEvaluationSplit = "search" | "held_out";
+  type Of360DatasetCompleteness = "seed_subset" | "full_owner_corpus";
+  type Of360GoldQa = { question_id: string; question: string; accepted_answers: string[]; evidence_memory_ids: string[] };
+  type Of360Speaker = "user" | "assistant" | "system";
+  type Of360ConversationTurn = { turn_id: string; speaker: Of360Speaker; timestamp: string; text: string };
+  type Of360MemoryKind = "persona" | "preference" | "event" | "relationship" | "plan" | "constraint" | "correction";
+  type Of360GoldMemoryPoint = { memory_id: string; claim: string; kind: Of360MemoryKind; importance: number; weight: number; is_update: boolean; temporal_required: boolean; valid_from?: string | null; valid_to?: string | null; evidence_turn_ids: string[] };
+  type Of360GoldCase = { qa?: Of360GoldQa[]; case_id: string; title: string; turns: Of360ConversationTurn[]; gold_memory_points: Of360GoldMemoryPoint[]; distractor_memories?: string[] };
+  type Of360GoldDataset = { schema_version: number; dataset_id: string; revision: string; description: string; completeness: Of360DatasetCompleteness; seed: number; target_full_memory_points: number; owner_corpus_missing: boolean; source_refs: string[]; cases: Of360GoldCase[] };
+  type Of360QaAnswer = { question_id: string; answer: string };
+  type Of360ExtractionScore = "omitted" | "partial" | "full";
+  type Of360GoldMatch = { memory_id: string; score: Of360ExtractionScore };
+  type Of360ExtractedClaim = { extraction_id: string; text: string; matched_gold?: Of360GoldMatch[]; temporal_correct?: boolean | null; overreach: boolean; dedup_key?: string | null };
+  type Of360CaseExtractionOutput = { qa_answers?: Of360QaAnswer[]; case_id: string; extracted_claims: Of360ExtractedClaim[] };
+  type Of360ExtractionRun = { schema_version: number; run_id: string; system_id: string; dataset_id: string; dataset_revision: string; cases: Of360CaseExtractionOutput[] };
+  type CampaignCost = { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_write_tokens: number; cost_usd: number; elapsed_ms: number };
+  type CampaignGoldAnchor = { dataset_id: string; revision: string; gold_digest: string };
+  type BlindCampaignJudgeInput = { claim: string; evidence_refs: string[]; held_out_gold: CampaignGoldAnchor };
+  type CampaignSmokeOutcome = "passed" | { killed: { reason: string } };
+  type CampaignSplitWire = { root: EntityId; arm: CampaignExecutableArm; split: CampaignEvaluationSplit; dataset: Of360GoldDataset; run: Of360ExtractionRun; cost: CampaignCost; blind: BlindCampaignJudgeInput; smoke: CampaignSmokeOutcome };
+  type AuthoringStrategyPin = { strategy_id: string; revision: string; config_sha256: string };
+  type Of360DerivationEnvelope = { content_hash: string; model_id: string; version: string; params_hash: string };
+  type Of360MetricDirection = "higher_is_better" | "lower_is_better";
+  type Of360MetricDefinition = { metric_id: string; label: string; definition: string; formula: string; direction: Of360MetricDirection; primary: boolean };
+  type Of360MetricDefinitionSet = { schema_version: number; set_id: string; revision: string; source_refs: string[]; derivation_envelope: Of360DerivationEnvelope; metrics: Of360MetricDefinition[] };
+  type Of360RateMetric = { value?: number | null; numerator: number; denominator: number };
+  type Of360ParsedMetrics = { updating_accuracy: Of360RateMetric; qa_accuracy: Of360RateMetric; omission_rate: Of360RateMetric; halumem_recall: Of360RateMetric; halumem_weighted_recall: Of360RateMetric; target_precision: Of360RateMetric; halumem_f1: Of360RateMetric; faithfulness_rate: Of360RateMetric; hallucination_rate: Of360RateMetric; overreach_rate: Of360RateMetric; temporal_correctness: Of360RateMetric; redundancy_rate: Of360RateMetric };
+  type Of360CaseEvalReport = { case_id: string; metrics: Of360ParsedMetrics; omitted_gold_memory_ids: string[]; partial_gold_memory_ids: string[]; hallucinated_extraction_ids: string[]; overreach_extraction_ids: string[]; redundant_extraction_ids: string[] };
+  type Of360EvalReport = { schema_version: number; metric_set_id: string; metric_definition_envelope: Of360DerivationEnvelope; dataset_id: string; dataset_revision: string; run_id: string; system_id: string; metrics: Of360ParsedMetrics; cases: Of360CaseEvalReport[]; warnings: string[] };
+  type Of360Ar3MetricTier = { interface_version: number; metric_definitions: Of360MetricDefinitionSet; report: Of360EvalReport };
+  type CampaignTaste = { score: number; useful?: boolean | null; external_anchor_digest: string };
+  type CampaignSplitReport = { authoring_strategy: AuthoringStrategyPin; arm: CampaignExecutableArm; split: CampaignEvaluationSplit; dataset: CampaignDatasetRef; metric_definition_digest: string; of360: Of360Ar3MetricTier; cost: CampaignCost; taste: CampaignTaste; smoke: CampaignSmokeOutcome; effective_taste_score: number };
   type ResearchInvalidWire = { root: EntityId; attempt: EntityId; reason: string; evidence_refs: string[] };
   type ResearchPruneCause = { kind: "dominated"; by: EntityId } | { kind: "floor_regression"; axis: string } | { kind: "gain_below_floor" } | { kind: "stopped" };
   type ResearchPruneWire = { root: EntityId; attempt: EntityId; cause: ResearchPruneCause; evidence_refs: string[] };
@@ -2070,6 +2105,8 @@ declare const vault: Sdk.VaultHost & {
   research: {
     /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
     bind(input: Sdk.ResearchBindWire): Promise<Sdk.ResearchBinding | StoredResult>;
+    /** The owner scores one arm of a bound claim-authoring campaign on one split under its bound config; the blind taste questions go through the host's decision ladder, and the report is returned, not stored. */
+    evaluate_split(input: Sdk.CampaignSplitWire): Promise<Sdk.CampaignSplitReport | StoredResult>;
     /** Records a variation or debug child the campaign's controller enqueued under a measured or buggy parent. */
     fork(input: Sdk.ResearchForkWire): Promise<Sdk.ExperimentNode | StoredResult>;
     /** Marks a node buggy: it stays as evidence and takes debug children. */

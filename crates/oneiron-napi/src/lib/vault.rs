@@ -5,8 +5,8 @@ use std::sync::Arc;
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 use oneiron::{
-    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, RepoRef, TimeRange, Vault,
-    VaultConfig,
+    ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EdgeActorClass, EntityId,
+    Memory, RawEntityPut, RepoRef, TimeRange, Vault, VaultConfig, parse_actor_key,
 };
 
 use super::boundary::{
@@ -24,7 +24,7 @@ use super::types::{
     NapiBatchEntity, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig,
     NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry,
 };
-use crate::facade::{NapiRecallMedia, facade_error, recall_media_to_engine};
+use crate::facade::{NapiRecallMedia, boundary_error, facade_error, recall_media_to_engine};
 
 /// What this embedded vault says to a context pack naming `media` (OF-370):
 /// it serves no `ai.embed` rung, so it cannot embed the bytes into their
@@ -49,11 +49,56 @@ fn refuse_unserved_media(media: Option<NapiRecallMedia>) -> napi::Result<()> {
     )))
 }
 
+/// What a bound vault says to a write it has no caller-bound door for
+/// (OF-063): it never writes as the host in its caller's place.
+const BOUND_WRITE_UNSERVED: &str =
+    "this write has no caller-bound door, so a bound vault does not make it as the host";
+
 /// Node.js binding for the Oneiron Vault.
+///
+/// A vault from `new` writes as the host. One from [`NapiVault::bound`]
+/// writes as the caller its app host named (OF-063): its puts, batch puts,
+/// edges, vectors and deletes run as that caller, inside its session.
 #[napi]
 pub struct NapiVault {
     vault: Arc<Vault>,
     dimensions: usize,
+    /// The caller a bound vault writes as; `None` writes as the host.
+    binding: Option<RawBinding>,
+}
+
+/// The principal a bound vault's app host named, and its off-record
+/// session, if any: this handle's alone, never process state.
+struct RawBinding {
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+    session: Option<String>,
+}
+
+impl NapiVault {
+    /// The bound caller's memory surface, its session bound; `None` for a
+    /// vault that writes as the host.
+    fn bound_memory(&self) -> Option<Memory<'_>> {
+        self.binding.as_ref().map(|binding| {
+            let memory = self.vault.memory(binding.actor, binding.actor_class);
+            match binding.session.as_deref() {
+                Some(session) => memory.in_off_record_session(session),
+                None => memory,
+            }
+        })
+    }
+
+    /// Refuses a write a bound vault has no caller-bound door for.
+    fn refuse_bound_host_write(&self) -> napi::Result<()> {
+        if self.binding.is_none() {
+            return Ok(());
+        }
+        Err(facade_error(oneiron::MemoryError::new(
+            oneiron::memory::MEMORY_CODE_FORBIDDEN,
+            BOUND_WRITE_UNSERVED,
+            &["Make this write on the unbound vault, which writes as the host."],
+        )))
+    }
 }
 
 #[napi]
@@ -91,6 +136,50 @@ impl NapiVault {
         Ok(Self {
             vault: Arc::new(vault),
             dimensions,
+            binding: None,
+        })
+    }
+
+    /// A NEW vault over this same open vault whose writes run as one caller
+    /// (OF-063): the principal `actorKey` names (`human:<ref>`,
+    /// `agent:<ref>` or `system:<ref>`), or the embedded owner when it is
+    /// omitted, inside the off-record session `sessionRef` names, or outside
+    /// any when it is omitted. This vault is unchanged.
+    ///
+    /// Its puts, batch puts, edges and vectors commit as that caller, below
+    /// owner grade, once their transaction proves the actor; its delete runs
+    /// the `vault.delete` door (owner-only; an id naming no record is refused
+    /// `INVENTED_REFERENCE`). A codebase snapshot or inbound route, which has
+    /// no caller-bound door, is refused there.
+    #[napi]
+    pub fn bound(
+        &self,
+        actor_key: Option<String>,
+        session_ref: Option<String>,
+    ) -> napi::Result<NapiVault> {
+        let session = session_ref.map(|session| session.trim().to_owned());
+        if session.as_deref().is_some_and(str::is_empty) {
+            return Err(boundary_error(
+                "invalid off-record session reference".to_owned(),
+            ));
+        }
+        let (actor, actor_class) = match actor_key.as_deref() {
+            Some(key) => parse_actor_key(&self.vault, key).map_err(facade_error)?,
+            None => (
+                self.vault
+                    .ensure_embedded_owner_actor()
+                    .map_err(facade_error)?,
+                EdgeActorClass::Human,
+            ),
+        };
+        Ok(NapiVault {
+            vault: Arc::clone(&self.vault),
+            dimensions: self.dimensions,
+            binding: Some(RawBinding {
+                actor,
+                actor_class,
+                session,
+            }),
         })
     }
 
@@ -110,18 +199,26 @@ impl NapiVault {
         let eid = parse_entity_id(&id)?;
         let etype = parse_u8(entity_type, "entity_type")?;
         validate_entity_payload_len(data.len()).map_err(napi::Error::from_reason)?;
-        self.vault
-            .put_entity(
-                &eid,
-                etype,
-                TimeRange {
-                    start: ts_to_u64(occurred_start),
-                    end: ts_to_u64(occurred_end),
-                },
-                ts_to_u64(learned_at),
-                data.as_ref(),
-            )
-            .map_err(to_napi_err)
+        let occurred = TimeRange {
+            start: ts_to_u64(occurred_start),
+            end: ts_to_u64(occurred_end),
+        };
+        let learned_at = ts_to_u64(learned_at);
+        match self.bound_memory() {
+            Some(memory) => memory
+                .raw_put_entity(RawEntityPut {
+                    id: eid,
+                    entity_type: etype,
+                    occurred,
+                    learned_at,
+                    data: data.as_ref(),
+                })
+                .map_err(facade_error),
+            None => self
+                .vault
+                .put_entity(&eid, etype, occurred, learned_at, data.as_ref())
+                .map_err(to_napi_err),
+        }
     }
 
     /// Retrieve an entity blob by ID. Returns null if not found.
@@ -138,7 +235,10 @@ impl NapiVault {
     #[napi]
     pub fn delete_entity(&self, id: Buffer) -> napi::Result<bool> {
         let eid = parse_entity_id(&id)?;
-        self.vault.delete_entity(&eid).map_err(to_napi_err)
+        match self.bound_memory() {
+            Some(memory) => memory.raw_delete_entity(&eid).map_err(facade_error),
+            None => self.vault.delete_entity(&eid).map_err(to_napi_err),
+        }
     }
 
     /// Check whether an entity exists in the vault.
@@ -156,9 +256,15 @@ impl NapiVault {
         let src_id = parse_entity_id(&src)?;
         let tgt_id = parse_entity_id(&tgt)?;
         let edge_kind = parse_edge_kind(kind)?;
-        self.vault
-            .put_edge(&src_id, edge_kind, &tgt_id, weight as f32)
-            .map_err(to_napi_err)
+        match self.bound_memory() {
+            Some(memory) => memory
+                .raw_put_edge(&src_id, edge_kind, &tgt_id, weight as f32)
+                .map_err(facade_error),
+            None => self
+                .vault
+                .put_edge(&src_id, edge_kind, &tgt_id, weight as f32)
+                .map_err(to_napi_err),
+        }
     }
 
     /// Return outbound edges for a source entity.
@@ -279,7 +385,10 @@ impl NapiVault {
     pub fn put_vector(&self, id: Buffer, vector: Array<'_>) -> napi::Result<()> {
         let eid = parse_entity_id(&id)?;
         let f32_vec = read_vector(&vector, self.dimensions, "vector")?;
-        self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err)
+        match self.bound_memory() {
+            Some(memory) => memory.raw_put_vector(&eid, &f32_vec).map_err(facade_error),
+            None => self.vault.put_vector(&eid, &f32_vec).map_err(to_napi_err),
+        }
     }
 
     // ─── Codebase Metadata ─────────────────────────────────────
@@ -287,6 +396,7 @@ impl NapiVault {
     /// Attach or replace codebase snapshot metadata for a CODE_ARTIFACT entity.
     #[napi]
     pub fn put_codebase_snapshot(&self, id: Buffer, snapshot: Object<'_>) -> napi::Result<()> {
+        self.refuse_bound_host_write()?;
         let eid = parse_entity_id(&id)?;
         let snapshot = read_codebase_snapshot(snapshot)?;
         // Take the bodies before conversion consumes the boundary struct, so
@@ -462,6 +572,7 @@ impl NapiVault {
         config: NapiEmailIdentityAdapterConfig,
         inbound: NapiEmailInboundEvent,
     ) -> napi::Result<String> {
+        self.refuse_bound_host_write()?;
         let adapter = core_email_adapter(config)?;
         let input = adapter
             .parse_inbound(ChannelIdentityProviderInbound::Email(core_email_inbound(
@@ -486,20 +597,31 @@ impl NapiVault {
             validate_entity_payload_len(e.data.len()).map_err(napi::Error::from_reason)?;
         }
 
-        let mut batch = self.vault.batch();
-
+        let mut puts = Vec::with_capacity(entities.len());
         for e in &entities {
-            let eid = parse_entity_id(&e.id)?;
-            let etype = parse_u8(e.entity_type, "entity_type")?;
-            batch = batch.put(
-                &eid,
-                etype,
-                TimeRange {
+            puts.push(RawEntityPut {
+                id: parse_entity_id(&e.id)?,
+                entity_type: parse_u8(e.entity_type, "entity_type")?,
+                occurred: TimeRange {
                     start: ts_to_u64(e.occurred_start),
                     end: ts_to_u64(e.occurred_end),
                 },
-                ts_to_u64(e.learned_at),
-                e.data.as_ref(),
+                learned_at: ts_to_u64(e.learned_at),
+                data: e.data.as_ref(),
+            });
+        }
+        if let Some(memory) = self.bound_memory() {
+            return memory.raw_put_entities(&puts).map_err(facade_error);
+        }
+
+        let mut batch = self.vault.batch();
+        for put in &puts {
+            batch = batch.put(
+                &put.id,
+                put.entity_type,
+                put.occurred,
+                put.learned_at,
+                put.data,
             );
         }
 
