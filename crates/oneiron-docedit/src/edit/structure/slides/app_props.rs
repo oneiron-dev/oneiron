@@ -1,18 +1,21 @@
-//! The app properties (`docProps/app.xml`) a slide's addition, copy or
-//! removal would leave stale (FIX 2377, FIX 2748): the slide, hidden-slide
-//! and notes counts, the slide's title among the document's part titles, and
-//! the words and paragraphs of the slides' text. Those titles are listed by
-//! heading-pair groups. The slide titles are the group counting the deck's
-//! slides (the last such group, as PowerPoint writes them after the fonts
-//! and themes), and a slide's title sits at its list index there: a copy
-//! lists its source's title, a blank slide [`UNTITLED`]. Words and paragraphs
-//! are recounted over every slide's text ([`Text`]). Properties that do not
-//! read so are left as they are: no reader opens a deck by them.
+//! The app properties (`docProps/app.xml`) a slide's addition, copy, removal
+//! or move, or an edit of its title, would leave stale (FIX 2377, FIX 2748,
+//! FIX 3523): the slide, hidden-slide and notes counts, the slide's title
+//! among the document's part titles, and the words and paragraphs of the
+//! slides' text. Those titles are listed by heading-pair groups. The slide
+//! titles are the group counting the deck's slides (the last such group, as
+//! PowerPoint writes them after the fonts and themes), and a slide's title
+//! sits at its list index there: a copy lists its source's title, a blank
+//! slide [`UNTITLED`], and a moved slide's title moves with it. The live
+//! export's last write lists each slide's own title, the text of its title
+//! placeholder, where the entry does not already read so. Words and
+//! paragraphs are recounted over every slide's text ([`Text`]). Properties
+//! that do not read so are left as they are: no reader opens a deck by them.
 use super::super::super::media::related;
 use super::super::super::xml::{self, Splice};
 use crate::deck::{DeckView, SlideView};
 use crate::edit::EditRefusal;
-use crate::ooxml::{Node, XmlTree};
+use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
 
 const EP: &str = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
@@ -122,15 +125,54 @@ pub(super) fn slide_added(
     Ok(())
 }
 
+/// The app properties after the slides, listed by id as `before` in
+/// presentation order, were put in `order`: each slide's title moves with
+/// it, its bytes kept.
+pub(super) fn slides_reordered(
+    next: &mut Package,
+    before: &[u32],
+    order: &[u32],
+) -> Result<(), EditRefusal> {
+    // The list index each slide comes from.
+    let Some(from) = order
+        .iter()
+        .map(|id| before.iter().position(|was| was == id))
+        .collect::<Option<Vec<usize>>>()
+    else {
+        return Ok(());
+    };
+    rewrite(next, |tree, bytes| {
+        let Some(titles) = counted_titles(tree, from.len()) else {
+            return Vec::new();
+        };
+        from.iter()
+            .enumerate()
+            .filter(|&(to, &was)| to != was)
+            .filter_map(|(to, &was)| {
+                let entry = titles.names.get(titles.first + to)?;
+                let moved = titles.names.get(titles.first + was)?;
+                Some((entry.span.clone(), bytes[moved.span.clone()].to_vec()))
+            })
+            .collect()
+    })?;
+    Ok(())
+}
+
 /// The words and paragraphs of `view`, the deck `next` holds, written over
-/// the app properties' counts: the live export's last write, after its text
+/// the app properties' counts, and its slides' titles over the slide titles'
+/// group: the live export's last write, after its slide-order and text
 /// edits. The part, when it changed.
 pub(crate) fn recount_slide_text(
     next: &mut Package,
     view: &DeckView,
 ) -> Result<Option<String>, EditRefusal> {
     let text = Text::of_deck(view);
-    rewrite(next, |tree, _| text_edits(tree, text))
+    let titles: Vec<Option<String>> = view.slides.iter().map(slide_title).collect();
+    rewrite(next, |tree, bytes| {
+        let mut edits = text_edits(tree, text);
+        edits.extend(retitled(tree, bytes, &titles));
+        edits
+    })
 }
 
 /// The `Slides` count `package`'s app properties state, when they state one.
@@ -280,6 +322,16 @@ fn titles(tree: &XmlTree, count: usize) -> Option<Titles<'_>> {
     })
 }
 
+/// The group listing the deck's `count` slide titles, when the app
+/// properties' `Slides` count states `count` too.
+fn counted_titles(tree: &XmlTree, count: usize) -> Option<Titles<'_>> {
+    let (_, slides) = tree.child(0, EP, "Slides").ok().flatten()?;
+    if slides.text.trim().parse::<usize>().ok()? != count {
+        return None;
+    }
+    titles(tree, count)
+}
+
 /// The removed slide's title out of `TitlesOfParts`, and its group's count
 /// one less.
 fn title_removed(tree: &XmlTree, index: usize, count: usize) -> Vec<Splice> {
@@ -318,12 +370,7 @@ fn title_added(
     };
     let title = match source {
         Some(_) => bytes[model.span.clone()].to_vec(),
-        None => {
-            let mut title = xml::open_tag(bytes, model);
-            title.extend(UNTITLED.as_bytes());
-            title.extend(format!("</{}>", model.qualified).into_bytes());
-            title
-        }
+        None => written_as(bytes, model, UNTITLED),
     };
     let point = match titles.names.get(titles.first + index) {
         Some(next) if index < count => next.span.start,
@@ -332,4 +379,68 @@ fn title_added(
     let mut edits = vec![(point..point, title)];
     edits.extend(titles.resized(count, true));
     edits
+}
+
+/// A slide's own title: the text of its first title placeholder (`title` or
+/// `ctrTitle`), its runs' text, the paragraphs holding any joined by a
+/// space; none when that is blank or the slide has no title placeholder.
+fn slide_title(slide: &SlideView) -> Option<String> {
+    let body = slide
+        .shapes
+        .iter()
+        .find(|shape| {
+            shape.placeholder.as_ref().is_some_and(|placeholder| {
+                matches!(placeholder.kind.as_str(), "title" | "ctrTitle")
+            })
+        })?
+        .text
+        .as_ref()?;
+    let paragraphs: Vec<String> = body
+        .paragraphs
+        .iter()
+        .map(|paragraph| {
+            paragraph
+                .runs
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect::<String>()
+        })
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let title = paragraphs.join(" ").trim().to_owned();
+    (!title.is_empty()).then_some(title)
+}
+
+/// The slide titles' group set to `titles`, the deck's slides' own titles in
+/// presentation order, when it lists as many: an entry that reads as its
+/// slide's title, white space aside (a line break or paragraph mark may be
+/// written either way), keeps its bytes; another is written as its slide's
+/// title, or [`UNTITLED`] for a slide with none.
+fn retitled(tree: &XmlTree, bytes: &[u8], titles: &[Option<String>]) -> Vec<Splice> {
+    let Some(group) = counted_titles(tree, titles.len()) else {
+        return Vec::new();
+    };
+    let visible = |text: &str| {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+    };
+    titles
+        .iter()
+        .enumerate()
+        .filter_map(|(at, title)| {
+            let entry = group.names.get(group.first + at)?;
+            let title = title.as_deref().unwrap_or(UNTITLED);
+            (visible(&entry.text) != visible(title))
+                .then(|| (entry.span.clone(), written_as(bytes, entry, title)))
+        })
+        .collect()
+}
+
+/// An element holding `text`, its tag written as `model`'s is.
+fn written_as(bytes: &[u8], model: &Node, text: &str) -> Vec<u8> {
+    let mut element = xml::open_tag(bytes, model);
+    element.extend(escape_text(text).into_bytes());
+    element.extend(format!("</{}>", model.qualified).into_bytes());
+    element
 }
