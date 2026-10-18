@@ -7,7 +7,7 @@ use super::authorize::{ceiling_for_grant, resolve_selector_position};
 use super::codec::{SyncSelector, selector_err};
 use super::scope::{CoreferenceExportContext, entity_selector_decision, facet_filter};
 use super::text_egress::{source_selected, text_backed};
-use crate::authority::{AuthorityFold, FederationGrantActivation, federation_grant_activation};
+use crate::authority::AuthorityFold;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result, SyncSelectorValidation as SelectorError};
@@ -44,7 +44,9 @@ pub(super) fn authorize_in_txn(
         return Err(selector_err(SelectorError::GrantNotFound));
     }
     let grant = decode_federation_grant_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..])?;
-    if grant.role.is_guest() || !matches!(grant.scope, FederationGrantScope::Vault { .. }) {
+    // A Connect guest grant reads (FIX 3016); the writer role gate below
+    // still refuses its writes. An Ask guest grant backs nothing here.
+    if !crate::federation::grant_serves_selector(&grant) {
         return Err(selector_err(SelectorError::GrantScopeMismatch));
     }
     if grant.scope != scope {
@@ -71,11 +73,8 @@ pub(super) fn authorize_in_txn(
     }
     // A readonly fold uses exactly this writer snapshot and cannot open a nested writer.
     let fold = vault.authority_fold_readonly_in_txn(txn)?;
-    match federation_grant_activation(&fold, &selector.grant_id) {
-        FederationGrantActivation::Unpacted | FederationGrantActivation::Active => {}
-        FederationGrantActivation::Inactive(_) => {
-            return Err(selector_err(SelectorError::GrantInactive));
-        }
+    if !crate::federation::pact_admits_grant(&fold, &selector.grant_id, &grant) {
+        return Err(selector_err(SelectorError::GrantInactive));
     }
     let position =
         resolve_selector_position(selector, &ceiling_for_grant(&fold, &selector.grant_id))?;
