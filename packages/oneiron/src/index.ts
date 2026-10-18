@@ -428,6 +428,8 @@ export class Oneiron {
     receipts: Object.assign((limit: number = 100, kinds?: string[]): FacadeReceipt[] => this.#call(() => this.#client.vaultReceipts(limit, kinds)), {
       /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
       get: (input: Facade.CallReceiptRequest): Facade.CallReceipt | null => this.#call(() => this.#client.vaultReceiptsGet(input) as Facade.CallReceipt | null),
+      /** Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly. */
+      context: (input: Facade.CallReceiptRequest): Facade.ContextEmitReceipt | null => this.#call(() => this.#client.vaultReceiptsContext(input) as Facade.ContextEmitReceipt | null),
     }),
     images: {
       /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */
@@ -1241,6 +1243,8 @@ export class Oneiron {
   /** Waits on an ask at a step with no other work: pending, changed, ready with its result, or a park for code mode. */
   wait(handle: TaskAskHandle, stepKey = "sdk.wait"): Facade.TaskAskWait { return this.#call(() => this.#client.wait({handle, step_key: stepKey}) as Facade.TaskAskWait) }
   readonly ai = {
+    /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
+    reply: (input: Facade.AiReplyRequest): Facade.AiReply => this.#call(() => this.#client.aiReply(input) as Facade.AiReply),
     /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
     options: (input: Facade.AiOptionsRequest): Facade.AiOptions => this.#call(() => this.#client.aiOptions(input) as Facade.AiOptions),
     /** One image out of the host's image model; reference images make it an edit. */

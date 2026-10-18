@@ -4566,6 +4566,36 @@
       "section": false
     },
     {
+      "name": "ai.reply",
+      "description": "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs.",
+      "input": "crate::task_verb::sdk::AiReplyRequest",
+      "output": "crate::task_verb::sdk::AiReply",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.reply\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.receipts.context",
+      "description": "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly.",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<crate::receipt::ContextEmitReceipt>",
+      "call": "memory.context_emit_receipt(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.options",
       "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",

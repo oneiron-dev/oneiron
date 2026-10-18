@@ -519,6 +519,7 @@ pub use super::sdk_legal_hold::*;
 pub use super::sdk_live_run::*;
 pub use super::sdk_mesh::*;
 pub use super::sdk_record_erase::*;
+pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_scratchpad::*;

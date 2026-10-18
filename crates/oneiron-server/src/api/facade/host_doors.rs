@@ -104,6 +104,7 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::secret_use_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
+pub(crate) use super::reply_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
@@ -1008,7 +1009,8 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.packs.put"
+        "ai.reply"
+        | "vault.packs.put"
         | "vault.packs.remove"
         | "vault.skill_hubs.put"
         | "vault.skill_hubs.get"

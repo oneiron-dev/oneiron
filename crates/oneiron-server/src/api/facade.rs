@@ -56,6 +56,7 @@ mod note_doors;
 mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;
+mod reply_doors;
 mod residence_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 454 code-mode rows (433 host rows, 21 run rows), 1640 declarations.
-// Replies: 398 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 456 code-mode rows (435 host rows, 21 run rows), 1650 declarations.
+// Replies: 400 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1162,6 +1162,16 @@ declare namespace Sdk {
   type SkillAuthoringReceipt = { skill_id: string; author: string; author_receipt: string; version: string };
   type SkillForkRequest = { parent: string; id?: string | null; skill_id: string };
   type CallableCardView = { skill: string; skill_id: string; version: string; desc: string; reference: string; arguments: unknown; returns: unknown };
+  type AiReplyReader = { definition: string; task_family?: string | null };
+  type ContextPackRetrievalBudgetControls = { claims?: number | null; turns?: number | null; summaries?: number | null; facets?: number | null; other?: number | null; selected_edges?: number | null };
+  type ContextPackBudgetControls = { token_budget?: number | null; max_item_tokens?: number | null; max_field_chars?: number | null; retrieval?: ContextPackRetrievalBudgetControls | null };
+  type AiReplyCompanion = { person_ref?: string | null; persona_ref?: string | null; expression?: string | null };
+  type AiReplyStanding = { world_ref?: string | null; token_budget: number; block_tokens?: number | null };
+  type AiReplyRequest = { model: string; conversation_id: string; message: string; session_id?: string | null; reader?: AiReplyReader | null; budget?: ContextPackBudgetControls | null; limit?: number | null; pinned_refs?: string[]; companion?: AiReplyCompanion | null; standing?: AiReplyStanding | null; reasoning_effort?: string | null };
+  type AiReplyL2Base = { content_hash: string; body: string };
+  type AiReply = { reply: string; model: string; receipt_refs: string[]; l2_base?: AiReplyL2Base | null };
+  type ContextReceiptFields = { persona_compile_stamp: string; activated_memory_ids: string[]; board_state_ref: string; substrate_ref?: string | null; model?: string | null; reasoning_effort?: string | null; prompt_input_ref?: string | null; disclosure_stamp?: string | null };
+  type ContextEmitReceipt = { receipt_ref: string; occurred_at: number; actor: string; conversation_id: string; request_digest: string; result_digest: string; context: ContextReceiptFields };
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
@@ -1664,6 +1674,8 @@ declare const ai: {
   image(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left. */
   options(input: Sdk.AiOptionsRequest): Promise<Sdk.AiOptions | StoredResult>;
+  /** Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs. */
+  reply(input: Sdk.AiReplyRequest): Promise<Sdk.AiReply | StoredResult>;
   /** Speech audio out of text, from the host's speech model. */
   speech(input: Sdk.AiCallRequest): Promise<Sdk.AiAnswer | StoredResult>;
   /** Text out of speech audio, from the host's transcription model. */
@@ -2505,6 +2517,8 @@ declare const vault: Sdk.VaultHost & {
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
   /** Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds. */
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.MemoryReceipt[] | StoredResult>) & {
+    /** Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly. */
+    context(input: Sdk.CallReceiptRequest): Promise<Sdk.ContextEmitReceipt | null | StoredResult>;
     /** One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none. */
     get(input: Sdk.CallReceiptRequest): Promise<Sdk.CallReceipt | null | StoredResult>;
   };

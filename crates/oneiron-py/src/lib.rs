@@ -2554,6 +2554,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn ai_reply(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "ai.reply")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("ai.reply", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_receipts_context(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.receipts.context")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.receipts.context", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_options(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.options")?;
         let output = py

@@ -886,6 +886,12 @@ impl OneironClient {
                 "self.skills.callables" => remote_agent_verb_output::<
                     Vec<oneiron::skill::helper::CallableCardView>,
                 >(client, verb, &input),
+                "ai.reply" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiReply>(
+                    client, verb, &input,
+                ),
+                "vault.receipts.context" => remote_agent_verb_output::<
+                    Option<oneiron::receipt::ContextEmitReceipt>,
+                >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
                 ),
@@ -4693,6 +4699,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.skills.callables", value)
+    }
+    pub fn ai_reply(
+        &self,
+        input: &oneiron::task_verb::sdk::AiReplyRequest,
+    ) -> Result<oneiron::task_verb::sdk::AiReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.reply", value)
+    }
+    pub fn vault_receipts_context(
+        &self,
+        input: &oneiron::receipt::CallReceiptRequest,
+    ) -> Result<Option<oneiron::receipt::ContextEmitReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.receipts.context", value)
     }
     pub fn ai_options(
         &self,
