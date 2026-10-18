@@ -622,7 +622,9 @@ impl McpRowSurface {
 
     /// The caller's surface for one row: its credential at its locality,
     /// born at this position, under this invocation and host origin, in the
-    /// off-record session the request named, its reads listed in `producers`.
+    /// off-record session `mcp_credential_memory` binds for its principal
+    /// (a slip naming none binds none, as its call receipt keeps none), its
+    /// reads listed in `producers`.
     fn memory<'a>(
         &self,
         server: &'a SyncServer,
@@ -643,14 +645,8 @@ impl McpRowSurface {
             Some(run) => memory.with_host_origin(run.origin.clone()),
             None => memory,
         };
-        let memory = match &self.task_work_turn {
+        match &self.task_work_turn {
             Some(turn) => memory.with_task_work_turn(Arc::clone(turn)),
-            None => memory,
-        };
-        // OF-063: the off-record session the request named; inside an anonymous
-        // one a reference refusal writes no receipt (Engine ruling 10-17).
-        match actor.off_record_session.as_deref() {
-            Some(session) => memory.in_off_record_session(session),
             None => memory,
         }
     }
