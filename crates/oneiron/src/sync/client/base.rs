@@ -236,17 +236,6 @@ impl SyncClient {
                 .is_ok_and(|marker| marker.is_some())
     }
 
-    /// Where this connection's sends go: the machine the home proved while it
-    /// still stands here on the key it proved, else an unknown destination.
-    pub(crate) fn home_destination(&self) -> crate::authority::Destination {
-        match self.vault.peer_machine_stands(self.home_peer) {
-            crate::authority::PeerMachine::Proven { machine, .. } => {
-                crate::authority::Destination::Machine(machine)
-            }
-            crate::authority::PeerMachine::Unknown => crate::authority::Destination::Unknown,
-        }
-    }
-
     /// Whether an outgoing frame carries what a device-only world now keeps
     /// here, judged as it is released: a window UPDATE by the raw verdict
     /// (a frame that cannot be read stays), a document frame, a NOTE command

@@ -210,10 +210,14 @@ fn validate_window_update(
             key,
             &candidate.get_map(crate::sync::room_facts::ROOM_FACTS_MAP),
         )?;
-        // FIX 853: and every document quote pin.
+        // FIX 853: and every document quote pin and MESSAGE document.
         crate::sync::document_pins::admit_document_pin_map(
             key,
             &candidate.get_map(crate::sync::document_pins::DOCUMENT_PINS_MAP),
+        )?;
+        crate::sync::message_docs::admit_message_doc_map(
+            key,
+            &candidate.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP),
         )?;
         // OF-013: every withdrawn cutoff the snapshot holds names its
         // artifact, and every epoch floor its session (FIX 2867).
@@ -271,6 +275,10 @@ fn validate_window_update(
             crate::sync::document_pins::admit_document_pin_map(
                 key,
                 &root.get_map(crate::sync::document_pins::DOCUMENT_PINS_MAP),
+            )?;
+            crate::sync::message_docs::admit_message_doc_map(
+                key,
+                &root.get_map(crate::sync::message_docs::MESSAGE_DOCS_MAP),
             )?;
             cutoffs.extend(crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_map(
                 &root.get_map(crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP),
@@ -358,6 +366,10 @@ fn validate_window_update(
         crate::sync::document_pins::DOCUMENT_PINS_MAP,
         ContainerType::Map,
     );
+    let message_docs = ContainerID::new_root(
+        crate::sync::message_docs::MESSAGE_DOCS_MAP,
+        ContainerType::Map,
+    );
     let withdrawn_cutoffs = ContainerID::new_root(
         crate::sync::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ContainerType::Map,
@@ -381,6 +393,8 @@ fn validate_window_update(
             crate::sync::room_facts::admit_room_fact_carrier(key, &map_key, &value)?;
         } else if op.container == document_pins {
             crate::sync::document_pins::admit_document_pin_carrier(key, &map_key, &value)?;
+        } else if op.container == message_docs {
+            crate::sync::message_docs::admit_message_doc_carrier(key, &map_key, &value)?;
         } else if op.container == withdrawn_cutoffs {
             cutoffs.push(
                 crate::sync::withdrawn_cutoffs::admit_withdrawn_cutoff_carrier(&map_key, &value)?,

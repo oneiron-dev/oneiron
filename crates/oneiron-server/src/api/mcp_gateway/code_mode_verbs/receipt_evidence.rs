@@ -45,7 +45,7 @@ impl ReceiptWriter {
     /// `run_host_door::agent_memory` builds it).
     fn memory(&self) -> Memory<'_> {
         let memory = match &self.caller {
-            VerdictAsker::Connector(actor) => crate::api::credential_memory(
+            VerdictAsker::Connector(actor) => crate::api::mcp_credential_memory(
                 &self.server.vault,
                 actor.auth.as_ref(),
                 actor.actor_ref,

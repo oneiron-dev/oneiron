@@ -157,6 +157,14 @@ impl WindowManager {
                     tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
                 }
             }
+            // FIX 853: a MESSAGE row that lands after its document's head
+            // finds the head here.
+            crate::sync::message_docs::merge_committed_message_docs(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
             if !carriers.is_empty()
                 && key.world().is_none()
                 && let Err(error) = crate::sync::room_facts::mirror_carriers(

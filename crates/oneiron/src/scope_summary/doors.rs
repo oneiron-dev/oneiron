@@ -308,7 +308,7 @@ pub(super) fn mint_in_txn(
             &encoded,
         )
         .text(&id, &[("text", text)]);
-    for covered in body.covers.iter().take(256) {
+    for covered in &body.covers {
         batch = batch.edge(&id, EdgeKind::DerivedFrom, covered, 1.0);
     }
     let _permit = super::producer::admit(&vault.store, id, &encoded);
@@ -796,7 +796,7 @@ impl Vault {
         settle_header(&requester, outcome)
     }
 
-    /// Reads the complete body truth list, not just the first 256 edges.
+    /// Reads the complete body truth list, not the DerivedFrom edges.
     pub fn scope_summary_covers(&self, summary: &EntityId) -> Result<Vec<EntityId>> {
         let txn = self.store.env.read_txn()?;
         Ok(summary_in_txn(self, &txn, summary)?.covers)

@@ -32,6 +32,7 @@ use crate::deck::{
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
+pub(crate) use slides::recount_slide_text;
 
 const A16: &str = "http://schemas.microsoft.com/office/drawing/2014/main";
 /// The `a:ext` that holds a shape's `a16:creationId`.
