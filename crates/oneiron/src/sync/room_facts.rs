@@ -26,8 +26,9 @@
 //!   and in every retained operation.
 //! - Reverse rematerialization mirrors each row beside its carrier, and a
 //!   door that changes a row mirrors it into the live window after commit. A
-//!   cell changed while no open window carried its room is marked, and
-//!   mirrored as that window opens.
+//!   cell, join or card changed while no open window carried it is marked,
+//!   and its carrier's window is faulted in for it by the live mirror (FIX
+//!   3095), or mirrors it as that window next opens.
 //! - Forward rematerialization and Observer B merge each row into this
 //!   vault's (`workspace_roster::rooms::replica`).
 //! - Every export, and the erase sweep, drops each row of a room this vault
@@ -402,6 +403,65 @@ pub(crate) fn committed_carriers(vault: &Vault, rows: &BTreeSet<EntityId>) -> Ve
     carriers.into_iter().collect()
 }
 
+/// Whether this machine marked a side row `carrier`'s window lacks: a cell
+/// of a room, or a join or card the room or thread root carries.
+fn carrier_marked(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    carrier: EntityId,
+    entity_type: u8,
+) -> Result<bool> {
+    let mut prefixes = vec![
+        shared_key_at(JOIN, carrier, ""),
+        shared_key_at(OFFER, carrier, ""),
+    ];
+    if entity_type == ENTITY_TYPE_CONVERSATION {
+        prefixes.push(cell_key(carrier, None));
+        prefixes.push(format!("{HANDLE}{}/", carrier.to_hex()));
+    }
+    for prefix in prefixes {
+        if !DIRTY
+            .scan_keys(&vault.store, rtxn, prefix.as_bytes())?
+            .is_empty()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The base windows a flush faults in (FIX 3095): the window of each of
+/// `carriers` queued by its own id among `rows` that holds marked side
+/// rows, by the carrier's learned month, where `loaded` holds none of it.
+pub(crate) fn cold_flush_windows(
+    vault: &Vault,
+    rows: &BTreeSet<EntityId>,
+    carriers: &[(EntityId, u8)],
+    loaded: &[WindowKey],
+) -> Vec<WindowKey> {
+    let Ok(rtxn) = vault.store.env.read_txn() else {
+        return Vec::new();
+    };
+    let mut keys = Vec::new();
+    for (id, entity_type) in carriers {
+        if !rows.contains(id) || !carrier_marked(vault, &rtxn, *id, *entity_type).unwrap_or(false) {
+            continue;
+        }
+        let Some(key) = vault
+            .get_raw_in(&rtxn, id)
+            .ok()
+            .flatten()
+            .and_then(|raw| super::residence::residence_window_for_blob(&raw).ok())
+        else {
+            continue;
+        };
+        if key.world().is_none() && !loaded.contains(&key) && !keys.contains(&key) {
+            keys.push(key);
+        }
+    }
+    keys
+}
+
 /// Merges every side row window `key`'s document holds into this vault's,
 /// as a window open does. A row that fails is logged and left; it never
 /// stops the open.
@@ -651,8 +711,8 @@ pub(crate) fn scrub_room_facts(
 impl Vault {
     /// Mirrors room `room`'s host pin, or its platform handle `handle`, into
     /// the live window that carries the room, after a door changed it (FIX
-    /// 1794). A cell no live window takes is marked, and mirrored as the
-    /// room's window next opens.
+    /// 1794). A cell no live window takes is marked, and the room queued for
+    /// a flush into its window (FIX 3095).
     pub(crate) fn refresh_room_cell_in_live_window(&self, room: EntityId, handle: Option<&str>) {
         let cell = cell_key(room, handle);
         if self
@@ -660,11 +720,21 @@ impl Vault {
         {
             return;
         }
-        if let Err(error) =
-            self.with_write_txn_grouped(|wtxn| DIRTY.put(&self.store, wtxn, &cell, &()))
-        {
-            tracing::warn!(room = %room.to_hex(), error = %error, "room side cell not marked");
+        match self.with_write_txn_grouped(|wtxn| DIRTY.put(&self.store, wtxn, &cell, &())) {
+            Ok(()) => self.queue_room_fact_flush(BTreeSet::from([room])),
+            Err(error) => {
+                tracing::warn!(room = %room.to_hex(), error = %error, "room side cell not marked");
+            }
         }
+    }
+
+    /// Queues `carriers`, whose marked side rows no live window took, for the
+    /// live mirror, which faults each one's window in for them (FIX 3095).
+    /// They are queued as an import's rows are, so no carrier a doc holds is
+    /// rewritten with them.
+    fn queue_room_fact_flush(&self, carriers: BTreeSet<EntityId>) {
+        let _import = super::manager::import_scope();
+        self.note_committed_rows(carriers);
     }
 
     /// Mirrors the claim, response and participation facts a door wrote for
@@ -692,7 +762,8 @@ impl Vault {
     /// Mirrors the join receipts `joins` names, and the offer cards `offers`
     /// names with the join each filed, into the live windows that carry
     /// their rooms or threads, after a door wrote them (FIX 1794). A row no
-    /// live window takes is marked, and mirrored as its window next opens.
+    /// live window takes is marked, and its room or thread root queued for a
+    /// flush into its window (FIX 3095).
     pub(crate) fn refresh_room_rows_in_live_windows(&self, joins: &[&str], offers: &[&str]) {
         let rows = self
             .store
@@ -729,22 +800,25 @@ impl Vault {
                 .push(carrier_key(row, &bytes));
         }
         let mut unheld = Vec::new();
+        let mut cold = BTreeSet::new();
         for (carrier, keys) in carriers {
             let changed: Vec<&str> = keys.iter().map(String::as_str).collect();
             if !self.mirror_carriers_in_live_windows(&[carrier], &changed) {
                 unheld.extend(keys);
+                cold.insert(carrier.0);
             }
         }
         if unheld.is_empty() {
             return;
         }
-        if let Err(error) = self.with_write_txn_grouped(|wtxn| {
+        match self.with_write_txn_grouped(|wtxn| {
             for key in &unheld {
                 DIRTY.put(&self.store, wtxn, key, &())?;
             }
             Ok(())
         }) {
-            tracing::warn!(error = %error, "room joins and offers not marked");
+            Ok(()) => self.queue_room_fact_flush(cold),
+            Err(error) => tracing::warn!(error = %error, "room joins and offers not marked"),
         }
     }
 
