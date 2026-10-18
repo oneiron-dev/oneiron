@@ -76,6 +76,13 @@ pub enum AgentVerb {
     VaultTaggingHistory,
     VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
+    VaultAffectCopingRecord,
+    VaultAffectCopingUpdate,
+    VaultAffectCopingAggregate,
+    VaultAffectWellnessPolicyGet,
+    VaultAffectWellnessPolicyConfigure,
+    VaultAffectWellnessDerive,
+    VaultAffectWellnessGet,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
     VaultRetrievalRun,
@@ -886,6 +893,13 @@ impl AgentVerb {
         Self::VaultTaggingHistory,
         Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
+        Self::VaultAffectCopingRecord,
+        Self::VaultAffectCopingUpdate,
+        Self::VaultAffectCopingAggregate,
+        Self::VaultAffectWellnessPolicyGet,
+        Self::VaultAffectWellnessPolicyConfigure,
+        Self::VaultAffectWellnessDerive,
+        Self::VaultAffectWellnessGet,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
         Self::VaultRetrievalRun,
@@ -1699,6 +1713,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => "vault.tagging.history",
             Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
+            Self::VaultAffectCopingRecord => "vault.affect.coping.record",
+            Self::VaultAffectCopingUpdate => "vault.affect.coping.update",
+            Self::VaultAffectCopingAggregate => "vault.affect.coping.aggregate",
+            Self::VaultAffectWellnessPolicyGet => "vault.affect.wellness.policy.get",
+            Self::VaultAffectWellnessPolicyConfigure => "vault.affect.wellness.policy.configure",
+            Self::VaultAffectWellnessDerive => "vault.affect.wellness.derive",
+            Self::VaultAffectWellnessGet => "vault.affect.wellness.get",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
             Self::VaultRetrievalRun => "vault.retrieval.run",
@@ -2530,6 +2551,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -3367,6 +3395,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -4278,6 +4313,13 @@ impl AgentVerb {
                 | Self::VaultTaggingHistory
                 | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectCopingAggregate
+                | Self::VaultAffectWellnessPolicyGet
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
+                | Self::VaultAffectWellnessGet
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalRun
@@ -5025,6 +5067,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
                 | Self::VaultAffectClaimsConsolidate
+                | Self::VaultAffectCopingRecord
+                | Self::VaultAffectCopingUpdate
+                | Self::VaultAffectWellnessPolicyConfigure
+                | Self::VaultAffectWellnessDerive
                 | Self::VaultRetrievalOutcomesPut
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
@@ -5582,6 +5628,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultAffectCopingRecord => &["spec"],
+            Self::VaultAffectCopingUpdate => &["spec"],
+            Self::VaultAffectCopingAggregate => &["spec"],
+            Self::VaultAffectWellnessPolicyGet => &["spec"],
+            Self::VaultAffectWellnessPolicyConfigure => &["spec"],
+            Self::VaultAffectWellnessDerive => &["spec"],
+            Self::VaultAffectWellnessGet => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -6393,6 +6446,13 @@ impl AgentVerb {
             Self::VaultTaggingHistory => &["spec"],
             Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
+            Self::VaultAffectCopingRecord => &["spec"],
+            Self::VaultAffectCopingUpdate => &["spec"],
+            Self::VaultAffectCopingAggregate => &["spec"],
+            Self::VaultAffectWellnessPolicyGet => &["spec"],
+            Self::VaultAffectWellnessPolicyConfigure => &["spec"],
+            Self::VaultAffectWellnessDerive => &["spec"],
+            Self::VaultAffectWellnessGet => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
             Self::VaultRetrievalRun => &["spec"],
@@ -7342,6 +7402,27 @@ impl AgentVerb {
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
+            }
+            Self::VaultAffectCopingRecord => {
+                "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded."
+            }
+            Self::VaultAffectCopingUpdate => {
+                "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs."
+            }
+            Self::VaultAffectCopingAggregate => {
+                "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs."
+            }
+            Self::VaultAffectWellnessPolicyGet => {
+                "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent."
+            }
+            Self::VaultAffectWellnessPolicyConfigure => {
+                "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine."
+            }
+            Self::VaultAffectWellnessDerive => {
+                "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs."
+            }
+            Self::VaultAffectWellnessGet => {
+                "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims."
             }
             Self::VaultRetrievalRecall => {
                 "Recalls through the normal credential-bound serving pipeline as the owner, with typed opt-in turn and trace capture and the actual finalized run handle."

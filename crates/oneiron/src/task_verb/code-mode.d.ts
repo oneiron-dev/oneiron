@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 820 code-mode rows (797 host rows, 23 run rows), 2783 declarations.
-// Replies: 733 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 827 code-mode rows (804 host rows, 23 run rows), 2799 declarations.
+// Replies: 740 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -421,6 +421,22 @@ declare namespace Sdk {
   type AffectClaimConsolidateRequest = { claim_ref: string };
   type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
   type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
+  type CopingStrategy = "SitSel" | "SitMod" | "AttDep" | "CogChg" | "ResMod" | "ERFlex";
+  type CopingOutcomeRecordRequest = { affected_person_ref: string; baseline_turn_ref: string; later_turn_ref: string; strategy: CopingStrategy; confidence: number; scope: ClaimScope; sensitivity?: number | null };
+  type CopingVadDelta = { valence: number; arousal: number; dominance: number };
+  type CopingOutcomeView = { claim_ref: string; affected_person_ref: string; strategy_ref: string; strategy: CopingStrategy; vad_delta: CopingVadDelta; confidence: number; successful: boolean; observed_n: number; scope: ClaimScope; approval: string; source?: string | null; valid_from?: number | null; valid_to?: number | null; evidence_refs: string[]; made_by?: MadeBy | null };
+  type CopingOutcomeReceipt = { outcome: CopingOutcomeView; superseded_claim_refs: string[]; receipt_ref: string };
+  type CopingOutcomeUpdateRequest = { prior_claim_ref: string; baseline_turn_ref: string; later_turn_ref: string; confidence: number };
+  type CopingAggregateRequest = { affected_person_ref: string; scope?: ClaimScope | null };
+  type CopingAggregate = { affected_person_ref: string; outcomes: CopingOutcomeView[]; observed_n: number };
+  type StateWindow = { window_secs: number; expected_goal_completions: number; expected_engaged_days: number };
+  type ActionModeRule = { mode: string; min_index: number; max_index: number };
+  type ActionModePolicy = { window: StateWindow; rules: ActionModeRule[] };
+  type WellnessPolicyConfigureRequest = { policy?: ActionModePolicy | null };
+  type WellnessPersonRequest = { affected_person_ref: string };
+  type ModeGateInputs = { affect: number; goal_velocity: number; engagement: number };
+  type StateIndex = { value: number; inputs?: ModeGateInputs | null; claim?: string | null; observed_at?: number | null };
+  type WellnessProjection = { affected_person_ref: string; policy?: ActionModePolicy | null; state_index: StateIndex; mode?: ActionModeRule | null; coping: CopingAggregate; source_refs: string[]; receipt_ref?: string | null };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -3171,6 +3187,26 @@ declare const vault: Sdk.VaultHost & {
     claims: {
       /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
       consolidate(input: Sdk.AffectClaimConsolidateRequest): Promise<Sdk.AffectClaimConsolidation | StoredResult>;
+    };
+    coping: {
+      /** Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs. */
+      aggregate(input: Sdk.CopingAggregateRequest): Promise<Sdk.CopingAggregate | StoredResult>;
+      /** Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded. */
+      record(input: Sdk.CopingOutcomeRecordRequest): Promise<Sdk.CopingOutcomeReceipt | StoredResult>;
+      /** Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs. */
+      update(input: Sdk.CopingOutcomeUpdateRequest): Promise<Sdk.CopingOutcomeReceipt | StoredResult>;
+    };
+    wellness: {
+      /** Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs. */
+      derive(input: Sdk.WellnessPersonRequest): Promise<Sdk.WellnessProjection | StoredResult>;
+      /** Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims. */
+      get(input: Sdk.WellnessPersonRequest): Promise<Sdk.WellnessProjection | StoredResult>;
+      policy: {
+        /** Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine. */
+        configure(input: Sdk.WellnessPolicyConfigureRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
+        /** Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent. */
+        get(input: Sdk.EmptyRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
+      };
     };
   };
   agents: {
