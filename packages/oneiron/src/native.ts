@@ -163,6 +163,16 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultFederationConnectIdentity(input: unknown): unknown
+vaultFederationConnectGrantsMint(input: unknown): unknown
+vaultFederationConnectOffer(input: unknown): unknown
+vaultFederationConnectAccept(input: unknown): unknown
+vaultFederationConnectNarrow(input: unknown): unknown
+vaultFederationConnectRescopeOffer(input: unknown): unknown
+vaultFederationConnectRescopeAccept(input: unknown): unknown
+vaultFederationConnectDisconnect(input: unknown): unknown
+vaultFederationConnectExport(input: unknown): unknown
+vaultFederationConnectRejoin(input: unknown): unknown
 vaultTrustedContactsName(input: unknown): unknown
 vaultTrustedContactsList(input: unknown): unknown
 vaultTrustedContactsConsent(input: unknown): unknown
@@ -418,6 +428,7 @@ vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
 vaultRefsLinks(input: unknown): unknown
+vaultSearchHybrid(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown

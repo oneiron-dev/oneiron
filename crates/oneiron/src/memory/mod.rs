@@ -75,6 +75,7 @@ mod report;
 mod result_attachment;
 mod room_turn;
 mod scoped_export;
+mod search_hybrid;
 mod session_writes;
 mod signal_extraction;
 mod shape_doors;
@@ -181,7 +182,7 @@ pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpt
 pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, MEMORY_PACK_VERSION,
-    MemoryItem, MemoryPack, MemoryProvenance, RecallEffort, RecallRerank, RecallRerankHost,
+    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
     RecallScope, RerankDocument, RerankEgress, RerankReport, RerankScores, RerankSkip,
     RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };
@@ -189,6 +190,9 @@ pub use result_attachment::{
     MESSAGE_RESULT_METADATA_KEY, MessageResultAttachment, MessageResultSource,
 };
 pub use room_turn::RoomTurnHandle;
+pub use search_hybrid::{
+    HybridPprQuery, HybridRankReplay, HybridSearchHit, HybridSearchRequest, HybridTemporalQuery,
+};
 pub use scoped_export::{
     ChannelCeiling, CredentialCeiling, ExportChannel, RecordPosition, RecordSelector,
     ScopeAxisInput, ScopeSensitivityBand, ScopeSensitivityInput, ScopedExport, ScopedExportRecord,

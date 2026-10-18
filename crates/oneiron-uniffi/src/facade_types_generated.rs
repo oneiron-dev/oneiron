@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 473 facade rows, 1714 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 437.
+// UniFFI census: 484 facade rows, 1747 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 448.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -9280,6 +9280,386 @@ pub struct SharedActPolicyChangeRequest {
     pub change_id: String,
 }
 
+/// `oneiron::task_verb::sdk_federation::ConnectIdentity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectIdentity {
+    #[serde(rename = "vault")]
+    pub vault: String,
+    #[serde(rename = "host_key")]
+    pub host_key: String,
+}
+
+/// `oneiron::task_verb::sdk_federation::MintConnectGrant`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MintConnectGrant {
+    #[serde(rename = "peer_vault")]
+    pub peer_vault: String,
+    #[serde(rename = "authority_scope")]
+    pub authority_scope: Scope,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectGrant`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectGrant {
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "guest_actor")]
+    pub guest_actor: String,
+    #[serde(rename = "resolved_scope")]
+    pub resolved_scope: Scope,
+    #[serde(
+        rename = "expires_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub expires_at: Option<u64>,
+}
+
+/// `oneiron_contracts::registry::families::TypeByteFamily`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TypeByteFamily {
+    #[serde(rename = "Conversation")]
+    Conversation,
+    #[serde(rename = "People")]
+    People,
+    #[serde(rename = "World")]
+    World,
+    #[serde(rename = "Content")]
+    Content,
+    #[serde(rename = "AgentsAndSurfacing")]
+    AgentsAndSurfacing,
+    #[serde(rename = "CoreOverflow")]
+    CoreOverflow,
+    #[serde(rename = "AuthorityPolicyCustody")]
+    AuthorityPolicyCustody,
+    #[serde(rename = "AuditObservability")]
+    AuditObservability,
+    #[serde(rename = "OutboundCommunicationConsent")]
+    OutboundCommunicationConsent,
+    #[serde(rename = "RegistriesDerived")]
+    RegistriesDerived,
+    #[serde(rename = "Productivity")]
+    Productivity,
+    #[serde(rename = "Code")]
+    Code,
+    #[serde(rename = "Documents")]
+    Documents,
+    #[serde(rename = "Companion")]
+    Companion,
+    #[serde(rename = "PackOverflow")]
+    PackOverflow,
+}
+
+/// `oneiron_authority::federation::selector_kind::SelectorRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SelectorRange {
+    #[serde(rename = "Semantic")]
+    Semantic,
+    #[serde(rename = "Core")]
+    Core,
+    #[serde(rename = "Maintenance")]
+    Maintenance,
+    #[serde(rename = "Family")]
+    Family(TypeByteFamily),
+}
+
+/// `oneiron_authority::federation::scope::ScopeAxis` with `T` = `SelectorRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "values")]
+pub enum ScopeAxisSelectorRange {
+    #[serde(rename = "bottom")]
+    Bottom,
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "some")]
+    Some(Vec<SelectorRange>),
+}
+
+/// `oneiron_authority::federation::pact_scope::FederationDirectionScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationDirectionScope {
+    #[serde(rename = "worlds")]
+    pub worlds: ScopeAxisScopeId,
+    #[serde(rename = "facets")]
+    pub facets: ScopeAxisScopeId,
+    #[serde(rename = "bands")]
+    pub bands: ScopeAxisSelectorRange,
+}
+
+/// `oneiron::task_verb::sdk_federation::OfferConnect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct OfferConnect {
+    #[serde(rename = "peer_vault")]
+    pub peer_vault: String,
+    #[serde(rename = "grant")]
+    pub grant: String,
+    #[serde(rename = "outbound")]
+    pub outbound: FederationDirectionScope,
+    #[serde(rename = "inbound")]
+    pub inbound: FederationDirectionScope,
+}
+
+/// `oneiron_authority::federation::pact_scope::FederationPactScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct FederationPactScope {
+    #[serde(rename = "lo_to_hi")]
+    pub lo_to_hi: FederationDirectionScope,
+    #[serde(rename = "hi_to_lo")]
+    pub hi_to_lo: FederationDirectionScope,
+}
+
+/// `oneiron::task_verb::sdk_federation::Offer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct Offer {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "from")]
+    pub from: String,
+    #[serde(rename = "to")]
+    pub to: String,
+    #[serde(rename = "scope")]
+    pub scope: FederationPactScope,
+    #[serde(rename = "signer")]
+    pub signer: String,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+
+/// `oneiron::task_verb::sdk_federation::AcceptConnect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptConnect {
+    #[serde(rename = "offer")]
+    pub offer: Offer,
+    #[serde(rename = "grant")]
+    pub grant: String,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectAccepted`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectAccepted {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "status")]
+    pub status: String,
+    #[serde(rename = "peer_key")]
+    pub peer_key: String,
+    #[serde(rename = "counter")]
+    pub counter: Offer,
+}
+
+/// `oneiron::task_verb::sdk_federation::NarrowConnect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NarrowConnect {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "outbound")]
+    pub outbound: FederationDirectionScope,
+}
+
+/// `oneiron_authority::authority::federation_pact::FederationPactStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum FederationPactStatus {
+    #[serde(rename = "Active")]
+    Active,
+    #[serde(rename = "Suspended")]
+    Suspended,
+    #[serde(rename = "Promoted")]
+    Promoted,
+    #[serde(rename = "Disconnected")]
+    Disconnected,
+    #[serde(rename = "Dissolved")]
+    Dissolved,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectPactReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectPactReceipt {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "status")]
+    pub status: FederationPactStatus,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "scope")]
+    pub scope: FederationPactScope,
+    #[serde(rename = "effective_scope")]
+    pub effective_scope: FederationDirectionScope,
+}
+
+/// `oneiron::task_verb::sdk_federation::RescopeConnect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RescopeConnect {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "outbound")]
+    pub outbound: FederationDirectionScope,
+    #[serde(rename = "inbound")]
+    pub inbound: FederationDirectionScope,
+}
+
+/// `oneiron::task_verb::sdk_federation::RescopeOffer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct RescopeOffer {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "nonce")]
+    pub nonce: String,
+    #[serde(rename = "from")]
+    pub from: String,
+    #[serde(rename = "to")]
+    pub to: String,
+    #[serde(rename = "scope")]
+    pub scope: FederationPactScope,
+    #[serde(rename = "signer")]
+    pub signer: String,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+
+/// `oneiron::task_verb::sdk_federation::AcceptRescopeConnect`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptRescopeConnect {
+    #[serde(rename = "offer")]
+    pub offer: RescopeOffer,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectRescoped`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectRescoped {
+    #[serde(rename = "receipt")]
+    pub receipt: ConnectPactReceipt,
+    #[serde(rename = "counter")]
+    pub counter: RescopeOffer,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectPactRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectPactRequest {
+    #[serde(rename = "pact")]
+    pub pact: String,
+}
+
+/// `oneiron::receipt::guest_revoke::GuestCopyState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum GuestCopyState {
+    #[serde(rename = "unknown")]
+    Unknown,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectDisconnected`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectDisconnected {
+    #[serde(rename = "receipt")]
+    pub receipt: ConnectPactReceipt,
+    #[serde(rename = "outbound_access")]
+    pub outbound_access: bool,
+    #[serde(rename = "inbound_access")]
+    pub inbound_access: bool,
+    #[serde(rename = "sync_stopped")]
+    pub sync_stopped: bool,
+    #[serde(rename = "copied_bytes_recallable")]
+    pub copied_bytes_recallable: bool,
+    #[serde(rename = "recipient_copy_state")]
+    pub recipient_copy_state: GuestCopyState,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectExportRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectExportRequest {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "facets", default, skip_serializing_if = "Option::is_none")]
+    pub facets: Option<Vec<String>>,
+    #[serde(rename = "bands", default, skip_serializing_if = "Option::is_none")]
+    pub bands: Option<Vec<SelectorRange>>,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectWindow {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "source_vault")]
+    pub source_vault: String,
+    #[serde(rename = "recipient_vault")]
+    pub recipient_vault: String,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "facets")]
+    pub facets: Vec<String>,
+    #[serde(rename = "bands")]
+    pub bands: Vec<SelectorRange>,
+    #[serde(rename = "window_key")]
+    pub window_key: String,
+    #[serde(rename = "update")]
+    pub update: Vec<u8>,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectDelivery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectDelivery {
+    #[serde(rename = "body")]
+    pub body: ConnectWindow,
+    #[serde(rename = "signature")]
+    pub signature: String,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectRejoinStatus`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConnectRejoinStatus {
+    #[serde(rename = "imported")]
+    Imported,
+    #[serde(rename = "deferred")]
+    Deferred,
+}
+
+/// `oneiron::task_verb::sdk_federation::ConnectRejoined`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectRejoined {
+    #[serde(rename = "pact")]
+    pub pact: String,
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "world_ref")]
+    pub world_ref: String,
+    #[serde(rename = "status")]
+    pub status: ConnectRejoinStatus,
+    #[serde(rename = "request", default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<String>,
+}
+
 /// `oneiron::counterparty_contact::trusted_contact::TrustedContactReach`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct TrustedContactReach {
@@ -9565,13 +9945,6 @@ pub enum GuestPactStanding {
     Disconnected,
     #[serde(rename = "dissolved")]
     Dissolved,
-}
-
-/// `oneiron::receipt::guest_revoke::GuestCopyState`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum GuestCopyState {
-    #[serde(rename = "unknown")]
-    Unknown,
 }
 
 /// `oneiron::receipt::guest_revoke::GuestDeletionRequestStatus`.
@@ -22526,6 +22899,109 @@ pub struct RecordLinks {
         skip_serializing_if = "Option::is_none"
     )]
     pub next_after: Option<String>,
+}
+
+/// `oneiron::memory::search_hybrid::HybridPprQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridPprQuery {
+    #[serde(rename = "seeds")]
+    pub seeds: Vec<String>,
+    #[serde(rename = "depth")]
+    pub depth: u32,
+}
+
+/// `oneiron::memory::search_hybrid::HybridTemporalQuery`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridTemporalQuery {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron_contracts::retrieval_telemetry::RetrievalBlendWeights`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RetrievalBlendWeights {
+    #[serde(rename = "recency")]
+    pub recency: f64,
+    #[serde(rename = "salience")]
+    pub salience: f64,
+    #[serde(rename = "confidence")]
+    pub confidence: f64,
+    #[serde(rename = "gravity")]
+    pub gravity: f64,
+}
+
+/// `oneiron::memory::search_hybrid::HybridRankReplay`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridRankReplay {
+    #[serde(rename = "now")]
+    pub now: u64,
+    #[serde(rename = "blend_weights")]
+    pub blend_weights: RetrievalBlendWeights,
+}
+
+/// `oneiron::memory::search_hybrid::HybridSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct HybridSearchRequest {
+    #[serde(rename = "query", default, skip_serializing_if = "Option::is_none")]
+    pub query: Option<String>,
+    #[serde(
+        rename = "query_vector",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub query_vector: Option<Vec<f64>>,
+    #[serde(
+        rename = "phonetic_codes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub phonetic_codes: Option<Vec<String>>,
+    #[serde(rename = "ppr", default, skip_serializing_if = "Option::is_none")]
+    pub ppr: Option<HybridPprQuery>,
+    #[serde(rename = "temporal", default, skip_serializing_if = "Option::is_none")]
+    pub temporal: Option<HybridTemporalQuery>,
+    #[serde(rename = "replay", default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<HybridRankReplay>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::memory::search_hybrid::HybridSearchHit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HybridSearchHit {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(
+        rename = "access_factor",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub access_factor: Option<f64>,
+    #[serde(rename = "components")]
+    pub components: Vec<RetrievalScoreComponent>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `HybridSearchHitList`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultHybridSearchHitList {
+    #[serde(rename = "value")]
+    pub value: Vec<HybridSearchHit>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::blob_artifact::create::ArtifactCreateRequest`.

@@ -5,6 +5,16 @@ use crate::context_pack::ContextPackRetrievalBudget;
 use crate::store::RetrievalAction;
 
 impl PipelineBuilder<'_> {
+    /// Pins the normalized blend weights for this run alone, without writing
+    /// the learned table. The ordinary channel and actor gates are unchanged.
+    pub fn with_blend_weights(
+        mut self,
+        weights: crate::store::RetrievalBlendWeights,
+    ) -> crate::Result<Self> {
+        self.blend_weights_override = Some(weights.normalized()?);
+        Ok(self)
+    }
+
     pub(crate) fn telemetry_action(mut self, action: RetrievalAction) -> Self {
         self.telemetry_action = action;
         self

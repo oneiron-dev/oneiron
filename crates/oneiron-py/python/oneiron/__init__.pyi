@@ -549,6 +549,8 @@ class Oneiron:
         @property
         def members(self) -> "Oneiron._VaultMembersVerbs": ...
         @property
+        def federation(self) -> "Oneiron._VaultFederationVerbs": ...
+        @property
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs": ...
         @property
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
@@ -959,6 +961,36 @@ class Oneiron:
             """The invitee declines their own invitation; nothing is granted."""
         def withdraw_invitation(self, spec: Facade.SharedInvitationWithdrawRequest) -> Facade.SharedActExecutionReceipt:
             """An Admin with the add_member power takes back a pending invitation."""
+    class _VaultFederationVerbs:
+        @property
+        def connect(self) -> "Oneiron._VaultFederationConnectVerbs": ...
+    class _VaultFederationConnectVerbs:
+        def identity(self, spec: Facade.EmptyRequest) -> Facade.ConnectIdentity:
+            """The owner reads this vault identity and the host key used for reciprocal Connect consent."""
+        @property
+        def grants(self) -> "Oneiron._VaultFederationConnectGrantsVerbs": ...
+        def offer(self, spec: Facade.OfferConnect) -> Facade.Offer:
+            """The owner asks the host to sign one disclosed Connect half without activating it."""
+        def accept(self, spec: Facade.AcceptConnect) -> Facade.ConnectAccepted:
+            """The owner accepts the peer host signed Connect half and receives the matching host counter-half."""
+        def narrow(self, spec: Facade.NarrowConnect) -> Facade.ConnectPactReceipt:
+            """The owner narrows the current outbound scope without breaking the reciprocal relationship."""
+        @property
+        def rescope(self) -> "Oneiron._VaultFederationConnectRescopeVerbs": ...
+        def disconnect(self, spec: Facade.ConnectPactRequest) -> Facade.ConnectDisconnected:
+            """The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy."""
+        def export(self, spec: Facade.ConnectExportRequest) -> Facade.ConnectDelivery:
+            """The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."""
+        def rejoin(self, spec: Facade.ConnectDelivery) -> Facade.ConnectRejoined:
+            """The owner admits a peer host signed update through guest admission into the retained foreign-world vault."""
+    class _VaultFederationConnectGrantsVerbs:
+        def mint(self, spec: Facade.MintConnectGrant) -> Facade.ConnectGrant:
+            """The owner mints an inert Connect guest grant inside the named local-world ceiling."""
+    class _VaultFederationConnectRescopeVerbs:
+        def offer(self, spec: Facade.RescopeConnect) -> Facade.RescopeOffer:
+            """The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."""
+        def accept(self, spec: Facade.AcceptRescopeConnect) -> Facade.ConnectRescoped:
+            """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
     class _VaultTrustedContactsVerbs:
         def name(self, spec: Facade.TrustedContactNameRequest) -> Facade.TrustedContact:
             """The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."""
@@ -1536,6 +1568,8 @@ class Oneiron:
         def links(self, spec: Facade.RecordLinksRequest) -> Facade.RecordLinks:
             """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
     class _VaultSearchVerbs:
+        def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
+            """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
     class _VaultStructuralVerbs:
