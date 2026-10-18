@@ -4878,6 +4878,131 @@ async fn vault_embedding_spaces_probes_delete(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_policy_owner_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.policy.owner.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.policy.owner.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.policy.owner.get", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_policy_owner_get(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_policy_owner_configure(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.policy.owner.configure")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.policy.owner.configure", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.policy.owner.configure", value).await?;
+    let (output, listed) = super::host_doors::vault_policy_owner_configure(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_policy_owner_row_change(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.policy.owner.row.change")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.policy.owner.row.change", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.policy.owner.row.change", value).await?;
+    let (output, listed) = super::host_doors::vault_policy_owner_row_change(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_policy_outbound_decide(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.policy.outbound.decide")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.policy.outbound.decide", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.policy.outbound.decide", value).await?;
+    let (output, listed) = super::host_doors::vault_policy_outbound_decide(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_policy_relay_decide(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.policy.relay.decide")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.policy.relay.decide", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.policy.relay.decide", value).await?;
+    let (output, listed) = super::host_doors::vault_policy_relay_decide(
+        server,
+        auth,
+        call.session()?,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_gate_policy_get(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12001,6 +12126,11 @@ pub(crate) async fn call_verb(
         "vault.embedding_spaces.probes.delete" => {
             vault_embedding_spaces_probes_delete(server, call, input).await
         }
+        "vault.policy.owner.get" => vault_policy_owner_get(server, call, input).await,
+        "vault.policy.owner.configure" => vault_policy_owner_configure(server, call, input).await,
+        "vault.policy.owner.row.change" => vault_policy_owner_row_change(server, call, input).await,
+        "vault.policy.outbound.decide" => vault_policy_outbound_decide(server, call, input).await,
+        "vault.policy.relay.decide" => vault_policy_relay_decide(server, call, input).await,
         "vault.gate.policy.get" => vault_gate_policy_get(server, call, input).await,
         "vault.gate.policy.put" => vault_gate_policy_put(server, call, input).await,
         "vault.gate.policy.propose" => vault_gate_policy_propose(server, call, input).await,

@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 558 code-mode rows (537 host rows, 21 run rows), 1964 declarations.
-// Replies: 491 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 563 code-mode rows (542 host rows, 21 run rows), 2000 declarations.
+// Replies: 496 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -934,6 +934,58 @@ declare namespace Sdk {
   type EmbeddingSpaceProbePutRequest = { kind: InputKind; query: string; family: EntityId; targets?: EntityId[]; author: string };
   type EmbeddingSpaceProbeDeleteRequest = { id: string };
   type EmbeddingSpaceProbeDeleted = { ok: boolean };
+  type PolicyOutputContract = "binary" | "category_json" | "rationale_json";
+  type PolicyPatternRole = "escalate" | "decide" | "log";
+  type PolicyPatternRule = { id: string; pattern: string; category: string; role?: PolicyPatternRole };
+  type OwnerPolicyConfiguration = { owner_policy_enabled?: boolean; owner_policy_document?: string | null; owner_policy_output_contract?: PolicyOutputContract | null; owner_policy_patterns?: PolicyPatternRule[] };
+  type OwnerPolicyConfigurationView = { manifest_ref: string; body_hash: string; read_frontier_hash: string; enabled: boolean; configuration: OwnerPolicyConfiguration };
+  type OwnerPolicyConfigureRequest = { expected_body_hash: string; configuration: OwnerPolicyConfiguration };
+  type OwnerPolicyConfigurationReceipt = { configuration: OwnerPolicyConfigurationView; receipt_ref: string };
+  type PolicyRowAction = "warn" | "reword" | "block" | "route_to_help";
+  type PolicyRowScope = "Vault" | { World: string } | { Project: string } | { WorldProject: { world: string; project: string } };
+  type PolicyRowChange = { Add: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope } } | { Edit: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope } } | { Remove: { row_ref: string; scope: PolicyRowScope } } | { AddWithWhy: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope; why: string } } | { EditWithWhy: { row_ref: string; text: string; action: PolicyRowAction; scope: PolicyRowScope; why: string } } | { DraftWhy: { row_ref: string; scope: PolicyRowScope; why: string } };
+  type PolicyRowChangeRequest = { change: PolicyRowChange };
+  type PolicyRowReceipt = { receipt_id: string; revision: number; author: string; change: PolicyRowChange; previous_receipt_id?: string | null; at: number };
+  type PolicyClassifySubject = "outbound_content" | "action";
+  type PolicyOutboundRequest = { subject: PolicyClassifySubject; content: string; world_ref?: string | null; project_ref?: string | null };
+  type PolicyEnforcementAction = "allow" | "warn" | "reword" | "block" | "route_to_help" | "hold" | "skipped";
+  type PolicySkipReason = "no-backend" | "no-document" | "backend-unavailable" | "response-unusable" | "budget-exhausted" | "policy-moving";
+  type PolicyClassifyDecision = "allow" | "warn" | "reword" | "block" | "route-to-help" | "hold" | { skipped: PolicySkipReason };
+  type PolicyVerdictCategory = { category: "none" } | { category: "owner_policy"; sub: { row_ref: string } } | { category: "hosted_legal"; sub: { category: string; jurisdiction: string; policy_version: string; row_ref: string } };
+  type PolicyHedgeBucket = "certain" | "high" | "medium" | "low";
+  type PolicyConfidence = { calibrated: number; hedge_bucket: PolicyHedgeBucket };
+  type PolicyContentBinding = { content_hash: number[]; read_frontier_hash: number[] };
+  type RelayClassifierMode = "classify_all" | "pattern_gated";
+  type ImageBox = { top: number; bottom: number; left: number; right: number };
+  type ImagePoint = { x: number; y: number };
+  type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type DecisionBand = { low: number; high: number };
+  type EvidenceVersion = { id: string; body_hash: number[] };
+  type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
+  type StopCause = "done" | "deadline" | "provider_failure";
+  type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
+  type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
+  type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
+  type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
+  type HostRuleRef = { id: string; revision: number };
+  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
+  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
+  type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
+  type PolicyPassAudit = { matched_pattern_ids?: string[]; acting_pattern_role?: PolicyPatternRole | null; model_rule_ids?: string[]; model_rule_ids_dropped?: number; model_confidence?: string | null; model_rationale?: string | null; typed_decisions?: TypedDecision[] };
+  type PolicyPlane = "owner_policy" | "hosted_legal";
+  type HostedOutagePolicy = "halt" | "proceed_receipted";
+  type HostedPlaneAttestation = { plane: PolicyPlane; policy_version: string; policy_hash: string; classifier_mode?: RelayClassifierMode | null; decision_binding?: string | null; outage_policy?: HostedOutagePolicy | null; degraded?: boolean | null };
+  type PolicyClassifyVerdict = { decision: PolicyClassifyDecision; category: PolicyVerdictCategory; confidence: PolicyConfidence; binding: PolicyContentBinding; safeguard_binding: string; classifier_mode?: RelayClassifierMode | null; decision_binding?: string | null; audit?: PolicyPassAudit | null; hosted_attestation?: HostedPlaneAttestation | null; plane_minted?: PolicyPlane | null };
+  type PolicyEnforcementVoice = "persona" | "system";
+  type PolicyHelpRouting = { category: PolicyVerdictCategory; message: string; diagnosis?: string | null; persona_present: boolean; resources?: GateSystemNoticeAction[] };
+  type PolicyRewordRequest = { row_ref: string; constraint: string; why?: string | null; rejected_binding: PolicyContentBinding };
+  type PolicyBargeInKill = { cancel_tts: boolean; flush_playout_buffer: boolean; cancel_llm: boolean };
+  type PolicyModelEnforcement = { action: PolicyEnforcementAction; verdict: PolicyClassifyVerdict; final_content?: string | null; outbound_halted: boolean; receipt_ref?: string | null; moderation_ref?: string | null; system_notice?: string | null; notice_voice?: PolicyEnforcementVoice | null; system_notices?: GateSystemNoticeRecord[]; help_routing?: PolicyHelpRouting | null; reword?: PolicyRewordRequest | null; classify_trace: PolicyClassifyVerdict[]; pre_display_block: boolean; barge_in_kill?: PolicyBargeInKill | null; custom_tier_skipped: boolean };
+  type RelayBoundaryDegrade = "safeguard_model_unavailable" | "safeguard_model_response_unusable" | "safeguard_model_tier_absent" | "output_contract_undeclared" | "policy_binding_moved_mid_pass";
+  type RelayResolution = "pattern_decided" | "model_decided" | "pattern_gated_allow" | "log_only" | "no_policy_in_play" | "vault_side_decided" | "unresolved";
+  type HostedPassEvidence = { version: string; policy_hash: string; verify_content_hash: number[] };
+  type HostedRelayDecision = { service_identity: string; verdict?: PolicyClassifyVerdict | null; degraded?: RelayBoundaryDegrade | null; resolution?: RelayResolution | null; hosted_evidence?: HostedPassEvidence | null; receipt_ref?: string | null; final_content?: string | null; outbound_halted: boolean; system_notice?: string | null; system_notices: GateSystemNoticeRecord[] };
   type PolicyManifestRead = { manifest_ref?: string | null };
   type PolicyCriticality = "normal" | "critical";
   type PolicySensitivity = "normal" | "sensitive";
@@ -1195,22 +1247,6 @@ declare namespace Sdk {
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
   type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: unknown; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
-  type ImageBox = { top: number; bottom: number; left: number; right: number };
-  type ImagePoint = { x: number; y: number };
-  type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
-  type DecisionBand = { low: number; high: number };
-  type EvidenceVersion = { id: string; body_hash: number[] };
-  type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
-  type StopCause = "done" | "deadline" | "provider_failure";
-  type ReasoningCause = "paired_high" | "small_margin" | "second_measurement";
-  type Reasoning = { state: "not_needed" } | { state: "ran"; cause: ReasoningCause } | { state: "skipped"; cause: ReasoningCause } | { state: "cut"; cause: ReasoningCause };
-  type DecisionTime = { budget_ms: number; used_ms: number; stop: StopCause; answered?: DecisionRung | null; reasoning: Reasoning };
-  type ImagePin = { provider: ProviderPin; name: string; evidence: EvidenceVersion; width: number; height: number; frame?: PixelRegion | null; edge?: number | null; sent_width: number; sent_height: number };
-  type HostRuleRef = { id: string; revision: number };
-  type DecisionReceipt = { question: string; question_version: number; principal: string; providers: ProviderPin[]; band: DecisionBand; band_version?: number; evidence_versions?: EvidenceVersion[]; cost_per_thousand?: number | null; paired?: PairedReading[]; person?: PairedReading[]; time?: DecisionTime | null; images?: ImagePin[]; think_row?: number | null; person_row?: number | null; rule?: HostRuleRef | null };
-  type HumanAskReason = "disagreement" | "uncertain" | "provider_unavailable" | "owner_selected" | "needs_person" | "deadline" | "exploration_budget";
-  type TypedDecision = { answer: DecisionAnswer; probability?: number | null; evidence: string[]; in_band: boolean; receipt: DecisionReceipt; human_ask?: HumanAskReason | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
   type UnitRefusal = { unit: unknown; reason: string };
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
@@ -2991,6 +3027,26 @@ declare const vault: Sdk.VaultHost & {
     get(input: Sdk.PersonRequest): Promise<Sdk.PersonRow | StoredResult>;
     /** One page of the people the caller reads, in handle order. */
     list(input: Sdk.PeopleListRequest): Promise<Sdk.PeoplePage | StoredResult>;
+  };
+  policy: {
+    outbound: {
+      /** Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes. */
+      decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.PolicyModelEnforcement | StoredResult>;
+    };
+    owner: {
+      /** The owner configures or toggles content policy against the current manifest hash without changing other policy tables. */
+      configure(input: Sdk.OwnerPolicyConfigureRequest): Promise<Sdk.OwnerPolicyConfigurationReceipt | StoredResult>;
+      /** The owner reads the content-policy configuration, default manifest hash and effective off/on state. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.OwnerPolicyConfigurationView | StoredResult>;
+      row: {
+        /** The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt. */
+        change(input: Sdk.PolicyRowChangeRequest): Promise<Sdk.PolicyRowReceipt | StoredResult>;
+      };
+    };
+    relay: {
+      /** Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer. */
+      decide(input: Sdk.PolicyOutboundRequest): Promise<Sdk.HostedRelayDecision | StoredResult>;
+    };
   };
   projects: {
     /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */

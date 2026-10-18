@@ -241,6 +241,11 @@ vaultEmbeddingSpacesMoveAbandon(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
+vaultPolicyOwnerGet(input: unknown): unknown
+vaultPolicyOwnerConfigure(input: unknown): unknown
+vaultPolicyOwnerRowChange(input: unknown): unknown
+vaultPolicyOutboundDecide(input: unknown): unknown
+vaultPolicyRelayDecide(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
