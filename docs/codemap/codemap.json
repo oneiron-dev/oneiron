@@ -54987,7 +54987,7 @@
      "path": "src/world_keys/root_doors.rs",
      "purpose": "The root doors (contract §4-§5): activating a kit's root, anchoring a machine with the kit's seed, restoring…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 1,
       "enum": 1,
       "fn": 4,
       "struct": 3
