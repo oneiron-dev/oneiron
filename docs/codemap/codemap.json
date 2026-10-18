@@ -31987,7 +31987,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 11,
-      "re-export": 43
+      "re-export": 44
      }
     },
     {
@@ -33917,6 +33917,19 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "OffRecordCreator"
+     ],
+     "path": "src/off_record/lifecycle/creator.rs",
+     "purpose": "Who manages a stretch entered alone (WILL-PLAN L13 row 03, Engine ruling 2026-10-19): the person or agent…",
+     "surface": {
+      "fn": 6,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -33934,7 +33947,7 @@
      "purpose": "OF-326 off-record / ephemeral session seam (ARCH-0052 P6, ONE-1731)",
      "surface": {
       "crate-vis": 3,
-      "re-export": 3
+      "re-export": 4
      }
     },
     {
@@ -34089,7 +34102,7 @@
      "path": "src/off_record/lifecycle/vault_api.rs",
      "purpose": "Vault verbs: session vault handle, enter, mode flip, receipt log and close",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 10
      }
     },
@@ -50911,9 +50924,8 @@
       "OffRecordWitnessRequest"
      ],
      "path": "src/task_verb/sdk_off_record.rs",
-     "purpose": "The owner's off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over the engine's off-record…",
+     "purpose": "The off-record session rows (DOOR-127, e2e PRIVACY-06): typed calls over the engine's off-record lifecycle…",
      "surface": {
-      "const": 1,
       "enum": 2,
       "fn": 1,
       "struct": 10
@@ -57253,7 +57265,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds"
     },
     "off_record": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -57906,7 +57918,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3529,
+   "source_files": 3530,
    "test_files": 902
   },
   "oneiron-android": {
@@ -61211,7 +61223,7 @@
      "path": "src/memory.rs",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…",
      "surface": {
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -61227,7 +61239,7 @@
      "path": "src/memory/error.rs",
      "purpose": "Memory error vocabulary: [`MemoryError`], the stable `MEMORY_CODE_*` strings, and the central engine-error…",
      "surface": {
-      "const": 16,
+      "const": 17,
       "fn": 7,
       "struct": 5,
       "type": 1
@@ -70845,9 +70857,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/off_record_doors.rs",
-     "purpose": "The host doors of the owner's off-record session rows (DOOR-127, e2e PRIVACY-06)",
+     "purpose": "The host doors of the off-record session rows (DOOR-127, e2e PRIVACY-06)",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -75941,7 +75953,7 @@
      "path": "src/mcp/exec_host/off_record_run.rs",
      "purpose": "Durable code-mode runs bound to an off-record session (DOOR-127): one entry of a run whose every row stays…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
