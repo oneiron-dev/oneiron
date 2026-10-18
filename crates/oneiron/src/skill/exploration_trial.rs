@@ -35,8 +35,8 @@ use serde::{Deserialize, Serialize};
 use super::SkillRecord;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::llm::decision::{
-    AnswerContract, AskAct, AskRole, AskTo, DecisionAnswer, DecisionClass, DecisionQuestion,
-    DecisionRung, HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank,
+    AnswerContract, AskAct, AskAnswer, AskRole, AskTo, DecisionAnswer, DecisionClass,
+    DecisionQuestion, DecisionRung, HumanAskReason, HumanDecisionRequest, ProviderPin, RoleRank,
 };
 use crate::llm::run_admission::LeaseUnit;
 use crate::side_table::{self, Named, SideTable};
@@ -384,10 +384,12 @@ fn dispatch_charge_in_txn(
 
 /// The trial state an answer to an overrun ask leaves: a yes covers
 /// one run of up to `charge` past the slice; anything else declines.
-fn answered(charge: u64, answer: &DecisionAnswer) -> TrialState {
-    match answer {
-        DecisionAnswer::Noul(true) => TrialState::Approved { charge },
-        _ => TrialState::Closed(ExplorationTrialClose::OverrunDeclined),
+/// None for a yes whose answerer was erased: that authority ended with
+/// the erase, so the answer stays and the overrun is asked again (FIX 3520).
+fn answered(charge: u64, answer: &AskAnswer) -> Option<TrialState> {
+    match answer.answer {
+        DecisionAnswer::Noul(true) => answer.by.id().map(|_| TrialState::Approved { charge }),
+        _ => Some(TrialState::Closed(ExplorationTrialClose::OverrunDeclined)),
     }
 }
 
@@ -406,13 +408,14 @@ fn take_answer_in_txn(
     else {
         return Ok(false);
     };
-    let Some(answer) = vault
+    let Some(state) = vault
         .decision_ask_in_txn(txn, seq)?
         .and_then(|ask| ask.answer)
+        .and_then(|answer| answered(charge, &answer))
     else {
         return Ok(false);
     };
-    trial.state = answered(charge, &answer.answer);
+    trial.state = state;
     Ok(true)
 }
 
@@ -699,25 +702,28 @@ fn open_in_txn(
 }
 
 /// The board's answer to a pending overrun ask, applied while the trial
-/// still waits on that ask.
+/// still waits on that ask. A yes whose answerer was erased leaves the
+/// overrun pending with no ask, to be asked again from its chain's start.
 fn answer_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     proposal: &EntityId,
     seq: u64,
-    answer: &DecisionAnswer,
+    answer: &AskAnswer,
 ) -> Result<TrialState> {
     let Some(mut trial) = TRIALS.get(&vault.store, txn, proposal)? else {
         return Err(Error::EntityNotFound);
     };
-    if let TrialState::AskPending(PendingOverrun {
-        seq: Some(held),
-        charge,
-        ..
-    }) = trial.state
-        && held == seq
+    if let TrialState::AskPending(pending) = &mut trial.state
+        && pending.seq == Some(seq)
     {
-        trial.state = answered(charge, answer);
+        match answered(pending.charge, answer) {
+            Some(state) => trial.state = state,
+            None => {
+                pending.seq = None;
+                pending.climbed_at = None;
+            }
+        }
         TRIALS.put(&vault.store, txn, proposal, &trial)?;
     }
     Ok(trial.state)
@@ -942,9 +948,12 @@ pub(crate) fn drive_exploration_trial(
                     ExplorationTrialStatus::Waiting
                 });
             };
-            vault.with_write_txn_grouped(|txn| {
-                answer_in_txn(vault, txn, proposal, seq, &answer.answer)
-            })?
+            let state = vault
+                .with_write_txn_grouped(|txn| answer_in_txn(vault, txn, proposal, seq, &answer))?;
+            if let TrialState::AskPending(PendingOverrun { seq: None, .. }) = state {
+                queue_trial_ask(vault, proposal)?;
+            }
+            state
         }
         state => state,
     };

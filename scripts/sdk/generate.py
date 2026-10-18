@@ -12,36 +12,35 @@ from uniffi_types import UniffiTypes
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = json.loads((Path(__file__).with_name('agent-verbs.json')).read_text())
-# A run row may also expose a typed host door. Its `host` projection takes
-# a credential-bound live-run attachment beside the original spec; code mode
-# keeps the run's own input and binding. The name, scope and reply stay one row.
-HOST_RUN_ROWS = [row for row in MANIFEST['verbs'] if 'host' in row]
-for row in HOST_RUN_ROWS:
+# Run and browser rows may expose a typed host door beside their code-mode
+# shape. The host projection adds the caller's credential-bound live-run
+# attachment; code mode keeps the original input and run-owned resource.
+HOST_ROWS = [row for row in MANIFEST['verbs'] if 'host' in row]
+HOST_RUN_ROWS = [row for row in HOST_ROWS if row.get('context') == 'run']
+HOST_BROWSER_ROWS = [row for row in HOST_ROWS if row.get('context') == 'browser']
+BROWSER_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'browser']
+for row in HOST_ROWS:
     host = row['host']
-    if (row.get('context') != 'run' or not {'input', 'description'} <= set(host)
-            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session'}
-            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session') if key in host)):
-        raise ValueError(f'{row["name"]}: a host projection names the run row public input and description, with optional caller and session flags')
-ROWS = [row for row in MANIFEST['verbs'] if 'call' in row] + [
+    if (row.get('context') not in ('run', 'browser') or not {'input', 'description'} <= set(host)
+            or set(host) - {'input', 'description', 'host_door_caller', 'host_door_session', 'openapi'}
+            or any(not isinstance(host[key], bool) for key in ('host_door_caller', 'host_door_session', 'openapi') if key in host)):
+        raise ValueError(f'{row["name"]}: a host projection names the public input and description, with optional caller, session and OpenAPI flags')
+ROWS = [row for row in MANIFEST['verbs'] if 'call' in row and row not in HOST_BROWSER_ROWS] + [
     {'name': row['name'], 'input': row['host']['input'], 'output': row['output'],
      'description': row['host']['description'], 'scope': row['scope'],
      'call': f'crate::task_verb::sdk::host_only(memory, "{row["name"]}", &input)?',
      'host_door': True, 'host_door_session': row['host'].get('host_door_session', True),
      'host_door_caller': row['host'].get('host_door_caller', False),
+     'host_door_lists': row.get('context') == 'browser',
+     'openapi': row['host'].get('openapi', False),
      'admission': {'unrestricted_record_scope': True}, 'section': False}
-    for row in HOST_RUN_ROWS
+    for row in HOST_ROWS
 ]
 DEFINITIONS = [row for row in MANIFEST['verbs'] if 'call' not in row and 'host' not in row]
 if len({row['name'] for row in MANIFEST['verbs']}) != len(MANIFEST['verbs']): raise ValueError('duplicate SDK verb')
-# A `context: "run"` row is answered by the code run itself, over its own
-# dispatcher and storage route, as the typed `self.*` call its `effect` names.
-# Code mode serves it beside the host's rows; no host door, tool, route or
-# binding carries a run unless the row declares its credential-bound `host`
-# projection. Its optional `output`
-# is the type its reply carries, which only the catalog fragment reads.
 RUN_ROWS = [row for row in MANIFEST['verbs'] if row.get('context') == 'run']
-# Code mode always reads the run input; the served schema reads its host input.
-CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_RUN_ROWS}] + RUN_ROWS
+# Code mode always reads the run/browser input; the served schema reads its host input.
+CODE_MODE_ROWS = [row for row in ROWS if row['name'] not in {r['name'] for r in HOST_ROWS}] + HOST_BROWSER_ROWS + RUN_ROWS
 SCHEMA_ROWS = ROWS + [row for row in RUN_ROWS if 'host' not in row]
 for row in RUN_ROWS:
     if set(row) - {'output', 'outputs_by_input', 'host'} != {'name', 'input', 'scope', 'context', 'effect'} or row['scope'] not in ('Read', 'Write'):
@@ -1254,7 +1253,12 @@ def facade_dispatch(facade_rows):
                         (output, producers.take())
                     }}
                     (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, auth.locality())?,
-                    (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(&input, &owner, auth.locality())?,
+                    (None, None, Some(owner)) => {{
+                        // Its receipt records the owner's act, with where
+                        // he spoke from (audit only).
+                        let surface = super::owner_binding::act_surface(auth);
+                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.locality())?
+                    }}
                     (None, None, None) => {{
                         return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
                     }}
@@ -1401,7 +1405,7 @@ pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, v
 match verb {{
 '''
     dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
-    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in ROWS if r.get('context') == 'browser']), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
+    for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board']), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
     return routes, dispatch
@@ -1454,6 +1458,12 @@ def outputs():
         binding = 'input' if checks else '_input'
         core += f'{json.dumps(r["name"])} => {{ let {binding}: {r["input"]} = decode(value.clone())?; {checks} }},\n'
     core += '_ => return Err(wrong_root(verb).unwrap_or_else(|| MemoryError::bad_request("unknown SDK agent verb"))), } Ok(()) }\n'
+    # Code mode binds its own guest, so a rewrite there validates the original
+    # browser input, never the public live-run attachment wrapper.
+    core += "pub fn validate_browser_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()> { match verb {\n"
+    for r in BROWSER_ROWS:
+        core += f'{json.dumps(r["name"])} => {{ let _input: {r["input"]} = decode(value.clone())?; }},\n'
+    core += '_ => return Err(MemoryError::bad_request("a browser verb is required")), } Ok(()) }\n'
     # ARCH-0080 §3: every door that runs a row by name crosses its verb hooks
     # here, once; no caller of `invoke` wraps it again.
     core += "pub fn invoke(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<serde_json::Value> {\n"
@@ -1472,10 +1482,8 @@ def outputs():
     core += "pub fn invoke_browser(driver: &mut dyn oneiron_browser::BrowserDriver, verb: &str, value: serde_json::Value) -> Result<serde_json::Value, oneiron_browser::BrowserError> {\n"
     core += "let invalid = |error: serde_json::Error| oneiron_browser::BrowserError::Input(error.to_string());\n"
     core += "let output = match verb {\n"
-    for r in ROWS:
-        if r.get('context') != 'browser': continue
-        method = r['name'].replace('.', '_')
-        core += f'{json.dumps(r["name"])} => serde_json::to_value({method}(driver, serde_json::from_value(value).map_err(invalid)?)?),\n'
+    for r in BROWSER_ROWS:
+        core += f'{json.dumps(r["name"])} => {{ let input: {r["input"]} = serde_json::from_value(value).map_err(invalid)?; let output = {r["call"]}; serde_json::to_value(output) }},\n'
     core += '_ => return Err(oneiron_browser::BrowserError::Input(format!("{verb} is not a browser verb"))),\n}; output.map_err(|error| oneiron_browser::BrowserError::Protocol(error.to_string())) }\n'
     for r in ROWS:
         method = r['name'].replace('.', '_')
@@ -1576,7 +1584,7 @@ def outputs():
     catalog += ''.join('Self::' + variants[r['name']] + ' => ' + json.dumps(r['name']) + ',\n' for r in ROWS) + '} }\n'
     for method, select in [
         ('is_facade', lambda r: r.get('context', 'memory') == 'memory'),
-        ('is_browser', lambda r: r.get('context') == 'browser'),
+        ('is_browser', lambda r: r['name'] in {row['name'] for row in BROWSER_ROWS}),
         ('is_mcp', lambda r: r.get('mcp') != 'none'),
         ('is_section', lambda r: r['section']),
         ('continuable', lambda r: r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))),

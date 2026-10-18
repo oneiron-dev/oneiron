@@ -73,6 +73,21 @@ pub struct VaultWaveTaskPort<'a> {
     gate: Option<WaveLaunchGate>,
 }
 impl<'a> VaultWaveTaskPort<'a> {
+    /// A caller-bound batch uses the ordinary gated wave port, with no
+    /// caller-provided origin and no replacement planning attempt.
+    pub(super) fn for_fanout(
+        vault: &'a Vault,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+        origin: TaskCreateOrigin,
+        gate: WaveLaunchGate,
+    ) -> Self {
+        let mut port = Self::new(vault, actor, actor_class);
+        port.origin = Some(origin);
+        port.gate = Some(gate);
+        port
+    }
+
     pub fn new(vault: &'a Vault, actor: EntityId, actor_class: EdgeActorClass) -> Self {
         Self {
             vault,

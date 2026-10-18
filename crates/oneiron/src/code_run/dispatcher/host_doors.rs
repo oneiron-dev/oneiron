@@ -21,6 +21,21 @@ impl<'a> HostSelfDispatcher<'a> {
         Self::for_leased_agent_attempt(vault, actor, &leased)
     }
 
+    /// The write origin of a browser call admitted on this live run. Its
+    /// envelope and parent binding come from the run, never the HTTP input.
+    pub fn browser_origin_from_host(
+        &self,
+        verb: crate::task_verb::sdk::AgentVerb,
+    ) -> MemoryResult<crate::memory::HostWriteOrigin> {
+        self.live_parent()?;
+        if !verb.is_browser() {
+            return Err(MemoryError::bad_request("a browser verb is required"));
+        }
+        Ok(crate::memory::HostWriteOrigin::new(self.agent_verb_envelope(verb, None)?)
+            .with_task_host(self.task_host_binding()?)
+            .with_model_provider(self.model_provider()))
+    }
+
     /// The host door's `self.agents.spawn`, after its credential and hooks
     /// admitted the call. Runs the same planner and child admission as code
     /// mode, under this dispatcher's acquired parent lease.
@@ -120,6 +135,36 @@ impl<'a> HostSelfDispatcher<'a> {
             }
             _ => Err(host_result_mismatch()),
         }
+    }
+
+    /// A typed batch uses this same acquired parent lease, then the existing
+    /// wave launch gate and child routing. No child receives a copied cap.
+    pub fn spawn_fanout_from_host(
+        &self,
+        input: crate::task_verb::sdk::FanoutBatchInput,
+        proof: &crate::authority::VerifiedSlip,
+        locality: crate::claim::CallerLocality,
+        decisions: Option<&crate::fanout_auto::FanoutDecisions<'_>>,
+    ) -> MemoryResult<crate::task_verb::sdk::FanoutBatchView> {
+        self.live_parent()?;
+        let binding = self.task_host_binding()?.ok_or_else(|| {
+            MemoryError::bad_request("a batch requires its caller's acquired parent lease")
+        })?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        let crate::code_run::storage::ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Err(MemoryError::bad_request(
+                "a batch requires canonical live-run storage",
+            ));
+        };
+        vault
+            .memory(self.actor.entity_ref(), self.actor.actor_class())
+            .with_read_proof(proof)
+            .at(locality)
+            .with_task_host(binding)
+            .spawn_fanout_batch(input, decisions)
     }
 
     fn live_parent(&self) -> MemoryResult<()> {

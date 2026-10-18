@@ -12,7 +12,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSu
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ingest::{ImportAudience, ImportAudienceState};
-use crate::llm::decision::{AskRole, AskTo, DecisionAnswer, HolderKind};
+use crate::llm::decision::{AskRole, AskTo, DecisionAnswer, DecisionQuestion, HolderKind};
 
 use super::tier_classification::{PREDICATE_DISCLOSURE_IMPORT_AUDIENCE, read_stored_claim_body};
 
@@ -82,8 +82,11 @@ impl Vault {
     /// as the topic's `disclosure.import_audience` CLAIM and the cluster is marked
     /// settled, in one transaction. The ask must still be the frozen one (question,
     /// contract, owner target and the topic as its correlation), answered by a person as
-    /// the owner, with one of the frozen options. `None` while the topic is clear or its
-    /// ask is unanswered; a settled topic returns its rule again.
+    /// the owner, with one of the frozen options. An answer whose answerer was erased
+    /// since settles nothing: that authority ended with the erase. The answer stays on
+    /// its ask, and the owner is asked again ([`Self::reask_import_audience`]). `None`
+    /// while the topic is clear or its ask is unanswered; a settled topic returns its
+    /// rule again.
     pub fn settle_import_audience(&self, topic: &EntityId) -> Result<Option<EntityId>> {
         self.with_write_txn_grouped(|txn| {
             let Some(mut cluster) = self.import_audience_cluster_in_txn(txn, topic)? else {
@@ -115,6 +118,13 @@ impl Vault {
             if answer.role != AskRole::Owner || answer.kind != HolderKind::Person {
                 return Err(invalid());
             }
+            // An erased answerer's authority ended with its erase: its answer
+            // stays on the ask and settles no rule (FIX 3520).
+            if answer.by.id().is_none() {
+                return Err(Error::InvalidClaimBody(
+                    "disclosure.import_audience answerer was erased",
+                ));
+            }
             let DecisionAnswer::Choice(label) = answer.answer else {
                 return Err(invalid());
             };
@@ -141,6 +151,70 @@ impl Vault {
             };
             self.put_import_audience_cluster_in_txn(txn, &cluster)?;
             Ok(Some(rule))
+        })
+    }
+
+    /// A topic's owner ask, with its frozen question and evidence, when the answer on it
+    /// came from an answerer erased since: that answer settles nothing, so the sweep asks
+    /// the owner again. `None` for any other topic.
+    pub fn erased_import_audience_ask(
+        &self,
+        topic: &EntityId,
+    ) -> Result<Option<(u64, DecisionQuestion, Vec<EntityId>)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(cluster) = self.import_audience_cluster_in_txn(&txn, topic)? else {
+            return Ok(None);
+        };
+        let ImportAudienceState::Asked {
+            seq,
+            question,
+            evidence,
+            ..
+        } = cluster.state
+        else {
+            return Ok(None);
+        };
+        let erased = self
+            .decision_ask_in_txn(&txn, seq)?
+            .and_then(|ask| ask.answer)
+            .is_some_and(|answer| answer.by.id().is_none());
+        Ok(erased.then_some((seq, question, evidence)))
+    }
+
+    /// Moves a topic asked at ask `erased`, whose answerer was erased, to ask `fresh`:
+    /// the owner's new ask of the same frozen question and evidence. The options stay,
+    /// and the erased answer stays on its ask. `false` when the topic is no longer asked
+    /// at `erased`.
+    pub fn reask_import_audience(&self, topic: &EntityId, erased: u64, fresh: u64) -> Result<bool> {
+        self.with_write_txn_grouped(|txn| {
+            let Some(mut cluster) = self.import_audience_cluster_in_txn(txn, topic)? else {
+                return Ok(false);
+            };
+            let ImportAudienceState::Asked {
+                seq,
+                question,
+                evidence,
+                ..
+            } = &mut cluster.state
+            else {
+                return Ok(false);
+            };
+            if *seq != erased {
+                return Ok(false);
+            }
+            let ask = self.decision_ask_in_txn(txn, fresh)?.ok_or_else(invalid)?;
+            if fresh <= erased
+                || ask.withdrawn_at.is_some()
+                || ask.question != *question
+                || ask.evidence != *evidence
+                || ask.to != AskTo::owner()
+                || ask.correlation != Some(*topic)
+            {
+                return Err(invalid());
+            }
+            *seq = fresh;
+            self.put_import_audience_cluster_in_txn(txn, &cluster)?;
+            Ok(true)
         })
     }
 

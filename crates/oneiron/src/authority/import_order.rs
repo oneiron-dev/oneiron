@@ -83,6 +83,23 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
         AuthorityOp::GrantTravelSet(set) => {
             vec![Grant::InstallKey(set.machine, entry.signer_key().clone())]
         }
+        AuthorityOp::OwnerWorkRequest(request) => {
+            vec![Grant::InstallKey(
+                request.carrier,
+                entry.signer_key().clone(),
+            )]
+        }
+        AuthorityOp::OwnerWorkResult(result) => {
+            vec![Grant::InstallKey(
+                result.executor,
+                entry.signer_key().clone(),
+            )]
+        }
+        // An owner answer waits for its carrier's install key (mesh PR1b).
+        AuthorityOp::MachineProfile(MachineProfile {
+            carrier: Some(carrier),
+            ..
+        }) => vec![Grant::InstallKey(*carrier, entry.signer_key().clone())],
         op => std::iter::once(&entry.signer)
             .chain(&entry.cosigns)
             .map(|signature| Grant::Admitter(signature.public_key.clone()))
