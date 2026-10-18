@@ -30,7 +30,8 @@ use serde::Deserialize;
 use serde_json::json;
 use tower::ServiceExt;
 
-use super::hello::{HelloOutcome, await_protocol_hello};
+use super::hello::HelloOutcome;
+use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 use crate::auth::{CoreAuth, RevokedTokenJtis};
 use crate::protocol::{TAG_RPC, close_codes};
@@ -186,9 +187,10 @@ pub(super) fn upgrade(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
-    // OF-237: over an embedded engine's channel the whole carrier, hello and
-    // calls included, lives under the engine's stop, and its stop waits for
-    // it from before the upgrade registers.
+    // OF-237: over an embedded engine's channel or mesh the whole carrier,
+    // hello and calls included, lives under the engine's stop, which it
+    // answers itself, and the stop waits for it and every call it admitted
+    // from before the upgrade registers.
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
@@ -196,35 +198,39 @@ pub(super) fn upgrade(
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
-            crate::embedded::UpgradeHold::run(
-                hold,
+            crate::embedded::UpgradeHold::run(hold, move |stop| {
                 crate::api::call_receipt::on_connection(
                     connection,
-                    serve(socket, server, conn_id, session_jti, caller),
-                ),
-            )
+                    serve(socket, stop, server, conn_id, session_jti, caller),
+                )
+            })
         })
         .into_response())
 }
 
 /// The carrier's loop. Every frame it writes goes through the guarded
 /// transport, which re-consults the socket credential's revocation first, and
-/// every read does too; each call is admitted again on its own proof.
+/// every read does too; each call is admitted again on its own proof. On the
+/// engine's `stop` (OF-237) the loop stops reading at its next wait and the
+/// transport closes; the carrier ends once every call it admitted has.
 async fn serve(
     socket: WebSocket,
+    mut stop: crate::embedded::UpgradeStop,
     server: Arc<SyncServer>,
     conn_id: u32,
     session_jti: Option<String>,
     caller: Caller,
 ) {
-    let mut transport = GuardedTransport::new(
+    let transport = GuardedTransport::new(
         socket,
         Arc::clone(server.vault()) as Arc<dyn RevokedTokenJtis + Send + Sync>,
         session_jti,
         conn_id,
     )
     .with_inbound_cap(server.config.max_frame_size);
-    match await_protocol_hello(&mut transport).await {
+    // Its hello and sends give way to the engine's stop.
+    let mut transport = StoppingTransport::new(transport, stop.clone());
+    match transport.hello().await {
         HelloOutcome::Valid(version)
             if version >= oneiron::sync::transport::APP_TIER_PROTOCOL_VERSION_VERSION => {}
         HelloOutcome::Valid(_) => {
@@ -245,9 +251,10 @@ async fn serve(
     let routes = mcp_routes(Arc::clone(&server));
     let caller = Arc::new(caller);
     let mut calls = tokio::task::JoinSet::new();
-    loop {
+    'serving: loop {
         let event = tokio::select! {
             biased;
+            () = stop.turned() => break,
             Some(answered) = calls.join_next(), if !calls.is_empty() => Event::Answered(answered),
             inbound = transport.read_next(), if calls.len() < MAX_MCP_CALLS_IN_FLIGHT => {
                 Event::Inbound(inbound)
@@ -257,7 +264,7 @@ async fn serve(
             Event::Answered(Ok(Ok(frames))) => {
                 for frame in frames {
                     if !transport.send_binary(frame).await {
-                        return;
+                        break 'serving;
                     }
                 }
                 continue;
@@ -347,6 +354,11 @@ async fn serve(
             async move { answer(id, call, &routes, &caller).await },
         ));
     }
+    // OF-237: the carrier closes, then every call it admitted runs to its
+    // end; none is aborted. Only after them does its place in an embedded
+    // engine's drain go, so no worker stops under one.
+    drop(transport);
+    while calls.join_next().await.is_some() {}
 }
 
 /// What woke the carrier's loop.
@@ -387,7 +399,7 @@ async fn answer(
     crate::livequery::rpc_result(id, json!({ "status": status.as_u16(), "body": body }))
 }
 
-async fn close(transport: &mut GuardedTransport<WebSocket>, code: u16, reason: &'static str) {
+async fn close(transport: &mut StoppingTransport, code: u16, reason: &'static str) {
     transport
         .send_unguarded_close_frame(WsMessage::Close(Some(CloseFrame {
             code,
