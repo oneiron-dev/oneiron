@@ -362,6 +362,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/ai.options", post(facade_route))
         .route("/ai.image", post(facade_route))
         .route("/ai.speech", post(facade_route))
+        .route("/vault.voices.packs.put", post(facade_route))
+        .route("/vault.voices.inspect", post(facade_route))
         .route("/ai.transcribe", post(facade_route))
         .route("/ai.embed", post(facade_route))
         .route("/ai.video", post(facade_route))

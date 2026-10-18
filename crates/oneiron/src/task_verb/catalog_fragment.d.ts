@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 534 code-mode rows (513 host rows, 21 run rows), 1901 declarations.
-// Replies: 470 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 536 code-mode rows (515 host rows, 21 run rows), 1915 declarations.
+// Replies: 472 fully typed, 60 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 91; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1399,6 +1399,20 @@ declare namespace Sdk {
   type AiCallRequest = { model?: string | null; prompt?: string | null; input?: AiPart[]; references?: AiPart[]; params?: Record<string, unknown>; voice?: AiVoice | null };
   type MediaUsage = { input_tokens?: number; output_tokens?: number; images?: number; audio_ms?: number; video_ms?: number; characters?: number; raw_provider?: unknown };
   type AiAnswer = { model: string; parts: AiPart[]; usage: MediaUsage };
+  type VoiceRefOrigin = { kind: "captured"; consent_event_ref: string } | { kind: "designed"; vendor: string } | { kind: "generated" };
+  type VoiceBankClipInput = { register: string; media_type: string; audio: string; transcript: string };
+  type VoiceBankPackPutRequest = { voice_id: string; pack_id: string; origin: VoiceRefOrigin; clips: VoiceBankClipInput[] };
+  type VoiceBankPackReceipt = { voice_id: string; pack_id: string };
+  type VoiceBankInspectRequest = { voice_id: string; target: string; include_generated?: boolean };
+  type VoiceIdentityView = { version: number; id: string; owner: string; pack_ids: string[] };
+  type VoiceClipSummary = { register: string; media_type: string; audio_bytes: number };
+  type VoicePackSummary = { version: number; id: string; origin: VoiceRefOrigin; clips: VoiceClipSummary[] };
+  type VoiceConsentBasis = { ConversationalNotice: { notice: string } } | { VerbalOnRecording: { recording_ref: string; start_ms: number; end_ms: number; words: string } } | { SettingsToggle: { surface_ref: string } };
+  type VoiceConsentState = "granted" | "withdrawn";
+  type VoiceRenderConsentView = { event_id: string; subject: string; recorded_by: string; occurred_at: number; reach: ModelLocality; basis: VoiceConsentBasis; state: VoiceConsentState; revision: string };
+  type VoiceTargetCloneView = { vendor_voice_id: string; source_packs: string[]; ref_digest: string; cloned_at: number; revision: string };
+  type VoiceTargetInspection = { target: string; locality: ModelLocality; include_generated: boolean; current?: VoiceTargetCloneView | null };
+  type VoiceBankInspection = { voice_id: string; identity?: VoiceIdentityView | null; packs: VoicePackSummary[]; render_consent?: VoiceRenderConsentView | null; target: VoiceTargetInspection };
   type AiOperation = "text" | "image" | "video" | "speech" | "transcribe" | "embed";
   type AiVideoTicket = { job: string; model: string; operation: AiOperation };
   type AiVideoJobRequest = { job: string };
@@ -3205,6 +3219,14 @@ declare const vault: Sdk.VaultHost & {
     tier: {
       /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
       set(input: Sdk.TrustedContactTierRequest): Promise<Sdk.TrustedContactTierSet | StoredResult>;
+    };
+  };
+  voices: {
+    /** The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone. */
+    inspect(input: Sdk.VoiceBankInspectRequest): Promise<Sdk.VoiceBankInspection | StoredResult>;
+    packs: {
+      /** The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op. */
+      put(input: Sdk.VoiceBankPackPutRequest): Promise<Sdk.VoiceBankPackReceipt | StoredResult>;
     };
   };
   weave: {

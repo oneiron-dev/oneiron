@@ -3191,6 +3191,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_voices_packs_put(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.packs.put", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_voices_inspect(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.voices.inspect", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_transcribe(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.transcribe", input)

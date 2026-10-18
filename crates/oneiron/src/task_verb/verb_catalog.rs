@@ -349,6 +349,8 @@ pub enum AgentVerb {
     AiOptions,
     AiImage,
     AiSpeech,
+    VaultVoicesPacksPut,
+    VaultVoicesInspect,
     AiTranscribe,
     AiEmbed,
     AiVideo,
@@ -872,6 +874,8 @@ impl AgentVerb {
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
+        Self::VaultVoicesPacksPut,
+        Self::VaultVoicesInspect,
         Self::AiTranscribe,
         Self::AiEmbed,
         Self::AiVideo,
@@ -1404,6 +1408,8 @@ impl AgentVerb {
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
+            Self::VaultVoicesPacksPut => "vault.voices.packs.put",
+            Self::VaultVoicesInspect => "vault.voices.inspect",
             Self::AiTranscribe => "ai.transcribe",
             Self::AiEmbed => "ai.embed",
             Self::AiVideo => "ai.video",
@@ -1930,6 +1936,8 @@ impl AgentVerb {
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesInspect
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -2460,6 +2468,8 @@ impl AgentVerb {
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesInspect
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -3034,6 +3044,8 @@ impl AgentVerb {
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
+                | Self::VaultVoicesInspect
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -3410,6 +3422,7 @@ impl AgentVerb {
                 | Self::AiReply
                 | Self::AiImage
                 | Self::AiSpeech
+                | Self::VaultVoicesPacksPut
                 | Self::AiTranscribe
                 | Self::AiEmbed
                 | Self::AiVideo
@@ -3886,6 +3899,8 @@ impl AgentVerb {
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
+            Self::VaultVoicesPacksPut => &["spec"],
+            Self::VaultVoicesInspect => &["spec"],
             Self::AiTranscribe => &["spec"],
             Self::AiEmbed => &["spec"],
             Self::AiVideo => &["spec"],
@@ -4410,6 +4425,8 @@ impl AgentVerb {
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
+            Self::VaultVoicesPacksPut => &["spec"],
+            Self::VaultVoicesInspect => &["spec"],
             Self::AiTranscribe => &["spec"],
             Self::AiEmbed => &["spec"],
             Self::AiVideo => &["spec"],
@@ -5577,6 +5594,12 @@ impl AgentVerb {
                 "One image out of the host's image model; reference images make it an edit."
             }
             Self::AiSpeech => "Speech audio out of text, from the host's speech model.",
+            Self::VaultVoicesPacksPut => {
+                "The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."
+            }
+            Self::VaultVoicesInspect => {
+                "The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."
+            }
             Self::AiTranscribe => "Text out of speech audio, from the host's transcription model.",
             Self::AiEmbed => {
                 "One embedding vector per input text, from the host's embedding model."

@@ -351,6 +351,8 @@ both bindings and their export-census tests in one change.
 - `ai.options`
 - `ai.image`
 - `ai.speech`
+- `vault.voices.packs.put`
+- `vault.voices.inspect`
 - `ai.transcribe`
 - `ai.embed`
 - `ai.video`

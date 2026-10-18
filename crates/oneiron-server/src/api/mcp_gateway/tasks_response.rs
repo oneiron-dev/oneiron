@@ -1293,6 +1293,8 @@ fn mcp_agent_verb_input(
         "ai.options" => a.spec.clone().ok_or_else(invalid),
         "ai.image" => a.spec.clone().ok_or_else(invalid),
         "ai.speech" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.packs.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.voices.inspect" => a.spec.clone().ok_or_else(invalid),
         "ai.transcribe" => a.spec.clone().ok_or_else(invalid),
         "ai.embed" => a.spec.clone().ok_or_else(invalid),
         "ai.video" => a.spec.clone().ok_or_else(invalid),
@@ -2560,6 +2562,12 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.speech" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.packs.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.voices.inspect" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "ai.transcribe" => {
@@ -8330,6 +8338,42 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::ai_speech(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.packs.put" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.packs.put", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceBankPackPutRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_packs_put(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.voices.inspect" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("vault.voices.inspect", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::task_verb::sdk::VoiceBankInspectRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) =
+                crate::api::facade::host_doors::vault_voices_inspect(server, auth, input).await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

@@ -7928,6 +7928,48 @@ async fn ai_speech(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_voices_packs_put(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.voices.packs.put")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.voices.packs.put", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.voices.packs.put", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_voices_packs_put(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_voices_inspect(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.voices.inspect")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.voices.inspect", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.voices.inspect", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_voices_inspect(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn ai_transcribe(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11588,6 +11630,8 @@ pub(crate) async fn call_verb(
         "ai.options" => ai_options(server, call, input).await,
         "ai.image" => ai_image(server, call, input).await,
         "ai.speech" => ai_speech(server, call, input).await,
+        "vault.voices.packs.put" => vault_voices_packs_put(server, call, input).await,
+        "vault.voices.inspect" => vault_voices_inspect(server, call, input).await,
         "ai.transcribe" => ai_transcribe(server, call, input).await,
         "ai.embed" => ai_embed(server, call, input).await,
         "ai.video" => ai_video(server, call, input).await,

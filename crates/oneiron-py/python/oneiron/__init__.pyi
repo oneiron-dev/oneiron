@@ -609,6 +609,8 @@ class Oneiron:
         @property
         def companions(self) -> "Oneiron._VaultCompanionsVerbs": ...
         @property
+        def voices(self) -> "Oneiron._VaultVoicesVerbs": ...
+        @property
         def graph(self) -> "Oneiron._VaultGraphVerbs": ...
         @property
         def questions(self) -> "Oneiron._VaultQuestionsVerbs": ...
@@ -1487,6 +1489,14 @@ class Oneiron:
             """One contact's clearance in a companion's source vault, for the principal who controls that vault."""
         def set(self, spec: Facade.CompanionSharingSetRequest) -> Facade.CompanionSharingView:
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
+    class _VaultVoicesVerbs:
+        @property
+        def packs(self) -> "Oneiron._VaultVoicesPacksVerbs": ...
+        def inspect(self, spec: Facade.VoiceBankInspectRequest) -> Facade.VoiceBankInspection:
+            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+    class _VaultVoicesPacksVerbs:
+        def put(self, spec: Facade.VoiceBankPackPutRequest) -> Facade.VoiceBankPackReceipt:
+            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
     class _VaultGraphVerbs:
         def ask(self, spec: Facade.GraphAskRequest) -> Facade.GraphAskOutcome: ...
     class _VaultQuestionsVerbs:

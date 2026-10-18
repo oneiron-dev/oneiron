@@ -705,6 +705,9 @@ class Oneiron:
         def companions(self) -> "Oneiron._VaultCompanionsVerbs":
             return Oneiron._VaultCompanionsVerbs(self._client)
         @property
+        def voices(self) -> "Oneiron._VaultVoicesVerbs":
+            return Oneiron._VaultVoicesVerbs(self._client)
+        @property
         def graph(self) -> "Oneiron._VaultGraphVerbs":
             return Oneiron._VaultGraphVerbs(self._client)
         @property
@@ -2252,6 +2255,21 @@ class Oneiron:
         def set(self, spec):
             """The owner's standing yes to one frozen clearance offer for a companion's contact."""
             return json.loads(_translate(lambda: self._client.vault_companions_sharing_set(json.dumps(spec))))
+    class _VaultVoicesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def packs(self) -> "Oneiron._VaultVoicesPacksVerbs":
+            return Oneiron._VaultVoicesPacksVerbs(self._client)
+        def inspect(self, spec):
+            """The owner inspects their own voice as the bank holds it for one configured hosted target: identity, pack metadata without audio or transcripts, the current render decision and the target's current clone."""
+            return json.loads(_translate(lambda: self._client.vault_voices_inspect(json.dumps(spec))))
+    class _VaultVoicesPacksVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def put(self, spec):
+            """The owner banks one immutable reference pack of their own voice: the first captured or designed pack makes its identity, a captured pack cites their current render grant, and a retry of the same pack is a no-op."""
+            return json.loads(_translate(lambda: self._client.vault_voices_packs_put(json.dumps(spec))))
     class _VaultGraphVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
