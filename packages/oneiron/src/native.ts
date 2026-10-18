@@ -315,6 +315,8 @@ vaultAgentsUpdate(input: unknown): unknown
 vaultWorkflowsSave(input: unknown): unknown
 vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown
+vaultWorkflowsDispatch(input: unknown): unknown
+vaultWorkflowsStatus(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown

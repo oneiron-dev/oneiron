@@ -6620,6 +6620,51 @@ async fn vault_workflows_update(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_workflows_dispatch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.workflows.dispatch")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.workflows.dispatch", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.workflows.dispatch", value).await?;
+    let (output, listed) = super::host_doors::vault_workflows_dispatch(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_workflows_status(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.workflows.status")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.workflows.status", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.workflows.status", value).await?;
+    let (output, listed) =
+        super::host_doors::vault_workflows_status(server, auth, facade_input(hooks.args.clone())?)
+            .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_workspace_establish(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11766,6 +11811,8 @@ pub(crate) async fn call_verb(
         "vault.workflows.save" => vault_workflows_save(server, call, input).await,
         "vault.workflows.get" => vault_workflows_get(server, call, input).await,
         "vault.workflows.update" => vault_workflows_update(server, call, input).await,
+        "vault.workflows.dispatch" => vault_workflows_dispatch(server, call, input).await,
+        "vault.workflows.status" => vault_workflows_status(server, call, input).await,
         "vault.workspace.establish" => vault_workspace_establish(server, call, input).await,
         "vault.workspace.members.onboard" => {
             vault_workspace_members_onboard(server, call, input).await

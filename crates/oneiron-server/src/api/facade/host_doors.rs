@@ -1117,6 +1117,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.workflows.save"
         | "vault.workflows.update"
         | "vault.workflows.get"
+        | "vault.workflows.dispatch"
+        | "vault.workflows.status"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"

@@ -4,7 +4,8 @@ use std::sync::Arc;
 
 use oneiron::task_verb::sdk::{
     self, AgentDefinitionCreateRequest, AgentDefinitionRequest, AgentDefinitionUpdateRequest,
-    AgentDefinitionView, WorkflowRequest, WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView,
+    AgentDefinitionView, WorkflowDispatchRequest, WorkflowRequest, WorkflowRunRequest,
+    WorkflowRunView, WorkflowSaveRequest, WorkflowUpdateRequest, WorkflowView,
     WorkspaceMemberOnboardRequest, WorkspacePresetReceipt, WorkspacePresetRequest,
     WorkspaceRosterRequest,
 };
@@ -116,6 +117,57 @@ pub(crate) async fn vault_workflows_get(
         owner_proof(auth, server, VERB),
         move |server, owner| sdk::read_workflow_as(server.vault(), &owner, input),
         workflow_rows,
+    )
+    .await
+}
+
+/// A run names its workflow, every step attempt it has started and the
+/// definitions those steps captured.
+fn workflow_run_rows(run: &WorkflowRunView) -> Option<Vec<oneiron::EntityId>> {
+    let mut rows = vec![
+        run.workflow_ref,
+        run.root_attempt_ref,
+        run.active_attempt_ref,
+    ];
+    for step in &run.steps {
+        rows.extend([step.requested_agent_ref, step.agent_def_ref]);
+    }
+    for result in &run.results {
+        rows.extend([result.dispatched_agent_ref, result.attempt_ref]);
+    }
+    rows.sort_unstable();
+    rows.dedup();
+    Some(rows)
+}
+
+pub(crate) async fn vault_workflows_dispatch(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowDispatchRequest,
+) -> MaybeListed<WorkflowRunView> {
+    const VERB: &str = "vault.workflows.dispatch";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::dispatch_workflow_as(server.vault(), &owner, input),
+        workflow_run_rows,
+    )
+    .await
+}
+
+pub(crate) async fn vault_workflows_status(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowRunRequest,
+) -> MaybeListed<WorkflowRunView> {
+    const VERB: &str = "vault.workflows.status";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::read_workflow_run_as(server.vault(), &owner, input),
+        workflow_run_rows,
     )
     .await
 }

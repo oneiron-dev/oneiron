@@ -291,6 +291,8 @@ both bindings and their export-census tests in one change.
 - `vault.workflows.save`
 - `vault.workflows.get`
 - `vault.workflows.update`
+- `vault.workflows.dispatch`
+- `vault.workflows.status`
 - `vault.workspace.establish`
 - `vault.workspace.members.onboard`
 - `vault.workspace.roster`

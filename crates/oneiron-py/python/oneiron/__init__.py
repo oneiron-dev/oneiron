@@ -2078,6 +2078,12 @@ class Oneiron:
         def update(self, spec):
             """The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."""
             return json.loads(_translate(lambda: self._client.vault_workflows_update(json.dumps(spec))))
+        def dispatch(self, spec):
+            """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_dispatch(json.dumps(spec))))
+        def status(self, spec):
+            """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
+            return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -4489,6 +4489,36 @@
       "openapi": true
     },
     {
+      "name": "vault.workflows.dispatch",
+      "description": "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run.",
+      "input": "crate::task_verb::sdk::WorkflowDispatchRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "call": "crate::task_verb::sdk::dispatch_workflow_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.dispatch\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.workflows.status",
+      "description": "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result.",
+      "input": "crate::task_verb::sdk::WorkflowRunRequest",
+      "output": "crate::task_verb::sdk::WorkflowRunView",
+      "call": "crate::task_verb::sdk::read_workflow_run_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.status\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workspace.establish",
       "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
       "input": "crate::task_verb::sdk::WorkspacePresetRequest",

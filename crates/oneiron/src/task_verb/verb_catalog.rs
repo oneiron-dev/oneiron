@@ -289,6 +289,8 @@ pub enum AgentVerb {
     VaultWorkflowsSave,
     VaultWorkflowsGet,
     VaultWorkflowsUpdate,
+    VaultWorkflowsDispatch,
+    VaultWorkflowsStatus,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -822,6 +824,8 @@ impl AgentVerb {
         Self::VaultWorkflowsSave,
         Self::VaultWorkflowsGet,
         Self::VaultWorkflowsUpdate,
+        Self::VaultWorkflowsDispatch,
+        Self::VaultWorkflowsStatus,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -1364,6 +1368,8 @@ impl AgentVerb {
             Self::VaultWorkflowsSave => "vault.workflows.save",
             Self::VaultWorkflowsGet => "vault.workflows.get",
             Self::VaultWorkflowsUpdate => "vault.workflows.update",
+            Self::VaultWorkflowsDispatch => "vault.workflows.dispatch",
+            Self::VaultWorkflowsStatus => "vault.workflows.status",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -1900,6 +1906,8 @@ impl AgentVerb {
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsStatus
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2440,6 +2448,8 @@ impl AgentVerb {
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsStatus
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3024,6 +3034,8 @@ impl AgentVerb {
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
+                | Self::VaultWorkflowsStatus
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3436,6 +3448,7 @@ impl AgentVerb {
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsUpdate
+                | Self::VaultWorkflowsDispatch
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
@@ -3894,6 +3907,8 @@ impl AgentVerb {
             Self::VaultWorkflowsSave => &["spec"],
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
+            Self::VaultWorkflowsDispatch => &["spec"],
+            Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -4428,6 +4443,8 @@ impl AgentVerb {
             Self::VaultWorkflowsSave => &["spec"],
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
+            Self::VaultWorkflowsDispatch => &["spec"],
+            Self::VaultWorkflowsStatus => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -5500,6 +5517,12 @@ impl AgentVerb {
             }
             Self::VaultWorkflowsUpdate => {
                 "The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."
+            }
+            Self::VaultWorkflowsDispatch => {
+                "The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."
+            }
+            Self::VaultWorkflowsStatus => {
+                "The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."
             }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."

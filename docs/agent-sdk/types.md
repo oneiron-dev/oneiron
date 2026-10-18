@@ -1814,6 +1814,10 @@ class Oneiron:
             """The owner reads one saved workflow, its steps, revision and fork lineage."""
         def update(self, spec: Facade.WorkflowUpdateRequest) -> Facade.WorkflowView:
             """The owner edits exactly the workflow revision they read; the door assigns the next revision and keeps fork lineage, and runs already admitted keep their captured steps."""
+        def dispatch(self, spec: Facade.WorkflowDispatchRequest) -> Facade.WorkflowRunView:
+            """The owner starts one root run of a saved workflow under a briefing through the ordinary dispatch admission for every step; each step's definition revision, scope and ceiling are captured, and a retried intent key returns the same run."""
+        def status(self, spec: Facade.WorkflowRunRequest) -> Facade.WorkflowRunView:
+            """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
     class _VaultWorkspaceVerbs:
         def establish(self, spec: Facade.WorkspacePresetRequest) -> Facade.WorkspacePresetReceipt:
             """The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."""
