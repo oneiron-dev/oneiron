@@ -3,11 +3,9 @@
 use super::codec::{
     ThreadHead, annotation_envelope, decode_comment, decode_thread_head, encode_comment_value,
 };
+use super::comment_parts::comment_parts;
 use super::threads::thread_from_head;
-use super::{
-    ANNOTATION_COMMENT_PREDICATE, ANNOTATION_COMMENT_TEXT_MAX_BYTES, ANNOTATION_THREAD_PREDICATE,
-    Locator, ThreadState,
-};
+use super::{ANNOTATION_COMMENT_PREDICATE, ANNOTATION_THREAD_PREDICATE, Locator, ThreadState};
 use crate::claim::{ClaimSubject, claim_surfaceable};
 use crate::edit_roundtrip::pptx::{
     PptxCommentAction, PptxCommentTarget, PptxInspection, PptxOperationalLimits,
@@ -171,24 +169,28 @@ impl crate::Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<()> {
-        if text.trim().is_empty() || text.len() > ANNOTATION_COMMENT_TEXT_MAX_BYTES {
+        if text.trim().is_empty() {
             return Err(invalid_anchor());
         }
         let envelope = annotation_envelope(actor, "pptx_comment")?;
-        self.batch_in()
-            .claim_candidate(
+        // A comment past one stored body's bound lands whole as linked parts,
+        // each a reply on the thread after the first.
+        let mut batch = self.batch_in();
+        for body in comment_parts(text) {
+            batch = batch.claim_candidate(
                 &EntityId::now(),
                 ClaimCandidate::new(
                     ANNOTATION_COMMENT_PREDICATE,
                     ClaimSubject::Entity(*artifact),
-                    encode_comment_value(&thread, &actor.entity_ref(), text, learned_at),
+                    encode_comment_value(&thread, &actor.entity_ref(), &body, learned_at),
                     1.0,
                 ),
                 &envelope,
                 occurred,
                 learned_at,
-            )
-            .apply(txn)?;
+            );
+        }
+        batch.apply(txn)?;
         Ok(())
     }
     fn pptx_thread_author_in_txn(

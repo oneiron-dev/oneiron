@@ -3,8 +3,9 @@
 //! brief, the closed SVG subset compiled to native shapes, native tables and
 //! classic charts written with their embedded workbooks, narrow value and
 //! text edits in place, native Word revisions over a pinned,
-//! Apache-2.0-selected stemma fork, and the DOCX read and projection a live
-//! office body imports from and exports through.
+//! Apache-2.0-selected stemma fork, the DOCX read and projection a live
+//! office body imports from and exports through, and PowerPoint's modern
+//! comment threads written byte for byte.
 //!
 //! [`contract`] is the engine contract over all of it: one versioned op
 //! table, served by this crate and by the hosted documents API.
@@ -25,6 +26,7 @@ pub mod graphic;
 pub mod live;
 pub mod native_patch;
 pub mod ooxml;
+pub mod pptx_comments;
 pub mod retained_opc;
 pub mod xlfn;
 pub mod xlsx_body;

@@ -159,7 +159,8 @@ pub enum NodePayload {
         preview: Option<HeldMedia>,
     },
     /// A shape drawn from custom geometry (`a:custGeom`) with this many
-    /// paths. It takes no preset.
+    /// paths. A preset replaces it, as PowerPoint's Change Shape does on a
+    /// freeform, and the export names the replacement.
     CustomGeometry { paths: u32 },
 }
 
@@ -437,8 +438,6 @@ pub(crate) const WRITTEN_COMBO: &str =
 /// A cached chart's data lives outside what the deck writes.
 pub(crate) const CACHED_CHART: &str =
     "a chart read from its caches keeps its data: its source is outside the package";
-/// Custom geometry takes no preset, at the op as at export.
-pub(crate) const CUSTOM_GEOMETRY: &str = "custom geometry takes no preset";
 
 /// One run of a paragraph. Formatting rides as run-property marks; scheme
 /// colour and hyperlinks stay atomic values on the run that carries them.
@@ -1072,8 +1071,10 @@ impl LiveDeck {
                 if found.kind != NodeKind::Shape {
                     return Err(LiveError::Invalid("only a shape takes a preset"));
                 }
+                // The preset replaces custom geometry; the export's
+                // effects name it.
                 if matches!(found.payload, Some(NodePayload::CustomGeometry { .. })) {
-                    return Err(LiveError::Invalid(CUSTOM_GEOMETRY));
+                    found.payload = None;
                 }
                 found.preset = Some(*preset);
                 vec![*node]

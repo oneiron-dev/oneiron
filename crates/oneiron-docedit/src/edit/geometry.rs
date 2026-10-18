@@ -1,15 +1,19 @@
 //! `set_preset` and `set_glue`: a shape's or connector's preset geometry,
 //! and a connector's glue. Adjust values belong to the preset they were
-//! written for, so a preset change writes an empty `a:avLst`; custom
-//! geometry takes no preset.
+//! written for, so a preset change writes an empty `a:avLst`. As
+//! PowerPoint's Change Shape does, a preset replaces custom geometry, and a
+//! shape that inherits its geometry from its layout gets its own; the
+//! report names either.
 use super::check::Declared;
 use super::xml::{self, A, P};
-use super::{ConnectorPreset, EditRefusal, FitUnverified, Preset, Written};
+use super::{ConnectorPreset, EditRefusal, Effect, FitUnverified, Preset, Written};
 use crate::deck::{ShapeKind, ShapeView, SlideView};
 use crate::retained_opc::Package;
 
 /// The path from a shape or connector element to its preset geometry.
 pub(super) const PRESET: &[(&str, &str)] = &[(P, "spPr"), (A, "prstGeom")];
+/// The path from a shape or connector element to its shape properties.
+const PROPERTIES: &[(&str, &str)] = &[(P, "spPr")];
 /// The path from a connector element to the element holding its glue.
 pub(super) const GLUE: &[(&str, &str)] = &[(P, "nvCxnSpPr"), (P, "cNvCxnSpPr")];
 
@@ -46,20 +50,41 @@ pub(super) fn set_preset(
         ));
     }
     let (bytes, tree) = xml::read(next, &slide.part)?;
-    let at = xml::path(&tree, shape.node.index, PRESET)
-        .ok_or(EditRefusal::Invalid("custom geometry takes no preset"))?;
-    let node = &tree.nodes[at];
-    let prefix = xml::prefix(node);
-    let element = format!(
-        r#"<{geom} prst="{preset}"><{list}/></{geom}>"#,
-        geom = xml::qualify(prefix, "prstGeom"),
-        list = xml::qualify(prefix, "avLst"),
-    );
-    next.replace_xml_part(
-        &slide.part,
-        xml::splice(&bytes, vec![(node.span.clone(), element.into_bytes())])?,
-    )?;
-    let mut out = written(slide, id, PRESET);
+    // The geometry element written in place of `at`, in its own prefix.
+    let over = |at: usize| {
+        let node = &tree.nodes[at];
+        let prefix = xml::prefix(node);
+        let element = format!(
+            r#"<{geom} prst="{preset}"><{list}/></{geom}>"#,
+            geom = xml::qualify(prefix, "prstGeom"),
+            list = xml::qualify(prefix, "avLst"),
+        );
+        (node.span.clone(), element.into_bytes())
+    };
+    let (splice, path, effect) = if let Some(at) = xml::path(&tree, shape.node.index, PRESET) {
+        (over(at), PRESET, None)
+    } else {
+        let properties = xml::path(&tree, shape.node.index, PROPERTIES)
+            .ok_or(EditRefusal::Missing("shape properties"))?;
+        if let Some(at) = xml::child(&tree, properties, A, "custGeom") {
+            (over(at), PROPERTIES, Some(Effect::CustomGeometryReplaced))
+        } else {
+            let element =
+                format!(r#"<a:prstGeom xmlns:a="{A}" prst="{preset}"><a:avLst/></a:prstGeom>"#);
+            // CT_ShapeProperties: the transform, then the geometry.
+            let splice = match xml::child(&tree, properties, A, "xfrm") {
+                Some(xfrm) => {
+                    let end = tree.nodes[xfrm].span.end;
+                    (end..end, element.into_bytes())
+                }
+                None => xml::insert_first(&bytes, &tree.nodes[properties], &element),
+            };
+            (splice, PROPERTIES, Some(Effect::InheritedGeometryOwned))
+        }
+    };
+    next.replace_xml_part(&slide.part, xml::splice(&bytes, vec![splice])?)?;
+    let mut out = written(slide, id, path);
+    out.effects.extend(effect);
     // The preset's text rectangle is the text's frame.
     out.fit = shape.text.is_some().then(|| FitUnverified {
         part: slide.part.clone(),
