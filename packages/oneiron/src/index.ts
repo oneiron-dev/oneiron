@@ -1587,6 +1587,8 @@ export class Oneiron {
     search: {
       /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
       hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
+      /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
+      temporal: (input: Facade.TemporalSearchRequest): Facade.ScopedReadResult<Facade.TemporalSearchResult> => this.#call(() => this.#client.vaultSearchTemporal(input) as Facade.ScopedReadResult<Facade.TemporalSearchResult>),
       /** BM25 text search over the engine index; surfaceable claims only. */
       bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
     },
@@ -1712,6 +1714,8 @@ export class Oneiron {
     notes: {
       /** Creates a NOTE of a registered kind, its first authored text as its birth. */
       create: (input: Facade.CreateNoteRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesCreate(input) as Facade.EntityRefReceipt),
+      /** Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target. */
+      author_take: (input: Facade.AuthorTakeRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesAuthorTake(input) as Facade.EntityRefReceipt),
       /** Creates a NOTE of a registered kind from an existing entity. */
       from_entity: (input: Facade.CreateNoteFromEntityRequest): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultNotesFromEntity(input) as Facade.EntityRefReceipt),
       /** Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot. */

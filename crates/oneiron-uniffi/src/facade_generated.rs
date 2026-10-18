@@ -2526,6 +2526,11 @@ export_facade! {
     let output = client.vault_search_hybrid(&input)?;
     crate::codec::lift_record("vault.search.hybrid", &output)
 };
+"vault.search.temporal" => fn vault_search_temporal(&self, input: TemporalSearchRequest) -> ScopedReadResultTemporalSearchResult = |client| {
+    let input: oneiron::memory::TemporalSearchRequest = crate::codec::lower_record("vault.search.temporal", input)?;
+    let output = client.vault_search_temporal(&input)?;
+    crate::codec::lift_record("vault.search.temporal", &output)
+};
 "vault.search.bm25" => fn vault_search_bm25(&self, query: String, limit: u32) -> LexicalHits = |client| {
     let input: oneiron::task_verb::sdk::QueryBm25Request = (query, limit).lower()?;
     let output = client.vault_search_bm25(&input)?;
@@ -2919,6 +2924,11 @@ export_facade! {
 "vault.notes.create" => fn vault_notes_create(&self, input: CreateNoteRequest) -> EntityRefReceipt = |client| {
     let input: oneiron::task_verb::sdk::CreateNoteRequest = crate::codec::lower_record("vault.notes.create", input)?;
     let output = client.vault_notes_create(&input)?;
+    Lift::lift(output)
+};
+"vault.notes.author_take" => fn vault_notes_author_take(&self, input: AuthorTakeRequest) -> EntityRefReceipt = |client| {
+    let input: oneiron::task_verb::sdk::AuthorTakeRequest = crate::codec::lower_record("vault.notes.author_take", input)?;
+    let output = client.vault_notes_author_take(&input)?;
     Lift::lift(output)
 };
 "vault.notes.from_entity" => fn vault_notes_from_entity(&self, input: CreateNoteFromEntityRequest) -> EntityRefReceipt = |client| {

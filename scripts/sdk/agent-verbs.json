@@ -8582,6 +8582,25 @@
       "openapi": true
     },
     {
+      "name": "vault.search.temporal",
+      "description": "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds.",
+      "input": "crate::memory::TemporalSearchRequest",
+      "output": "crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>",
+      "call": "memory.query_temporal(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true,
+        "validate": "input.validate()?;"
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "mcp_scope": "filtered",
+      "openapi": true
+    },
+    {
       "name": "vault.search.bm25",
       "description": "BM25 text search over the engine index; surfaceable claims only.",
       "uniffi": {
@@ -10414,6 +10433,27 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.notes.author_take",
+      "description": "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target.",
+      "refs": [
+        "/target/subject",
+        "/target/claim"
+      ],
+      "input": "AuthorTakeRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "memory_requests::author_take(memory, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "binding": {
+        "native": "agent_verb",
+        "request": true
+      },
+      "openapi": true
     },
     {
       "name": "vault.notes.from_entity",

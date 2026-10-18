@@ -2925,6 +2925,9 @@ class Oneiron:
         def hybrid(self, input: dict[str, Any]) -> Any:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
             return json.loads(_translate(lambda: self._client.vault_search_hybrid(json.dumps(input, allow_nan=False))))
+        def temporal(self, input: dict[str, Any]) -> Any:
+            """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
+            return json.loads(_translate(lambda: self._client.vault_search_temporal(json.dumps(input, allow_nan=False))))
         def bm25(self, input: dict[str, Any]) -> Any:
             """BM25 text search over the engine index; surfaceable claims only."""
             return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
@@ -3126,6 +3129,9 @@ class Oneiron:
         def create(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
             return json.loads(_translate(lambda: self._client.vault_notes_create(json.dumps(input, allow_nan=False))))
+        def author_take(self, input: dict[str, Any]) -> Any:
+            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."""
+            return json.loads(_translate(lambda: self._client.vault_notes_author_take(json.dumps(input, allow_nan=False))))
         def from_entity(self, input: dict[str, Any]) -> Any:
             """Creates a NOTE of a registered kind from an existing entity."""
             return json.loads(_translate(lambda: self._client.vault_notes_from_entity(json.dumps(input, allow_nan=False))))

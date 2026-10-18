@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 620 facade rows, 2251 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 12; generated in and out: 580.
+// UniFFI census: 622 facade rows, 2260 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 13; generated in and out: 581.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -30009,6 +30009,123 @@ pub struct ScopedReadResultHybridSearchHitList {
     pub narrowing: ScopedReadReceipt,
 }
 
+/// `oneiron::temporal::TemporalAnchorMode`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TemporalAnchorMode {
+    #[serde(rename = "occurred")]
+    Occurred,
+    #[serde(rename = "learned")]
+    Learned,
+    #[serde(rename = "both")]
+    Both,
+    #[serde(rename = "auto")]
+    Auto,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchRange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalSearchRange {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TemporalSearchRequest {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+    #[serde(rename = "sigma_secs")]
+    pub sigma_secs: u64,
+    #[serde(
+        rename = "anchor_mode",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub anchor_mode: Option<TemporalAnchorMode>,
+    #[serde(
+        rename = "learned_start",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_start: Option<u64>,
+    #[serde(
+        rename = "learned_end",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_end: Option<u64>,
+    #[serde(rename = "adaptive", default, skip_serializing_if = "Option::is_none")]
+    pub adaptive: Option<bool>,
+    #[serde(
+        rename = "occurred_range",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub occurred_range: Option<TemporalSearchRange>,
+    #[serde(
+        rename = "learned_range",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub learned_range: Option<TemporalSearchRange>,
+    #[serde(rename = "limit")]
+    pub limit: u64,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchHit`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TemporalSearchHit {
+    #[serde(rename = "entity_ref")]
+    pub entity_ref: String,
+    #[serde(
+        rename = "source_revision_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub source_revision_ref: Option<String>,
+    #[serde(rename = "score")]
+    pub score: f64,
+    #[serde(rename = "occurred_start")]
+    pub occurred_start: u64,
+    #[serde(rename = "occurred_end")]
+    pub occurred_end: u64,
+    #[serde(rename = "learned_at")]
+    pub learned_at: u64,
+}
+
+/// `oneiron::pipeline::temporal_report::TemporalSearchReport`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TemporalSearchReport {
+    #[serde(rename = "sigma_secs")]
+    pub sigma_secs: u64,
+    #[serde(rename = "rounds")]
+    pub rounds: u64,
+}
+
+/// `oneiron::memory::search_temporal::TemporalSearchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TemporalSearchResult {
+    #[serde(rename = "hits")]
+    pub hits: Vec<TemporalSearchHit>,
+    #[serde(rename = "widening", default, skip_serializing_if = "Option::is_none")]
+    pub widening: Option<TemporalSearchReport>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `TemporalSearchResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultTemporalSearchResult {
+    #[serde(rename = "value")]
+    pub value: TemporalSearchResult,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
 /// `oneiron::memory::structural::productivity::ProductivityCreateRole`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum ProductivityCreateRole {
@@ -34637,6 +34754,25 @@ pub struct SummaryRegenerateRequest {
 pub struct SummaryProposalRequest {
     #[serde(rename = "proposal_ref")]
     pub proposal_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_memory::AuthorTakeTarget`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AuthorTakeTarget {
+    #[serde(rename = "subject")]
+    Subject(String),
+    #[serde(rename = "claim")]
+    Claim(String),
+}
+
+/// `oneiron::task_verb::sdk_memory::AuthorTakeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorTakeRequest {
+    #[serde(rename = "target")]
+    pub target: AuthorTakeTarget,
+    #[serde(rename = "markdown")]
+    pub markdown: String,
 }
 
 /// `oneiron::task_verb::sdk_memory::CreateNoteFromEntityRequest`.
