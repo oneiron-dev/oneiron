@@ -33,6 +33,11 @@ impl Memory<'_> {
         artifact: &EntityId,
         proposal: &EntityId,
     ) -> Option<String> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .ask_office_holders(artifact, proposal);
+        }
         let error = self.raise_office_holder_ask(artifact, proposal).err()?;
         tracing::warn!(
             proposal = %proposal.to_hex(),
