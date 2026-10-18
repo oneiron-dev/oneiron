@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 316 facade rows, 1175 generated types.
-// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 284.
+// UniFFI census: 318 facade rows, 1182 generated types.
+// Hand-written records in and out: 27; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 2; generated in and out: 286.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -19329,4 +19329,104 @@ pub struct NoteLifecycleView {
     pub status: NoteLifecycleStatus,
     #[serde(rename = "seal", default, skip_serializing_if = "Option::is_none")]
     pub seal: Option<NoteSeal>,
+}
+
+/// `oneiron::note::kinds::ExtractionDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ExtractionDefault {
+    #[serde(rename = "allowed")]
+    Allowed,
+    #[serde(rename = "after_seal")]
+    AfterSeal,
+    #[serde(rename = "private_strategy_only")]
+    PrivateStrategyOnly,
+    #[serde(rename = "disabled")]
+    Disabled,
+}
+
+/// `oneiron::note::kinds::ContextDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ContextDefault {
+    #[serde(rename = "owner_only")]
+    OwnerOnly,
+    #[serde(rename = "relationship_scoped")]
+    RelationshipScoped,
+    #[serde(rename = "vault_readable")]
+    VaultReadable,
+    #[serde(rename = "explicit_only")]
+    ExplicitOnly,
+}
+
+/// `oneiron::note::kinds::RetentionDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RetentionDefault {
+    #[serde(rename = "durable")]
+    Durable,
+    #[serde(rename = "session_sealed")]
+    SessionSealed,
+    #[serde(rename = "archive_after_days")]
+    ArchiveAfterDays,
+}
+
+/// `oneiron::note::overrides::NoteOverrides`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteOverrides {
+    #[serde(
+        rename = "extraction",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub extraction: Option<ExtractionDefault>,
+    #[serde(rename = "context", default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ContextDefault>,
+    #[serde(rename = "retention", default, skip_serializing_if = "Option::is_none")]
+    pub retention: Option<RetentionDefault>,
+    #[serde(
+        rename = "archive_after_days",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub archive_after_days: Option<u32>,
+}
+
+/// `oneiron::note::overrides::SetNoteOverridesRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SetNoteOverridesRequest {
+    #[serde(rename = "note_ref")]
+    pub note_ref: String,
+    #[serde(rename = "overrides", default, skip_serializing_if = "Option::is_none")]
+    pub overrides: Option<NoteOverrides>,
+}
+
+/// `oneiron::note::kinds::NoteKindDescriptor`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct NoteKindDescriptor {
+    #[serde(rename = "pack")]
+    pub pack: String,
+    #[serde(rename = "kind")]
+    pub kind: String,
+    #[serde(rename = "extraction")]
+    pub extraction: ExtractionDefault,
+    #[serde(rename = "context")]
+    pub context: ContextDefault,
+    #[serde(rename = "retention")]
+    pub retention: RetentionDefault,
+    #[serde(
+        rename = "archive_after_days",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub archive_after_days: Option<u32>,
+}
+
+/// `oneiron::note::overrides::NoteDefaultsView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct NoteDefaultsView {
+    #[serde(rename = "overrides")]
+    pub overrides: NoteOverrides,
+    #[serde(rename = "defaults")]
+    pub defaults: NoteKindDescriptor,
 }

@@ -968,6 +968,10 @@ export class Oneiron {
       seal: (request: Facade.NoteRefRequest): Facade.NoteSeal => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSeal(keyedJson(request))) as Facade.NoteSeal; return result }),
       /** Where one NOTE stands (active, sealed, archived or tombstoned) and its seal. */
       lifecycle: (request: Facade.NoteRefRequest): Facade.NoteLifecycleView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesLifecycle(keyedJson(request))) as Facade.NoteLifecycleView; return result }),
+      /** Sets the defaults one NOTE overrides over its kind's; empty overrides clear them. */
+      set_overrides: (request: Facade.SetNoteOverridesRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSetOverrides(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
+      /** One NOTE's overrides and the defaults its gates read after them. */
+      defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */

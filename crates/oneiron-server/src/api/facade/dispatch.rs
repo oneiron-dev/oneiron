@@ -7205,6 +7205,62 @@ async fn vault_notes_lifecycle(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_set_overrides(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.set_overrides",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.set_overrides"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.set_overrides",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_defaults(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.defaults",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.defaults"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.defaults",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 /// Runs facade verb `verb` for `call` over `input`, as its row admits it:
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
@@ -7629,6 +7685,8 @@ pub(crate) async fn call_verb(
         "vault.notes.edit" => vault_notes_edit(server, call, input).await,
         "vault.notes.seal" => vault_notes_seal(server, call, input).await,
         "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
+        "vault.notes.set_overrides" => vault_notes_set_overrides(server, call, input).await,
+        "vault.notes.defaults" => vault_notes_defaults(server, call, input).await,
         "self.focus.refresh" | "self.focus.subscribe" | "self.focus.unsubscribe" => {
             Err(context_required(verb, VerbContext::Board))
         }
