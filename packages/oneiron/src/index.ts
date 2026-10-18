@@ -287,6 +287,11 @@ export class Oneiron {
       /** Asks a person for access on the caller's behalf; the request grants nothing until the vault owner approves it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
     },
+    /** The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money. */
+    budget: Object.assign((input: Facade.SelfBudgetRequest): Facade.AgentBudgetView => this.#call(() => this.#client.selfBudget(input) as Facade.AgentBudgetView), {
+      /** The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later. */
+      land: (input: Facade.BudgetLandRequest): Facade.PartialResultHold => this.#call(() => this.#client.selfBudgetLand(input) as Facade.PartialResultHold),
+    }),
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),
     skills: {
@@ -351,6 +356,24 @@ export class Oneiron {
       /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */
       ack: (input: Facade.FanoutAckRequest): Facade.FanoutLaunchView => this.#call(() => this.#client.vaultFanoutAck(input) as Facade.FanoutLaunchView),
     },
+    budgets: {
+      /** The owner reads a persisted spend lease, its remaining allowance and the hard ancestor that binds it. */
+      lease: Object.assign((input: Facade.SpendScopeRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLease(input) as Facade.SpendLeaseView), {
+        /** The owner opens a persisted launch spend lease under the maximum the customer set and saw, in its declared unit. */
+        open: (input: Facade.OpenSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseOpen(input) as Facade.SpendLeaseView),
+        /** The owner raises a hard lease to a shown replacement maximum; replay adds nothing twice and a child's increase stays within its ancestor's cap. */
+        top_up: (input: Facade.TopUpSpendLeaseRequest): Facade.SpendLeaseView => this.#call(() => this.#client.vaultBudgetsLeaseTopUp(input) as Facade.SpendLeaseView),
+      }),
+      /** The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume. */
+      hold: Object.assign((input: Facade.BudgetHoldRequest): Facade.PartialResultHold | null => this.#call(() => this.#client.vaultBudgetsHold(input) as Facade.PartialResultHold | null), {
+        /** The owner resumes the same held attempts from their checkpoints after their lease has funds; no model substitution or terminal completion. */
+        resume: (input: Facade.BudgetHoldRequest): Facade.PartialResultHold => this.#call(() => this.#client.vaultBudgetsHoldResume(input) as Facade.PartialResultHold),
+      }),
+      /** The owner observes a device-local runner budget counter without creating it, including absence after an owner restore. */
+      local: (input: Facade.LocalRunnerBudgetRequest): Facade.LocalRunnerBudgetView => this.#call(() => this.#client.vaultBudgetsLocal(input) as Facade.LocalRunnerBudgetView),
+      /** The owner reads a served run's persisted physical-rung settlement receipts, with reservation, settled units and stamped cost when priced. */
+      settlements: (input: Facade.RunSettlementsRequest): Facade.RunSettlementsView => this.#call(() => this.#client.vaultBudgetsSettlements(input) as Facade.RunSettlementsView),
+    },
     /**
    * Witnesses one conversational turn.
    *
@@ -361,6 +384,10 @@ export class Oneiron {
     claims: {
       /** Admits an explicitly four-axis claim through the caller credential and existing gate, with host-authored provenance. */
       upsert: (input: Facade.ScopedClaimInput): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsUpsert(input) as Facade.CommitReceipt),
+      /** The owner reviews one proposed claim: the claim as the owner may read it, its opener and tray row, and the review_id that settles exactly this content. */
+      review: (input: Facade.ClaimProposalReviewRequest): Facade.ClaimProposalReview => this.#call(() => this.#client.vaultClaimsReview(input) as Facade.ClaimProposalReview),
+      /** The owner approves or rejects exactly the reviewed proposed claim through the gate and keeps its Settlement; a claim changed since its review_id is refused. */
+      settle: (input: Facade.ClaimSettleRequest): Facade.ClaimSettlement => this.#call(() => this.#client.vaultClaimsSettle(input) as Facade.ClaimSettlement),
       /** Retracts one active claim: a deliberate withdrawal that preserves the record. */
       retract: (input: Facade.ClaimRefRequest): Facade.CommitReceipt => this.#call(() => this.#client.vaultClaimsRetract(input) as Facade.CommitReceipt),
       /** Lists claims by subject, predicate and lifecycle, with the read's narrowing receipt. */

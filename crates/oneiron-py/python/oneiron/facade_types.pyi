@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 391 facade rows, 1515 declarations.
-Inputs: 348 of 391 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 348 of 391 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 402 facade rows, 1564 declarations.
+Inputs: 359 of 402 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 357 of 402 fully typed, 45 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 75; unread shapes: 0.
 """
 
@@ -1160,6 +1160,192 @@ class FanoutLaunchView(TypedDict):
     check_row_ref: NotRequired[str | None]
     choice_receipt_ref: NotRequired[str | None]
     task_refs: list[EntityId]
+class SelfBudgetRequest(TypedDict):
+    attempt: str
+    run: NotRequired[str | None]
+SpendState = Literal["open", "closed"]
+class SpendPayer(TypedDict):
+    party: EntityId
+    granted_by: EntityId
+    at_ms: int
+class SpendScope(TypedDict):
+    scope: SpendScopeId
+    parent: NotRequired[SpendScopeId | None]
+    unit: LeaseUnit
+    cap_units: int
+    hard: bool
+    spent_units: int
+    held_units: int
+    state: SpendState
+    shown_at_ms: NotRequired[int | None]
+    opened_at: int
+    closed_at: NotRequired[int | None]
+    agent: NotRequired[EntityId | None]
+    payer: NotRequired[SpendPayer | None]
+class SpendSignalWrapUp(TypedDict):
+    signal: Literal["wrap_up"]
+    available_units: int
+    cap_units: int
+class SpendSignalAtCap(TypedDict):
+    signal: Literal["at_cap"]
+    cap_units: int
+SpendSignal = SpendSignalWrapUp | SpendSignalAtCap
+class SpendRead(TypedDict):
+    scope: SpendScopeId
+    unit: LeaseUnit
+    spent_units: int
+    available_units: int
+    cap_scope: SpendScopeId
+    cap_units: int
+    signal: NotRequired[SpendSignal | None]
+class SpendLeaseView(TypedDict):
+    lease: SpendScope
+    spend: SpendRead
+class AttemptLandingReserve(TypedDict):
+    limit_units: NotRequired[int]
+    reserve_units: NotRequired[int]
+    spent_units: NotRequired[int]
+    dial_generation: NotRequired[int | None]
+LandingTrigger = Literal["cancel_request", "budget_warning", "lease_warning"]
+class AttemptLanding(TypedDict):
+    trigger: LandingTrigger
+    requested_by: str
+    entered_at: int
+    status: NotRequired[str | None]
+AttemptCancelReceiptKind = Literal["soft_requested", "landing_accepted", "soft_rejected", "resume_point_recorded", "reserve_spent", "landed", "force_cancelled"]
+CancelStanding = Literal["peer_agent", "healer", "automation", "authority", "none"]
+ForceCancelGrounds = Literal["owner", "lease_expiry", "criticality"]
+class AttemptResumePoint(TypedDict):
+    marker: str
+    artifact_ref: NotRequired[str | None]
+    recorded_at: int
+class AttemptCancelReceipt(TypedDict):
+    sequence: int
+    at: int
+    actor: str
+    kind: AttemptCancelReceiptKind
+    standing: NotRequired[CancelStanding | None]
+    trigger: NotRequired[LandingTrigger | None]
+    grounds: NotRequired[ForceCancelGrounds | None]
+    status: NotRequired[str | None]
+    reason: NotRequired[str | None]
+    resume_point: NotRequired[AttemptResumePoint | None]
+    reserve_units: NotRequired[int]
+    request_sequence: NotRequired[int | None]
+BudgetHoldState = Literal["warned", "held", "resumed"]
+class HeldAttempt(TypedDict):
+    attempt: AttemptId
+    resume_point: AttemptResumePoint
+CoordinationPattern = Literal["solo", "ceo_decides", "committee", "vote", "market", "rotation"]
+class TeamShape(TypedDict):
+    pattern: CoordinationPattern
+    width: int
+ModelId = str
+class PatternSkillRef(TypedDict):
+    skill: EntityId
+    version: str
+CareLevel = Literal["light", "medium", "high", "xhigh", "max"]
+ReasoningEffort = Literal["none", "low", "medium", "high", "xhigh"]
+class CostEnvelope(TypedDict):
+    agent_count: int
+    expected_spend_units: int
+    hard_cap_units: NotRequired[int | None]
+    available_units: NotRequired[int | None]
+    per_agent: ExpectedSpend
+PlannerRung = Literal["cheap_classifier", "small_thinking", "strong"]
+class TeamPlan(TypedDict):
+    shape: TeamShape
+    model: ModelId
+    agent_def: EntityId
+    pattern_skill: NotRequired[PatternSkillRef | None]
+    care: CareLevel
+    effort: ReasoningEffort
+    envelope: CostEnvelope
+    rung: PlannerRung
+    fitted_to_budget: bool
+    over_budget: NotRequired[bool]
+    what_more_would_buy: NotRequired[str | None]
+class BudgetHoldNotice(TypedDict):
+    text: str
+    delivered_at: NotRequired[int | None]
+class PartialResultHold(TypedDict):
+    root_attempt: AttemptId
+    state: BudgetHoldState
+    warned: NotRequired[list[AttemptId]]
+    held: NotRequired[list[HeldAttempt]]
+    partial_result_refs: NotRequired[list[str]]
+    plan: NotRequired[TeamPlan | None]
+    reason: str
+    warned_at: NotRequired[int | None]
+    held_at: NotRequired[int | None]
+    notice: NotRequired[BudgetHoldNotice | None]
+    resume_ready: NotRequired[bool]
+    resumed_at: NotRequired[int | None]
+    resumed_by: NotRequired[str | None]
+class AgentBudgetView(TypedDict):
+    attempt: str
+    lease: NotRequired[SpendLeaseView | None]
+    landing_reserve: AttemptLandingReserve
+    ordinary_limit_units: int
+    landing: NotRequired[AttemptLanding | None]
+    budget_notices: list[AttemptCancelReceipt]
+    checkpoint: NotRequired[AttemptResumePoint | None]
+    hold: NotRequired[PartialResultHold | None]
+class BudgetLandRequest(TypedDict):
+    attempt: str
+    run: str
+    lease_owner: str
+    attempt_count: int
+    marker: str
+    artifact_ref: NotRequired[str | None]
+    reason: str
+class OpenSpendLeaseRequest(TypedDict):
+    launch: str
+    cap_units: int
+    unit: str
+    shown_at_ms: int
+class SpendScopeRequest(TypedDict):
+    scope: str
+class TopUpSpendLeaseRequest(TypedDict):
+    scope: str
+    expected_cap_units: int
+    cap_units: int
+    unit: str
+    shown_at_ms: int
+class BudgetHoldRequest(TypedDict):
+    run: str
+class LocalRunnerBudgetRequest(TypedDict):
+    budget_id: str
+class LocalRunnerBudgetCounter(TypedDict):
+    total_units: int
+    remaining_units: int
+    reserved_units: int
+    updated_at: int
+class LocalRunnerBudgetView(TypedDict):
+    budget_id: str
+    counter: NotRequired[LocalRunnerBudgetCounter | None]
+class RunSettlementsRequest(TypedDict):
+    run: str
+class RunRungSettlement(TypedDict):
+    instance: str
+    lease: str
+    revision: int
+    model: NotRequired[str | None]
+    offer: str
+    route: str
+    reserved_units: int
+    settled_units: int
+    unit: str
+    usage_reported: bool
+    settlement_refused: bool
+    occurred_at: int
+    cost_amount: NotRequired[int | None]
+    currency: NotRequired[str | None]
+    price_table_snapshot: NotRequired[str | None]
+class RunSettlementsView(TypedDict):
+    run: str
+    metering_enabled: bool
+    settlements: list[RunRungSettlement]
 FanoutLaunchRuling = Literal["approve_once", "approve_and_remember", "deny"]
 class FanoutResumeRequest(TypedDict):
     launch_ref: EntityId
@@ -3860,7 +4046,6 @@ class PolicyManifestReceipt(TypedDict):
     read_frontier_hash: str
 class PolicyManifestPropose(TypedDict):
     manifest: PolicyManifest
-ModelId = str
 ModelSlot = Literal["llm", "embedder", "oneironer"]
 ConfidenceBand = Literal["low", "medium", "high", "certain"]
 VerdictMode = Literal["shadow", "enforce"]
@@ -4010,6 +4195,43 @@ class WidenProposalsView(TypedDict):
     proposals: list[WidenProposalView]
 class WidenProposalAnswer(TypedDict):
     proposal_id: str
+class ClaimProposalReviewRequest(TypedDict):
+    claim_ref: str
+class ClaimProposalReview(TypedDict):
+    review_id: str
+    proposal_ref: str
+    claim: ClaimView
+    opener_ref: NotRequired[str | None]
+    pending_ref: NotRequired[str | None]
+ClaimSettleDecision = Literal["approve", "reject"]
+class ClaimSettleRequest(TypedDict):
+    claim_ref: str
+    review_id: str
+    decision: ClaimSettleDecision
+ClaimSettlementVerdict = Literal["landed", "rejected"]
+class ClaimChangeVerdict(TypedDict):
+    claim_ref: str
+    verdict: ClaimSettlementVerdict
+class ClaimSettlementAnswer(TypedDict):
+    kind: Literal["word"]
+    person_ref: str
+ClaimSettlementReason = Literal["gate.claim.settle.approved", "gate.claim.settle.declined"]
+class ClaimSettlementRevert(TypedDict):
+    verb: str
+    claim_ref: str
+class ClaimSettlement(TypedDict):
+    receipt_ref: str
+    proposal_ref: str
+    review_id: str
+    changes: list[ClaimChangeVerdict]
+    verdict: ClaimSettlementVerdict
+    answered_by: ClaimSettlementAnswer
+    reason: ClaimSettlementReason
+    summary: str
+    tray_receipt_ref: NotRequired[str | None]
+    revert: NotRequired[ClaimSettlementRevert | None]
+    claim: ClaimView
+    settled_at: int
 class CraftCandidatesRequest(TypedDict):
     resident: NotRequired[str | None]
 class CraftCandidateView(TypedDict):
