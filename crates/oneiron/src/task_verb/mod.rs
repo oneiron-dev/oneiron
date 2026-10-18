@@ -20,6 +20,7 @@ mod ask_soft_confirm_types;
 mod ask_types;
 mod attendee_answer;
 mod board_task;
+mod comm_widen;
 pub(crate) use board_task::board_task_for_id;
 mod brief;
 mod consts;
