@@ -321,6 +321,10 @@ both bindings and their export-census tests in one change.
 - `connector.outbound.schedule`
 - `vault.notes.create`
 - `vault.notes.from_entity`
+- `vault.notes.read`
+- `vault.notes.history`
+- `vault.notes.editor.bind`
+- `vault.notes.editor.close`
 - `vault.notes.edit`
 - `vault.notes.seal`
 - `vault.notes.lifecycle`
