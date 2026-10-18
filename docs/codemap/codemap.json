@@ -67774,7 +67774,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
