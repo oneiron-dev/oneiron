@@ -180,7 +180,7 @@ pub(crate) use self::grants::{
 pub(crate) use self::hosted_tts_policy::{HostedTtsLimits, resolve_hosted_tts_limits};
 pub(crate) use self::input::{
     ConsentGateContext, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
-    GateProvenanceHandles, consent_gate_reason_codes,
+    GateProvenanceHandles, consent_floor_refusal, consent_gate_reason_codes,
 };
 pub(crate) use self::operational_policy::{
     LinearMirrorPolicy, LinearSyncBudget, ProviderCooldownPolicy, WaveHandoffPolicy,
