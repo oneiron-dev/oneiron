@@ -59,6 +59,7 @@ mod sync_wake;
 pub(crate) mod test_support;
 #[cfg(test)]
 mod tests;
+pub(crate) mod trained_serving;
 mod training_offer;
 mod turn_actions;
 mod turns;

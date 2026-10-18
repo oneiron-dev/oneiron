@@ -187,7 +187,9 @@ fn settle_with_cutoff_in(
     if !super::attendee_answer::may_cut(vault, txn, &group, reason, &decision, owner)? {
         return Ok(None);
     }
-    if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)? {
+    if !super::training_offer_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
+        || !super::training_swap_ask::may_cut(vault, txn, id, &group, reason, &decision, owner)?
+    {
         return Ok(None);
     }
     let decision = if stale {
@@ -291,6 +293,7 @@ fn settle_with_cutoff_in(
     // identity in the settling commit; no other ask is touched.
     super::attendee_answer::resolve_answer_in(vault, txn, &group, &result, owner)?;
     super::training_offer_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
+    super::training_swap_ask::resolve_answer_in(vault, txn, &group, &result, owner)?;
     let proof = ask_record::sign_link_settlement(vault, txn, id, &group, &result)?;
     result.settlement.link_result_proof = proof;
     ask_record::put(vault, txn, reference, SETTLEMENT, &result, now)?;
