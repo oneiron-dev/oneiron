@@ -296,6 +296,9 @@ pub enum AgentVerb {
     VaultQuestionsRead,
     VaultQuestionsAnswers,
     VaultQuestionsRefresh,
+    VaultDecisionsBandsRead,
+    VaultDecisionsBandsLearn,
+    VaultDecisionsBandsEnforce,
     VaultDecisionsAsksAnswer,
     VaultDecisionsAsksClimb,
     SelfDecisionsAsks,
@@ -742,6 +745,9 @@ impl AgentVerb {
         Self::VaultQuestionsRead,
         Self::VaultQuestionsAnswers,
         Self::VaultQuestionsRefresh,
+        Self::VaultDecisionsBandsRead,
+        Self::VaultDecisionsBandsLearn,
+        Self::VaultDecisionsBandsEnforce,
         Self::VaultDecisionsAsksAnswer,
         Self::VaultDecisionsAsksClimb,
         Self::SelfDecisionsAsks,
@@ -1195,6 +1201,9 @@ impl AgentVerb {
             Self::VaultQuestionsRead => "vault.questions.read",
             Self::VaultQuestionsAnswers => "vault.questions.answers",
             Self::VaultQuestionsRefresh => "vault.questions.refresh",
+            Self::VaultDecisionsBandsRead => "vault.decisions.bands.read",
+            Self::VaultDecisionsBandsLearn => "vault.decisions.bands.learn",
+            Self::VaultDecisionsBandsEnforce => "vault.decisions.bands.enforce",
             Self::VaultDecisionsAsksAnswer => "vault.decisions.asks.answer",
             Self::VaultDecisionsAsksClimb => "vault.decisions.asks.climb",
             Self::SelfDecisionsAsks => "self.decisions.asks",
@@ -1644,6 +1653,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
+                | Self::VaultDecisionsBandsRead
+                | Self::VaultDecisionsBandsLearn
+                | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::SelfDecisionsAsks
@@ -2097,6 +2109,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
+                | Self::VaultDecisionsBandsRead
+                | Self::VaultDecisionsBandsLearn
+                | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::SelfDecisionsAsks
@@ -2589,6 +2604,9 @@ impl AgentVerb {
                 | Self::VaultQuestionsRead
                 | Self::VaultQuestionsAnswers
                 | Self::VaultQuestionsRefresh
+                | Self::VaultDecisionsBandsRead
+                | Self::VaultDecisionsBandsLearn
+                | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::SelfDecisionsAsks
@@ -2909,6 +2927,8 @@ impl AgentVerb {
                 | Self::VaultQuestionsPause
                 | Self::VaultQuestionsBackfill
                 | Self::VaultQuestionsRefresh
+                | Self::VaultDecisionsBandsLearn
+                | Self::VaultDecisionsBandsEnforce
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::ConnectorCall
@@ -3317,6 +3337,9 @@ impl AgentVerb {
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
+            Self::VaultDecisionsBandsRead => &["spec"],
+            Self::VaultDecisionsBandsLearn => &["spec"],
+            Self::VaultDecisionsBandsEnforce => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
@@ -3764,6 +3787,9 @@ impl AgentVerb {
             Self::VaultQuestionsRead => &["spec"],
             Self::VaultQuestionsAnswers => &["spec"],
             Self::VaultQuestionsRefresh => &["spec"],
+            Self::VaultDecisionsBandsRead => &["spec"],
+            Self::VaultDecisionsBandsLearn => &["spec"],
+            Self::VaultDecisionsBandsEnforce => &["spec"],
             Self::VaultDecisionsAsksAnswer => &["spec"],
             Self::VaultDecisionsAsksClimb => &["spec"],
             Self::SelfDecisionsAsks => &["spec"],
@@ -4727,6 +4753,15 @@ impl AgentVerb {
             Self::VaultQuestionsAnswers => "",
             Self::VaultQuestionsRefresh => {
                 "Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."
+            }
+            Self::VaultDecisionsBandsRead => {
+                "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero."
+            }
+            Self::VaultDecisionsBandsLearn => {
+                "The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility."
+            }
+            Self::VaultDecisionsBandsEnforce => {
+                "The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority."
             }
             Self::VaultDecisionsAsksAnswer => "",
             Self::VaultDecisionsAsksClimb => "",

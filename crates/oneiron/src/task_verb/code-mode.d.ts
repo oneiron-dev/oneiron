@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 458 code-mode rows (437 host rows, 21 run rows), 1649 declarations.
-// Replies: 402 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 461 code-mode rows (440 host rows, 21 run rows), 1654 declarations.
+// Replies: 405 fully typed, 52 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1216,6 +1216,11 @@ declare namespace Sdk {
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionRefreshRequest = { id: EntityId };
+  type DecisionBandReadRequest = { question: DecisionQuestion; reversibility: Reversibility; seed: DecisionBand };
+  type BandMode = "shadow" | "enforce";
+  type LearnedBand = { band: DecisionBand; version: number; mode: BandMode };
+  type DecisionBandLearnRequest = { question: DecisionQuestion; reversibility: Reversibility; band: DecisionBand; version: number };
+  type DecisionBandEnforceRequest = { question: DecisionQuestion; reversibility: Reversibility };
   type DecisionAskAnswerRequest = { seq: number; answer: DecisionAnswer };
   type AskPrior = { answer: DecisionAnswer; probability?: number | null; provider: ProviderPin; paired?: PairedReading | null; person?: PairedReading | null };
   type AskRole = { role: "responsible"; actor: string; project?: string | null } | { role: "board"; project: string } | { role: "owner" };
@@ -2224,6 +2229,14 @@ declare const vault: Sdk.VaultHost & {
     asks: {
       answer(input: Sdk.DecisionAskAnswerRequest): Promise<Sdk.DecisionAsk | StoredResult>;
       climb(input: Sdk.DecisionAskClimbRequest): Promise<Sdk.ResolvedRole | null | StoredResult>;
+    };
+    bands: {
+      /** The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority. */
+      enforce(input: Sdk.DecisionBandEnforceRequest): Promise<Sdk.LearnedBand | StoredResult>;
+      /** The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility. */
+      learn(input: Sdk.DecisionBandLearnRequest): Promise<Sdk.LearnedBand | StoredResult>;
+      /** The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero. */
+      read(input: Sdk.DecisionBandReadRequest): Promise<Sdk.LearnedBand | StoredResult>;
     };
   };
   /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */

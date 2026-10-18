@@ -19,7 +19,7 @@ pub enum DecisionRung {
     Human,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DecisionClass {
     Retrieval,
@@ -174,10 +174,11 @@ impl ImagePoint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionQuestion {
     #[serde(with = "super::codec::entity")]
+    #[schemars(with = "String")]
     pub id: EntityId,
     pub version: u32,
     pub text: String,
@@ -207,7 +208,7 @@ pub struct ProviderPin {
     pub version: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionBand {
     pub low: f64,
