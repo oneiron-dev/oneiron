@@ -229,6 +229,8 @@ pub enum AgentVerb {
     VaultResearchRecordBenchmark,
     VaultAuthorityHandoffAlarms,
     VaultAuthorityHandoffAlarmsAcknowledge,
+    VaultCleanupRun,
+    VaultEntitiesMention,
     VaultLegalHoldsPlace,
     VaultLegalHoldsWiden,
     VaultLegalHoldsList,
@@ -299,6 +301,19 @@ pub enum AgentVerb {
     VaultSharesRevoke,
     VaultSharesView,
     VaultHooksReplay,
+    VaultArtifactsPublishApproval,
+    VaultArtifactsPublish,
+    VaultArtifactsRepoint,
+    VaultArtifactsPointer,
+    VaultArtifactsUnpublish,
+    VaultArtifactsLinkToken,
+    VaultArtifactsLivePreviewRegister,
+    VaultArtifactsLivePreviewRead,
+    VaultArtifactsLivePreviewClose,
+    VaultArtifactsLivePreviewInvite,
+    VaultArtifactsLivePreviewRevokeInvite,
+    VaultArtifactsLivePreviewShare,
+    VaultArtifactsLivePreviewRevokeShare,
     VaultArtifactsView,
     VaultArtifactsUnits,
     VaultArtifactsAnchorsPin,
@@ -873,6 +888,8 @@ impl AgentVerb {
         Self::VaultResearchRecordBenchmark,
         Self::VaultAuthorityHandoffAlarms,
         Self::VaultAuthorityHandoffAlarmsAcknowledge,
+        Self::VaultCleanupRun,
+        Self::VaultEntitiesMention,
         Self::VaultLegalHoldsPlace,
         Self::VaultLegalHoldsWiden,
         Self::VaultLegalHoldsList,
@@ -943,6 +960,19 @@ impl AgentVerb {
         Self::VaultSharesRevoke,
         Self::VaultSharesView,
         Self::VaultHooksReplay,
+        Self::VaultArtifactsPublishApproval,
+        Self::VaultArtifactsPublish,
+        Self::VaultArtifactsRepoint,
+        Self::VaultArtifactsPointer,
+        Self::VaultArtifactsUnpublish,
+        Self::VaultArtifactsLinkToken,
+        Self::VaultArtifactsLivePreviewRegister,
+        Self::VaultArtifactsLivePreviewRead,
+        Self::VaultArtifactsLivePreviewClose,
+        Self::VaultArtifactsLivePreviewInvite,
+        Self::VaultArtifactsLivePreviewRevokeInvite,
+        Self::VaultArtifactsLivePreviewShare,
+        Self::VaultArtifactsLivePreviewRevokeShare,
         Self::VaultArtifactsView,
         Self::VaultArtifactsUnits,
         Self::VaultArtifactsAnchorsPin,
@@ -1526,6 +1556,8 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "vault.authority.handoff_alarms.acknowledge"
             }
+            Self::VaultCleanupRun => "vault.cleanup.run",
+            Self::VaultEntitiesMention => "vault.entities.mention",
             Self::VaultLegalHoldsPlace => "vault.legal_holds.place",
             Self::VaultLegalHoldsWiden => "vault.legal_holds.widen",
             Self::VaultLegalHoldsList => "vault.legal_holds.list",
@@ -1598,6 +1630,23 @@ impl AgentVerb {
             Self::VaultSharesRevoke => "vault.shares.revoke",
             Self::VaultSharesView => "vault.shares.view",
             Self::VaultHooksReplay => "vault.hooks.replay",
+            Self::VaultArtifactsPublishApproval => "vault.artifacts.publish_approval",
+            Self::VaultArtifactsPublish => "vault.artifacts.publish",
+            Self::VaultArtifactsRepoint => "vault.artifacts.repoint",
+            Self::VaultArtifactsPointer => "vault.artifacts.pointer",
+            Self::VaultArtifactsUnpublish => "vault.artifacts.unpublish",
+            Self::VaultArtifactsLinkToken => "vault.artifacts.link_token",
+            Self::VaultArtifactsLivePreviewRegister => "vault.artifacts.live_preview.register",
+            Self::VaultArtifactsLivePreviewRead => "vault.artifacts.live_preview.read",
+            Self::VaultArtifactsLivePreviewClose => "vault.artifacts.live_preview.close",
+            Self::VaultArtifactsLivePreviewInvite => "vault.artifacts.live_preview.invite",
+            Self::VaultArtifactsLivePreviewRevokeInvite => {
+                "vault.artifacts.live_preview.revoke_invite"
+            }
+            Self::VaultArtifactsLivePreviewShare => "vault.artifacts.live_preview.share",
+            Self::VaultArtifactsLivePreviewRevokeShare => {
+                "vault.artifacts.live_preview.revoke_share"
+            }
             Self::VaultArtifactsView => "vault.artifacts.view",
             Self::VaultArtifactsUnits => "vault.artifacts.units",
             Self::VaultArtifactsAnchorsPin => "vault.artifacts.anchors.pin",
@@ -2175,6 +2224,8 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsList
@@ -2245,6 +2296,19 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
+                | Self::VaultArtifactsPublishApproval
+                | Self::VaultArtifactsPublish
+                | Self::VaultArtifactsRepoint
+                | Self::VaultArtifactsPointer
+                | Self::VaultArtifactsUnpublish
+                | Self::VaultArtifactsLinkToken
+                | Self::VaultArtifactsLivePreviewRegister
+                | Self::VaultArtifactsLivePreviewRead
+                | Self::VaultArtifactsLivePreviewClose
+                | Self::VaultArtifactsLivePreviewInvite
+                | Self::VaultArtifactsLivePreviewRevokeInvite
+                | Self::VaultArtifactsLivePreviewShare
+                | Self::VaultArtifactsLivePreviewRevokeShare
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsUnits
                 | Self::VaultArtifactsAnchorsPin
@@ -2826,6 +2890,8 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsList
@@ -2896,6 +2962,19 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
+                | Self::VaultArtifactsPublishApproval
+                | Self::VaultArtifactsPublish
+                | Self::VaultArtifactsRepoint
+                | Self::VaultArtifactsPointer
+                | Self::VaultArtifactsUnpublish
+                | Self::VaultArtifactsLinkToken
+                | Self::VaultArtifactsLivePreviewRegister
+                | Self::VaultArtifactsLivePreviewRead
+                | Self::VaultArtifactsLivePreviewClose
+                | Self::VaultArtifactsLivePreviewInvite
+                | Self::VaultArtifactsLivePreviewRevokeInvite
+                | Self::VaultArtifactsLivePreviewShare
+                | Self::VaultArtifactsLivePreviewRevokeShare
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsUnits
                 | Self::VaultArtifactsAnchorsPin
@@ -3532,6 +3611,8 @@ impl AgentVerb {
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsList
@@ -3602,6 +3683,19 @@ impl AgentVerb {
                 | Self::VaultSharesRevoke
                 | Self::VaultSharesView
                 | Self::VaultHooksReplay
+                | Self::VaultArtifactsPublishApproval
+                | Self::VaultArtifactsPublish
+                | Self::VaultArtifactsRepoint
+                | Self::VaultArtifactsPointer
+                | Self::VaultArtifactsUnpublish
+                | Self::VaultArtifactsLinkToken
+                | Self::VaultArtifactsLivePreviewRegister
+                | Self::VaultArtifactsLivePreviewRead
+                | Self::VaultArtifactsLivePreviewClose
+                | Self::VaultArtifactsLivePreviewInvite
+                | Self::VaultArtifactsLivePreviewRevokeInvite
+                | Self::VaultArtifactsLivePreviewShare
+                | Self::VaultArtifactsLivePreviewRevokeShare
                 | Self::VaultArtifactsView
                 | Self::VaultArtifactsUnits
                 | Self::VaultArtifactsAnchorsPin
@@ -4072,6 +4166,8 @@ impl AgentVerb {
                 | Self::VaultResearchRefundWork
                 | Self::VaultResearchRecordBenchmark
                 | Self::VaultAuthorityHandoffAlarmsAcknowledge
+                | Self::VaultCleanupRun
+                | Self::VaultEntitiesMention
                 | Self::VaultLegalHoldsPlace
                 | Self::VaultLegalHoldsWiden
                 | Self::VaultLegalHoldsLiftAndErase
@@ -4119,6 +4215,16 @@ impl AgentVerb {
                 | Self::SelfSecretsUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultArtifactsPublish
+                | Self::VaultArtifactsRepoint
+                | Self::VaultArtifactsUnpublish
+                | Self::VaultArtifactsLinkToken
+                | Self::VaultArtifactsLivePreviewRegister
+                | Self::VaultArtifactsLivePreviewClose
+                | Self::VaultArtifactsLivePreviewInvite
+                | Self::VaultArtifactsLivePreviewRevokeInvite
+                | Self::VaultArtifactsLivePreviewShare
+                | Self::VaultArtifactsLivePreviewRevokeShare
                 | Self::VaultArtifactsThreadsOpen
                 | Self::VaultArtifactsThreadsComment
                 | Self::VaultArtifactsThreadsAssign
@@ -4582,6 +4688,8 @@ impl AgentVerb {
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultCleanupRun => &["spec"],
+            Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
             Self::VaultLegalHoldsList => &[],
@@ -4652,6 +4760,19 @@ impl AgentVerb {
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
+            Self::VaultArtifactsPublishApproval => &["spec"],
+            Self::VaultArtifactsPublish => &["spec"],
+            Self::VaultArtifactsRepoint => &["spec"],
+            Self::VaultArtifactsPointer => &["spec"],
+            Self::VaultArtifactsUnpublish => &["spec"],
+            Self::VaultArtifactsLinkToken => &["spec"],
+            Self::VaultArtifactsLivePreviewRegister => &["spec"],
+            Self::VaultArtifactsLivePreviewRead => &["spec"],
+            Self::VaultArtifactsLivePreviewClose => &["spec"],
+            Self::VaultArtifactsLivePreviewInvite => &["spec"],
+            Self::VaultArtifactsLivePreviewRevokeInvite => &["spec"],
+            Self::VaultArtifactsLivePreviewShare => &["spec"],
+            Self::VaultArtifactsLivePreviewRevokeShare => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsUnits => &["spec"],
             Self::VaultArtifactsAnchorsPin => &["spec"],
@@ -5227,6 +5348,8 @@ impl AgentVerb {
             Self::VaultResearchRecordBenchmark => &["spec"],
             Self::VaultAuthorityHandoffAlarms => &[],
             Self::VaultAuthorityHandoffAlarmsAcknowledge => &["spec"],
+            Self::VaultCleanupRun => &["spec"],
+            Self::VaultEntitiesMention => &["spec"],
             Self::VaultLegalHoldsPlace => &["spec"],
             Self::VaultLegalHoldsWiden => &["spec"],
             Self::VaultLegalHoldsList => &[],
@@ -5297,6 +5420,19 @@ impl AgentVerb {
             Self::VaultSharesRevoke => &["spec"],
             Self::VaultSharesView => &["spec"],
             Self::VaultHooksReplay => &["spec"],
+            Self::VaultArtifactsPublishApproval => &["spec"],
+            Self::VaultArtifactsPublish => &["spec"],
+            Self::VaultArtifactsRepoint => &["spec"],
+            Self::VaultArtifactsPointer => &["spec"],
+            Self::VaultArtifactsUnpublish => &["spec"],
+            Self::VaultArtifactsLinkToken => &["spec"],
+            Self::VaultArtifactsLivePreviewRegister => &["spec"],
+            Self::VaultArtifactsLivePreviewRead => &["spec"],
+            Self::VaultArtifactsLivePreviewClose => &["spec"],
+            Self::VaultArtifactsLivePreviewInvite => &["spec"],
+            Self::VaultArtifactsLivePreviewRevokeInvite => &["spec"],
+            Self::VaultArtifactsLivePreviewShare => &["spec"],
+            Self::VaultArtifactsLivePreviewRevokeShare => &["spec"],
             Self::VaultArtifactsView => &["spec"],
             Self::VaultArtifactsUnits => &["spec"],
             Self::VaultArtifactsAnchorsPin => &["spec"],
@@ -6301,6 +6437,12 @@ impl AgentVerb {
             Self::VaultAuthorityHandoffAlarmsAcknowledge => {
                 "The owner acknowledges one saved handoff fork alarm."
             }
+            Self::VaultCleanupRun => {
+                "The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing."
+            }
+            Self::VaultEntitiesMention => {
+                "The owner resolves an evidence-backed mention through the existing waterfall, restoring its selected archived record in place and never minting a duplicate."
+            }
             Self::VaultLegalHoldsPlace => {
                 "The owner places a customer legal hold on the named records or gate partitions."
             }
@@ -6500,6 +6642,45 @@ impl AgentVerb {
             Self::VaultSharesView => "",
             Self::VaultHooksReplay => {
                 "The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."
+            }
+            Self::VaultArtifactsPublishApproval => {
+                "Computes the exact publication approval digest for the existing owner approve-once door; it grants nothing."
+            }
+            Self::VaultArtifactsPublish => {
+                "Publishes one immutable code fork or numbered blob export with an explicit audience through the existing Gate, returning its pointer and durable receipt ref."
+            }
+            Self::VaultArtifactsRepoint => {
+                "Repoints one artifact channel to an exact immutable export through the publication Gate; use a new publish id, and earlier receipts survive."
+            }
+            Self::VaultArtifactsPointer => {
+                "Reads the current artifact channel pin and audience under the owner credential; null when absent or withheld."
+            }
+            Self::VaultArtifactsUnpublish => {
+                "Removes one artifact channel pointer without deleting its immutable export or earlier publication receipts."
+            }
+            Self::VaultArtifactsLinkToken => {
+                "Mints a serving-only link token and its digest tier; publication still requires a separate exact Gate authorization."
+            }
+            Self::VaultArtifactsLivePreviewRegister => {
+                "Opens a draft-labelled, owner-private live preview only for the exact process, port and lease already declared by the trusted session runtime."
+            }
+            Self::VaultArtifactsLivePreviewRead => {
+                "Reads a live draft endpoint and a caller-specific preview URL as the owner or a named invitee; uninvited callers are refused."
+            }
+            Self::VaultArtifactsLivePreviewClose => {
+                "Closes one owner-private preview lease, invalidating its old URLs, streams and upgrades without changing any published artifact pin."
+            }
+            Self::VaultArtifactsLivePreviewInvite => {
+                "Invites one named principal to a private live preview under the lease owner proof; no public audience is created."
+            }
+            Self::VaultArtifactsLivePreviewRevokeInvite => {
+                "Revokes one private preview invitation and its personal credentials, including active streams."
+            }
+            Self::VaultArtifactsLivePreviewShare => {
+                "Mints a revocable sharing URL for one private live preview, replacing any earlier sharing URL; no artifact is published."
+            }
+            Self::VaultArtifactsLivePreviewRevokeShare => {
+                "Revokes the private preview sharing URL and streams that used it while preserving separate owner and invitee credentials."
             }
             Self::VaultArtifactsView => {
                 "One artifact: its kind, name, type, head and every version with its made_by and born-from."

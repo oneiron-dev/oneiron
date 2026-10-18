@@ -1,5 +1,8 @@
 //! Typed question records and shared outcome projection.
 
+mod answer_actor;
+pub use answer_actor::AnswerActor;
+pub(crate) use answer_actor::{erase_ask_actor_in_txn, erase_rule_actor_in_txn};
 mod asks;
 pub use asks::{AskAnswer, AskPrior, DecisionAsk, DecisionAsks};
 pub mod catalogue;
