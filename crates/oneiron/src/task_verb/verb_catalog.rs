@@ -494,6 +494,10 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultConsolidationPromote,
+    VaultConsolidationEvidence,
+    VaultClaimsVet,
+    VaultClaimsVetting,
     VaultMemorySignalExtraction,
     VaultMemorySignalExtractionResult,
     VaultClaimsSeed,
@@ -1037,6 +1041,10 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultConsolidationPromote,
+        Self::VaultConsolidationEvidence,
+        Self::VaultClaimsVet,
+        Self::VaultClaimsVetting,
         Self::VaultMemorySignalExtraction,
         Self::VaultMemorySignalExtractionResult,
         Self::VaultClaimsSeed,
@@ -1589,6 +1597,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultConsolidationPromote => "vault.consolidation.promote",
+            Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
+            Self::VaultClaimsVet => "vault.claims.vet",
+            Self::VaultClaimsVetting => "vault.claims.vetting",
             Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
             Self::VaultMemorySignalExtractionResult => "vault.memory.signal_extraction.result",
             Self::VaultClaimsSeed => "vault.claims.seed",
@@ -2095,6 +2107,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
@@ -2645,6 +2661,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
@@ -3266,6 +3286,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultConsolidationPromote
+                | Self::VaultConsolidationEvidence
+                | Self::VaultClaimsVet
+                | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultMemorySignalExtractionResult
                 | Self::VaultChannelIdentitiesProvision
@@ -3614,6 +3638,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultConsolidationPromote
+                | Self::VaultClaimsVet
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
@@ -4167,6 +4193,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultClaimsVet => &["spec"],
+            Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
             Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
@@ -4711,6 +4741,10 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultConsolidationPromote => &["spec"],
+            Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultClaimsVet => &["spec"],
+            Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
             Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
@@ -6139,6 +6173,18 @@ impl AgentVerb {
             }
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
+            }
+            Self::VaultConsolidationPromote => {
+                "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."
+            }
+            Self::VaultConsolidationEvidence => {
+                "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
+            }
+            Self::VaultClaimsVet => {
+                "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."
+            }
+            Self::VaultClaimsVetting => {
+                "Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle."
             }
             Self::VaultMemorySignalExtraction => {
                 "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."

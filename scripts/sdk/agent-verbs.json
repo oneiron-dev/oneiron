@@ -8231,6 +8231,69 @@
       "section": false
     },
     {
+      "name": "vault.consolidation.promote",
+      "description": "Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals.",
+      "input": "crate::memory::consolidation::ConsolidationPromoteRequest",
+      "output": "crate::memory::consolidation::ConsolidationPromotion",
+      "scope": "Write",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.consolidation.promote\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.consolidation.evidence",
+      "description": "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner.",
+      "input": "crate::memory::consolidation::ConsolidationEvidenceRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::memory::consolidation::ConsolidationEvidenceSource>>",
+      "scope": "Read",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.consolidation.evidence\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.claims.vet",
+      "description": "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration.",
+      "input": "crate::memory::ClaimSettleRequest",
+      "output": "crate::memory::ClaimSettlement",
+      "scope": "Write",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.claims.vet\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.claims.vetting",
+      "description": "Reviews an exact generated-origin Auto claim or proposal before owner vetting, returning the content-bound review handle.",
+      "input": "crate::memory::ClaimProposalReviewRequest",
+      "output": "crate::memory::ClaimProposalReview",
+      "scope": "Read",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.claims.vetting\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.memory.signal_extraction",
       "description": "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates.",
       "input": "crate::memory::SignalExtractionRequest",

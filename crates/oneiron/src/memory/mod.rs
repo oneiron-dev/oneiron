@@ -31,6 +31,7 @@ mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
+pub mod consolidation;
 mod conflict_settle;
 mod diary_read;
 mod dreamer_revert;
