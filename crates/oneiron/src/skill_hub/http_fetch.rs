@@ -356,26 +356,28 @@ impl HttpEndpointSkillHubAdapter {
         Ok((entry, files))
     }
 
-    /// A well-known entry's files: a v0.2.0 `skill-md` artifact checked against
-    /// its SHA-256 digest, or v0.1.0's `files` under `<name>/` beside the index.
-    /// Archives are not read yet. Every URL is same-origin, as for the native index.
+    /// A well-known entry's files: a v0.2.0 `skill-md` artifact or `archive`
+    /// (`.tar.gz` or `.zip` of the skill folder) checked against its SHA-256
+    /// digest, or v0.1.0's `files` under `<name>/` beside the index. Every URL
+    /// is same-origin, as for the native index.
     fn well_known_files(&self, entry: &WellKnownEntry) -> Result<Vec<HubFile>> {
         match (entry.kind.as_deref(), &entry.url, &entry.files) {
             (Some("skill-md"), Some(url), _) => {
                 let bytes = self.fetch(&self.same_origin(url)?, MAX_HUB_FILE_BYTES)?;
-                let digest = entry
-                    .digest
-                    .as_deref()
-                    .and_then(|digest| digest.strip_prefix("sha256:"))
-                    .ok_or_else(|| invalid("a well-known skill needs a sha256 digest"))?;
-                let actual = <sha2::Sha256 as sha2::Digest>::digest(&bytes);
-                let actual: String = actual.iter().map(|b| format!("{b:02x}")).collect();
-                if !digest.eq_ignore_ascii_case(&actual) {
-                    return Err(invalid("well-known skill digest drift"));
-                }
+                check_digest(entry, &bytes)?;
                 Ok(vec![HubFile::new("SKILL.md", bytes)])
             }
-            (Some("archive"), _, _) => Err(invalid("well-known skill archives are not read yet")),
+            (Some("archive"), Some(url), _) => {
+                let bytes = self.fetch(&self.same_origin(url)?, MAX_HUB_PACKAGE_TOTAL_BYTES)?;
+                check_digest(entry, &bytes)?;
+                let files = super::skill_archive::skill_archive(&bytes)?;
+                crate::skill::canonical_skill_tree_hash(
+                    files
+                        .iter()
+                        .map(|file| (file.path.as_str(), file.content.as_slice())),
+                )?;
+                Ok(files)
+            }
             (None, _, Some(files)) if !files.is_empty() && files.len() <= MAX_HUB_PACKAGE_FILES => {
                 crate::skill::canonical_skill_tree_hash(
                     files.iter().map(|f| (f.as_str(), &[][..])),
@@ -409,4 +411,19 @@ impl HttpEndpointSkillHubAdapter {
         }
         Ok(url)
     }
+}
+
+/// Check a v0.2.0 artifact's bytes against the entry's `sha256:` digest.
+fn check_digest(entry: &WellKnownEntry, bytes: &[u8]) -> Result<()> {
+    let digest = entry
+        .digest
+        .as_deref()
+        .and_then(|digest| digest.strip_prefix("sha256:"))
+        .ok_or_else(|| invalid("a well-known skill needs a sha256 digest"))?;
+    let actual = <sha2::Sha256 as sha2::Digest>::digest(bytes);
+    let actual: String = actual.iter().map(|b| format!("{b:02x}")).collect();
+    if !digest.eq_ignore_ascii_case(&actual) {
+        return Err(invalid("well-known skill digest drift"));
+    }
+    Ok(())
 }
