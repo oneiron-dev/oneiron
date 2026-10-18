@@ -1262,6 +1262,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.guests.share",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestDocumentShareRequest,
+                >(),
+            ),
+            (
+                "vault.guests.export_envelope",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestDocumentShareRequest,
+                >(),
+            ),
+            (
+                "vault.guests.reshare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::GuestDocumentShareRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -4664,6 +4682,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.trusted_contacts.concern.authorize",
     "vault.trusted_contacts.concern.propose",
     "vault.trusted_contacts.concern.deliver",
+    "vault.guests.share",
+    "vault.guests.export_envelope",
+    "vault.guests.reshare",
+    "vault.guests.mint_slip",
     "vault.support_grants.mint",
     "vault.support_grants.list",
     "vault.support_grants.revoke",
@@ -5417,6 +5439,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.trusted_contacts.concern.deliver" => crate::code_run::vault_read::request_schema::<
             Option<crate::task_verb::sdk::TrustedContactDeliveryReceipt>,
         >(),
+        "vault.guests.share" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::GuestDocumentEnvelope,
+        >(),
+        "vault.guests.export_envelope" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::GuestDocumentEnvelope,
+        >(),
+        "vault.guests.reshare" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::GuestDocumentEnvelope,
+        >(),
+        "vault.guests.mint_slip" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::GuestSlipMinted>()
+        }
         "vault.support_grants.mint" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SupportGrantMintAnswer,
         >(),
@@ -8114,6 +8148,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.trusted_contacts.concern.deliver" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.guests.share" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.guests.export_envelope" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.guests.reshare" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12815,6 +12870,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::TrustedContactDeliverRequest =
                 decode(value.clone())?;
         }
+        "vault.guests.share" => {
+            let _input: crate::task_verb::sdk::GuestDocumentShareRequest = decode(value.clone())?;
+        }
+        "vault.guests.export_envelope" => {
+            let _input: crate::task_verb::sdk::GuestDocumentShareRequest = decode(value.clone())?;
+        }
+        "vault.guests.reshare" => {
+            let _input: crate::task_verb::sdk::GuestDocumentShareRequest = decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -15316,6 +15380,11 @@ pub fn invoke(
             memory,
             decode(value)?,
         )?),
+        "vault.guests.share" => encode(vault_guests_share(memory, decode(value)?)?),
+        "vault.guests.export_envelope" => {
+            encode(vault_guests_export_envelope(memory, decode(value)?)?)
+        }
+        "vault.guests.reshare" => encode(vault_guests_reshare(memory, decode(value)?)?),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.support_grants.mint" => encode(vault_support_grants_mint(memory, decode(value)?)?),
@@ -18584,6 +18653,24 @@ pub fn vault_trusted_contacts_concern_deliver(
         input,
         &mut crate::outbound::ServedChannelSink::new(memory.vault())?,
     )
+}
+pub fn vault_guests_share(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestDocumentShareRequest,
+) -> MemoryResult<crate::task_verb::sdk::GuestDocumentEnvelope> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.guests.share", &input)
+}
+pub fn vault_guests_export_envelope(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestDocumentShareRequest,
+) -> MemoryResult<crate::task_verb::sdk::GuestDocumentEnvelope> {
+    crate::task_verb::sdk::guest_document_host_only(memory, "vault.guests.export_envelope", &input)
+}
+pub fn vault_guests_reshare(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::GuestDocumentShareRequest,
+) -> MemoryResult<crate::task_verb::sdk::GuestDocumentEnvelope> {
+    crate::task_verb::sdk::connect_host_only(memory, "vault.guests.reshare", &input)
 }
 pub fn vault_guests_revoke(
     memory: &Memory<'_>,

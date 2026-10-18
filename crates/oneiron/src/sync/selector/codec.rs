@@ -423,6 +423,18 @@ pub fn guest_share_envelope_body(
     grant_scope: FederationGrantScope,
     selector: &SyncSelector,
 ) -> Result<GuestShareEnvelopeBody> {
+    guest_share_envelope_body_listing(vault, source, key, grant_scope, selector)
+        .map(|(body, _)| body)
+}
+
+/// The same stripped body, with the rows its update actually carries.
+pub(crate) fn guest_share_envelope_body_listing(
+    vault: &Vault,
+    source: &LoroDoc,
+    key: &WindowKey,
+    grant_scope: FederationGrantScope,
+    selector: &SyncSelector,
+) -> Result<(GuestShareEnvelopeBody, Vec<EntityId>)> {
     let position = authorize_selector_export(
         vault,
         grant_scope,
@@ -446,13 +458,22 @@ pub fn guest_share_envelope_body(
         .export(ExportMode::all_updates())
         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportAllUpdates, e))?;
     let selector_bytes = encode_sync_selector(selector)?;
-    Ok(GuestShareEnvelopeBody::new(
+    let mut rows = Vec::new();
+    crate::sync::loro_support::map_for_each_value_bytes(
+        &stripped.get_map("entities"),
+        |key, value| {
+            if value.is_some() && let Ok(id) = EntityId::from_hex(key) {
+                rows.push(id);
+            }
+        },
+    );
+    Ok((GuestShareEnvelopeBody::new(
         grant_scope,
         selector.member_ref,
         selector_bytes,
         key.as_str(),
         update,
-    ))
+    ), rows))
 }
 
 fn decode_selector_value(value: &Value) -> Result<SyncSelector> {

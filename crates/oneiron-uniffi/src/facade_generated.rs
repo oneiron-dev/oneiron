@@ -1216,6 +1216,21 @@ export_facade! {
     let output = client.vault_trusted_contacts_concern_deliver(&input)?;
     crate::codec::lift_record("vault.trusted_contacts.concern.deliver", &output)
 };
+"vault.guests.share" => fn vault_guests_share(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
+    let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.share", input)?;
+    let output = client.vault_guests_share(&input)?;
+    crate::codec::lift_record("vault.guests.share", &output)
+};
+"vault.guests.export_envelope" => fn vault_guests_export_envelope(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
+    let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.export_envelope", input)?;
+    let output = client.vault_guests_export_envelope(&input)?;
+    crate::codec::lift_record("vault.guests.export_envelope", &output)
+};
+"vault.guests.reshare" => fn vault_guests_reshare(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
+    let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.reshare", input)?;
+    let output = client.vault_guests_reshare(&input)?;
+    crate::codec::lift_record("vault.guests.reshare", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;

@@ -790,6 +790,15 @@ impl OneironClient {
                 "vault.trusted_contacts.concern.deliver" => remote_agent_verb_output::<
                     Option<oneiron::task_verb::sdk::TrustedContactDeliveryReceipt>,
                 >(client, verb, &input),
+                "vault.guests.share" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GuestDocumentEnvelope,
+                >(client, verb, &input),
+                "vault.guests.export_envelope" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GuestDocumentEnvelope,
+                >(client, verb, &input),
+                "vault.guests.reshare" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::GuestDocumentEnvelope,
+                >(client, verb, &input),
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
@@ -5545,6 +5554,42 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.trusted_contacts.concern.deliver", value)
+    }
+    pub fn vault_guests_share(
+        &self,
+        input: &oneiron::task_verb::sdk::GuestDocumentShareRequest,
+    ) -> Result<oneiron::task_verb::sdk::GuestDocumentEnvelope, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.guests.share", value)
+    }
+    pub fn vault_guests_export_envelope(
+        &self,
+        input: &oneiron::task_verb::sdk::GuestDocumentShareRequest,
+    ) -> Result<oneiron::task_verb::sdk::GuestDocumentEnvelope, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.guests.export_envelope", value)
+    }
+    pub fn vault_guests_reshare(
+        &self,
+        input: &oneiron::task_verb::sdk::GuestDocumentShareRequest,
+    ) -> Result<oneiron::task_verb::sdk::GuestDocumentEnvelope, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.guests.reshare", value)
     }
     pub fn vault_guests_revoke(
         &self,
