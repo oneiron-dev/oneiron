@@ -9,7 +9,8 @@
 //!
 //! An agent's ask is the owners' inbox Ask; taking the desktop or handing it
 //! back clears it. The owner watches a desktop as a stream of frames
-//! (`GET /v1/owner/desktops/stream`), re-proved at each frame.
+//! (`GET /v1/owner/desktops/stream`), re-proved at each frame; the run
+//! browser's stream ([`frame_stream`]) is the same one.
 
 use std::collections::VecDeque;
 use std::convert::Infallible;
@@ -34,11 +35,12 @@ use crate::api::{json_payload, query_params};
 use crate::auth::CoreAuth;
 use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, OwnerResult};
-use crate::server::{DesktopSeat, DesktopSeats, SyncServer};
+use crate::server::{DesktopSeats, RunSeats, Seat, SeatGuest, SyncServer};
 
 /// The pace of the owner's frame stream (CALLS, open): one look at the
-/// display every 500 ms, sent only when it changed. A look skips a desktop
-/// a call or another act holds, rather than wait for it.
+/// display every 500 ms, sent only when it changed. A look skips a guest a
+/// call or another act holds, rather than wait for it. A browser's stream
+/// keeps the same pace.
 const FRAME_EVERY: Duration = Duration::from_millis(500);
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -230,18 +232,30 @@ async fn stream(
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, EnvelopedApiError> {
     let owner = owner(&auth, &server)?;
     let request = query_params(query)?;
+    frame_stream::<DesktopSession>(server, owner, request.run).await
+}
+
+/// Run `run`'s guest of kind `S` as the owner's stream of server-sent
+/// events, paced by [`FRAME_EVERY`]: `state`, `frame`, `error`, `ended` and
+/// `refused` as the desktop's stream sends them, and `tabs` (a browser's
+/// tabs, at the start and when they change) for a guest with more than one
+/// screen. Watching keeps no parked guest up.
+pub(super) async fn frame_stream<S: SeatGuest>(
+    server: Arc<SyncServer>,
+    owner: AuthenticatedOwner,
+    run: String,
+) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, EnvelopedApiError> {
     let seat = {
         let (server, owner) = (Arc::clone(&server), owner.clone());
-        let run = request.run.clone();
-        blocking(move || -> OwnerResult<Arc<DesktopSeat>> {
+        let run = run.clone();
+        blocking(move || -> OwnerResult<Arc<Seat<S>>> {
             owner.revalidate_principal_ref(server.vault())?;
-            let not_found = || OwnerError::NotFound("run desktop", run.clone());
-            let seat = server
-                .desktop_seats
+            let not_found = || OwnerError::NotFound(S::NOUN, run.clone());
+            let seat = S::seats(&server)
                 .watch(run_of(&run)?)
                 .ok_or_else(not_found)?;
-            // A desktop a call holds is starting or started.
-            if DesktopSeats::peek(&seat, |session| session.is_none()) == Some(true) {
+            // A guest a call holds is starting or started.
+            if RunSeats::<S>::peek(&seat, |session| session.is_none()) == Some(true) {
                 return Err(not_found());
             }
             Ok(seat)
@@ -252,8 +266,9 @@ async fn stream(
         server,
         owner,
         seat,
-        run: request.run,
+        run,
         takeover: None,
+        tabs: None,
         frame: None,
         failing: None,
         seq: 0,
@@ -287,14 +302,16 @@ async fn stream(
     Ok(Sse::new(events).keep_alive(KeepAlive::default()))
 }
 
-/// One owner's watch on one run desktop.
-struct Watch {
+/// One owner's watch on one run guest.
+struct Watch<S> {
     server: Arc<SyncServer>,
     owner: AuthenticatedOwner,
-    seat: Arc<DesktopSeat>,
+    seat: Arc<Seat<S>>,
     run: String,
     /// The takeover last sent.
     takeover: Option<Takeover>,
+    /// The tabs last sent.
+    tabs: Option<serde_json::Value>,
     /// The digest of the frame last sent.
     frame: Option<[u8; 32]>,
     /// The code of the failed look last sent, until a look succeeds.
@@ -311,21 +328,22 @@ struct Frame {
     png_base64: String,
 }
 
-/// What one look at a watched desktop found.
+/// What one look at a watched guest found.
 enum Look {
     Refused,
     Ended,
-    /// A call or another act holds the desktop now.
+    /// A call or another act holds the guest now.
     Busy,
     Seen {
         takeover: Takeover,
+        tabs: Option<serde_json::Value>,
         png: Result<Vec<u8>, BrowserError>,
     },
 }
 
-/// One look, on a blocking thread: the owner is re-proved, and a desktop a
+/// One look, on a blocking thread: the owner is re-proved, and a guest a
 /// call or an act holds is skipped, never waited for.
-fn look(server: &SyncServer, owner: &AuthenticatedOwner, seat: &DesktopSeat) -> Look {
+fn look<S: SeatGuest>(server: &SyncServer, owner: &AuthenticatedOwner, seat: &Seat<S>) -> Look {
     if owner.revalidate_principal_ref(server.vault()).is_err() {
         return Look::Refused;
     }
@@ -337,20 +355,27 @@ fn look(server: &SyncServer, owner: &AuthenticatedOwner, seat: &DesktopSeat) -> 
     let Some(session) = session.as_mut() else {
         return Look::Ended;
     };
+    let takeover = session.takeover().clone();
+    let (tabs, png) = session.watch();
     Look::Seen {
-        takeover: session.takeover().clone(),
-        png: session.person_screen(),
+        takeover,
+        tabs,
+        png,
     }
 }
 
-impl Watch {
+impl<S> Watch<S> {
     /// Queues the events a look calls for.
     fn saw(&mut self, look: Look) {
-        let (takeover, png) = match look {
+        let (takeover, tabs, png) = match look {
             Look::Busy => return,
             Look::Refused => return self.last(Event::default().event("refused").data("owner")),
             Look::Ended => return self.last(Event::default().event("ended").data(&self.run)),
-            Look::Seen { takeover, png } => (takeover, png),
+            Look::Seen {
+                takeover,
+                tabs,
+                png,
+            } => (takeover, tabs, png),
         };
         if self.takeover.as_ref() != Some(&takeover) {
             if let Ok(state) = serde_json::to_string(&takeover) {
@@ -358,6 +383,13 @@ impl Watch {
                     .push_back(Event::default().event("state").data(state));
             }
             self.takeover = Some(takeover);
+        }
+        if let Some(tabs) = tabs
+            && self.tabs.as_ref() != Some(&tabs)
+        {
+            self.queued
+                .push_back(Event::default().event("tabs").data(tabs.to_string()));
+            self.tabs = Some(tabs);
         }
         let png = match png {
             Ok(png) => png,
