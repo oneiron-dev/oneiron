@@ -359,6 +359,12 @@ export class Oneiron {
    */
     recall: (query: string, opts: RecallOptions = {}): MemoryPack => this.#call(() => this.#client.vaultRecall(query, opts.effort ?? "medium", opts.scope, opts.limit ?? 10, opts.format, opts.asOf, opts.deadlineMs, opts.media, opts.queryAffect)),
     retrieval: {
+      aging: {
+        /** The owner reads class-level exponential aging profiles and the trusted manifest hash; confidence never ages. */
+        get: (input: Facade.EmptyRequest = {}): Facade.ClaimAgingProfilesView => this.#call(() => this.#client.vaultRetrievalAgingGet(input) as Facade.ClaimAgingProfilesView),
+        /** The owner edits all class-aging profiles against the current manifest hash without rewriting confidence, lifecycle or claim bodies. */
+        configure: (input: Facade.ClaimAgingProfilesConfigureRequest): Facade.ClaimAgingProfilesReceipt => this.#call(() => this.#client.vaultRetrievalAgingConfigure(input) as Facade.ClaimAgingProfilesReceipt),
+      },
       weights: {
         /** The owner reads effective affect, arousal, community and semantic-edge VAD priors with the trusted manifest hash. */
         get: (input: Facade.EmptyRequest = {}): Facade.RetrievalWeightsView => this.#call(() => this.#client.vaultRetrievalWeightsGet(input) as Facade.RetrievalWeightsView),
@@ -445,6 +451,14 @@ export class Oneiron {
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
     campaign: {
+      /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
+      enroll: (input: Facade.CampaignEnrollRequest): Facade.CampaignEnrollmentReceipt => this.#call(() => this.#client.vaultCampaignEnroll(input) as Facade.CampaignEnrollmentReceipt),
+      stage: {
+        /** Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing. */
+        evidence: (input: Facade.CampaignStageEvidenceRequest): Facade.CampaignStageEvidenceReceipt => this.#call(() => this.#client.vaultCampaignStageEvidence(input) as Facade.CampaignStageEvidenceReceipt),
+      },
+      /** Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction. */
+      unsubscribe: (input: Facade.CampaignUnsubscribeRequest): Facade.CampaignUnsubscribeReceipt => this.#call(() => this.#client.vaultCampaignUnsubscribe(input) as Facade.CampaignUnsubscribeReceipt),
       program: {
         /** Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns. */
         create: (input: Facade.CreateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramCreate(input) as Facade.CampaignProgramRecord),
@@ -1340,6 +1354,10 @@ export class Oneiron {
         /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
         get: (input: Facade.RunBranchesRequest): Facade.RunBranchesView => this.#call(() => this.#client.vaultRunsBranchesGet(input) as Facade.RunBranchesView),
       },
+      /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
+      step: (input: Facade.SettledStepRequest): Facade.SettledStepView | null => this.#call(() => this.#client.vaultRunsStep(input) as Facade.SettledStepView | null),
+      /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
+      checkpoint: (input: Facade.CheckpointReadRequest): Facade.CheckpointView | null => this.#call(() => this.#client.vaultRunsCheckpoint(input) as Facade.CheckpointView | null),
     },
     consults: {
       /** The owner reads one consult TASK: its deadline and terminal register (how it ended, its result, the evidence or abstention reason, the ladder outcome and any counter TASK), as refs, never bodies. */

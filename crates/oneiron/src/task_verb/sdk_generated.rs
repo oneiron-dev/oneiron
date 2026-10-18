@@ -308,6 +308,16 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<RecallRequest>(),
             ),
             (
+                "vault.retrieval.aging.get",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "vault.retrieval.aging.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+                >(),
+            ),
+            (
                 "vault.retrieval.weights.get",
                 crate::code_run::vault_read::request_schema::<EmptyRequest>(),
             ),
@@ -458,6 +468,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.kv.namespaces",
                 crate::code_run::vault_read::request_schema::<crate::memory::KeyValueNamespaces>(),
+            ),
+            (
+                "vault.campaign.enroll",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignEnrollRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.stage.evidence",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignStageEvidenceRequest,
+                >(),
+            ),
+            (
+                "vault.campaign.unsubscribe",
+                crate::code_run::vault_read::request_schema::<
+                    crate::campaign::surface::CampaignUnsubscribeRequest,
+                >(),
             ),
             (
                 "vault.campaign.program.create",
@@ -3299,6 +3327,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ConsolidationStatusRequest>(),
             ),
             (
+                "vault.runs.step",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::model_step::SettledStepRequest,
+                >(),
+            ),
+            (
+                "vault.runs.checkpoint",
+                crate::code_run::vault_read::request_schema::<
+                    crate::engine_executor::checkpoint_read::CheckpointReadRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.promote",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationPromoteRequest,
@@ -3866,6 +3906,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.lease.top_up",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.retrieval.aging.get",
+    "vault.retrieval.aging.configure",
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
     "vault.affect.annotations.put",
@@ -3885,6 +3927,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "self.credential.attenuate",
     "vault.scope.ceiling",
     "vault.export.scoped",
+    "vault.campaign.enroll",
+    "vault.campaign.stage.evidence",
+    "vault.campaign.unsubscribe",
     "vault.skill_hubs.put",
     "vault.skill_hubs.get",
     "vault.skill_hubs.publishers.admit",
@@ -4105,6 +4150,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
+    "vault.consolidation.status",
+    "vault.runs.step",
+    "vault.runs.checkpoint",
     "vault.consolidation.promote",
     "vault.claims.vet",
     "vault.claims.vetting",
@@ -4223,6 +4271,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
         >(),
+        "vault.retrieval.aging.get" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::ClaimAgingProfilesView,
+        >(),
+        "vault.retrieval.aging.configure" => crate::code_run::vault_read::request_schema::<
+            crate::policy_manifest_doors::ClaimAgingProfilesReceipt,
+        >(),
         "vault.retrieval.weights.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::RetrievalWeightsView,
         >(),
@@ -4280,6 +4334,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.export.scoped" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ScopedExport>()
         }
+        "vault.campaign.enroll" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::surface::CampaignEnrollmentReceipt,
+        >(),
+        "vault.campaign.stage.evidence" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::surface::CampaignStageEvidenceReceipt,
+        >(),
+        "vault.campaign.unsubscribe" => crate::code_run::vault_read::request_schema::<
+            crate::campaign::surface::CampaignUnsubscribeReceipt,
+        >(),
         "vault.skill_hubs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::SkillHubConfigured,
         >(),
@@ -4947,6 +5010,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.consolidation.status" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::DreamerAttemptView>,
+        >(),
+        "vault.runs.step" => crate::code_run::vault_read::request_schema::<
+            Option<crate::llm::model_step::SettledStepView>,
+        >(),
+        "vault.runs.checkpoint" => crate::code_run::vault_read::request_schema::<
+            Option<crate::engine_executor::checkpoint_read::CheckpointView>,
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
@@ -5644,6 +5716,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.retrieval.aging.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.retrieval.aging.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.retrieval.weights.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5855,6 +5941,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.kv.namespaces" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.enroll" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.stage.evidence" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.campaign.unsubscribe" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9369,6 +9476,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.runs.step" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.checkpoint" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.promote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -10194,6 +10315,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             crate::memory::caps::check_as_of(input.as_of)?;
             crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
         }
+        "vault.retrieval.aging.get" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "vault.retrieval.aging.configure" => {
+            let _input: crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest =
+                decode(value.clone())?;
+        }
         "vault.retrieval.weights.get" => {
             let _input: EmptyRequest = decode(value.clone())?;
         }
@@ -10295,6 +10423,17 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.kv.namespaces" => {
             let _input: crate::memory::KeyValueNamespaces = decode(value.clone())?;
+        }
+        "vault.campaign.enroll" => {
+            let _input: crate::campaign::surface::CampaignEnrollRequest = decode(value.clone())?;
+        }
+        "vault.campaign.stage.evidence" => {
+            let _input: crate::campaign::surface::CampaignStageEvidenceRequest =
+                decode(value.clone())?;
+        }
+        "vault.campaign.unsubscribe" => {
+            let _input: crate::campaign::surface::CampaignUnsubscribeRequest =
+                decode(value.clone())?;
         }
         "vault.campaign.program.create" => {
             let _input: crate::campaign::surface::CreateCampaignProgramRequest =
@@ -12010,6 +12149,13 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.status" => {
             let _input: ConsolidationStatusRequest = decode(value.clone())?;
         }
+        "vault.runs.step" => {
+            let _input: crate::llm::model_step::SettledStepRequest = decode(value.clone())?;
+        }
+        "vault.runs.checkpoint" => {
+            let _input: crate::engine_executor::checkpoint_read::CheckpointReadRequest =
+                decode(value.clone())?;
+        }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
@@ -12536,6 +12682,10 @@ pub fn invoke(
         "vault.witness" => encode(vault_witness(memory, decode(value)?)?),
         "vault.claims.upsert" => encode(vault_claims_upsert(memory, decode(value)?)?),
         "vault.recall" => encode(vault_recall(memory, decode(value)?)?),
+        "vault.retrieval.aging.get" => encode(vault_retrieval_aging_get(memory, decode(value)?)?),
+        "vault.retrieval.aging.configure" => {
+            encode(vault_retrieval_aging_configure(memory, decode(value)?)?)
+        }
         "vault.retrieval.weights.get" => {
             encode(vault_retrieval_weights_get(memory, decode(value)?)?)
         }
@@ -12579,6 +12729,11 @@ pub fn invoke(
         "vault.kv.delete" => encode(vault_kv_delete(memory, decode(value)?)?),
         "vault.kv.search" => encode(vault_kv_search(memory, decode(value)?)?),
         "vault.kv.namespaces" => encode(vault_kv_namespaces(memory, decode(value)?)?),
+        "vault.campaign.enroll" => encode(vault_campaign_enroll(memory, decode(value)?)?),
+        "vault.campaign.stage.evidence" => {
+            encode(vault_campaign_stage_evidence(memory, decode(value)?)?)
+        }
+        "vault.campaign.unsubscribe" => encode(vault_campaign_unsubscribe(memory, decode(value)?)?),
         "vault.campaign.program.create" => {
             encode(vault_campaign_program_create(memory, decode(value)?)?)
         }
@@ -13463,6 +13618,8 @@ pub fn invoke(
             encode(vault_consolidation_enqueue(memory, decode(value)?)?)
         }
         "vault.consolidation.status" => encode(vault_consolidation_status(memory, decode(value)?)?),
+        "vault.runs.step" => encode(vault_runs_step(memory, decode(value)?)?),
+        "vault.runs.checkpoint" => encode(vault_runs_checkpoint(memory, decode(value)?)?),
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -14364,6 +14521,27 @@ pub fn vault_recall(
     crate::memory::caps::check_deadline_ms(input.deadline_ms)?;
     crate::task_verb::sdk::recall_unembedded(memory, input)
 }
+pub fn vault_retrieval_aging_get(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<crate::policy_manifest_doors::ClaimAgingProfilesView> {
+    crate::policy_manifest_doors::claim_aging_profiles_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.aging.get")?,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_retrieval_aging_configure(
+    memory: &Memory<'_>,
+    input: crate::policy_manifest_doors::ClaimAgingProfilesConfigureRequest,
+) -> MemoryResult<crate::policy_manifest_doors::ClaimAgingProfilesReceipt> {
+    crate::policy_manifest_doors::configure_claim_aging_profiles_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.retrieval.aging.configure")?,
+        input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_retrieval_weights_get(
     memory: &Memory<'_>,
     _input: EmptyRequest,
@@ -14632,6 +14810,24 @@ pub fn vault_kv_namespaces(
     input: crate::memory::KeyValueNamespaces,
 ) -> MemoryResult<Vec<Vec<String>>> {
     memory.key_value_namespaces(&input)
+}
+pub fn vault_campaign_enroll(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignEnrollRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignEnrollmentReceipt> {
+    memory.campaign_enroll(&input)
+}
+pub fn vault_campaign_stage_evidence(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignStageEvidenceRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignStageEvidenceReceipt> {
+    memory.campaign_stage_evidence(&input)
+}
+pub fn vault_campaign_unsubscribe(
+    memory: &Memory<'_>,
+    input: crate::campaign::surface::CampaignUnsubscribeRequest,
+) -> MemoryResult<crate::campaign::surface::CampaignUnsubscribeReceipt> {
+    memory.campaign_unsubscribe(&input)
 }
 pub fn vault_campaign_program_create(
     memory: &Memory<'_>,
@@ -18913,6 +19109,26 @@ pub fn vault_consolidation_status(
     input: ConsolidationStatusRequest,
 ) -> MemoryResult<Option<crate::memory::DreamerAttemptView>> {
     memory_requests::dreamer_attempt_status(memory, input)
+}
+pub fn vault_runs_step(
+    memory: &Memory<'_>,
+    input: crate::llm::model_step::SettledStepRequest,
+) -> MemoryResult<Option<crate::llm::model_step::SettledStepView>> {
+    crate::llm::model_step::settled_step_as_owner(
+        memory,
+        &memory.embedded_owner("vault.runs.step")?,
+        &input,
+    )
+}
+pub fn vault_runs_checkpoint(
+    memory: &Memory<'_>,
+    input: crate::engine_executor::checkpoint_read::CheckpointReadRequest,
+) -> MemoryResult<Option<crate::engine_executor::checkpoint_read::CheckpointView>> {
+    crate::engine_executor::checkpoint_read::checkpoint_as_owner(
+        memory,
+        &memory.embedded_owner("vault.runs.checkpoint")?,
+        &input,
+    )
 }
 pub fn vault_consolidation_promote(
     memory: &Memory<'_>,

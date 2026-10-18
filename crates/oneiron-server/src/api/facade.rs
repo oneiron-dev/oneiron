@@ -26,6 +26,7 @@
 
 pub(super) mod action_routes;
 mod affect_doors;
+mod aging_doors;
 mod agent_definition_doors;
 mod agent_verbs;
 mod artifact_hosting_doors;
@@ -36,6 +37,7 @@ mod browser_doors;
 mod budget_doors;
 mod calendar_doors;
 mod call_context;
+mod campaign_doors;
 mod campaign_split_doors;
 mod channel_doors;
 mod claim_settle_doors;
@@ -92,6 +94,7 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+mod run_read_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;

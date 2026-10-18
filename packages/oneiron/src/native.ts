@@ -85,6 +85,8 @@ tasksAccept(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
 vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRetrievalAgingGet(input: unknown): unknown
+vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
@@ -116,6 +118,9 @@ vaultKvPut(requestJson: string): string
 vaultKvDelete(requestJson: string): string
 vaultKvSearch(requestJson: string): string
 vaultKvNamespaces(requestJson: string): string
+vaultCampaignEnroll(input: unknown): unknown
+vaultCampaignStageEvidence(input: unknown): unknown
+vaultCampaignUnsubscribe(input: unknown): unknown
 vaultCampaignProgramCreate(input: unknown): unknown
 vaultCampaignProgramRead(input: unknown): unknown
 vaultCampaignProgramUpdate(input: unknown): unknown
@@ -622,6 +627,8 @@ vaultArtifactsAppend(input: unknown): unknown
 vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
+vaultRunsStep(input: unknown): unknown
+vaultRunsCheckpoint(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationEvidence(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
