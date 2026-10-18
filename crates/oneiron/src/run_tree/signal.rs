@@ -26,7 +26,7 @@ pub struct RunSignalInput {
 
 /// No answer variant grants effect confirmation: that remains at the
 /// authenticated effect/consent door, not at this message transport.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RunSignalKind {
     Steer {
         instruction: String,
@@ -46,7 +46,7 @@ pub enum RunSignalKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RunSignalState {
     Pending,
     Settled,
@@ -57,7 +57,7 @@ pub enum RunSignalState {
 }
 
 /// A per-branch idempotency receipt, kept after consumption for retry replay.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunBranchSignal {
     pub key: String,
     pub actor: String,
@@ -65,7 +65,7 @@ pub struct RunBranchSignal {
     pub state: RunSignalState,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum RunAskAnswerKind {
     Word,
     Companion,
@@ -73,7 +73,7 @@ pub enum RunAskAnswerKind {
     Unknown,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunAskAnswer {
     pub who: String,
     pub answer: String,
@@ -83,7 +83,7 @@ pub struct RunAskAnswer {
 
 /// One question on a durable needs_input handle. The host can display the
 /// exact prompt and choices without a live round trip to the worker.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunAskQuestion {
     pub who: String,
     pub prompt: String,
@@ -93,7 +93,7 @@ pub struct RunAskQuestion {
 
 /// Durable needs_input handle; `answers` may be partial and is readable even
 /// after every question was answered. Silence is never treated as consent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RunAsk {
     pub handle: String,
     pub questions: Vec<RunAskQuestion>,

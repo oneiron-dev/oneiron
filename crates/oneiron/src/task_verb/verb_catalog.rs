@@ -329,6 +329,8 @@ pub enum AgentVerb {
     VaultTaskTypesPin,
     VaultTaskTypesGet,
     VaultAgentsSpawnGet,
+    VaultTasksCancelForce,
+    VaultRunsBranchesGet,
     VaultWorkspaceEstablish,
     VaultWorkspaceMembersOnboard,
     VaultWorkspaceRoster,
@@ -932,6 +934,8 @@ impl AgentVerb {
         Self::VaultTaskTypesPin,
         Self::VaultTaskTypesGet,
         Self::VaultAgentsSpawnGet,
+        Self::VaultTasksCancelForce,
+        Self::VaultRunsBranchesGet,
         Self::VaultWorkspaceEstablish,
         Self::VaultWorkspaceMembersOnboard,
         Self::VaultWorkspaceRoster,
@@ -1544,6 +1548,8 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => "vault.task_types.pin",
             Self::VaultTaskTypesGet => "vault.task_types.get",
             Self::VaultAgentsSpawnGet => "vault.agents.spawn.get",
+            Self::VaultTasksCancelForce => "vault.tasks.cancel_force",
+            Self::VaultRunsBranchesGet => "vault.runs.branches.get",
             Self::VaultWorkspaceEstablish => "vault.workspace.establish",
             Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
             Self::VaultWorkspaceRoster => "vault.workspace.roster",
@@ -2150,6 +2156,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultTasksCancelForce
+                | Self::VaultRunsBranchesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -2760,6 +2768,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultTasksCancelForce
+                | Self::VaultRunsBranchesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3423,6 +3433,8 @@ impl AgentVerb {
                 | Self::VaultTaskTypesPin
                 | Self::VaultTaskTypesGet
                 | Self::VaultAgentsSpawnGet
+                | Self::VaultTasksCancelForce
+                | Self::VaultRunsBranchesGet
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultWorkspaceRoster
@@ -3879,6 +3891,7 @@ impl AgentVerb {
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
                 | Self::VaultTaskTypesPin
+                | Self::VaultTasksCancelForce
                 | Self::VaultWorkspaceEstablish
                 | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
@@ -4405,6 +4418,8 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -5009,6 +5024,8 @@ impl AgentVerb {
             Self::VaultTaskTypesPin => &["spec"],
             Self::VaultTaskTypesGet => &["spec"],
             Self::VaultAgentsSpawnGet => &["spec"],
+            Self::VaultTasksCancelForce => &["spec"],
+            Self::VaultRunsBranchesGet => &["spec"],
             Self::VaultWorkspaceEstablish => &["spec"],
             Self::VaultWorkspaceMembersOnboard => &["spec"],
             Self::VaultWorkspaceRoster => &["spec"],
@@ -6231,6 +6248,12 @@ impl AgentVerb {
             }
             Self::VaultAgentsSpawnGet => {
                 "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."
+            }
+            Self::VaultTasksCancelForce => {
+                "The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts."
+            }
+            Self::VaultRunsBranchesGet => {
+                "The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts."
             }
             Self::VaultWorkspaceEstablish => {
                 "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."

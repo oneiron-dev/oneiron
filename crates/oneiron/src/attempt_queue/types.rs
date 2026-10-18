@@ -111,7 +111,7 @@ impl AttemptResultRef {
 }
 
 /// Durable lifecycle state persisted on each attempt row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[non_exhaustive]
 pub enum AttemptState {
     Queued,

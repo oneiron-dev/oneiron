@@ -3072,6 +3072,20 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_tasks_cancel_force(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.tasks.cancel_force")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.tasks.cancel_force", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_runs_branches_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.runs.branches.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.runs.branches.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_workspace_establish(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.workspace.establish")?;
         let output = py

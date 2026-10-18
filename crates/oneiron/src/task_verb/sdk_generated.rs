@@ -1762,6 +1762,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.tasks.cancel_force",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::CancelForceRequest,
+                >(),
+            ),
+            (
+                "vault.runs.branches.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::run_doors::RunBranchesRequest,
+                >(),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -3323,6 +3335,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.task_types.pin",
     "vault.task_types.get",
     "vault.agents.spawn.get",
+    "vault.tasks.cancel_force",
+    "vault.runs.branches.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3792,6 +3806,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.agents.spawn.get" => crate::code_run::vault_read::request_schema::<
             crate::team::doors::PlannedSpawnObservation,
+        >(),
+        "vault.tasks.cancel_force" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::CancelForceReceipt,
+        >(),
+        "vault.runs.branches.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::run_doors::RunBranchesView,
         >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
@@ -6321,6 +6341,20 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.agents.spawn.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tasks.cancel_force" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runs.branches.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9058,6 +9092,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.agents.spawn.get" => {
             let _input: crate::team::doors::PlannedSpawnRead = decode(value.clone())?;
         }
+        "vault.tasks.cancel_force" => {
+            let _input: crate::task_verb::run_doors::CancelForceRequest = decode(value.clone())?;
+        }
+        "vault.runs.branches.get" => {
+            let _input: crate::task_verb::run_doors::RunBranchesRequest = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -10507,6 +10547,8 @@ pub fn invoke(
         "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
         "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
+        "vault.tasks.cancel_force" => encode(vault_tasks_cancel_force(memory, decode(value)?)?),
+        "vault.runs.branches.get" => encode(vault_runs_branches_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -13784,6 +13826,26 @@ pub fn vault_agents_spawn_get(
     crate::team::doors::observe_spawn_as(
         memory.vault(),
         &memory.embedded_owner("vault.agents.spawn.get")?,
+        input,
+    )
+}
+pub fn vault_tasks_cancel_force(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::CancelForceRequest,
+) -> MemoryResult<crate::task_verb::run_doors::CancelForceReceipt> {
+    crate::task_verb::run_doors::cancel_force_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.tasks.cancel_force")?,
+        input,
+    )
+}
+pub fn vault_runs_branches_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::run_doors::RunBranchesRequest,
+) -> MemoryResult<crate::task_verb::run_doors::RunBranchesView> {
+    crate::task_verb::run_doors::read_branches_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.runs.branches.get")?,
         input,
     )
 }

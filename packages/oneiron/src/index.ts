@@ -1235,6 +1235,25 @@ export class Oneiron {
       /** The owner reads the task-type tree in force, or one kept tree version, for the vault or a project. */
       get: (input: Facade.TaskTypeTreeRead): Facade.TaskTypeTreeReadReply => this.#call(() => this.#client.vaultTaskTypesGet(input) as Facade.TaskTypeTreeReadReply),
     },
+    tasks: {
+      /** The owner force-stops every live branch of one TASK, unrefusably: each running attempt is cancelled, its live step stops, and the reply carries every branch's landing and cancellation receipts. */
+      cancel_force: (input: Facade.CancelForceRequest): Facade.CancelForceReceipt => this.#call(() => this.#client.vaultTasksCancelForce(input) as Facade.CancelForceReceipt),
+      linear: {
+        /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
+        mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
+          /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
+          edit: (input: Facade.LinearMappingEdit): Facade.LinearMappingEditReceipt => this.#call(() => this.#client.vaultTasksLinearMappingEdit(input) as Facade.LinearMappingEditReceipt),
+        }),
+        /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
+        provenance: (input: Facade.LinearProvenanceRequest): Facade.LinearProvenancePage => this.#call(() => this.#client.vaultTasksLinearProvenance(input) as Facade.LinearProvenancePage),
+      },
+    },
+    runs: {
+      branches: {
+        /** The owner reads every branch of one TASK: its lifecycle state, run status, result, typed asks and signals, and its landing, saved partial-result (resume point) and cancellation receipts. */
+        get: (input: Facade.RunBranchesRequest): Facade.RunBranchesView => this.#call(() => this.#client.vaultRunsBranchesGet(input) as Facade.RunBranchesView),
+      },
+    },
     workspace: {
       /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
       establish: (input: Facade.WorkspacePresetRequest): Facade.WorkspacePresetReceipt => this.#call(() => this.#client.vaultWorkspaceEstablish(input) as Facade.WorkspacePresetReceipt),
@@ -1600,17 +1619,6 @@ export class Oneiron {
       set_overrides: (request: Facade.SetNoteOverridesRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesSetOverrides(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
       /** One NOTE's overrides and the defaults its gates read after them. */
       defaults: (request: Facade.NoteRefRequest): Facade.NoteDefaultsView => this.#call(() => {  const result = JSON.parse(this.#client.vaultNotesDefaults(keyedJson(request))) as Facade.NoteDefaultsView; return result }),
-    },
-    tasks: {
-      linear: {
-        /** One TASK's Linear issue mapping: its link, watermarks, unresolved conflicts, opt-out, mapping and dirty revisions, and its newest mirror events. */
-        mapping: Object.assign((input: Facade.LinearMappingRequest): Facade.LinearMappingView => this.#call(() => this.#client.vaultTasksLinearMapping(input) as Facade.LinearMappingView), {
-          /** Links, unlinks or mirrors again one TASK's Linear issue, by the TASK's owner at the mapping revision the caller read, under an intent key. */
-          edit: (input: Facade.LinearMappingEdit): Facade.LinearMappingEditReceipt => this.#call(() => this.#client.vaultTasksLinearMappingEdit(input) as Facade.LinearMappingEditReceipt),
-        }),
-        /** One TASK's stored Linear mirror events, newest first: webhook deliveries, sent pushes, mapping and title edits, with their external evidence and receipts. */
-        provenance: (input: Facade.LinearProvenanceRequest): Facade.LinearProvenancePage => this.#call(() => this.#client.vaultTasksLinearProvenance(input) as Facade.LinearProvenancePage),
-      },
     },
   }
   /** Cancels one task under the ladder's `auto` default. The receipt says what stopped and what became a proposal instead. */

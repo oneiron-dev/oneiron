@@ -78,6 +78,7 @@ mod report_journal;
 pub(crate) use report_journal::erase_in_txn as erase_report_journal_in_txn;
 mod room_thread;
 mod route_receipts;
+pub mod run_doors;
 mod runner_done;
 mod scheduling;
 mod subproject;

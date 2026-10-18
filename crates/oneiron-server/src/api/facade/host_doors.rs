@@ -122,7 +122,8 @@ pub(crate) use super::policy_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
-// The owner's task-type tree doors (DOOR-111), likewise.
+// The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
+// likewise.
 pub(crate) use super::coordination_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
@@ -1161,6 +1162,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.task_types.pin"
         | "vault.task_types.get"
         | "vault.agents.spawn.get"
+        | "vault.tasks.cancel_force"
+        | "vault.runs.branches.get"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
