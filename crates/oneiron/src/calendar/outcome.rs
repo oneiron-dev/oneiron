@@ -76,7 +76,7 @@ const CHECK_IN_RECORDING_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:calendar-outcome-
 /// A closed four-value set. `Unknown` is a real recorded value, not a missing
 /// one: it says "the question was asked and nothing established an outcome",
 /// which reads the same as silence and is never transition evidence.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EventOutcome {
     Held,
@@ -111,7 +111,7 @@ impl EventOutcome {
 }
 
 /// What established an [`EventOutcome`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EventOutcomeBasis {
     /// Explicit machine evidence: a transcript, join telemetry, a cancellation.
@@ -142,7 +142,7 @@ impl EventOutcomeBasis {
 }
 
 /// Value of a `calendar.event_outcome` claim, subject = EVENT.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EventOutcomeClaimValue {
     pub outcome: EventOutcome,
@@ -275,7 +275,6 @@ pub fn record_event_outcome(
     value: &EventOutcomeClaimValue,
     source: ClaimSource,
 ) -> Result<EntityId> {
-    require_event_subject(vault, &event_ref)?;
     vault.with_write_txn_grouped(|txn| {
         record_event_outcome_in_txn(vault, txn, event_ref, value, source)
     })
@@ -283,7 +282,7 @@ pub fn record_event_outcome(
 
 mod conditional;
 use conditional::record_event_outcome_in_txn;
-pub(crate) use conditional::record_lifecycle_outcome_in_txn;
+pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
 
 /// Reads the EVENT's live outcome claim.
 ///
@@ -313,7 +312,7 @@ pub fn read_event_outcome(
 /// lower id is not the earlier evidence, and picking it would invert this
 /// layer's own rule that later evidence supersedes earlier. The id is the
 /// tie-break, so the contest stays total and both replicas pick the same head.
-fn current_outcome_in(
+pub(in crate::calendar) fn current_outcome_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     event_ref: &EntityId,
@@ -470,14 +469,22 @@ pub struct DueOutcomeCheckIn {
 ///
 /// Storage errors, and claim-body errors from reading either head.
 pub fn check_in_is_still_due(vault: &Vault, due: &DueOutcomeCheckIn) -> Result<bool> {
+    let rtxn = vault.store.env.read_txn()?;
+    check_in_is_still_due_in_txn(vault, &rtxn, due)
+}
+
+pub(in crate::calendar) fn check_in_is_still_due_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    due: &DueOutcomeCheckIn,
+) -> Result<bool> {
     if !is_meeting_class(due.signals) {
         return Ok(false);
     }
-    let rtxn = vault.store.env.read_txn()?;
-    if current_outcome_in(vault, &rtxn, &due.event_ref)?.is_some() {
+    if current_outcome_in(vault, txn, &due.event_ref)?.is_some() {
         return Ok(false);
     }
-    Ok(current_status_in(vault, &rtxn, &due.event_ref)?
+    Ok(current_status_in(vault, txn, &due.event_ref)?
         .is_none_or(|status| status.status != CalendarStatus::Cancelled))
 }
 

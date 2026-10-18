@@ -200,9 +200,12 @@ pub use rooms::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
 pub(crate) use rooms::{room_upkeep_host, upkeep_rooms};
 
 pub(crate) use rooms::erase_room_side_rows;
+#[cfg(feature = "sync")]
+pub(crate) use rooms::erased_side_row_here;
 pub(crate) use rooms::room_project_in;
 pub(crate) use rooms::room_thread_turns_in_txn;
 pub(crate) use rooms::task_binding_turns_in;
+pub use rooms::{ACTOR_ERASE_OFFER_BINDING, ACTOR_ERASE_PARTICIPATION_KEY, ParticipationKeyErase};
 pub(crate) use rooms::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
     merge_replicated_responses_in_txn, merge_replicated_shared_row_in_txn,
@@ -220,6 +223,7 @@ pub use crate::gate::RoomThreadFill;
 
 mod join_consent;
 mod join_door;
+mod join_history;
 mod join_receipt;
 mod workplace_join;
 pub(crate) use join_consent::person_of_actor_in_txn;
@@ -236,6 +240,7 @@ pub use join_door::{
 pub(crate) use join_door::{
     files_roster_joins_in_txn, invites_into_room_in_txn, roster_invitee_in_txn,
 };
+pub use join_history::{ACTOR_ERASE_JOIN_BINDING, RosterBindingErase};
 pub(crate) use join_receipt::erase_join_actor_in_txn;
 pub use join_receipt::{
     ACTOR_ERASE_PENDING_JOIN, JoinParticipation, JoinReceipt, JoinReceiptRef, RecordedAnswer,

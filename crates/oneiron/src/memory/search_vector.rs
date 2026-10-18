@@ -1,9 +1,9 @@
-//! Typed MRL vector reads and full-row uploads through the existing scoped lanes.
-use serde::{Deserialize, Serialize};
-
+//! Typed vector search, MRL refinement evidence and full-row uploads in scoped lanes.
 use super::{Memory, MemoryError, MemoryResult, caps};
 use crate::claim::{ClaimReadStatus, ScopedReadResult};
 use crate::consent::AuthenticatedOwner;
+use crate::embed::{EmbeddingMatchEvidence, InputKind};
+use serde::{Deserialize, Serialize};
 
 /// The compatibility shape fixed when the vault opens. Changing a populated
 /// graph's prefix is not an online operation.
@@ -18,14 +18,22 @@ pub struct VectorSearchConfig {
 pub enum VectorSearchLane {
     #[default]
     Ordinary,
-    /// Explicit speculative voice quality: prefix scores and a reduced limit.
+    /// Explicit speculative voice quality for the text index, at a reduced limit.
     VoiceHot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct VectorSearchRequest {
-    pub query_vector: Vec<f32>,
+    /// Omit for the vault's text index; otherwise the complete declared pin.
+    #[serde(default)]
+    pub space: Option<String>,
+    #[serde(default)]
+    pub query_kind: Option<InputKind>,
+    pub query: Vec<f32>,
+    /// Stored input kinds in a declared space, not registry kinds.
+    #[serde(default)]
+    pub kinds: Vec<InputKind>,
     pub limit: usize,
     #[serde(default)]
     pub lane: VectorSearchLane,
@@ -34,21 +42,33 @@ pub struct VectorSearchRequest {
 impl VectorSearchRequest {
     pub fn validate(&self) -> MemoryResult<()> {
         caps::check_limit_nonzero(self.limit)?;
-        caps::check_dimensions(self.query_vector.len())?;
-        if let Some(error) = crate::Error::invalid_vector_component(&self.query_vector) {
+        caps::check_dimensions(self.query.len())?;
+        if let Some(error) = crate::Error::invalid_vector_component(&self.query) {
             return Err(error.into());
+        }
+        if self.space.is_none() && (self.query_kind.is_some() || !self.kinds.is_empty()) {
+            return Err(MemoryError::bad_request(
+                "query_kind and kinds name a declared space; set space too",
+            ));
+        }
+        if self.space.is_some() && self.lane == VectorSearchLane::VoiceHot {
+            return Err(MemoryError::bad_request(
+                "voice_hot prefix scoring is a text-index lane; omit space",
+            ));
         }
         Ok(())
     }
 }
 
-/// The source revision is the same pin the ordinary dense lane retrieved.
-/// It can be hydrated/cited without silently switching to newer text.
+/// The source revision is the same pin the dense lane retrieved. It can be
+/// hydrated/cited without silently switching to newer text.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct VectorSearchHit {
     pub entity_ref: String,
     pub source_revision_ref: Option<String>,
+    /// Rank score within this space only, never compared across spaces.
     pub score: f32,
+    pub embedding_matches: Vec<EmbeddingMatchEvidence>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -57,8 +77,9 @@ pub struct VectorSearchResult {
     pub lane: VectorSearchLane,
     pub effective_limit: usize,
     pub limit_clamped: bool,
-    /// None if authority prevented the vector channel from running. Scores
-    /// from different dimensional spaces are not cross-comparable.
+    /// None for a declared embedding space or when authority prevented the
+    /// text-index vector channel from running. Scores from different
+    /// dimensional spaces are not cross-comparable.
     pub refinement: Option<crate::pipeline::VectorRefinement>,
 }
 
@@ -102,12 +123,22 @@ impl Memory<'_> {
             limit = reduced;
         }
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let found = lane.search_vector_revisioned_with_rescore(
-            &input.query_vector,
-            limit,
-            None,
-            skip_rescore,
-        )?;
+        let found = match &input.space {
+            Some(space) => lane.search_space_kinds_revisioned(
+                space,
+                input.query_kind.unwrap_or(InputKind::Text),
+                &input.query,
+                &input.kinds,
+                limit,
+                None,
+            ),
+            None => lane.search_vector_revisioned_with_rescore(
+                &input.query,
+                limit,
+                None,
+                skip_rescore,
+            ),
+        }?;
         self.produced_from(found.hits.iter().map(|hit| hit.id));
         Ok(ScopedReadResult {
             value: VectorSearchResult {
@@ -118,6 +149,11 @@ impl Memory<'_> {
                         entity_ref: hit.id.to_hex(),
                         source_revision_ref: found.revisions.get(&hit.id).map(|pin| pin.to_hex()),
                         score: hit.score,
+                        embedding_matches: found
+                            .embedding_matches
+                            .get(&hit.id)
+                            .cloned()
+                            .unwrap_or_default(),
                     })
                     .collect(),
                 lane: input.lane,

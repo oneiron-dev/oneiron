@@ -244,6 +244,17 @@ export type MemoryProvenance = {
   evidenceTurnIds: string[]
 }
 
+/** A retained foreign world's stale stamp, present only on an admitted recall item. */
+export type MemoryStaleStamp = {
+  /** Unix seconds; absent when the terminal fold is visible before its stamp sweep. */
+  staleSince?: number
+  /** Seconds since staleSince; absent when the stamp time is unknown. */
+  ageSecs?: number
+  /** The terminal reason: disconnected, dissolved or promoted. */
+  reason: string
+  pactEpoch: number
+}
+
 /** One ranked memory pack item. */
 export type MemoryItem = {
   /** The same `name:hash` a witness receipt returns. */
@@ -260,6 +271,8 @@ export type MemoryItem = {
   confidence: number
   hedgeBucket: string
   provenance: MemoryProvenance
+  /** Retained foreign content stopped refreshing; selecting its world grants no read authority. */
+  stale?: MemoryStaleStamp
   world?: string
   facet?: string
   salience?: number
@@ -383,6 +396,8 @@ export type FacadeReceipt = {
   actorRef?: string
   contentKind: string
   claimRef?: string
+  /** That claim as a typed record ref, labelled with its kind and id. */
+  claim?: RecordRef
   /** A family receipt's own fields; empty on a gate-ledger row. */
   fields: Record<string, string>
 }

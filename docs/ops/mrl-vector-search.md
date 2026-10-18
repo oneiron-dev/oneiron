@@ -26,11 +26,14 @@ at `/v1/core/facade/<verb>`:
   checks and revision staging. Its `{entity_ref, dimensions}` receipt means
   accepted, not necessarily indexed: a pending live revision publishes its
   staged inputs at the normal boundary.
-- `vault.search.vector` takes `{query_vector, limit, lane?}`. `lane` defaults to
-  `ordinary`. A full query refines prefix candidates on the retained full rows.
+- `vault.search.vector` takes `{query, limit, lane?, space?, query_kind?, kinds?}`. `lane` defaults to
+  `ordinary`. Omit `space` for the text index. A declared `space` keeps its
+  query tower (`query_kind`, default `text`) and stored input-kind filter
+  (`kinds`); its matches carry per-kind embedding evidence. A full text-index
+  query refines prefix candidates on the retained full rows.
   A prefix-length query has no full query to rescore and honestly reports
   prefix scoring even on `ordinary`.
-- Explicit `lane: "voice_hot"` skips refinement and caps the effective limit at
+- Explicit `lane: "voice_hot"` is text-index only (omit `space`), skips refinement and caps the effective limit at
   the engine's existing speculative fire default (8), below the ordinary search
   ceiling. This is not deadline/call effort and does not simulate ASR. The
   existing `ai.voice.asr.*` family owns utterance triggers, fire budgets and
@@ -38,10 +41,12 @@ at `/v1/core/facade/<verb>`:
 
 Search returns a scoped read result whose `value` contains `hits`, `lane`,
 `effective_limit`, `limit_clamped`, and `refinement`. Each hit carries its
-`entity_ref`, `source_revision_ref` (when pinned by the engine), and `score`.
+`entity_ref`, `source_revision_ref` (when pinned by the engine), `score`, and
+`embedding_matches`.
 Use that pin when hydrating or citing the retrieved source. `refinement` states
 stored, candidate, query and score dimensions and `full_dimension_rescore`.
-It is absent when authority prevented the vector channel from running. Full
+It is absent for declared embedding spaces or when authority prevented the
+text-index vector channel from running. Full
 refinement is exact only within the retrieved beam, not globally exact recall.
 Never compare full-space and prefix-space scores or depend on voice tie order.
 

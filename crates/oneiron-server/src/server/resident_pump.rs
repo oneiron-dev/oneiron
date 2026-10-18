@@ -25,6 +25,12 @@
 //!
 //! A successor that carries the owner's approved prompt continuation of its
 //! failed predecessor (FIX 3694) runs as the fork of that run, from its cut.
+//!
+//! A leased run's planned team writes its start on the run's own seat and
+//! line, and a planned team's leader runs with the exact pattern pack its
+//! launch froze (DOOR-111 S4c, `pattern_launch`).
+mod pattern_launch;
+
 use std::collections::{BTreeMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -521,6 +527,12 @@ fn run_bound(
             tracing::warn!(%error, agent = %actor.entity_ref().to_hex(), "a wake's model change was not noted in the agent's diary");
         }
     }
+    // DOOR-111 S4c-5: a planned team's leader runs with the exact pattern
+    // pack its launch froze, its SKILL.md before any other skill's body; a
+    // continued run's task, its source's fork, already holds it there.
+    let leader =
+        pattern_launch::leader_exposure(vault, &status.attempt, &mut config, continues, unix_now())
+            .map_err(text)?;
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
     // run whose skill does not load is refused, never run unskilled. The
     // body is tagged where it went, so the run's first step is captured with
@@ -528,7 +540,7 @@ fn run_bound(
     // it too, and its task already holds the body: it is tagged where its
     // source's append put it.
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
-    let mut exposures = Vec::new();
+    let mut exposures: Vec<TaskExposure> = leader.into_iter().collect();
     if let Some(skill) = AgentDispatcher::new(vault)
         .prepare_project_conversation_run(
             &status.attempt,
@@ -726,8 +738,9 @@ fn continued_seat(
 /// calls do (FIX 3194): `spend`'s guard for the entry, else the provider's.
 /// It runs on `model_seat`, the one `run_bound` bore it on. With the host's
 /// `[models.planner]` seats, its spawns are planned on `decisions`' ladder
-/// and its leader calls answer; `issuer` signs its leader's subproject
-/// spawn.
+/// and its leader calls answer, and its planned team's start is written on
+/// `model_seat` and the entry's line (DOOR-111 S4c-4); `issuer` signs its
+/// leader's subproject spawn.
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is one axis of the run's host binding"
@@ -756,8 +769,19 @@ fn enter_run(
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
         .with_reader_spawn(seat.clone())
         .with_replay_exposures(exposures.to_vec());
+    let meter = spend
+        .map(|scope| ScopeMeter::open(vault, scope))
+        .transpose()?;
+    // The line the entry's model calls spend on: its scope's meter and the
+    // payer it bills, else the provider's.
+    let line = match &meter {
+        Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
+        None => provider.host_meter().map(|guard| (guard, None)),
+    };
     let planner = decisions.host_planner_decisions(actor.entity_ref());
-    if let Some(planner) = planner_binding(vault, provider, config, planner)? {
+    if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
+        planner.pattern_runner =
+            pattern_launch::agent_runner(vault, provider, status, actor, model_seat, line.clone());
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {
@@ -779,13 +803,7 @@ fn enter_run(
         )
         .map_err(text)?
         .enter();
-    let meter = spend
-        .map(|scope| ScopeMeter::open(vault, scope))
-        .transpose()?;
-    door.bind_meter(match &meter {
-        Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
-        None => provider.host_meter().map(|guard| (guard, None)),
-    });
+    door.bind_meter(line);
     let entered = enter_engine_native_run(
         vault, provider, &bound, config, compaction, reactor, meter, model_seat,
     );
@@ -844,6 +862,9 @@ pub(crate) fn seated_planner<'a>(
         decisions: Some(decisions),
         leader: LeaderStarterSkills::seeded().map_err(text)?,
         top: settings.top,
+        // A leased run's entry lends its own (`enter_run`); a host action
+        // binds none.
+        pattern_runner: None,
     }))
 }
 
@@ -919,7 +940,9 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
         .then(|| brief.to_owned())
         .into_iter()
         .chain(parts)
-        .chain(std::iter::once(status.input.comm.prompt_block()))
+        .chain(std::iter::once(oneiron::agent_dispatch::comm_prompt_block(
+            status.input.comm,
+        )))
         .collect::<Vec<_>>()
         .join("\n\n")
 }
