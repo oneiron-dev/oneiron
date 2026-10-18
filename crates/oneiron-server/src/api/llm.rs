@@ -131,7 +131,7 @@ async fn replace_defaults(
 /// Admits a raw call: the owner, then the vault's inference policy for the
 /// model the request names. The call itself is admitted rung by rung under a
 /// run on the raw routes' meter, as it goes out.
-fn admit(
+pub(super) fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
     request: &mut LlmRequest,

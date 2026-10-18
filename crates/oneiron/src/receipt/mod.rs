@@ -8,6 +8,7 @@
 mod authority_audit;
 mod brief_share;
 mod call;
+mod context_emit;
 mod decision_asks;
 mod direct_dispatch;
 mod dispatch_observation;
@@ -44,6 +45,7 @@ pub use self::call::{
     MAX_ACTION_INPUT_ENTITIES, MAX_CALL_RECEIPT_SERVED, call_bytes_digest, call_json_digest,
     call_reads_world, call_refusal_digest, json_entity_refs,
 };
+pub use self::context_emit::ContextEmitReceipt;
 pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{

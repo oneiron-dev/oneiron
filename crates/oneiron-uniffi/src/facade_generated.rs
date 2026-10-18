@@ -1516,6 +1516,16 @@ export_facade! {
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
 };
+"ai.reply" => fn ai_reply(&self, input: AiReplyRequest) -> AiReply = |client| {
+    let input: oneiron::task_verb::sdk::AiReplyRequest = crate::codec::lower_record("ai.reply", input)?;
+    let output = client.ai_reply(&input)?;
+    crate::codec::lift_record("ai.reply", &output)
+};
+"vault.receipts.context" => fn vault_receipts_context(&self, input: CallReceiptRequest) -> Option<ContextEmitReceipt> = |client| {
+    let input: oneiron::receipt::CallReceiptRequest = crate::codec::lower_record("vault.receipts.context", input)?;
+    let output = client.vault_receipts_context(&input)?;
+    crate::codec::lift_record("vault.receipts.context", &output)
+};
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
     let output = client.ai_options(&input)?;

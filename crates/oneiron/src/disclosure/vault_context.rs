@@ -534,6 +534,7 @@ impl DisclosureContext {
     #[must_use]
     pub fn assembly(&self, clamped_out: u64) -> DisclosureAssembly {
         DisclosureAssembly {
+            emit_stamp: self.receipt_stamp(),
             mode: self.mode.as_str().to_owned(),
             notice: (self.mode == DisclosureMode::Supervised)
                 .then(|| presence_discretion_notice(&self.interlocutors)),
@@ -602,6 +603,9 @@ fn escape_receipt_stamp_label(label: &str) -> String {
 /// persisted on receipts.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DisclosureAssembly {
+    /// The exact clamp stamp kept for an emit; not reconstructed from display labels.
+    #[serde(skip)]
+    pub emit_stamp: String,
     pub mode: String,
     /// The presence-discretion notice; `Some` iff Supervised.
     pub notice: Option<String>,

@@ -2834,6 +2834,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_reply(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.reply", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_receipts_context(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts.context", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_options(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.options", input)

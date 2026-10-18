@@ -311,6 +311,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.skills.save", post(facade_route))
         .route("/self.skills.fork", post(facade_route))
         .route("/self.skills.callables", post(facade_route))
+        .route("/ai.reply", post(facade_route))
+        .route("/vault.receipts.context", post(facade_route))
         .route("/ai.options", post(facade_route))
         .route("/ai.image", post(facade_route))
         .route("/ai.speech", post(facade_route))
