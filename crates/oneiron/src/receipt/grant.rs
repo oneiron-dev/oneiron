@@ -596,5 +596,12 @@ fn append_federation_scope_fields(
             fields.insert("scope".to_owned(), "ask".to_owned());
             fields.insert("ask_ref".to_owned(), ask_ref.to_hex());
         }
+        FederationGrantScope::Connect { peer_vault_id } => {
+            fields.insert("scope".to_owned(), "connect".to_owned());
+            fields.insert(
+                "peer_vault_id".to_owned(),
+                crate::entity_id::bytes_to_hex_lower(&peer_vault_id),
+            );
+        }
     }
 }
