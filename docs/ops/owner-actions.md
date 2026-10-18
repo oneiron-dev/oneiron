@@ -1249,6 +1249,8 @@ SDK's `vault.authority.handoff_alarms` answer one shape in one order: `raised_at
 acknowledgement's `at` in unix seconds, oldest raised first, then by signer. The routes and the
 CLI run the `vault.authority.handoff_alarms` and `.acknowledge` rows' verb hooks once per
 operation, as you, after the owner check; a hook's stop or ask comes back as the owner refusal.
+`oneiron handoff-alarms list` still needs no owner proof: its hooks run as the vault's local
+host actor, and a vault that holds none answers the list unhooked and logs a warning.
 
 ## Learned settings
 

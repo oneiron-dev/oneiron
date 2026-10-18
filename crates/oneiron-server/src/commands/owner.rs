@@ -956,7 +956,9 @@ fn hold_host_root(config: &ServeConfig, vault: &oneiron::Vault) -> anyhow::Resul
 /// acknowledgement of one; `serve` answers the same at
 /// `/v1/owner/authority/handoff-alarms`. Each operation runs its
 /// `vault.authority.handoff_alarms` row's verb hooks once around the engine
-/// door, as the route does (OF-580).
+/// door, as the route does (OF-580). The list still takes no owner proof
+/// (Engine 10-18): its hooks run as the local host actor where this vault
+/// holds one, and without one the read runs unhooked and logs a warning.
 pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     use oneiron::task_verb::sdk;
 
@@ -969,27 +971,37 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
     };
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, route)?;
-    let owner = local_owner(&vault)?;
-    let actor = owner_actor(&vault)?;
     let answer = match command {
-        HandoffAlarmsCommand::List(_) => hooked_row(
-            &vault,
-            actor,
-            "vault.authority.handoff_alarms",
-            sdk::EmptyRequest {},
-            |_| Ok(vault.authority_handoff_alarms()?),
-        )?,
-        HandoffAlarmsCommand::Acknowledge(args) => hooked_row(
-            &vault,
-            actor,
-            "vault.authority.handoff_alarms.acknowledge",
-            sdk::HandoffAlarmRequest {
-                signer: args.signer,
-            },
-            |request: sdk::HandoffAlarmRequest| {
-                Ok(vault.acknowledge_authority_handoff_alarm(&owner, &request.signer)?)
-            },
-        )?,
+        HandoffAlarmsCommand::List(_) => match local_host_actor(&vault)? {
+            Some(actor) => hooked_row(
+                &vault,
+                actor,
+                "vault.authority.handoff_alarms",
+                sdk::EmptyRequest {},
+                |_| Ok(vault.authority_handoff_alarms()?),
+            )?,
+            None => {
+                tracing::warn!(
+                    verb = "vault.authority.handoff_alarms",
+                    "this vault holds no local host actor, so the row's verb hooks did not run for this read"
+                );
+                serde_json::to_value(vault.authority_handoff_alarms()?)?
+            }
+        },
+        HandoffAlarmsCommand::Acknowledge(args) => {
+            let owner = local_owner(&vault)?;
+            hooked_row(
+                &vault,
+                owner_actor(&vault)?,
+                "vault.authority.handoff_alarms.acknowledge",
+                sdk::HandoffAlarmRequest {
+                    signer: args.signer,
+                },
+                |request: sdk::HandoffAlarmRequest| {
+                    Ok(vault.acknowledge_authority_handoff_alarm(&owner, &request.signer)?)
+                },
+            )?
+        }
     };
     emit(&answer)
 }
@@ -1407,6 +1419,17 @@ fn owner_actor(vault: &oneiron::Vault) -> anyhow::Result<oneiron::EntityId> {
     vault
         .ensure_embedded_owner_actor()
         .map_err(|error| anyhow::anyhow!("vault owner unavailable: {error}"))
+}
+
+/// The CLI's local host actor, for a read that takes no owner proof: the
+/// actor a host's own call runs as (`verb_hook_boundary::host_actor`, the
+/// vault's embedded owner), when this vault holds it. Unlike `owner_actor`
+/// it creates nothing.
+fn local_host_actor(vault: &oneiron::Vault) -> anyhow::Result<Option<oneiron::EntityId>> {
+    let Ok(actor) = oneiron::task_verb::verb_hook_boundary::host_actor() else {
+        return Ok(None);
+    };
+    Ok(vault.entity_exists(&actor)?.then_some(actor))
 }
 
 /// The engine's input kind for a command-line kind.
