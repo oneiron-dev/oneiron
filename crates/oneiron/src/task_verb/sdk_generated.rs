@@ -2155,6 +2155,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::LensListRequest>(),
             ),
             (
+                "vault.lenses.select",
+                crate::code_run::vault_read::request_schema::<crate::lens::LensSelectRequest>(),
+            ),
+            (
+                "vault.lenses.resolve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::lens::LensSelectionResolveRequest,
+                >(),
+            ),
+            (
+                "vault.lenses.result_set.action",
+                crate::code_run::vault_read::request_schema::<
+                    crate::lens::LensResultSetActionRequest,
+                >(),
+            ),
+            (
                 "vault.lenses.default",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensDefaultRequest>(),
             ),
@@ -4883,6 +4899,9 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.seal.complete",
     "vault.claims.review",
     "vault.claims.settle",
+    "vault.lenses.select",
+    "vault.lenses.resolve",
+    "vault.lenses.result_set.action",
     "self.secrets.materialize",
     "self.secrets.renew",
     "self.secrets.teardown",
@@ -5857,6 +5876,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.claims.settle" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
+        }
+        "vault.lenses.select" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensSelection>()
+        }
+        "vault.lenses.resolve" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensSelectionResolved>()
+        }
+        "vault.lenses.result_set.action" => {
+            crate::code_run::vault_read::request_schema::<crate::lens::LensResultSetActionResult>()
         }
         "self.secrets.materialize" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::SecretGrantView>()
@@ -9410,6 +9438,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.lenses.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.select" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.resolve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.result_set.action" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13746,6 +13795,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.lenses.list" => {
             let _input: crate::lens::LensListRequest = decode(value.clone())?;
         }
+        "vault.lenses.select" => {
+            let _input: crate::lens::LensSelectRequest = decode(value.clone())?;
+        }
+        "vault.lenses.resolve" => {
+            let _input: crate::lens::LensSelectionResolveRequest = decode(value.clone())?;
+        }
+        "vault.lenses.result_set.action" => {
+            let _input: crate::lens::LensResultSetActionRequest = decode(value.clone())?;
+        }
         "vault.lenses.default" => {
             let _input: crate::lens::LensDefaultRequest = decode(value.clone())?;
         }
@@ -16138,6 +16196,11 @@ pub fn invoke(
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
+        "vault.lenses.select" => encode(vault_lenses_select(memory, decode(value)?)?),
+        "vault.lenses.resolve" => encode(vault_lenses_resolve(memory, decode(value)?)?),
+        "vault.lenses.result_set.action" => {
+            encode(vault_lenses_result_set_action(memory, decode(value)?)?)
+        }
         "vault.lenses.default" => encode(vault_lenses_default(memory, decode(value)?)?),
         "vault.disclosure.offer" => encode(vault_disclosure_offer(memory, decode(value)?)?),
         "reveal" => encode(reveal(memory, decode(value)?)?),
@@ -20503,6 +20566,24 @@ pub fn vault_lenses_list(
     input: crate::lens::LensListRequest,
 ) -> MemoryResult<crate::lens::LensListPage> {
     memory.lenses_list(input)
+}
+pub fn vault_lenses_select(
+    memory: &Memory<'_>,
+    input: crate::lens::LensSelectRequest,
+) -> MemoryResult<crate::lens::LensSelection> {
+    crate::task_verb::sdk::host_only(memory, "vault.lenses.select", &input)
+}
+pub fn vault_lenses_resolve(
+    memory: &Memory<'_>,
+    input: crate::lens::LensSelectionResolveRequest,
+) -> MemoryResult<crate::lens::LensSelectionResolved> {
+    crate::task_verb::sdk::host_only(memory, "vault.lenses.resolve", &input)
+}
+pub fn vault_lenses_result_set_action(
+    memory: &Memory<'_>,
+    input: crate::lens::LensResultSetActionRequest,
+) -> MemoryResult<crate::lens::LensResultSetActionResult> {
+    crate::task_verb::sdk::host_only(memory, "vault.lenses.result_set.action", &input)
 }
 pub fn vault_lenses_default(
     memory: &Memory<'_>,

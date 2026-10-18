@@ -406,6 +406,9 @@ pub enum AgentVerb {
     VaultLensesActivate,
     VaultLensesDeactivate,
     VaultLensesList,
+    VaultLensesSelect,
+    VaultLensesResolve,
+    VaultLensesResultSetAction,
     VaultLensesDefault,
     VaultDisclosureOffer,
     Reveal,
@@ -1256,6 +1259,9 @@ impl AgentVerb {
         Self::VaultLensesActivate,
         Self::VaultLensesDeactivate,
         Self::VaultLensesList,
+        Self::VaultLensesSelect,
+        Self::VaultLensesResolve,
+        Self::VaultLensesResultSetAction,
         Self::VaultLensesDefault,
         Self::VaultDisclosureOffer,
         Self::Reveal,
@@ -2123,6 +2129,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => "vault.lenses.activate",
             Self::VaultLensesDeactivate => "vault.lenses.deactivate",
             Self::VaultLensesList => "vault.lenses.list",
+            Self::VaultLensesSelect => "vault.lenses.select",
+            Self::VaultLensesResolve => "vault.lenses.resolve",
+            Self::VaultLensesResultSetAction => "vault.lenses.result_set.action",
             Self::VaultLensesDefault => "vault.lenses.default",
             Self::VaultDisclosureOffer => "vault.disclosure.offer",
             Self::Reveal => "reveal",
@@ -2980,6 +2989,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -3857,6 +3869,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -4811,6 +4826,9 @@ impl AgentVerb {
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
                 | Self::VaultLensesList
+                | Self::VaultLensesSelect
+                | Self::VaultLensesResolve
+                | Self::VaultLensesResultSetAction
                 | Self::VaultLensesDefault
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -5482,6 +5500,7 @@ impl AgentVerb {
                 | Self::VaultLensesPropose
                 | Self::VaultLensesActivate
                 | Self::VaultLensesDeactivate
+                | Self::VaultLensesResultSetAction
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
                 | Self::SelfUse
@@ -6179,6 +6198,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesSelect => &["spec"],
+            Self::VaultLensesResolve => &["spec"],
+            Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::Reveal => &["spec"],
@@ -7030,6 +7052,9 @@ impl AgentVerb {
             Self::VaultLensesActivate => &["spec"],
             Self::VaultLensesDeactivate => &["spec"],
             Self::VaultLensesList => &["spec"],
+            Self::VaultLensesSelect => &["spec"],
+            Self::VaultLensesResolve => &["spec"],
+            Self::VaultLensesResultSetAction => &["spec"],
             Self::VaultLensesDefault => &["spec"],
             Self::VaultDisclosureOffer => &["spec"],
             Self::Reveal => &["spec"],
@@ -8657,6 +8682,15 @@ impl AgentVerb {
             }
             Self::VaultLensesList => {
                 "One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."
+            }
+            Self::VaultLensesSelect => {
+                "Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card."
+            }
+            Self::VaultLensesResolve => {
+                "Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span."
+            }
+            Self::VaultLensesResultSetAction => {
+                "Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate."
             }
             Self::VaultLensesDefault => {
                 "Composes the default vault lens from the named sources, read under the caller's own scope, as a card. A server holds its frame for the card's events; an embedded handle holds none, so its events need a server."
