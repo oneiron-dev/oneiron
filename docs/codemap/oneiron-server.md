@@ -217,7 +217,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/support_grant_doors.rs` | src | s | 3 crate-vis | — | The host doors of the owner's support grant rows (OF-606): `vault.support_grants.mint`, `.list` and `.revoke` |
 | `src/api/facade/tests.rs` | test | XL | 1 crate-vis | — | — |
 | `src/api/facade/tests/call_mode.rs` | test | s | — | — | Call mode at the HTTP recall door (retrieval hub #call-mode) |
-| `src/api/facade/trusted_contact_doors.rs` | src | s | 8 crate-vis | — | The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors` |
+| `src/api/facade/trusted_contact_doors.rs` | src | s | 10 crate-vis | — | The host doors of the trusted-contact rows (DOOR-140 A, OF-527), beside `shared_policy_doors` |
 | `src/api/facade/ui_action_routes.rs` | src | s | 2 crate-vis | — | OF-181: a host-rendered lens card's events, against the frame this server holds for it… |
 | `src/api/facade/vault_shape_doors.rs` | src | s | 1 crate-vis | — | `vault.shape.apply` (ARCH-0070) as a host door: the gated landing of a shape plan |
 | `src/api/facade/voice_bank_doors.rs` | src | s | 5 crate-vis | — | The owner's voice-bank host doors (DOOR-143, e2e VOICE-02): `vault.voices.packs.put`, `.render_consent`… |
