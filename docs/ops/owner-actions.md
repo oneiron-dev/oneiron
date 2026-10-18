@@ -988,6 +988,30 @@ to you as a `rubric_recheck` ask in your digest. `POST /v1/owner/coach/judge-ask
 drops it for good and asks the case again, as a `rubric_regrade` A/B ask in a later digest, which
 you pick like any other.
 
+## Swap in a trained model
+
+When you say yes to a Coach offer to train a custom model, the run trains, is scored on its
+held-out cases, and then waits for a separate choice: a trained model never swaps in by itself.
+Once a run is scored and its checks allow a swap (no exact-hash overlap with the held-out cases,
+passing export checks, a passing held-out verdict under the plan's harness), the Coach asks each
+owner in their conversation with it: "Swap in the trained model" or "Keep the current model".
+The question names the starting and returned checkpoints with their load-set hashes, the
+harness, the export checks, the overlaps and the held-out metrics, and reads the paired
+comparison with the current model as unknown, since nothing measured it yet. Doing nothing keeps
+the current model, and only your own answer settles it. Embedder runs are not asked: their swap
+re-embeds through a space move.
+
+`POST /v1/owner/coach/training-runs/view` with `{"run"}` shows a run: its state, evaluation,
+export checks and overlaps, every swap receipt, every swap question and `serving`. `POST
+/v1/owner/coach/training-runs/swap` with `{"run", "choice": {"kind": "evaluated"}, "expected":
+{"spec", "checkpoint"}}` swaps in the result you viewed, named by the `spec` and `checkpoint`
+hashes the view showed; a result that moved since is refused as changed. `{"kind":
+"explicit_override", "reason"}` binds a returned checkpoint whose checks failed, with your reason
+on its receipt. Either answer closes the run's other open questions.
+
+No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
+with the custody pin a loader would load.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the

@@ -18,6 +18,11 @@
 //! Proposed, malformed or unsupported row closes it, as does a fail-closed
 //! policy, which yields no rows. A revoked reach refuses both acts; a
 //! training offer ask never falls back to the Coach's generic ceiling.
+//!
+//! The same row reaches the result of a training run an offer led to
+//! (FIX 857): the one reserved question about a Scored run's result, while
+//! the run still waits at the expectation it froze, and the ask on its TURN.
+//! Revoking the row closes both questions.
 
 use rmpv::Value;
 
@@ -180,7 +185,8 @@ fn pending_for_owner_in(
 /// The ask door's ceiling for a training offer intent: whether the Coach,
 /// under its reach, asks exactly the one owner its intent key names about
 /// its own pending offer, on that tuple's reserved question TURN, with no
-/// context refs, task or class. Any other asker or shape is refused.
+/// context refs, task or class. A training swap intent reads the same over
+/// its pending result question. Any other asker or shape is refused.
 /// # Errors
 /// Storage errors, or a policy that does not resolve.
 pub(crate) fn coach_offer_ask_ceiling_in_txn(
@@ -192,6 +198,9 @@ pub(crate) fn coach_offer_ask_ceiling_in_txn(
 ) -> Result<bool> {
     if !is_coach(actor, class)? {
         return Ok(false);
+    }
+    if crate::task_verb::is_training_swap_ask_intent(&input.intent_key) {
+        return coach_swap_ask_ceiling_in(vault, txn, input);
     }
     let Some(key) = crate::task_verb::training_offer_ask_key(&input.intent_key) else {
         return Ok(false);
@@ -222,6 +231,41 @@ pub(crate) fn coach_offer_ask_ceiling_in_txn(
     )?))
 }
 
+/// [`coach_offer_ask_ceiling_in_txn`] for a training swap intent: the Coach
+/// asks exactly the one owner its intent key names about a Scored run's
+/// result that still waits at the frozen expectation, on that tuple's
+/// reserved question TURN, with no context refs, task or class.
+fn coach_swap_ask_ceiling_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    input: &TaskAskSpec,
+) -> Result<bool> {
+    let Some(key) = crate::task_verb::training_swap_ask_key(&input.intent_key) else {
+        return Ok(false);
+    };
+    let asks_owner = matches!(
+        &input.who,
+        Some(TaskAskTarget::Responder(TaskAssignee::Human { actor_ref })) if *actor_ref == key.1
+    );
+    if !asks_owner
+        || input.task_ref.is_some()
+        || input.class.is_some()
+        || !input.what.context_refs.is_empty()
+    {
+        return Ok(false);
+    }
+    let Some(question) = crate::task_verb::pending_swap_question_in(vault, txn, &key)? else {
+        return Ok(false);
+    };
+    if input.what.reference != ConsultPayloadRef::Turn(question.turn) {
+        return Ok(false);
+    }
+    Ok(offer_reach_granted(&super::resolve_policy_manifest(
+        &vault.store,
+        txn,
+    )?))
+}
+
 /// The Coach's leave to write one `system` question row about a pending
 /// offer, bound to the writer and the row's exact canonical bytes. Only the
 /// witness door's System-author floor reads it.
@@ -237,7 +281,8 @@ pub(crate) struct OfferQuestionPermit {
 /// reservation holds exactly this conversation, TURN and MESSAGE; the offer
 /// still waits at that digest for a live owner; the text is that offer's
 /// question; and the live policy grants the reach. The metadata locates the
-/// tuple and proves nothing by itself.
+/// tuple and proves nothing by itself. A training swap question carries its
+/// permit on the same terms over its result (`coach_swap_question_permit_in`).
 /// # Errors
 /// Storage errors, or a body that does not encode.
 #[expect(
@@ -254,6 +299,10 @@ pub(crate) fn coach_offer_question_permit_in_txn(
     envelope: &WitnessMessageEnvelope<'_>,
     policy: &PolicyManifestResolution,
 ) -> Result<Option<OfferQuestionPermit>> {
+    if envelope.message_type == crate::task_verb::SWAP_QUESTION_TYPE {
+        let ids = (conversation, turn, message);
+        return coach_swap_question_permit_in(vault, txn, actor, ids, envelope, policy);
+    }
     if envelope.author != WITNESS_AUTHOR_SYSTEM
         || envelope.message_type != crate::task_verb::OFFER_QUESTION_TYPE
         || !envelope.is_visible
@@ -281,6 +330,50 @@ pub(crate) fn coach_offer_question_permit_in_txn(
         return Ok(None);
     };
     if envelope.content != crate::task_verb::offer_question_text(&row)
+        || !offer_reach_granted(policy)
+    {
+        return Ok(None);
+    }
+    Ok(Some(OfferQuestionPermit {
+        actor,
+        body: envelope.encode_body()?,
+    }))
+}
+
+/// The permit the Coach's reserved question about a Scored run's result
+/// carries to the witness door: the writer is the Coach in its System class;
+/// the message is the canonical question envelope; its metadata names a swap
+/// tuple whose reservation holds exactly these `(conversation, TURN,
+/// MESSAGE)` ids; the run still waits at the expectation the question froze,
+/// for a live owner; the text is that result's question; and the live policy
+/// grants the reach.
+fn coach_swap_question_permit_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+    ids: (EntityId, EntityId, EntityId),
+    envelope: &WitnessMessageEnvelope<'_>,
+    policy: &PolicyManifestResolution,
+) -> Result<Option<OfferQuestionPermit>> {
+    if envelope.author != WITNESS_AUTHOR_SYSTEM
+        || !envelope.is_visible
+        || envelope.order != 0
+        || !is_coach(actor.entity_ref(), actor.actor_class())?
+    {
+        return Ok(None);
+    }
+    let Some(key) = envelope
+        .metadata
+        .as_ref()
+        .and_then(crate::task_verb::swap_question_key)
+    else {
+        return Ok(None);
+    };
+    let Some(question) = crate::task_verb::pending_swap_question_in(vault, txn, &key)? else {
+        return Ok(None);
+    };
+    if (question.conversation, question.turn, question.message) != ids
+        || envelope.content != question.text
         || !offer_reach_granted(policy)
     {
         return Ok(None);

@@ -131,6 +131,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/coach/training-runs/swap",
+        summary: "Binds the training result the owner viewed, named by its spec and checkpoint hashes, to its role; an embedder run is refused.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/coach/training-runs/view",
+        summary: "One training run's result: state, evaluation, checks, overlaps, swap receipts, swap questions and how it serves here.",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/commitments/reminder-route",
         summary: "Reminder route.",
