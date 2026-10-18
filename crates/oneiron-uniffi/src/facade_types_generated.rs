@@ -35398,6 +35398,12 @@ pub struct AiVerdict {
     pub screenshot: Option<bool>,
     #[serde(rename = "until_ms", default, skip_serializing_if = "Option::is_none")]
     pub until_ms: Option<u64>,
+    #[serde(
+        rename = "evidence_cut_at_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub evidence_cut_at_bytes: Option<u64>,
 }
 
 /// `oneiron::llm::decision::types::DecisionClass`.

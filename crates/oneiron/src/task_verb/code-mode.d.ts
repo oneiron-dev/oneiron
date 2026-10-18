@@ -2292,7 +2292,7 @@ declare namespace Sdk {
   type AiVerdictReversibility = "reversible_read" | "outbound_effect";
   type AiVerdictRequest = { question: string; contract?: AnswerContract; evidence?: string[]; state?: unknown | null; ceiling?: DecisionRung | null; reversibility?: AiVerdictReversibility; deadline_ms?: number | null; routine?: boolean; image?: string | null; misses?: number; until_ms?: number | null };
   type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null };
-  type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null };
+  type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null };
   type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
   type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type GraphAskSelection = { entity_type: number; limit: number };

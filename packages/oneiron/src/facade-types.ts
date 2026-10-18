@@ -4543,7 +4543,7 @@ export type AiVerdictRequest = { question: string; contract?: AnswerContract; ev
 /** `oneiron::llm::decision::routine::RoutineOutcome` */
 export type RoutineOutcome = { outcome: "act"; candidate: string } | { outcome: "point"; x: number; y: number; found?: ImageBox | null } | { outcome: "none" } | { outcome: "reobserve" } | { outcome: "ask_up"; reason?: HumanAskReason | null }
 /** `oneiron::task_verb::sdk_host::AiVerdict` */
-export type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null }
+export type AiVerdict = { answer: DecisionAnswer; p?: number | null; rung?: DecisionRung | null; receipt: DecisionReceipt; presence?: TypedDecision | null; outcome?: RoutineOutcome | null; screenshot?: boolean; until_ms?: number | null; evidence_cut_at_bytes?: number | null }
 /** `oneiron::llm::decision::types::DecisionClass` */
 export type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance"
 /** `oneiron::llm::decision::types::DecisionQuestion` */

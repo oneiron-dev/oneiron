@@ -11480,6 +11480,7 @@ class AiVerdict(TypedDict):
     outcome: NotRequired[RoutineOutcome | None]
     screenshot: NotRequired[bool]
     until_ms: NotRequired[int | None]
+    evidence_cut_at_bytes: NotRequired[int | None]
 DecisionClass = Literal["retrieval", "contradiction", "triage", "judgment", "useful_upstream", "preference", "provenance"]
 DecisionQuestion = TypedDict("DecisionQuestion", {"id": str, "version": int, "text": str, "class": DecisionClass, "contract": AnswerContract, "accept_type": bool})
 class GraphAskSelection(TypedDict):

@@ -614,7 +614,8 @@ pub struct AiVerdictRequest {
     pub contract: crate::llm::decision::AnswerContract,
     /// Entity refs (short refs or 32-hex ids, each optionally `@<revision>`)
     /// the answer reads. Each must be readable by the caller; the providers
-    /// read their views in the call's state.
+    /// read their views in the call's state, every text in them cut to fit
+    /// it when the views do not fit whole (`evidence_cut_at_bytes`).
     #[serde(default)]
     pub evidence: Vec<String>,
     /// What else the question reads, beside the evidence.
@@ -689,6 +690,11 @@ pub struct AiVerdict {
     /// passes it on as the next step's `until_ms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_ms: Option<u64>,
+    /// The bytes every text in the evidence views was cut to, when the views
+    /// did not fit the ladder's state whole: the ladder read them cut. The
+    /// refs, kinds and the caller's own state are never cut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_cut_at_bytes: Option<u64>,
 }
 
 impl From<crate::llm::decision::TypedDecision> for AiVerdict {
@@ -702,6 +708,7 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             outcome: None,
             screenshot: false,
             until_ms: None,
+            evidence_cut_at_bytes: None,
         }
     }
 }
