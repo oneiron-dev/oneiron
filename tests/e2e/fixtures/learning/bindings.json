@@ -1,0 +1,241 @@
+{
+  "version": 1,
+  "binding_head": "f8e2f8397685bc63405bc1a303b65f94aa26c33d",
+  "binding_scope": "Source-only inspection of worktree HEAD = origin/main. No live OpenAPI/server, build, typecheck or test was executed on the Mac.",
+  "authority": "Owner ruling G01: designed verbs await typed HTTP and SDK calls. No generic escape hatch or internal fallback.",
+  "shared_binding_head": "c716fa9921692224fe46114b283993d5d81f6c8c",
+  "shared_binding_note": "Shared README/suite-plan pins are older; coordinator must qualify the queued head. Area writer leaves shared files unchanged.",
+  "source_files": [
+    {
+      "path": "scripts/sdk/agent-verbs.json",
+      "sha256": "d4fa36be976e4195323bf342a0e21a49f8965a2533536d7f6c0c2b9f2570911a"
+    },
+    {
+      "path": "packages/oneiron-client/src/facade.ts",
+      "sha256": "e0cb73a45e493baa7182b10bc076eeb198984d15bcbc19add0fbc62c22912c76"
+    },
+    {
+      "path": "packages/oneiron-client/src/facade-types.ts",
+      "sha256": "d64b62450805589152ac08d4dc99a6504c33862d0600449904ff264a45ad7e6a"
+    },
+    {
+      "path": "packages/oneiron-client/src/index.ts",
+      "sha256": "a7d217a0c748bbfdb1cf0a3fcca20de8a03e71844e739fc148465420205eb149"
+    },
+    {
+      "path": "packages/oneiron/src/agent-verbs.ts",
+      "sha256": "b5f8633317cc8e39d5ef970e65964d040d76216fff7400a91a3b90ccc1663b7b"
+    },
+    {
+      "path": "packages/oneiron/README.md",
+      "sha256": "6459fe7b752d2b9ae516ef58475252aa047f04c5f1e432a393e6a4d960348097"
+    },
+    {
+      "path": "oneiron.skills.md",
+      "sha256": "9335428a1e29b40abddaf55350c9d95bbce6d50385ada010f5fff2b422851ace"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/mod.rs",
+      "sha256": "c8ac1a8955d8ff7a6a5669ada79b88b6c896670835bef4314191f83f1ca4b587"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/openapi_registry.rs",
+      "sha256": "38a4872df012265d0df3d2d749585957ecd57826b1478e29ff06962eccb1e145"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/openapi/owner_paths.rs",
+      "sha256": "7bb5654c2e2e5bedb9b8392bfea116bca68a14a4771968e0c2eb51703f927761"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/run_tree.rs",
+      "sha256": "1f4a2ed9c0d19316d0b7dbc4569a76a4653d82f4847e190f55889c3f4156b25e"
+    },
+    {
+      "path": "crates/oneiron-server/src/cli.rs",
+      "sha256": "81eb90def61131fc4c8988941876972ec619af98c1f97d170bcabea50a34bf33"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/owner_routes/skill_judge_routes.rs",
+      "sha256": "067888e5a350c4b14cd7bc65da04b0ff7c03b7a7bfaf0ede5c66002202e4f032"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/owner_routes/proactivity_routes.rs",
+      "sha256": "6938076ba9730771b2ee11eb90da87380d146aeb52afa05724292c0abaf9efab"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/owner_routes/proactivity_routes/training_runs.rs",
+      "sha256": "779317e196d48cb48e3fa798dc26c6189e5facdae7e04a5aaa1a0d6ba170ae16"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/owner_routes/training_swap_routes.rs",
+      "sha256": "8c2b260adf45a5f2b0a61f236df525822866047ff5f6cb448a47117e98319967"
+    },
+    {
+      "path": "crates/oneiron-server/src/api/owner_routes/budget_hold_routes.rs",
+      "sha256": "9f7e0440d758fb3d32d122301fc7b5ec03d70deb69a69a45cd35dfd8d0991a0f"
+    },
+    {
+      "path": "crates/oneiron-server/src/ai_host/training_pack.rs",
+      "sha256": "ddc597fcbae1b56d2c9b7c79c834dbc08326d5fcc13a3da3405e926f97322bea"
+    },
+    {
+      "path": "crates/oneiron-server/src/ai_host/eval_authoring.rs",
+      "sha256": "60b37372ddf635b2a8e7938de08aa005f39adbcf66243855e614851362434dbf"
+    },
+    {
+      "path": "crates/oneiron-server/src/ai_host/training_offer.rs",
+      "sha256": "ac71b213c412c7d6b10b800b907b04ca5bbb68d28269711b86b4169829a2bb98"
+    },
+    {
+      "path": "crates/oneiron-server/src/ai_host/coach_host.rs",
+      "sha256": "85118cd24340257cdb212b5d3e9270dddc41be22076acce54db126a7ea6de2ca"
+    },
+    {
+      "path": "crates/oneiron-server/src/ai_host/coach_host/seal_checks.rs",
+      "sha256": "9118a1193830779f31f02d948bd11902d656db8beb58df538fe62ddb16da47b2"
+    }
+  ],
+  "canon_files": [
+    {
+      "path": "generated/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1.md",
+      "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+    },
+    {
+      "path": "generated/oneiron/core/oneiron-arch-0003-semantic-memory.md",
+      "sha256": "195a3a6bae7a44dd6ab6b1353268513176531abcee5b47ceaed5fb8664c588ed"
+    },
+    {
+      "path": "generated/oneiron/agents/oneiron-arch-0079-agent-coordination-v1.md",
+      "sha256": "d9261a0833eab70dfde34cd7195a6fd268ea34054c1f5c8f966e92dfea65cade"
+    },
+    {
+      "path": "generated/oneiron/extraction/oneiron-arch-0036-model-families-v1.md",
+      "sha256": "f1d847a24975aa46e00bc43f8ec6ce52d53f806045b587772e71380a3670372c"
+    },
+    {
+      "path": "generated/oneiron/gate/oneiron-arch-0069-secret-custody-v1.md",
+      "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+    }
+  ],
+  "registry_source": {
+    "path": "registry/oneiron.json",
+    "sha256": "8f56eb0c82be8475001e0127735558a0c6aa5721017138f9d68b951f87b19be7"
+  },
+  "existing_typed_facade_verbs": [
+    "vault.critic.review",
+    "vault.projects.goal.dismiss",
+    "vault.projects.goal.intake",
+    "vault.projects.goal.revisions",
+    "vault.research.bind",
+    "vault.research.evaluate_split",
+    "vault.research.fork",
+    "vault.research.mark_invalid",
+    "vault.research.measure_held_out",
+    "vault.research.measure_search",
+    "vault.research.promote",
+    "vault.research.promotion_basis",
+    "vault.research.prune",
+    "vault.research.record_benchmark",
+    "vault.research.refund_work",
+    "vault.research.reserve_confirmation",
+    "vault.research.reserve_work",
+    "vault.research.select",
+    "vault.research.settle_work",
+    "vault.research.weave",
+    "vault.settings.learning",
+    "vault.settings.learning.clear",
+    "vault.settings.learning.put"
+  ],
+  "cases": [
+    {
+      "id": "LEARNING-01",
+      "rows": [
+        "OF-495"
+      ],
+      "todo_reason": "waits on typed full goal-vector intake write and optimizer candidate admission/proposal calls",
+      "binding_note": "Goal-intake reads, goal-project joins, measurement and owner A/B picks exist. No typed full goal-vector/optimizer submission write is published."
+    },
+    {
+      "id": "LEARNING-02",
+      "rows": [
+        "OF-542"
+      ],
+      "todo_reason": "waits on typed measured learning-cell/prior/provenance view and attributed-outcome projection observation",
+      "binding_note": "Claims upsert/list/history/recall and learned-setting reads exist. They are not a measured learning-cell view with attribution provenance and projector completion."
+    },
+    {
+      "id": "LEARNING-03",
+      "rows": [
+        "OF-351",
+        "OF-366"
+      ],
+      "todo_reason": "waits on typed experiment child creation, sealed-cohort setup and campaign archive/evidence reads",
+      "binding_note": "Research record/measure/select/weave/prune/promote calls exist. Fork records an already-enqueued child; sealed-cohort public setup and campaign experiment archive reads are not published."
+    },
+    {
+      "id": "LEARNING-04",
+      "rows": [
+        "OF-352",
+        "OF-544"
+      ],
+      "todo_reason": "waits on typed confession, directed-recheck and stamped seal-audit receipt/completion calls",
+      "binding_note": "Critic review and audit-rate seed/pin exist, and the host runs seal checks. Typed confession, audit draw/result receipts and directed recheck completion are not published."
+    },
+    {
+      "id": "LEARNING-05",
+      "rows": [
+        "OF-545"
+      ],
+      "todo_reason": "waits on typed campaign output-archive descriptor/placement/best reads and coverage-floor admission setup",
+      "binding_note": "CampaignArchivePin is a reference consumed by promotion_basis, not a typed archive descriptor/output-placement authoring and per-cell view API."
+    },
+    {
+      "id": "LEARNING-06",
+      "rows": [
+        "OF-578"
+      ],
+      "todo_reason": "waits on typed eval-authoring trigger/completion, family/date/exposure ledgers and sufficiency/blocked-label reads",
+      "binding_note": "The host runs eval authoring. There is no typed author-now/completion or family/date/exposure/sufficiency/blocked-label view call; G01 is settled, not an open owner question."
+    },
+    {
+      "id": "LEARNING-07",
+      "rows": [
+        "OF-382",
+        "OF-400"
+      ],
+      "todo_reason": "waits on public trainer/seat-evaluator adapter, inspectable consented corpus export and sealed-cohort setup",
+      "binding_note": "Prepare/authorize/training/view/swap owner routes exist. Production trainer_binding, training_connector and training_evaluator return None. No guessed local connector protocol or invented checkpoint hashes."
+    },
+    {
+      "id": "LEARNING-08",
+      "rows": [
+        "OF-577",
+        "OF-512"
+      ],
+      "todo_reason": "waits on typed Coach offer-pass trigger/completion and per-seat candidate/pilot evidence setup/readback",
+      "binding_note": "Nightly host offer wiring and owner list/answer/undo exist. No typed offer-pass trigger/completion or per-seat candidate/pilot evidence setup/readback for deterministic fixture control."
+    },
+    {
+      "id": "LEARNING-09",
+      "rows": [
+        "OF-496"
+      ],
+      "todo_reason": "waits on typed vault RSI soft/pinned share and exposure controls, top-up and campaign hold/resume observation",
+      "binding_note": "Research work reserve/settle/refund and general owner task holds exist. None configures/tops up vault RSI soft/pinned shares or independently unit-labelled exposure lines."
+    }
+  ],
+  "fixture_needs": [
+    "Public trainer protocol fixture and an actual revision/load-file-pinned checkpoint after the trainer adapter ships; no empty or placeholder executable hash is supplied."
+  ],
+  "no_engine_constants_changed": true,
+  "fixture_constants": {
+    "goal_baseline_completions": 10,
+    "audit_rate_at_draw": 1,
+    "audit_rate_after_draw": 0.5,
+    "work_tokens": 120,
+    "soft_share_tokens": 30,
+    "pinned_share_tokens": 30,
+    "exploration_exposures": 2,
+    "minimum_rare_families": 2
+  }
+}

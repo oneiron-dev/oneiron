@@ -1,0 +1,177 @@
+{
+  "version": 1,
+  "seat": "decision",
+  "set_revision": "learning-eval-v1",
+  "rubric_revision": "learning-rubric-v1",
+  "oracle": "Synthetic source families assigned before derivation; labels are independently authored facts, never candidate-generated text.",
+  "date_cut": "2026-10-01T00:00:00Z",
+  "families": [
+    {
+      "label": "development-a",
+      "source_at": "2026-09-01T00:00:00Z",
+      "purpose": "development",
+      "rows": [
+        {
+          "label": "dev-a-source",
+          "kind": "source",
+          "input": "Is 2 + 3 equal to 5?",
+          "expected": true
+        },
+        {
+          "label": "dev-a-paraphrase",
+          "kind": "paraphrase",
+          "parent": "dev-a-source",
+          "input": "Does adding two and three give five?",
+          "expected": true
+        },
+        {
+          "label": "dev-a-translation",
+          "kind": "translation",
+          "parent": "dev-a-source",
+          "input": "2たす3は5ですか。",
+          "expected": true
+        },
+        {
+          "label": "dev-a-summary",
+          "kind": "summary",
+          "parent": "dev-a-source",
+          "input": "2+3=5",
+          "expected": true
+        },
+        {
+          "label": "dev-a-synthetic",
+          "kind": "synthetic",
+          "parent": "dev-a-source",
+          "input": "Two blue tiles and three red tiles make five tiles.",
+          "expected": true
+        },
+        {
+          "label": "dev-a-rubric",
+          "kind": "generated_rubric",
+          "parent": "dev-a-source",
+          "input": "Success means the answer to 2+3 is 5.",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "label": "audit-b",
+      "source_at": "2026-09-15T00:00:00Z",
+      "purpose": "judge_audit",
+      "rows": [
+        {
+          "label": "audit-b-source",
+          "kind": "source",
+          "input": "Is 7 less than 4?",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "label": "exposed-c",
+      "source_at": "2026-10-02T00:00:00Z",
+      "purpose": "sealed_confirmation",
+      "expected_after_exposure": "development",
+      "rows": [
+        {
+          "label": "exposed-c-source",
+          "kind": "source",
+          "input": "Does the table contain the exact word cobalt? Table: amber, teal.",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "label": "confirmation-d",
+      "source_at": "2026-10-03T00:00:00Z",
+      "purpose": "sealed_confirmation",
+      "rows": [
+        {
+          "label": "sealed-d-source",
+          "kind": "source",
+          "input": "Does the table contain the exact word indigo? Table: indigo, amber.",
+          "expected": true
+        },
+        {
+          "label": "sealed-d-copy",
+          "kind": "paraphrase",
+          "parent": "sealed-d-source",
+          "input": "The table lists indigo and amber. Is indigo present?",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "label": "rare-e",
+      "source_at": "2026-10-04T00:00:00Z",
+      "purpose": "sealed_confirmation",
+      "stratum": "rare",
+      "rows": [
+        {
+          "label": "rare-e-source",
+          "kind": "source",
+          "input": "Is the empty list nonempty?",
+          "expected": false
+        }
+      ]
+    },
+    {
+      "label": "reference-f",
+      "source_at": "2026-09-10T00:00:00Z",
+      "purpose": "fixed_reference",
+      "rows": [
+        {
+          "label": "reference-f-source",
+          "kind": "source",
+          "input": "Is 1 + 1 equal to 2?",
+          "expected": true
+        }
+      ]
+    },
+    {
+      "label": "independent-near-copy",
+      "source_at": "2026-09-20T00:00:00Z",
+      "purpose": "judge_audit",
+      "rows": [
+        {
+          "label": "near-copy-source",
+          "kind": "source",
+          "input": "Is 2+3=5?",
+          "expected": true
+        }
+      ]
+    }
+  ],
+  "exposure_ledger": [
+    {
+      "family": "exposed-c",
+      "candidates": 1,
+      "queries": 2,
+      "promotions": 1
+    }
+  ],
+  "near_copy_flag": {
+    "left": "dev-a-source",
+    "right": "near-copy-source",
+    "expected": "review-only-not-proof",
+    "source_relationship": "independently authored, not a derivation"
+  },
+  "expected": {
+    "train_families": [
+      "development-a"
+    ],
+    "audit_families": [
+      "audit-b",
+      "independent-near-copy"
+    ],
+    "fresh_confirmation_families": [
+      "confirmation-d",
+      "rare-e"
+    ],
+    "fixed_reference_family": "reference-f",
+    "derivatives_must_not_cross_splits": true,
+    "minimum_rare_families_fixture": 2,
+    "rare_families_available": 1,
+    "sufficiency": "unknown"
+  }
+}
