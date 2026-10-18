@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 537 facade rows, 1925 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 500.
+// UniFFI census: 538 facade rows, 1946 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 10; generated in and out: 501.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SlipCaveat.pact (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -18739,6 +18739,424 @@ pub struct TaskTypeTreeReadReply {
     pub in_force_skill_ref: Option<String>,
     #[serde(rename = "tree", default, skip_serializing_if = "Option::is_none")]
     pub tree: Option<TaskTypeTreeView>,
+}
+
+/// `oneiron::team::doors::PlannedSpawnRead`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct PlannedSpawnRead {
+    #[serde(rename = "spawn_ref")]
+    pub spawn_ref: String,
+}
+
+/// `oneiron::team::doors::SpawnPhase`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SpawnPhase {
+    #[serde(rename = "reserved")]
+    Reserved,
+    #[serde(rename = "planned")]
+    Planned,
+    #[serde(rename = "launched")]
+    Launched,
+    #[serde(rename = "in_doubt")]
+    InDoubt,
+}
+
+/// `oneiron::team::doors::CoordinationPatternView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CoordinationPatternView {
+    #[serde(rename = "solo")]
+    Solo,
+    #[serde(rename = "ceo_decides")]
+    CeoDecides,
+    #[serde(rename = "committee")]
+    Committee,
+    #[serde(rename = "vote")]
+    Vote,
+    #[serde(rename = "market")]
+    Market,
+    #[serde(rename = "rotation")]
+    Rotation,
+}
+
+/// `oneiron::team::doors::SkillRevisionView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SkillRevisionView {
+    #[serde(rename = "skill_ref")]
+    pub skill_ref: String,
+    #[serde(rename = "version")]
+    pub version: String,
+}
+
+/// `oneiron::team::doors::ProviderPinView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ProviderPinView {
+    #[serde(rename = "rung")]
+    pub rung: DecisionRung,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "version")]
+    pub version: String,
+}
+
+/// `oneiron::team::doors::PlanObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PlanObservation {
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "width")]
+    pub width: u32,
+    #[serde(rename = "pattern")]
+    pub pattern: CoordinationPatternView,
+    #[serde(
+        rename = "hard_cap_units",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub hard_cap_units: Option<u64>,
+    #[serde(rename = "expected_spend_units")]
+    pub expected_spend_units: u64,
+    #[serde(
+        rename = "available_units",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub available_units: Option<u64>,
+    #[serde(rename = "over_budget")]
+    pub over_budget: bool,
+    #[serde(rename = "fitted_to_budget")]
+    pub fitted_to_budget: bool,
+    #[serde(rename = "why")]
+    pub why: Vec<String>,
+    #[serde(
+        rename = "team_shape",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub team_shape: Option<SkillRevisionView>,
+    #[serde(
+        rename = "pattern_skill",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pattern_skill: Option<SkillRevisionView>,
+    #[serde(
+        rename = "rung_skill",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub rung_skill: Option<SkillRevisionView>,
+    #[serde(rename = "rung_providers")]
+    pub rung_providers: Vec<ProviderPinView>,
+}
+
+/// `oneiron::team::doors::LaunchedMember`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LaunchedMember {
+    #[serde(rename = "attempt_ref")]
+    pub attempt_ref: String,
+    #[serde(rename = "state")]
+    pub state: String,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "team_ref", default, skip_serializing_if = "Option::is_none")]
+    pub team_ref: Option<String>,
+}
+
+/// `oneiron::team::pattern::TeamAxis`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum TeamAxis {
+    #[serde(rename = "converge")]
+    Converge,
+    #[serde(rename = "diverge")]
+    Diverge,
+}
+
+/// `oneiron::team::doors::ResolvedTeam`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ResolvedTeam {
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "pattern")]
+    pub pattern: CoordinationPatternView,
+    #[serde(rename = "width")]
+    pub width: u32,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "axis", default, skip_serializing_if = "Option::is_none")]
+    pub axis: Option<TeamAxis>,
+    #[serde(
+        rename = "project_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub project_ref: Option<String>,
+    #[serde(rename = "root_attempt_ref")]
+    pub root_attempt_ref: String,
+    #[serde(rename = "member_attempt_refs")]
+    pub member_attempt_refs: Vec<String>,
+    #[serde(rename = "team_ref", default, skip_serializing_if = "Option::is_none")]
+    pub team_ref: Option<String>,
+}
+
+/// `oneiron::team::doors::TeamBindingView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TeamBindingView {
+    #[serde(rename = "team_ref")]
+    pub team_ref: String,
+    #[serde(rename = "pattern")]
+    pub pattern: CoordinationPatternView,
+    #[serde(rename = "leader")]
+    pub leader: String,
+    #[serde(rename = "member_attempt_refs")]
+    pub member_attempt_refs: Vec<String>,
+    #[serde(rename = "proposal_refs")]
+    pub proposal_refs: Vec<String>,
+    #[serde(rename = "root_task", default, skip_serializing_if = "Option::is_none")]
+    pub root_task: Option<String>,
+    #[serde(rename = "started_at")]
+    pub started_at: u64,
+}
+
+/// `oneiron::team::doors::TeamReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct TeamReceiptView {
+    #[serde(rename = "team_ref")]
+    pub team_ref: String,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "pattern")]
+    pub pattern: CoordinationPatternView,
+    #[serde(
+        rename = "pattern_skill",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub pattern_skill: Option<SkillRevisionView>,
+    #[serde(rename = "axis")]
+    pub axis: TeamAxis,
+    #[serde(rename = "width")]
+    pub width: u32,
+    #[serde(rename = "models")]
+    pub models: Vec<String>,
+    #[serde(
+        rename = "outcome_receipt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub outcome_receipt: Option<String>,
+}
+
+/// `oneiron::team::doors::RouteStampState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum RouteStampState {
+    #[serde(rename = "unstamped_before_s5")]
+    UnstampedBeforeS5,
+    #[serde(rename = "stamped")]
+    Stamped,
+}
+
+/// `oneiron::team::doors::RouteObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RouteObservation {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<TypeStamp>,
+    #[serde(rename = "stamp_state")]
+    pub stamp_state: RouteStampState,
+    #[serde(rename = "model")]
+    pub model: String,
+    #[serde(rename = "effort")]
+    pub effort: ReasoningEffort,
+    #[serde(rename = "why")]
+    pub why: String,
+    #[serde(rename = "reused")]
+    pub reused: bool,
+}
+
+/// `oneiron::team::doors::CriticAssociation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum CriticAssociation {
+    #[serde(rename = "branch_attempt")]
+    BranchAttempt,
+    #[serde(rename = "canonical_run_ref")]
+    CanonicalRunRef,
+}
+
+/// `oneiron::team::doors::CriticObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CriticObservation {
+    #[serde(rename = "run_ref")]
+    pub run_ref: String,
+    #[serde(rename = "branch_attempt_ref")]
+    pub branch_attempt_ref: String,
+    #[serde(rename = "association")]
+    pub association: CriticAssociation,
+    #[serde(rename = "artifact_id")]
+    pub artifact_id: String,
+    #[serde(rename = "target_ref")]
+    pub target_ref: String,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "lens_ref")]
+    pub lens_ref: String,
+    #[serde(rename = "lens_id")]
+    pub lens_id: String,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "axis")]
+    pub axis: String,
+    #[serde(rename = "verdict")]
+    pub verdict: String,
+}
+
+/// `oneiron::team::doors::LearningCellView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningCellView {
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "axis")]
+    pub axis: String,
+}
+
+/// `oneiron::team::doors::BorrowedCellView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BorrowedCellView {
+    #[serde(rename = "predicate")]
+    pub predicate: String,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<TypeStamp>,
+    #[serde(rename = "axis", default, skip_serializing_if = "Option::is_none")]
+    pub axis: Option<String>,
+}
+
+/// `oneiron::team::doors::LearningEvidenceView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningEvidenceView {
+    #[serde(rename = "receipt_ref")]
+    pub receipt_ref: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "anchor_kind")]
+    pub anchor_kind: String,
+    #[serde(rename = "weight")]
+    pub weight: f64,
+}
+
+/// `oneiron::team::doors::LearningObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LearningObservation {
+    #[serde(rename = "cell")]
+    pub cell: LearningCellView,
+    #[serde(rename = "mean")]
+    pub mean: f64,
+    #[serde(rename = "own")]
+    pub own: bool,
+    #[serde(rename = "own_runs")]
+    pub own_runs: f64,
+    #[serde(rename = "prior_origin")]
+    pub prior_origin: String,
+    #[serde(rename = "prior_weight_runs")]
+    pub prior_weight_runs: f64,
+    #[serde(
+        rename = "borrowed_from",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub borrowed_from: Option<BorrowedCellView>,
+    #[serde(rename = "untested")]
+    pub untested: bool,
+    #[serde(rename = "window_half_life_secs")]
+    pub window_half_life_secs: u64,
+    #[serde(rename = "estimator_version")]
+    pub estimator_version: u32,
+    #[serde(rename = "evidence")]
+    pub evidence: Vec<LearningEvidenceView>,
+}
+
+/// `oneiron::team::doors::ObservationIssue`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind")]
+pub enum ObservationIssue {
+    #[serde(rename = "stamp_mismatch")]
+    StampMismatch {
+        #[serde(rename = "consumer")]
+        consumer: String,
+        #[serde(rename = "reference")]
+        reference: String,
+        #[serde(rename = "expected")]
+        expected: TypeStamp,
+        #[serde(rename = "actual")]
+        actual: TypeStamp,
+    },
+    #[serde(rename = "missing_binding")]
+    MissingBinding {
+        #[serde(rename = "reference")]
+        reference: String,
+    },
+    #[serde(rename = "several_teams")]
+    SeveralTeams {
+        #[serde(rename = "team_refs")]
+        team_refs: Vec<String>,
+    },
+    #[serde(rename = "team_mismatch")]
+    TeamMismatch {
+        #[serde(rename = "member_ref")]
+        member_ref: String,
+        #[serde(rename = "expected")]
+        expected: String,
+        #[serde(rename = "actual", default, skip_serializing_if = "Option::is_none")]
+        actual: Option<String>,
+    },
+    #[serde(rename = "unavailable")]
+    Unavailable {
+        #[serde(rename = "consumer")]
+        consumer: String,
+        #[serde(rename = "reason")]
+        reason: String,
+    },
+}
+
+/// `oneiron::team::doors::PlannedSpawnObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PlannedSpawnObservation {
+    #[serde(rename = "spawn_ref")]
+    pub spawn_ref: String,
+    #[serde(rename = "phase")]
+    pub phase: SpawnPhase,
+    #[serde(rename = "type_ref")]
+    pub type_ref: TypeStamp,
+    #[serde(rename = "plan", default, skip_serializing_if = "Option::is_none")]
+    pub plan: Option<PlanObservation>,
+    #[serde(rename = "launched")]
+    pub launched: Vec<LaunchedMember>,
+    #[serde(rename = "resolved", default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<ResolvedTeam>,
+    #[serde(rename = "binding", default, skip_serializing_if = "Option::is_none")]
+    pub binding: Option<TeamBindingView>,
+    #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
+    pub receipt: Option<TeamReceiptView>,
+    #[serde(rename = "routes")]
+    pub routes: Vec<RouteObservation>,
+    #[serde(rename = "critics")]
+    pub critics: Vec<CriticObservation>,
+    #[serde(rename = "learning")]
+    pub learning: Vec<LearningObservation>,
+    #[serde(rename = "issues")]
+    pub issues: Vec<ObservationIssue>,
 }
 
 /// `oneiron::workspace_roster::intent::WorkspaceRosterPreset`.

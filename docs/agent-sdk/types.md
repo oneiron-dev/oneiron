@@ -1872,7 +1872,12 @@ class Oneiron:
             """The owner reads one saved agent composition and its version and approval state."""
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
+        @property
+        def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultAgentsSpawnVerbs:
+        def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
+            """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
     class _VaultWorkflowsVerbs:
         def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
             """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""

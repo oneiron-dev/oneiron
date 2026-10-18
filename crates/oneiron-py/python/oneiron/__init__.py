@@ -2174,9 +2174,18 @@ class Oneiron:
         def update(self, spec):
             """The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."""
             return json.loads(_translate(lambda: self._client.vault_agents_update(json.dumps(spec))))
+        @property
+        def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs":
+            return Oneiron._VaultAgentsSpawnVerbs(self._client)
         def export_pack(self, request: dict[str, Any]) -> dict[str, Any]:
             """The agent's travelling AgentPack folder (files base64) and what stayed home."""
             return json.loads(_translate(lambda: self._client.vault_agents_export_pack(json.dumps(request, allow_nan=False))))
+    class _VaultAgentsSpawnVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+            return json.loads(_translate(lambda: self._client.vault_agents_spawn_get(json.dumps(spec))))
     class _VaultWorkflowsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
