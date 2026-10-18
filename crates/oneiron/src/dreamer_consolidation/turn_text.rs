@@ -324,8 +324,21 @@ pub(crate) fn dreamer_may_read_turns_in(
     dreamer_read(vault)?.entities_readable_in_txn(txn, turns)
 }
 
+/// The refusal a TURN's text read gives while a MESSAGE its saved tags were
+/// read from is away from this replica (a window demoted back to thin,
+/// OF-534). It is a wait, not a fault: a prepared attempt takes it as
+/// [`super::AttemptPreparation::ResidencyDeferred`].
+pub(super) const MESSAGES_NOT_RESIDENT: &str = "witnessed turn message is not resident here";
+
+/// Whether a text refusal is [`MESSAGES_NOT_RESIDENT`]'s wait.
+pub(super) fn residency_deferred(reason: &str) -> bool {
+    reason == MESSAGES_NOT_RESIDENT
+}
+
 /// [`collect_in`] over any reader of the MESSAGE rows: `read_rows` returns
 /// each id's `(type, learned_at, logical body)`, `None` where it is withheld.
+/// A kept TURN whose tagged MESSAGE is away refuses with
+/// [`MESSAGES_NOT_RESIDENT`] before its children are read.
 fn collect_with(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -372,6 +385,13 @@ fn collect_with(
             });
         }
     };
+    // The children read below would be only the ones this replica holds
+    // (OF-534): no fragment is the turn's text, for a planner or for an
+    // attempt queued before the demotion. The read waits for the promotion
+    // that brings the row back.
+    if crate::tagging::tagged_messages_absent_in_txn(&vault.store, txn, turn)? {
+        return Err(invalid_consolidation(MESSAGES_NOT_RESIDENT));
+    }
     let parents = peers(
         vault,
         txn,

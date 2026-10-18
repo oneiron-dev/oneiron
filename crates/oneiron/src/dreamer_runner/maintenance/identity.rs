@@ -337,11 +337,12 @@ pub(crate) fn mention_unsettled_in_txn(
     ) else {
         return Ok(Some(String::new()));
     };
-    let current = crate::tagging::tag_set_in_txn(&vault.store, txn, &turn)?.and_then(|tags| {
-        tags.mentions
-            .into_iter()
-            .find(|each| each.message == message && each.start == start && each.end == end)
-    });
+    let current =
+        crate::tagging::readable_view_in_txn(&vault.store, txn, &turn)?.and_then(|tags| {
+            tags.mentions
+                .into_iter()
+                .find(|each| each.message == message && each.start == start && each.end == end)
+        });
     let Some(current) = current else {
         return Ok(Some(String::new()));
     };
@@ -1088,7 +1089,7 @@ fn recheck_turn_in_txn(
     open: &mut Vec<([u8; 32], IdentityAsk)>,
     now: u64,
 ) -> Result<()> {
-    let Some(tags) = crate::tagging::tag_set_in_txn(&vault.store, txn, turn)? else {
+    let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, turn)? else {
         return Ok(());
     };
     let mut texts: BTreeMap<EntityId, Option<String>> = BTreeMap::new();
@@ -1557,8 +1558,8 @@ impl Memory<'_> {
                 }
                 return Ok(IdentityActNow::Deciding { ask: key_hex(&key) });
             }
-            let current =
-                crate::tagging::tag_set_in_txn(&vault.store, txn, &hit.turn)?.and_then(|tags| {
+            let current = crate::tagging::readable_view_in_txn(&vault.store, txn, &hit.turn)?
+                .and_then(|tags| {
                     tags.mentions.into_iter().find(|each| {
                         each.message == mention.message
                             && each.start == mention.start
