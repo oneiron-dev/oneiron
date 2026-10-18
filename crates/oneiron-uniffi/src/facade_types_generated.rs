@@ -16984,12 +16984,20 @@ pub enum RepoProposalStatus {
 /// `oneiron::code_document::review_views::CodeProposedStamp`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct CodeProposedStamp {
-    #[serde(rename = "actor_ref")]
-    pub actor_ref: String,
-    #[serde(rename = "session_ref")]
-    pub session_ref: String,
-    #[serde(rename = "provenance_claim_ref")]
-    pub provenance_claim_ref: String,
+    #[serde(rename = "actor_ref", default, skip_serializing_if = "Option::is_none")]
+    pub actor_ref: Option<String>,
+    #[serde(
+        rename = "session_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_ref: Option<String>,
+    #[serde(
+        rename = "provenance_claim_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub provenance_claim_ref: Option<String>,
     #[serde(rename = "turn_ref", default, skip_serializing_if = "Option::is_none")]
     pub turn_ref: Option<String>,
     #[serde(

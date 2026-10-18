@@ -2265,7 +2265,7 @@ export type CodeProposalViewRequest = { proposal_ref: string }
 /** `oneiron::repo_mutation::proposal::RepoProposalStatus` */
 export type RepoProposalStatus = "Proposed" | "Approved" | "Applied" | "Failed"
 /** `oneiron::code_document::review_views::CodeProposedStamp` */
-export type CodeProposedStamp = { actor_ref: string; session_ref: string; provenance_claim_ref: string; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null }
+export type CodeProposedStamp = { actor_ref?: string | null; session_ref?: string | null; provenance_claim_ref?: string | null; turn_ref?: string | null; activity_ref?: string | null; intent_ref?: string | null; model_ref?: string | null; reasoning_effort?: string | null }
 /** `oneiron::code_document::review_views::CodeProposalView` */
 export type CodeProposalView = { proposal_ref: string; repo: string; path: string; message: string; status: RepoProposalStatus; proposed: CodeProposedStamp; changes: CodeChangeView[]; landed?: CodeOperationView | null; rendered: string }
 /** `oneiron::memory::code_doors::types::CodeSymbolsDeclareRequest` */

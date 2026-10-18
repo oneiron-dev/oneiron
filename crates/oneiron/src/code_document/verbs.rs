@@ -237,7 +237,7 @@ impl<'a, 'v> OpRefs<'a, 'v> {
     }
 
     /// `id` as a view names it: its hex when the caller reads it.
-    fn admitted(&mut self, id: Option<EntityId>) -> MemoryResult<Option<String>> {
+    pub(super) fn admitted(&mut self, id: Option<EntityId>) -> MemoryResult<Option<String>> {
         let Some(id) = id else {
             return Ok(None);
         };
