@@ -99,7 +99,12 @@ pub struct RecoveryKitRestoreArgs {
     /// Restore the vault from its sealed cloud bundle on an install that holds
     /// no copy of it yet: the bundle's file, with `--sealed-pads` and
     /// `--vault-id`. The kit alone opens it.
-    #[arg(long, value_name = "FILE", requires = "sealed_pads")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        requires = "sealed_pads",
+        group = "sealed_source"
+    )]
     pub sealed_bundle: Option<PathBuf>,
 
     /// With `--sealed-bundle`: the file of the pad object of the bundle's
@@ -107,9 +112,20 @@ pub struct RecoveryKitRestoreArgs {
     #[arg(long, value_name = "FILE", requires = "sealed_bundle")]
     pub sealed_pads: Option<PathBuf>,
 
-    /// With `--sealed-bundle`: the vault id the kit is bound to, 64 hex digits,
-    /// as `oneiron recovery-kit status` prints it.
-    #[arg(long, value_name = "HEX", requires = "sealed_bundle")]
+    /// Restore the vault from its sealed cloud bundle as `--sealed-bundle`
+    /// does, fetched with the kit alone from the home at this address: the
+    /// newest generation it keeps for the kit's root. With `--vault-id`.
+    #[arg(long, value_name = "URL", group = "sealed_source")]
+    pub sealed_home: Option<String>,
+
+    /// With `--sealed-home`: fetch this generation, 48 hex digits, instead of
+    /// the newest.
+    #[arg(long, value_name = "HEX", requires = "sealed_home")]
+    pub sealed_generation: Option<String>,
+
+    /// With `--sealed-bundle` or `--sealed-home`: the vault id the kit is
+    /// bound to, 64 hex digits, as `oneiron recovery-kit status` prints it.
+    #[arg(long, value_name = "HEX", requires = "sealed_source")]
     pub vault_id: Option<String>,
 
     #[command(flatten)]
