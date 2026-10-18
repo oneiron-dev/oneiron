@@ -434,18 +434,22 @@ pub const TASK_WORK_WAIT: Duration = Duration::from_secs(300);
 /// dropping it hands the turn to the next caller in line. Work that waited
 /// out its turn holds none.
 #[must_use = "task work keeps its turn only while it is held"]
-pub struct TaskWorkTurn(Option<LinePermit>);
+pub struct TaskWorkTurn {
+    _permit: Option<LinePermit>,
+}
 
 impl TaskWorkTurn {
     fn after(caller: EntityId, admitted: Result<LinePermit, WaitTimedOut>) -> Self {
         match admitted {
-            Ok(permit) => Self(Some(permit)),
+            Ok(permit) => Self {
+                _permit: Some(permit),
+            },
             Err(WaitTimedOut) => {
                 tracing::info!(
                     caller = %caller.to_hex(),
                     "task work waited out its turn; it runs past the task-work bound"
                 );
-                Self(None)
+                Self { _permit: None }
             }
         }
     }
