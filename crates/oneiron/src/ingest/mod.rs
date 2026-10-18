@@ -94,6 +94,11 @@ use rmpv::Value as MsgpackValue;
 #[cfg(test)]
 use serde_json::Value;
 
+mod audience;
+pub use audience::{
+    IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,
+    ImportAudienceOption, ImportAudienceState, MAX_IMPORT_AUDIENCE_PROJECTS, import_audience_topic,
+};
 pub mod exports;
 pub mod history;
 mod parsed;
