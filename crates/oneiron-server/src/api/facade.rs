@@ -32,6 +32,7 @@ mod aging_doors;
 mod artifact_hosting_doors;
 mod asr_doors;
 mod authority_history_doors;
+mod board_stream_doors;
 mod booking_doors;
 mod browser_doors;
 mod budget_doors;

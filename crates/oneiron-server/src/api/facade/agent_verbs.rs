@@ -8,6 +8,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.reports.disclosure", post(facade_route))
         .route("/vault.reports.route", post(facade_route))
         .route("/vault.reports.outbound", post(facade_route))
+        .route("/self.focus.wakes", post(facade_route))
         .route("/self.focus.scratchpad.recall", post(facade_route))
         .route("/self.focus.scratchpad.append", post(facade_route))
         .route("/self.focus.scratchpad.seal", post(facade_route))
@@ -755,6 +756,9 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/self.agents.spawn", post(facade_route))
         .route("/self.leader.split", post(facade_route))
         .route("/self.skills.call", post(facade_route))
+        .route("/self.focus.refresh", post(facade_route))
+        .route("/self.focus.subscribe", post(facade_route))
+        .route("/self.focus.unsubscribe", post(facade_route))
 }
 pub(super) fn anonymous_chat_routes() -> Router<Arc<SyncServer>> {
     Router::new().route(

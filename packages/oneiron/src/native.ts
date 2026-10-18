@@ -36,6 +36,7 @@ feedbackSend(input: unknown): unknown
 vaultReportsDisclosure(input: unknown): unknown
 vaultReportsRoute(input: unknown): unknown
 vaultReportsOutbound(input: unknown): unknown
+selfFocusWakes(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -736,6 +737,9 @@ tasksRefuse(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown
+selfFocusRefresh(input: unknown): unknown
+selfFocusSubscribe(input: unknown): unknown
+selfFocusUnsubscribe(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

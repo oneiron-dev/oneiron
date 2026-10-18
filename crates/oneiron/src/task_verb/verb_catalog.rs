@@ -10,6 +10,7 @@ pub enum AgentVerb {
     SelfFocusRefresh,
     SelfFocusSubscribe,
     SelfFocusUnsubscribe,
+    SelfFocusWakes,
     SelfFocusScratchpadRecall,
     SelfFocusScratchpadAppend,
     SelfFocusScratchpadSeal,
@@ -747,6 +748,7 @@ impl AgentVerb {
         Self::SelfFocusRefresh,
         Self::SelfFocusSubscribe,
         Self::SelfFocusUnsubscribe,
+        Self::SelfFocusWakes,
         Self::SelfFocusScratchpadRecall,
         Self::SelfFocusScratchpadAppend,
         Self::SelfFocusScratchpadSeal,
@@ -1487,6 +1489,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => "self.focus.refresh",
             Self::SelfFocusSubscribe => "self.focus.subscribe",
             Self::SelfFocusUnsubscribe => "self.focus.unsubscribe",
+            Self::SelfFocusWakes => "self.focus.wakes",
             Self::SelfFocusScratchpadRecall => "self.focus.scratchpad.recall",
             Self::SelfFocusScratchpadAppend => "self.focus.scratchpad.append",
             Self::SelfFocusScratchpadSeal => "self.focus.scratchpad.seal",
@@ -2239,6 +2242,10 @@ impl AgentVerb {
                 | Self::VaultReportsDisclosure
                 | Self::VaultReportsRoute
                 | Self::VaultReportsOutbound
+                | Self::SelfFocusRefresh
+                | Self::SelfFocusSubscribe
+                | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -2998,6 +3005,7 @@ impl AgentVerb {
                 | Self::SelfFocusRefresh
                 | Self::SelfFocusSubscribe
                 | Self::SelfFocusUnsubscribe
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -3832,6 +3840,7 @@ impl AgentVerb {
                 | Self::VaultReportsDisclosure
                 | Self::VaultReportsRoute
                 | Self::VaultReportsOutbound
+                | Self::SelfFocusWakes
                 | Self::SelfFocusScratchpadRecall
                 | Self::SelfFocusScratchpadAppend
                 | Self::SelfFocusScratchpadSeal
@@ -4994,6 +5003,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &["frame_epoch"],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusWakes => &["spec"],
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
@@ -5749,6 +5759,7 @@ impl AgentVerb {
             Self::SelfFocusRefresh => &[],
             Self::SelfFocusSubscribe => &["scopes"],
             Self::SelfFocusUnsubscribe => &["scopes"],
+            Self::SelfFocusWakes => &["spec"],
             Self::SelfFocusScratchpadRecall => &["spec"],
             Self::SelfFocusScratchpadAppend => &["spec"],
             Self::SelfFocusScratchpadSeal => &["spec"],
@@ -6503,6 +6514,9 @@ impl AgentVerb {
             Self::SelfFocusSubscribe => "Subscribes the run's board stream to the named scopes.",
             Self::SelfFocusUnsubscribe => {
                 "Unsubscribes the run's board stream from the named scopes."
+            }
+            Self::SelfFocusWakes => {
+                "Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery."
             }
             Self::SelfFocusScratchpadRecall => {
                 "Searches the bound actor's whole session scratchpad, live or sealed, for the lines holding every query word, folded lines in full."

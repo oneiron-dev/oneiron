@@ -103,7 +103,15 @@
       },
       "mcp_required_fields": [],
       "mcp_scope": "filtered",
-      "section": true
+      "section": true,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardRefreshRequest>",
+        "output": "crate::task_verb::sdk::BoardFrameReply",
+        "description": "Re-renders the attached run's context board as one STREAM frame, at the frame epoch the caller last saw.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "openapi": true
+      }
     },
     {
       "name": "self.focus.subscribe",
@@ -120,7 +128,15 @@
         "scopes"
       ],
       "mcp_scope": "filtered",
-      "section": true
+      "section": true,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
+        "output": "crate::task_verb::sdk::BoardSubscriptionReply",
+        "description": "Subscribes the attached run's board STREAM connection to the named scopes, inside its credential ceiling.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "openapi": true
+      }
     },
     {
       "name": "self.focus.unsubscribe",
@@ -137,7 +153,30 @@
         "scopes"
       ],
       "mcp_scope": "filtered",
-      "section": true
+      "section": true,
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardSubscriptionRequest>",
+        "output": "crate::task_verb::sdk::BoardSubscriptionReply",
+        "description": "Unsubscribes the attached run's board STREAM connection from the named scopes.",
+        "host_door_caller": true,
+        "host_door_session": false,
+        "openapi": true
+      }
+    },
+    {
+      "name": "self.focus.wakes",
+      "description": "Takes every wake queued for the attached run's board STREAM connection, each re-read under this credential at delivery.",
+      "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::sdk::BoardWakeRequest>",
+      "output": "crate::task_verb::sdk::BoardWakeReply",
+      "call": "crate::code_run::fold_api::host_required(memory, &input)?",
+      "host_door": true,
+      "host_door_caller": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "self.focus.scratchpad.recall",

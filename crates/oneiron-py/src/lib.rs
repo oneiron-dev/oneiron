@@ -342,6 +342,13 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn self_focus_wakes(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.wakes")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.wakes", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn self_focus_scratchpad_recall(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "self.focus.scratchpad.recall")?;
         let output = py
@@ -6237,6 +6244,27 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "self.skills.call")?;
         let output = py
             .detach(|| self.inner.agent_verb("self.skills.call", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_focus_refresh(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.refresh")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.refresh", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_focus_subscribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.subscribe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.subscribe", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_focus_unsubscribe(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.focus.unsubscribe")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.focus.unsubscribe", input))
             .map_err(raise)?;
         encode(&output)
     }

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 706 facade rows, 2501 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 662.
+// UniFFI census: 710 facade rows, 2515 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 666.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -366,6 +366,42 @@ pub struct ReportOutboundView {
     pub issue_ref: String,
     #[serde(rename = "payload", default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<ReportPayloadView>,
+}
+
+/// `oneiron::task_verb::sdk::BoardWakeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardWakeRequest {}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BoardWakeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestBoardWakeRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: BoardWakeRequest,
+}
+
+/// `oneiron::context_board::stream::wake::WakeEnvelope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct WakeEnvelope {
+    #[serde(rename = "event_ref")]
+    pub event_ref: String,
+    #[serde(rename = "task_ref")]
+    pub task_ref: String,
+    #[serde(rename = "actor_ref")]
+    pub actor_ref: String,
+    #[serde(rename = "line")]
+    pub line: String,
+}
+
+/// `oneiron::task_verb::sdk::BoardWakeReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardWakeReply {
+    #[serde(rename = "wakes")]
+    pub wakes: Vec<WakeEnvelope>,
 }
 
 /// `oneiron::task_verb::sdk_scratchpad::ScratchpadRecallRequest`.
@@ -39949,4 +39985,109 @@ pub struct LiveRunRequestSkillCallInput {
     pub live_run: String,
     #[serde(rename = "spec")]
     pub spec: SkillCallInput,
+}
+
+/// `oneiron::task_verb::sdk::BoardRefreshRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardRefreshRequest {
+    #[serde(
+        rename = "frame_epoch",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub frame_epoch: Option<u64>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BoardRefreshRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestBoardRefreshRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: BoardRefreshRequest,
+}
+
+/// `oneiron::context_board::stream::frames::DeltaRow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct DeltaRow {
+    #[serde(rename = "key")]
+    pub key: String,
+    #[serde(rename = "line")]
+    pub line: String,
+}
+
+/// `oneiron::context_board::stream::frames::FrameKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "payload")]
+pub enum FrameKind {
+    #[serde(rename = "keyframe")]
+    Keyframe(String),
+    #[serde(rename = "delta")]
+    Delta(Vec<DeltaRow>),
+}
+
+/// `oneiron::context_board::stream::frames::BoardStreamFrame`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct BoardStreamFrame {
+    #[serde(rename = "epoch")]
+    pub epoch: u64,
+    #[serde(rename = "kind")]
+    pub kind: FrameKind,
+}
+
+/// `oneiron::task_verb::sdk::BoardFrameReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardFrameReply {
+    #[serde(rename = "frame")]
+    pub frame: BoardStreamFrame,
+}
+
+/// `oneiron::context_board::stream::events::SubscriptionScope`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SubscriptionScope {
+    #[serde(rename = "my_tasks")]
+    MyTasks,
+    #[serde(rename = "my_children")]
+    MyChildren,
+    #[serde(rename = "consults_to_me")]
+    ConsultsToMe,
+    #[serde(rename = "memories")]
+    Memories,
+    #[serde(rename = "worlds")]
+    Worlds,
+    #[serde(rename = "presence")]
+    Presence,
+    #[serde(rename = "counts")]
+    Counts,
+}
+
+/// `oneiron::task_verb::sdk::BoardSubscriptionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSubscriptionRequest {
+    #[serde(rename = "scopes")]
+    pub scopes: Vec<SubscriptionScope>,
+}
+
+/// `oneiron::task_verb::sdk_live_run::LiveRunRequest` with `T` = `BoardSubscriptionRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct LiveRunRequestBoardSubscriptionRequest {
+    #[serde(rename = "live_run")]
+    pub live_run: String,
+    #[serde(rename = "spec")]
+    pub spec: BoardSubscriptionRequest,
+}
+
+/// `oneiron::task_verb::sdk::BoardSubscriptionReply`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BoardSubscriptionReply {
+    #[serde(rename = "connection")]
+    pub connection: String,
+    #[serde(rename = "active")]
+    pub active: Vec<SubscriptionScope>,
 }
