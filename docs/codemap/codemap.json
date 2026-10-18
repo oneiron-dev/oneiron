@@ -20362,6 +20362,7 @@
      "purpose": "ED-03 (ONE-1759, ARCH-0056 §5): the amendment JUDGE, and everything a judged amendment's shares earn",
      "surface": {
       "crate-vis": 2,
+      "fn": 1,
       "re-export": 4
      }
     },
@@ -37270,9 +37271,9 @@
      "path": "src/receipt/field_set.rs",
      "purpose": "—",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 1,
-      "fn": 19,
+      "fn": 20,
       "struct": 1
      }
     },
