@@ -163,6 +163,9 @@ impl LimitRow {
         Self::Engine(EngineLimit::ImportDecodedMessages),
         Self::Engine(EngineLimit::ImportDecodedBytes),
         Self::Engine(EngineLimit::SignatureDecodeBytes),
+        Self::Engine(EngineLimit::MaintenanceRowItems),
+        Self::Engine(EngineLimit::MaintenanceTextBytes),
+        Self::Engine(EngineLimit::MaintenanceScanRows),
     ];
     /// The config key that sets the row, or, for the memory the embedder
     /// endpoint sizes for its one model, the name it asks under.

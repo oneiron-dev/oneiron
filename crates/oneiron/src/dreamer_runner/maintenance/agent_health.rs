@@ -33,6 +33,7 @@ use crate::learning::{
     project_run_coordination, team_events_from_attempts,
 };
 use crate::learning_setting::{SettingSpec, setting_value_in_scope_in_txn};
+use crate::limit_ask::EngineLimit;
 use crate::llm::run_admission::LeaseUnit;
 use crate::llm::{DreamerTrapKind, OpenTrapWait, open_trap_waits};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
@@ -166,14 +167,6 @@ fn dup_cost_unit() -> LeaseUnit {
 
 /// How far back one review reads receipts and settled attempts.
 const LOOKBACK_SECS: u64 = 24 * 60 * 60;
-/// Most call receipts one review reads, newest first.
-const MAX_CALL_SCAN: usize = 50_000;
-/// Most evidence refs one card keeps, newest kept.
-const MAX_CARD_EVIDENCE: usize = 256;
-/// Most DIAGNOSTIC ids one card keeps, newest kept.
-const MAX_CARD_DIAGNOSTICS: usize = 64;
-/// A DIAGNOSTIC cites at most this many evidence refs.
-const MAX_EVENT_EVIDENCE: usize = 64;
 /// A wait on a person is not a problem (agent-mind §3.4).
 const WAIT_PERSON: &str = "person";
 /// `cost_spike` needs this many settled runs of a task type for its p90.
@@ -613,6 +606,9 @@ pub(super) fn run(vault: &Vault, now: u64) -> Result<u64> {
             let key = card_key(finding.subject, finding.signal, finding.task);
             let card = CARDS.get(&vault.store, txn, &key)?;
             let card = merge(card, finding, *diagnostic, route, &owners, now);
+            for items in [card.evidence.len(), card.diagnostics.len()] {
+                let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+            }
             CARDS.put(&vault.store, txn, &key, &card)?;
             touched.insert(key);
         }
@@ -673,17 +669,18 @@ impl Dispatched {
     }
 }
 
-/// Each agent's calls in the lookback, oldest first.
+/// Each agent's calls in the lookback, oldest first. The whole lookback is
+/// read: past `limits.maintenance_scan_rows` receipts the review asks and
+/// reads on.
 fn agent_calls(
     vault: &Vault,
     since: u64,
 ) -> Result<BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut calls: BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>> = BTreeMap::new();
-    for row in CALL_RECEIPTS
-        .iter_rev_from(&vault.store, &rtxn, &[])?
-        .take(MAX_CALL_SCAN)
-    {
+    let mut read: u64 = 0;
+    for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
+        read += 1;
         let Ok((id, receipt)) = row else {
             continue;
         };
@@ -698,6 +695,7 @@ fn agent_calls(
         };
         calls.entry(actor).or_default().push((id, receipt));
     }
+    let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, read);
     for rows in calls.values_mut() {
         rows.reverse();
     }
@@ -1513,14 +1511,13 @@ fn unsupported_done_findings(
 }
 
 /// Writes the finding's DIAGNOSTIC once: the same evidence is the same body
-/// and the same id.
+/// and the same id. It cites every evidence ref; past
+/// `limits.maintenance_row_items` it asks and cites them all.
 fn emit(vault: &Vault, finding: &Finding) -> Result<EntityId> {
     let mut evidence = finding.evidence.clone();
-    if evidence.len() > MAX_EVENT_EVIDENCE {
-        evidence.drain(..evidence.len() - MAX_EVENT_EVIDENCE);
-    }
     evidence.sort_unstable();
     evidence.dedup();
+    let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, evidence.len() as u64);
     let mut digest = blake3::Hasher::new();
     digest.update(HEALTH_DIGEST_DOMAIN);
     digest.update(finding.signal.as_str().as_bytes());
@@ -1622,14 +1619,12 @@ fn add_recipients(recipients: &mut Vec<EntityId>, subject: EntityId, ids: &[Enti
     }
 }
 
-fn keep_newest(ids: &mut Vec<EntityId>, more: &[EntityId], cap: usize) {
+/// Adds each of `more` once, after every id the card already holds.
+fn add_ids(ids: &mut Vec<EntityId>, more: &[EntityId]) {
     for id in more {
         if !ids.contains(id) {
             ids.push(*id);
         }
-    }
-    if ids.len() > cap {
-        ids.drain(..ids.len() - cap);
     }
 }
 
@@ -1686,8 +1681,8 @@ fn merge(
         updated_at: now,
         coach: None,
     });
-    keep_newest(&mut card.evidence, &finding.evidence, MAX_CARD_EVIDENCE);
-    keep_newest(&mut card.diagnostics, &[diagnostic], MAX_CARD_DIAGNOSTICS);
+    add_ids(&mut card.evidence, &finding.evidence);
+    add_ids(&mut card.diagnostics, &[diagnostic]);
     card.attempt = finding.attempt.and_then(entity).or(card.attempt);
     card.window_from = card.window_from.min(finding.window.0);
     card.window_to = card.window_to.max(finding.window.1);

@@ -101,11 +101,23 @@ pub enum EngineLimit {
     /// it. An image whose header declares a raster past it asks whether
     /// everything is okay, and is decoded whole.
     SignatureDecodeBytes,
+    /// Items one Dreamer-maintenance or Coach row holds: an owner policy's
+    /// rules, aliases, groups, voices or evidence refs, a diagnostic's or
+    /// card's evidence refs, a training offer's losses or refs. Past it the
+    /// row is kept whole.
+    MaintenanceRowItems,
+    /// Bytes of one text field a Dreamer-maintenance or Coach row holds (a
+    /// template, a rule's instruction, a route, a draft, an offer's note).
+    /// Past it the text is kept whole.
+    MaintenanceTextBytes,
+    /// Rows one Dreamer-maintenance or Coach pass reads to find its work
+    /// (receipts, calls, runs). Past it the pass reads them all.
+    MaintenanceScanRows,
 }
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 25] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -128,6 +140,9 @@ impl EngineLimit {
         Self::ImportDecodedMessages,
         Self::ImportDecodedBytes,
         Self::SignatureDecodeBytes,
+        Self::MaintenanceRowItems,
+        Self::MaintenanceTextBytes,
+        Self::MaintenanceScanRows,
     ];
 
     /// The config key that sets the row.
@@ -155,6 +170,9 @@ impl EngineLimit {
             Self::ImportDecodedMessages => "limits.import_decoded_messages",
             Self::ImportDecodedBytes => "limits.import_decoded_bytes",
             Self::SignatureDecodeBytes => "limits.signature_decode_bytes",
+            Self::MaintenanceRowItems => "limits.maintenance_row_items",
+            Self::MaintenanceTextBytes => "limits.maintenance_text_bytes",
+            Self::MaintenanceScanRows => "limits.maintenance_scan_rows",
         }
     }
 
@@ -184,6 +202,9 @@ impl EngineLimit {
             Self::ImportDecodedMessages => 1_000_000,
             Self::ImportDecodedBytes => 1 << 30,
             Self::SignatureDecodeBytes => 1 << 30,
+            Self::MaintenanceRowItems => 256,
+            Self::MaintenanceTextBytes => 65_536,
+            Self::MaintenanceScanRows => 50_000,
         }
     }
 }
