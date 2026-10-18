@@ -15,8 +15,8 @@ use crate::skill_optimize::FamilyPurpose;
 
 use super::custody::keep_bytes;
 use super::{
-    ComputeChoice, ComputePin, CorpusSplit, RUNS, SplitRow, SplitSide, TrainingPackDraft,
-    TrainingRun, TrainingState, hash_json, invalid,
+    ComputeChoice, ComputePin, CorpusSplit, RUNS, SplitRow, SplitSide, TrainingOwner,
+    TrainingPackDraft, TrainingRun, TrainingState, hash_json, invalid,
 };
 
 struct SplitBytes {
@@ -168,7 +168,7 @@ impl Vault {
             };
             let run = TrainingRun {
                 id,
-                owner: actor,
+                owner: TrainingOwner::Actor(actor),
                 created_at: self.store.clock.now_recorded_at(),
                 spec_blake3: hash_json(&(&draft.plan, &compute, &corpus))?,
                 plan: draft.plan.clone(),
