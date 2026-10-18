@@ -12198,7 +12198,7 @@
      "path": "src/code_run/dispatcher/host_doors.rs",
      "purpose": "Typed coordination calls whose credential admission and verb hooks are owned by the host's verb-table door",
      "surface": {
-      "fn": 7
+      "fn": 8
      }
     },
     {
@@ -12603,6 +12603,8 @@
       "MemoryTimeRange",
       "MemoryWriteOutput",
       "ReaderSpawnInput",
+      "ReportBlockedInput",
+      "ReportBlockedOutput",
       "SkillCallInput",
       "SpawnCare",
       "SpawnKnob",
@@ -12618,10 +12620,10 @@
      "purpose": "The inputs and outputs of the verb-table rows a code run answers itself (`context: \"run\"` in…",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 7,
       "fn": 1,
-      "struct": 22
+      "struct": 24
      }
     },
     {
@@ -32198,6 +32200,26 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "BlockedReportView",
+      "CoachInspectRequest",
+      "CoachInspectionView",
+      "CoachProposalView",
+      "CoachWorkingSetView",
+      "DiagnosticEventView",
+      "DiagnosticsGetRequest",
+      "DiagnosticsListRequest"
+     ],
+     "path": "src/memory/diagnostics.rs",
+     "purpose": "Typed diagnostic reads and scoped Coach repair inspection (OPERATIONS-01)",
+     "surface": {
+      "fn": 3,
+      "struct": 8
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -32575,7 +32597,7 @@
      "surface": {
       "crate-vis": 15,
       "mod": 14,
-      "re-export": 46
+      "re-export": 47
      }
     },
     {
@@ -42872,7 +42894,7 @@
      "path": "src/self_heal/blocked_reports.rs",
      "purpose": "Blocked reports into the Coach's Issues job (ARCH-0066 #report_blocked, OF-418)",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 13,
       "fn": 1
      }
     },
@@ -51698,7 +51720,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 784
+      "fn": 788
      }
     },
     {
@@ -58432,7 +58454,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 186,
+     "files": 187,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59113,7 +59135,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3608,
+   "source_files": 3609,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67645,7 +67667,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 753
+      "fn": 757
      }
     },
     {
@@ -68694,7 +68716,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 754
+      "fn": 758
      }
     },
     {
@@ -72137,7 +72159,7 @@
      "path": "src/api/facade/live_run_doors.rs",
      "purpose": "Public coordination doors over the caller's own live-run attachment",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -80695,6 +80717,8 @@
       "Birth",
       "BlindCampaignJudgeInput",
       "BlockChange",
+      "BlockedCategory",
+      "BlockedReportView",
       "BodyBlockKind",
       "BodyCell",
       "BodyConflict",
@@ -80908,6 +80932,10 @@
       "CleanupPosture",
       "CleanupRunView",
       "ClickInput",
+      "CoachInspectRequest",
+      "CoachInspectionView",
+      "CoachProposalView",
+      "CoachWorkingSetView",
       "CodeBlameView",
       "CodeChangeView",
       "CodeConflictHistory",
@@ -81229,6 +81257,9 @@
       "DerivationEnvelopeView",
       "DerivationKind",
       "DeterministicFallback",
+      "DiagnosticEventView",
+      "DiagnosticsGetRequest",
+      "DiagnosticsListRequest",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
       "DiaryQueryEntry",
@@ -81697,6 +81728,7 @@
       "LiveRunRequestOpenInput",
       "LiveRunRequestPointInput",
       "LiveRunRequestProposeInput",
+      "LiveRunRequestReportBlockedInput",
       "LiveRunRequestScreenshotInput",
       "LiveRunRequestSecretGrantMintRequest",
       "LiveRunRequestSecretGrantRenewRequest",
@@ -82240,6 +82272,8 @@
       "RepoProposalDecision",
       "RepoProposalSettlement",
       "RepoProposalStatus",
+      "ReportBlockedInput",
+      "ReportBlockedOutput",
       "ReportDisclosure",
       "ReportDisclosureChoice",
       "ReportDisclosureRequest",
@@ -82473,11 +82507,14 @@
       "ScopedReadResultCalendarEventViewList",
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
+      "ScopedReadResultCoachInspectionView",
       "ScopedReadResultConsolidationEvidenceSourceList",
+      "ScopedReadResultDiagnosticEventViewList",
       "ScopedReadResultHybridSearchHitList",
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalClaimView",
+      "ScopedReadResultOptionalDiagnosticEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
       "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
@@ -83119,8 +83156,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 649,
-      "struct": 1967
+      "enum": 650,
+      "struct": 1981
      }
     },
     {
