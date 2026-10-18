@@ -233,3 +233,20 @@ impl Vault {
         read_chunk(self, chunk).map(Some)
     }
 }
+
+/// OF-222 (FIX 2768) archive seam: the LFS tables a whole-vault archive carries beside a
+/// published object (chunk marks, both chunk-ownership directions, the object and manifest
+/// rows, git ref attachments, tombstones and the boundary seed), lent with their own key
+/// types and codec. The upload journal and GC queue are in-flight work and never lent.
+pub(crate) fn archive_lfs_tables() -> [crate::batch::export::LentSideTable; 8] {
+    [
+        &CHUNK_MARKS,
+        &OWNER_REFS,
+        &CHUNK_REFS,
+        &super::store::OBJECTS,
+        &super::lifecycle::REVERSE,
+        &super::store::REFS,
+        &super::lifecycle::DELETED,
+        &CDC_SEED,
+    ]
+}

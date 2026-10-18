@@ -10,9 +10,10 @@ use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE
 use crate::serialize::{ExportBody, ExportValue};
 
 impl WholeVaultDocument {
-    /// `files` are the archive's attached files, each already checked against
-    /// its name: an ASSET's file body is validated against them (OF-222).
-    pub(super) fn validate(&self, vault: &Vault, files: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    /// `files` are the archive's attached files, read one at a time and
+    /// checked against their names: an ASSET's file body is validated against
+    /// them (OF-222).
+    pub(super) fn validate(&self, vault: &Vault, files: &dyn super::ArchiveFiles) -> Result<()> {
         self.manifest.validate()?;
         for floor in &self.epoch_floors {
             parse_id(&floor.session)?;
@@ -38,6 +39,13 @@ impl WholeVaultDocument {
             }
             row.body.validate_in(row.entity_type, files)?;
         }
+        // FIX 2768: each side row reads back through its own table and names
+        // only records and carriers this document holds.
+        super::archive_side_tables::validate_side_rows(
+            &self.side_tables,
+            &ids,
+            &mut |file: &crate::serialize::ExportBodyFile| file.read(files),
+        )?;
         if self
             .claims
             .iter()

@@ -98,33 +98,17 @@ pub(super) fn read_capped<B: Read>(body: B, limit: usize) -> Result<Vec<u8>, Rea
     Ok(buffer)
 }
 
-/// Decodes an export straight from the wire, reading at most `limit` bytes.
+/// Decodes an export straight from the wire.
 ///
 /// An export is one document that may pass the ordinary success ceiling, so
-/// it streams into its typed result with no second whole-body buffer. It is
-/// still finite: a `Content-Length` over `limit` is refused before the body
-/// is read, and the body goes through `take(limit + 1)`, so a peer that keeps
-/// sending is cut off one byte past the limit whatever its header said.
+/// it streams into its typed result with no second whole-body buffer. No
+/// code-only ceiling caps it (rule 5): the export-specific total timeout
+/// still refuses a stalled peer.
 pub(super) fn read_export<R: DeserializeOwned, B: Read>(
     body: B,
-    content_length: Option<u64>,
     status: reqwest::StatusCode,
-    limit: usize,
 ) -> Result<R, MemoryError> {
-    let too_large = || {
-        transport_error(format!(
-            "the server's export exceeded the {limit}-byte read ceiling"
-        ))
-    };
-    if content_length.is_some_and(|length| length > limit as u64) {
-        return Err(too_large());
-    }
-    let mut reader = body.take(limit as u64 + 1);
-    let decoded = serde_json::from_reader(&mut reader);
-    if reader.limit() == 0 {
-        return Err(too_large());
-    }
-    decoded.map_err(|error| {
+    serde_json::from_reader(body).map_err(|error| {
         transport_error(format!(
             "the server answered {status} for export with an incomplete or invalid export: {error}"
         ))

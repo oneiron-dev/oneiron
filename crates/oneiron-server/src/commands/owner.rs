@@ -7,7 +7,7 @@
 //! door the embedded export uses; a running `serve` answers the same actions
 //! at `/v1/owner/*`. Output is JSON on stdout.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::Path;
 
 use oneiron::claim::CallerLocality;
@@ -482,7 +482,7 @@ pub fn whoami(args: WhoamiArgs) -> anyhow::Result<()> {
 struct Exported<'a> {
     file: &'a Path,
     format: String,
-    bytes: usize,
+    bytes: u64,
 }
 
 pub fn export(args: ExportArgs) -> anyhow::Result<()> {
@@ -498,28 +498,44 @@ pub fn export(args: ExportArgs) -> anyhow::Result<()> {
     memory
         .admit_export(None)
         .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
-    let export = oneiron::task_verb::verb_hook_boundary::typed_row(
-        &memory,
-        "vault.export",
-        oneiron::memory::ExportOptions {
-            format: Some(args.format),
-            include_secrets: Some(args.include_secrets),
-        },
-        |input| memory.export(&input),
-    )
-    .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+    let options = oneiron::memory::ExportOptions {
+        format: Some(args.format),
+        include_secrets: Some(args.include_secrets),
+    };
+    // The archive is written to a file as it is built (FIX 2766), never held
+    // whole: to `--out`, or to a spool under the vault's own staging
+    // directory that is then copied to stdout. The verb hooks see the
+    // export's receipt, not its bytes.
+    let run = |file: &mut std::fs::File| {
+        oneiron::task_verb::verb_hook_boundary::typed_row(
+            &memory,
+            "vault.export",
+            options.clone(),
+            |input| memory.export_to(&input, &mut *file),
+        )
+    };
     let Some(out) = args.out else {
-        io::stdout().lock().write_all(&export.archive)?;
+        let mut spool = vault
+            .archive_spool_file()
+            .map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+        run(&mut spool).map_err(|error| anyhow::anyhow!("export failed: {error}"))?;
+        spool.seek(io::SeekFrom::Start(0))?;
+        io::copy(&mut spool, &mut io::stdout().lock())?;
         return Ok(());
     };
+    let mut exported = None;
     write_new_file(&out, |file| {
-        file.write_all(&export.archive)?;
-        file.sync_all()
+        let receipt =
+            run(file).map_err(|error| io::Error::other(format!("export failed: {error}")))?;
+        file.sync_all()?;
+        exported = Some(receipt);
+        Ok(())
     })?;
+    let exported = exported.ok_or_else(|| anyhow::anyhow!("export failed: no receipt"))?;
     emit(&Exported {
         file: &out,
-        format: export.format,
-        bytes: export.archive.len(),
+        format: exported.format,
+        bytes: exported.bytes,
     })
 }
 
@@ -846,12 +862,14 @@ const EMBEDDING_SETUP_IMPORTED: &str = "setup imported; vectors pending recomput
 
 /// Re-imports a whole-vault archive through the vault's import doors.
 fn import_archive(args: crate::cli::ImportArchiveArgs) -> anyhow::Result<()> {
-    let bytes = std::fs::read(&args.path)
+    // The archive is read member by member from its file (FIX 2766), never
+    // whole.
+    let file = std::fs::File::open(&args.path)
         .map_err(|error| anyhow::anyhow!("read {}: {error}", args.path.display()))?;
     let config = resolve_serve_config(&args.serve)?;
     let vault = open_stopped_vault(&config, "stop `serve` to import an archive")?;
     let receipt = vault
-        .import_whole_vault_archive(&bytes)
+        .import_whole_vault_archive_from(io::BufReader::new(file))
         .map_err(|error| anyhow::anyhow!("archive import failed: {error}"))?;
     let setup = receipt.embedding_setup;
     let status = setup

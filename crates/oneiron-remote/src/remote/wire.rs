@@ -36,8 +36,6 @@ pub(super) enum Wire {
 pub(super) struct Reply {
     pub(super) status: StatusCode,
     pub(super) headers: HeaderMap,
-    /// What the reply announced; the readers still cap what they read.
-    pub(super) content_length: Option<u64>,
     pub(super) body: Box<dyn Read>,
 }
 
@@ -70,7 +68,6 @@ impl RemoteClient {
                 Ok(Reply {
                     status: response.status(),
                     headers: response.headers().clone(),
-                    content_length: response.content_length(),
                     body: Box::new(response),
                 })
             }
@@ -130,7 +127,6 @@ fn exchange_in_process(
     Ok(Reply {
         status,
         headers,
-        content_length: u64::try_from(body.len()).ok(),
         body: Box::new(Cursor::new(body)),
     })
 }

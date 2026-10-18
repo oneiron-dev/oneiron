@@ -838,3 +838,10 @@ pub(crate) fn blob_artifact_asset_entity_id(
 ) -> Result<EntityId> {
     entity_id_from_hash_material(BLOB_ARTIFACT_ASSET_ID_DOMAIN, &[content_hash])
 }
+
+/// OF-222 (FIX 2768) archive seam: the version chain tables a whole-vault archive carries
+/// beside the artifact (versions, head, highwater and the asset refcount markers), lent to
+/// the archive's side-row reader and restorer with their own key types and codec.
+pub(crate) fn archive_version_tables() -> [crate::batch::export::LentSideTable; 4] {
+    [&VERSIONS, &HEAD, &HIGHWATER, &super::store_keys::ASSET_REF]
+}

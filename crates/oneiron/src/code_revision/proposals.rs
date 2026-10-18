@@ -213,3 +213,9 @@ fn verify(store: &Store, txn: &RoTxn<'_>, proposal: &CodeRevisionProposal) -> Re
     }
     Ok(())
 }
+
+/// OF-222 (FIX 2768) archive seam: the stranded proposals a whole-vault archive carries beside
+/// each revision, lent with their own key type and codec.
+pub(crate) fn archive_proposal_table() -> crate::batch::export::LentSideTable {
+    &PROPOSALS
+}

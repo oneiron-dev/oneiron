@@ -78,6 +78,15 @@ pub(super) fn null_document_credentials(value: &Value) -> Value {
     null_at_depth("", value, 0, true)
 }
 
+/// One member of the whole-vault document as [`null_document_credentials`]
+/// reads it in place: `key` is its field name (empty for an array item) and
+/// `depth` its depth from the document root. A section's rows are objects, so
+/// the section's own array readings never change one: a row read alone at its
+/// depth is the row the whole pass leaves.
+pub(super) fn null_document_member(key: &str, value: &Value, depth: usize) -> Value {
+    null_at_depth(key, value, depth, true)
+}
+
 fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Value {
     if depth >= 128 || credential_key(key) {
         return Value::Null;

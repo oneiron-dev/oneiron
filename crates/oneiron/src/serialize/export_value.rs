@@ -5,7 +5,6 @@
 //! A stored file is no tree: the whole-vault archive carries its bytes beside the
 //! document as they are stored (OF-222), and the tree names them ([`ExportBodyFile`]).
 use std::borrow::Cow;
-use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use rmpv::Value as Mp;
@@ -13,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::credential_nulling::{credential_key, null_credentials, reference_carries_credential};
+use crate::batch::export::ArchiveFiles;
 use crate::batch::secret_scan::{
     decode_members, nested_past_decoder, release_joined_messagepack, release_joined_strings,
     release_reads_whole, scan_file_content, scan_undecoded_body,
@@ -93,11 +93,15 @@ impl ExportBodyFile {
         &self.blake3
     }
 
-    /// The archive file this names, at this length. The reader has already
-    /// checked each file against its name, so the bytes are the ones hashed.
-    pub(crate) fn resolve<'a>(&self, files: &'a BTreeMap<String, Vec<u8>>) -> Result<&'a [u8]> {
-        match files.get(&self.blake3) {
-            Some(bytes) if bytes.len() as u64 == self.bytes => Ok(bytes.as_slice()),
+    pub(crate) fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// The archive file this names, at this length, read from the archive
+    /// when it is needed (FIX 2766), checked against its name as it is read.
+    pub(crate) fn read(&self, files: &dyn ArchiveFiles) -> Result<Vec<u8>> {
+        match files.file_len(&self.blake3) {
+            Some(bytes) if bytes == self.bytes => files.read_file(&self.blake3),
             Some(_) => Err(invalid("file body length disagrees with its archive file")),
             None => Err(invalid("file body names no archive file")),
         }
@@ -200,10 +204,10 @@ impl ExportBody {
         }
     }
 
-    /// The stored bytes, a file body's from the archive's verified files.
-    pub(crate) fn to_bytes_in(&self, files: &BTreeMap<String, Vec<u8>>) -> Result<Vec<u8>> {
+    /// The stored bytes, a file body's read from the archive's files.
+    pub(crate) fn to_bytes_in(&self, files: &dyn ArchiveFiles) -> Result<Vec<u8>> {
         match self {
-            Self::File(file) => file.resolve(files).map(<[u8]>::to_vec),
+            Self::File(file) => file.read(files),
             body => body.to_bytes(),
         }
     }
@@ -239,18 +243,14 @@ impl ExportBody {
     /// body is an ASSET's, names one of them at its length, and holds bytes
     /// the serializer attaches ([`attaches_as_file`]), so no owning adapter's
     /// body or text passes as a file.
-    pub(crate) fn validate_in(
-        &self,
-        entity_type: u8,
-        files: &BTreeMap<String, Vec<u8>>,
-    ) -> Result<()> {
+    pub(crate) fn validate_in(&self, entity_type: u8, files: &dyn ArchiveFiles) -> Result<()> {
         let Self::File(file) = self else {
             return self.validate(entity_type);
         };
         if entity_type != crate::registry::ENTITY_TYPE_ASSET {
             return Err(invalid("file body attached to non-asset kind"));
         }
-        if !attaches_as_file(entity_type, file.resolve(files)?) {
+        if !attaches_as_file(entity_type, &file.read(files)?) {
             return Err(invalid("file body is not one the serializer attaches"));
         }
         Ok(())

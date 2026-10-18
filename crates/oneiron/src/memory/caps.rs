@@ -63,13 +63,6 @@ pub const MAX_REMOTE_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum remote SUCCESS body read, in bytes: 64 MiB.
 pub const MAX_REMOTE_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 
-/// Maximum remote EXPORT body read, in bytes: 2 GiB.
-///
-/// A full-vault export is one document and may pass the ordinary success
-/// ceiling, so it has its own; it is still finite, and the client stops
-/// reading one byte past it.
-pub const MAX_REMOTE_EXPORT_BYTES: usize = 2 * 1024 * 1024 * 1024;
-
 /// A ranked retrieval's row count served at [`MAX_SEARCH_LIMIT`]: the
 /// effective limit, and whether the caller's was lowered to it. An
 /// over-large limit is served and says so, never refused (rule 5).
