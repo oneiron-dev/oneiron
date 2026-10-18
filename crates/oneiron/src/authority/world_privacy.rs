@@ -575,9 +575,10 @@ pub(super) fn main_log_heads(
     (main, foreign)
 }
 
-/// The live world edits and grant travel choices `machine` signed: what a
-/// new profile revision lists as seen, capped at the codec's limit (an
-/// unlisted edit or choice only counts stricter).
+/// The live world edits, grant travel choices and machine answers
+/// `machine` carried: what a new profile revision lists as seen, capped at
+/// the codec's limit (an unlisted act only counts stricter once a removal
+/// races it).
 pub(super) fn live_edits_by(
     fold: &AuthorityFold,
     machine: EntityId,
@@ -588,6 +589,7 @@ pub(super) fn live_edits_by(
         .filter(|(_, signer)| **signer == machine)
         .map(|(hash, _)| *hash)
         .chain(super::grant_travel::live_choices_by(fold, machine))
+        .chain(super::machine_profile::live_answers_by(fold, machine))
         .take(MACHINE_SEEN_WORLD_EDITS_MAX)
         .collect()
 }
