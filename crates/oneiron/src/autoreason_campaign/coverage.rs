@@ -99,8 +99,6 @@ impl CoverageFloorComparison {
         before: CoverageReplay,
         after: CoverageReplay,
     ) -> CampaignResult<Self> {
-        check_floor(goal)?;
-        archive.pin().check_goal(goal)?;
         if before.skill != after.skill
             || before.skill_id != after.skill_id
             || before.held_out_receipts != after.held_out_receipts
@@ -110,14 +108,8 @@ impl CoverageFloorComparison {
                 "arms must replay the same skill and held-out cases",
             );
         }
-        let before_cells = archive.coverage(&before.outputs)?;
-        let after_cells = archive.coverage(&after.outputs)?;
-        if before_cells.is_empty() {
-            return invalid(
-                "coverage floor",
-                "incumbent coverage is unknown without outputs",
-            );
-        }
+        let (before_cells, after_cells) =
+            project_output_coverage(goal, archive, &before.outputs, &after.outputs)?;
         if before.version == after.version
             && before.instructions_digest == after.instructions_digest
             && before_cells != after_cells
@@ -269,6 +261,27 @@ impl HeldOutReplayNotes for CoverageFloorScorer<'_> {
         }
         Ok(axes)
     }
+}
+
+/// Project replay arms through one goal-pinned output archive. Both the skill
+/// gate and campaign promotion use this floor; a scalar cannot replace it.
+pub(crate) fn project_output_coverage(
+    goal: &GoalRecord,
+    archive: &OutputArchive,
+    before: &[ArchiveOutputRef],
+    after: &[ArchiveOutputRef],
+) -> CampaignResult<(BTreeSet<ArchiveCell>, BTreeSet<ArchiveCell>)> {
+    check_floor(goal)?;
+    archive.pin().check_goal(goal)?;
+    let before_cells = archive.coverage(before)?;
+    let after_cells = archive.coverage(after)?;
+    if before_cells.is_empty() {
+        return invalid(
+            "coverage floor",
+            "incumbent coverage is unknown without outputs",
+        );
+    }
+    Ok((before_cells, after_cells))
 }
 
 fn instructions_digest(instructions: &str) -> String {

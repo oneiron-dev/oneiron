@@ -69,6 +69,8 @@ pub use estimator::{
     BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,
     SelectionBenchmark, SelectionRanking, record_selection_benchmark, selection_benchmark,
 };
+pub(crate) use promotion::{promotion_basis_in_txn, research_incumbent_in_txn};
+
 pub use promotion::{
     CampaignPromotionReceipt, ConfirmationOutcome, ConfirmationReceipt, HeldOutCall,
     PromotionBasis, PromotionDisposition, promote_measured, promotion_basis, research_incumbent,
@@ -503,8 +505,17 @@ fn check_ruler(config: &CampaignConfig, goal: &[GoalAxisSpec]) -> Result<()> {
 
 /// The goal a skill campaign was bound under must still be the goal in force.
 pub(super) fn check_goal_current(vault: &Vault, binding: &ResearchBinding) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    check_goal_current_in_txn(vault, &txn, binding)
+}
+
+pub(super) fn check_goal_current_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    binding: &ResearchBinding,
+) -> Result<()> {
     if let (ResearchTarget::Skill { skill }, Some(pin)) = (&binding.target, &binding.goal) {
-        let goal = skill_edit_goal(vault, skill)?;
+        let goal = crate::skill_optimize::skill_edit_goal_in_txn(vault, txn, skill)?;
         if goal.goal_id != pin.goal_id || goal.revision != pin.revision {
             return Err(invalid(
                 "the skill's goal moved since the campaign was bound; bind a new campaign",
@@ -630,6 +641,23 @@ pub fn research_binding(vault: &Vault, root: AttemptId) -> Result<Option<Researc
 
 pub(super) fn binding(vault: &Vault, root: AttemptId) -> Result<ResearchBinding> {
     research_binding(vault, root)?.ok_or(invalid("no campaign is bound to this root"))
+}
+
+pub(crate) fn has_binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+) -> Result<bool> {
+    BINDING.contains(&vault.store, txn, root.as_bytes())
+}
+
+pub(crate) fn binding_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+) -> Result<ResearchBinding> {
+    BINDING.get(&vault.store, txn, root.as_bytes())?
+        .ok_or(invalid("no campaign is bound to this root"))
 }
 
 pub(super) fn nodes_in_txn(

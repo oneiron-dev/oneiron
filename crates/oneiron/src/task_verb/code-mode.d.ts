@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 692 code-mode rows (671 host rows, 21 run rows), 2450 declarations.
-// Replies: 613 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 698 code-mode rows (677 host rows, 21 run rows), 2464 declarations.
+// Replies: 619 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -946,6 +946,20 @@ declare namespace Sdk {
   type CampaignPromotionReceipt = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; parents: AttemptId[]; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; cohort: EntityId; exposures: EntityId[]; sufficiency: SufficiencyCard; sealed_won: boolean; sealed_digest: string; referee_pin: string; skill_proposal?: EntityId | null; disposition: PromotionDisposition; budget: ResearchBudgetRead; at: number };
   type PromotionBasis = { root: AttemptId; candidate: AttemptId; incumbent: AttemptId; candidate_pin: CandidateRef; incumbent_pin: CandidateRef; config_sha256: string; goal?: ResearchGoalPin | null; policy_digest: string; archive?: CampaignArchivePin | null; archive_version?: string | null; incumbent_held_out: Measurement; candidate_held_out: Measurement; call: HeldOutCall; merge_crossover_enabled: boolean; decided_at: number; confirmation?: ConfirmationReceipt | null; promotion?: CampaignPromotionReceipt | null };
   type ResearchArchive = { binding: ResearchBinding; experiments: ExperimentNode[]; rounds: SelectionReceipt[]; promotions: PromotionBasis[]; incumbent: EntityId };
+  type ArchiveAxesProposal = { receipt: EntityId; descriptor: ArchiveDescriptor };
+  type CampaignArchiveInstall = { root: EntityId; task: EntityId; project: EntityId; goal_ref: EntityId; quality_metric: ArchiveQualityMetric; sample_outputs: ArchiveOutputRef[]; proposal: ArchiveAxesProposal };
+  type ArchiveCell = { kind: "axes"; bins: string[] } | { kind: "cluster"; index: number };
+  type CampaignArchiveBest = { cell: ArchiveCell; output: ArchiveOutputRef; score: number; placement_receipt: EntityId; scoring_receipt: EntityId };
+  type CampaignArchiveView = { descriptor_revision: string; pin: CampaignArchivePin; best: CampaignArchiveBest[]; needs_axes_reproposal: boolean };
+  type ArchiveCellJudgment = { receipt: EntityId; pin_version: string; output: ArchiveOutputRef; cell: ArchiveCell };
+  type CampaignArchivePlacement = { kind: "judgment"; judgment: ArchiveCellJudgment } | { kind: "embedding"; output: ArchiveOutputRef; receipt: EntityId; model_revision: string; embedding: number[] };
+  type ArchiveOutputScore = { receipt: EntityId; pin_version: string; output: ArchiveOutputRef; quality: number };
+  type CampaignArchiveOutput = { root: EntityId; descriptor_revision: string; placement: CampaignArchivePlacement; score: ArchiveOutputScore };
+  type CampaignArchiveRequest = { root: EntityId };
+  type CampaignArchiveRecord = { project: EntityId; pin: CampaignArchivePin; placements: ArchiveCellJudgment[]; scores: ArchiveOutputScore[] };
+  type CampaignArchiveReproposal = { root: EntityId; new_root: EntityId; proposal: ArchiveAxesProposal };
+  type CampaignArchiveCoverage = { root: EntityId; candidate: EntityId; incumbent: EntityId; descriptor_revision: string; incumbent_outputs: ArchiveOutputRef[]; candidate_outputs: ArchiveOutputRef[] };
+  type CampaignArchiveAdmission = { descriptor_revision: string; candidate: EntityId; required_cells: ArchiveCell[]; covered_cells: ArchiveCell[]; admitted: boolean };
   type EvalInventoryWire = { at?: number | null };
   type FamilyPurpose = "development" | "judge_audit" | "sealed_confirmation";
   type EvalSourceGroup = { id: string; seat: EvalSeat; candidates: number; labelled: number; roots: number; fresh_roots: number; family?: EntityId | null; purpose?: FamilyPurpose | null; blocked?: string | null };
@@ -3735,7 +3749,20 @@ declare const vault: Sdk.VaultHost & {
   remember(input: Sdk.ClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
   research: {
     /** Reads the complete retained campaign record, including every pruned, buggy and woven candidate, original search and held-out evidence, selection rounds and promotion receipts, under the controller gate. */
-    archive(input: Sdk.ResearchArchiveWire): Promise<Sdk.ResearchArchive | StoredResult>;
+    archive: ((input: Sdk.ResearchArchiveWire) => Promise<Sdk.ResearchArchive | StoredResult>) & {
+      /** Rebuilds one best output per cell under the immutable descriptor revision and reports whether bunching warrants a new campaign proposal. */
+      best(input: Sdk.CampaignArchiveRequest): Promise<Sdk.CampaignArchiveView | StoredResult>;
+      /** Pins the incumbent and candidate replay output refs and projects the human goal coverage floor; promotion rechecks these receipts and rejects any lost incumbent cell. */
+      coverage(input: Sdk.CampaignArchiveCoverage): Promise<Sdk.CampaignArchiveAdmission | StoredResult>;
+      /** Reads the installed campaign output descriptor and every original placement and scoring receipt, including losing outputs, under the research controller gate. */
+      get(input: Sdk.CampaignArchiveRequest): Promise<Sdk.CampaignArchiveRecord | StoredResult>;
+      /** Installs one immutable campaign output descriptor from a receipted Coach proposal under the current human goal; categorical axes and embedding clusters share the engine validator. */
+      install(input: Sdk.CampaignArchiveInstall): Promise<Sdk.CampaignArchiveView | StoredResult>;
+      /** Records original placement and quality receipts for one output revision; categorical judgment or pinned embedding placement competes only within its own cell. */
+      record(input: Sdk.CampaignArchiveOutput): Promise<Sdk.CampaignArchiveView | StoredResult>;
+      /** Installs a receipted descriptor proposal in a new bound campaign when the old archive is bunched; the old descriptor, goal and cell winners remain unchanged. */
+      repropose(input: Sdk.CampaignArchiveReproposal): Promise<Sdk.CampaignArchiveView | StoredResult>;
+    };
     /** Binds an autoresearch campaign to its existing root attempt: its ruler, selection policy, cohort, budget share and prior ladder, once. The owner or the agent running that root calls it. */
     bind(input: Sdk.ResearchBindWire): Promise<Sdk.ResearchBinding | StoredResult>;
     /** The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave. */

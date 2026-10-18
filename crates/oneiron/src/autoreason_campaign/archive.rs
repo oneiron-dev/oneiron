@@ -11,6 +11,13 @@ use crate::workspace_roster::GoalRecord;
 use super::{CampaignError, CampaignResult};
 
 mod axes;
+pub(crate) mod records;
+pub use records::{
+    CampaignArchiveAdmission, CampaignArchiveBest, CampaignArchiveCoverage,
+    CampaignArchiveInstall, CampaignArchiveOutput, CampaignArchivePlacement,
+    CampaignArchiveRecord, CampaignArchiveReproposal, CampaignArchiveRequest,
+    CampaignArchiveView,
+};
 pub use axes::{
     ArchiveAxesProposal, ArchiveAxesRequest, ArchiveAxis, ArchiveDescriptor,
     CoachArchiveAxesRecipe, propose_campaign_archive,
@@ -18,7 +25,7 @@ pub use axes::{
 
 /// A specific output revision. References must resolve to immutable content,
 /// not a mutable entity's current body.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveOutputRef {
     pub entity: EntityId,
@@ -33,7 +40,7 @@ impl ArchiveOutputRef {
 
 /// Coordinates use the axis order in the pinned definition. Cluster cells are
 /// deliberately unnamed and cannot mix with categorical cells.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ArchiveCell {
     Axes { bins: Vec<String> },
@@ -41,7 +48,7 @@ pub enum ArchiveCell {
 }
 
 /// The scoring definition shared by every output in this campaign.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveQualityMetric {
     pub metric_id: String,
@@ -50,7 +57,7 @@ pub struct ArchiveQualityMetric {
 
 /// Immutable campaign descriptor. Its content hash binds every receipt to the
 /// task, human goal revision, quality ruler, proposal and sample outputs.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CampaignArchivePin {
     campaign_id: String,
@@ -189,7 +196,7 @@ impl CampaignArchivePin {
 }
 
 /// A typed, receipted judgment, not free text from which a cell is guessed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveCellJudgment {
     pub receipt: EntityId,
@@ -209,7 +216,7 @@ pub trait ArchiveCellJudge {
 /// A score on the pin's quality metric, normalized with higher always better.
 /// The receipt remains the source of truth; the archive never writes a twin
 /// score into `learning.*` or changes an outcome's original judgment.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ArchiveOutputScore {
     pub receipt: EntityId,

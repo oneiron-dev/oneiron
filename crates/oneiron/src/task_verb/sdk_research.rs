@@ -229,7 +229,7 @@ pub struct ResearchBenchmarkWire {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Caller {
+pub(super) enum Caller {
     Owner,
     Controller,
 }
@@ -238,36 +238,33 @@ enum Caller {
 /// version-wide benchmark): the vault owner, or the agent whose live leased
 /// try is that root.
 fn controller(memory: &Memory<'_>, root: Option<AttemptId>) -> MemoryResult<Caller> {
+    let txn = memory.vault().store.env.read_txn().map_err(crate::Error::from)?;
+    controller_in_txn(memory, &txn, root)
+}
+
+pub(super) fn controller_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    root: Option<AttemptId>,
+) -> MemoryResult<Caller> {
     let vault = memory.vault();
-    {
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(crate::error::Error::from)?;
-        if crate::memory::actor_is_vault_owner_in_txn(
-            vault,
-            &txn,
-            memory.actor(),
-            memory.actor_class(),
-        )? {
-            return Ok(Caller::Owner);
-        }
+    if crate::memory::actor_is_vault_owner_in_txn(
+        vault, txn, memory.actor(), memory.actor_class(),
+    )? {
+        return Ok(Caller::Owner);
     }
-    let refused = || {
-        forbidden(
-            "only the campaign's controller drives its record: the owner, or the agent running its root attempt",
-            "Call from the campaign's root try, or as the owner.",
-        )
-    };
+    let refused = || forbidden(
+        "only the campaign's controller drives its record: the owner, or the agent running its root attempt",
+        "Call from the campaign's root try, or as the owner.",
+    );
     let binding = memory.task_host().ok_or_else(refused)?;
     let attempt = binding.parent();
     let admitted = match root {
         Some(root) => attempt == root,
-        None => research::research_binding(vault, attempt)?.is_some(),
+        None => research::has_binding_in_txn(vault, txn, attempt)?,
     };
     let live = AttemptQueue::new(vault)
-        .get(attempt)?
+        .get_in_txn(txn, attempt)?
         .is_some_and(|record| {
             record.state.is_running()
                 && record.lease_owner.as_deref() == Some(binding.lease_owner())
@@ -466,14 +463,12 @@ pub fn research_promotion_basis(
     input: ResearchBasisWire,
 ) -> MemoryResult<PromotionBasis> {
     let root = attempt(input.root)?;
-    controller(memory, Some(root))?;
-    Ok(research::promotion_basis(
-        memory.vault(),
-        root,
-        attempt(input.candidate)?,
-        input.archive,
-        now(memory),
-    )?)
+    memory.vault().try_with_write_txn_grouped(|txn| {
+        controller_in_txn(memory, txn, Some(root))?;
+        Ok(research::promotion_basis_in_txn(
+            memory.vault(), txn, root, attempt(input.candidate)?, input.archive, now(memory),
+        )?)
+    })
 }
 
 /// `vault.research.reserve_confirmation`: the released cohort goes to the

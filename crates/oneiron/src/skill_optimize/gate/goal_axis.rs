@@ -237,7 +237,15 @@ pub(super) fn goal_definition_in_txn(
 /// conflicting axes, or storage errors.
 pub fn skill_edit_goal(vault: &Vault, skill: &EntityId) -> Result<SkillEditGoal> {
     let txn = vault.store.env.read_txn()?;
-    let definition = goal_definition_in_txn(vault, &txn, skill)?;
+    skill_edit_goal_in_txn(vault, &txn, skill)
+}
+
+pub(crate) fn skill_edit_goal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<SkillEditGoal> {
+    let definition = goal_definition_in_txn(vault, txn, skill)?;
     Ok(SkillEditGoal {
         goal_id: definition.goal_id,
         revision: definition.revision,

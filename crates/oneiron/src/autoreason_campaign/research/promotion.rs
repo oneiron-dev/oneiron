@@ -131,8 +131,16 @@ fn consumer(root: AttemptId) -> String {
 
 fn bases(vault: &Vault, root: AttemptId) -> Result<Vec<PromotionBasis>> {
     let txn = vault.store.env.read_txn()?;
+    bases_in_txn(vault, &txn, root)
+}
+
+fn bases_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+) -> Result<Vec<PromotionBasis>> {
     Ok(BASIS
-        .scan_from(&vault.store, &txn, root.as_bytes())?
+        .scan_from(&vault.store, txn, root.as_bytes())?
         .into_iter()
         .map(|(_, basis)| basis)
         .collect())
@@ -149,7 +157,16 @@ pub fn research_promotions(vault: &Vault, root: AttemptId) -> Result<Vec<Promoti
 /// # Errors
 /// Storage errors.
 pub fn research_incumbent(vault: &Vault, root: AttemptId) -> Result<AttemptId> {
-    Ok(bases(vault, root)?
+    let txn = vault.store.env.read_txn()?;
+    research_incumbent_in_txn(vault, &txn, root)
+}
+
+pub(crate) fn research_incumbent_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    root: AttemptId,
+) -> Result<AttemptId> {
+    Ok(bases_in_txn(vault, txn, root)?
         .into_iter()
         .filter_map(|basis| basis.promotion)
         .filter(|receipt| receipt.disposition == PromotionDisposition::Promoted)
@@ -180,13 +197,26 @@ pub fn promotion_basis(
     archive: Option<CampaignArchivePin>,
     at: u64,
 ) -> Result<PromotionBasis> {
-    let binding = binding(vault, root)?;
+    vault.with_write_txn_grouped(|txn| {
+        promotion_basis_in_txn(vault, txn, root, candidate, archive, at)
+    })
+}
+
+pub(crate) fn promotion_basis_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    root: AttemptId,
+    candidate: AttemptId,
+    archive: Option<CampaignArchivePin>,
+    at: u64,
+) -> Result<PromotionBasis> {
+    let binding = super::binding_in_txn(vault, txn, root)?;
     if matches!(binding.config.decide, DecideRules::Of366 { .. }) {
         return Err(invalid(
             "the OF-366 campaign promotes through its measure-once door",
         ));
     }
-    check_goal_current(vault, &binding)?;
+    super::check_goal_current_in_txn(vault, txn, &binding)?;
     let coverage_floor = binding
         .config
         .metric_set
@@ -198,6 +228,10 @@ pub fn promotion_basis(
             if pin.campaign_id() != binding.config.campaign_id {
                 return Err(invalid("the archive pin belongs to another campaign"));
             }
+            let retained = super::super::archive::records::read_in_txn(vault, txn, root)?;
+            if retained.pin != *pin {
+                return Err(invalid("the archive pin is not the installed campaign descriptor"));
+            }
             Some(pin.version().map_err(campaign_error)?)
         }
         // Skill coverage may never shrink: a coverage floor reads the archive.
@@ -206,13 +240,11 @@ pub fn promotion_basis(
         }
         None => None,
     };
-    let incumbent = research_incumbent(vault, root)?;
+    let incumbent = research_incumbent_in_txn(vault, txn, root)?;
     if candidate == incumbent {
         return Err(invalid("the incumbent is not its own candidate"));
     }
-    let txn = vault.store.env.read_txn()?;
-    let nodes = nodes_in_txn(vault, &txn, root)?;
-    drop(txn);
+    let nodes = nodes_in_txn(vault, txn, root)?;
     let node = nodes.get(candidate.as_bytes()).ok_or(invalid(
         "the candidate is not an experiment of this campaign",
     ))?;
@@ -227,15 +259,28 @@ pub fn promotion_basis(
             "both the candidate and the incumbent need held-out evidence",
         ));
     };
-    let decision = binding
-        .config
-        .decide_held_out(&before.measurement, &after.measurement)
+    let mut incumbent_held_out = before.measurement.clone();
+    let mut candidate_held_out = after.measurement.clone();
+    if coverage_floor {
+        let pin = archive.as_ref().ok_or(invalid("a coverage floor needs the campaign's archive pin"))?;
+        let coverage = super::super::archive::records::promotion_coverage_in_txn(
+            vault, txn, root, incumbent, candidate, pin,
+        )?;
+        let axis = binding.config.metric_set.axes.iter()
+            .find(|axis| axis.name == "coverage")
+            .ok_or(invalid("the campaign has no coverage axis"))?;
+        let (before, after) = match axis.direction {
+            super::super::general::MetricDirection::Higher => (1.0, if coverage.admitted { 1.0 } else { 0.0 }),
+            super::super::general::MetricDirection::Lower => (0.0, if coverage.admitted { 0.0 } else { 1.0 }),
+        };
+        incumbent_held_out.scores.insert("coverage".into(), before);
+        candidate_held_out.scores.insert("coverage".into(), after);
+    }
+    let decision = binding.config.decide_held_out(&incumbent_held_out, &candidate_held_out)
         .map_err(campaign_error)?;
-    let policy = super::selection_policy_for(
-        vault,
-        &binding.config.campaign_id,
-        binding.holder.as_deref(),
-    )?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?
+        .experiment_selection_policy(&binding.config.campaign_id, binding.holder.as_deref())
+        .ok_or(invalid("missing experiment selection policy"))?;
     let basis = PromotionBasis {
         root,
         candidate,
@@ -247,8 +292,8 @@ pub fn promotion_basis(
         policy_digest: policy_digest(&policy)?,
         archive,
         archive_version,
-        incumbent_held_out: before.measurement.clone(),
-        candidate_held_out: after.measurement.clone(),
+        incumbent_held_out,
+        candidate_held_out,
         call: match decision.verdict() {
             Verdict::Promote => HeldOutCall::Promote,
             Verdict::Reject => HeldOutCall::Reject,
@@ -259,14 +304,12 @@ pub fn promotion_basis(
         confirmation: None,
         promotion: None,
     };
-    vault.with_write_txn_grouped(|txn| {
-        let key = (*root.as_bytes(), *candidate.as_bytes());
-        if BASIS.contains(&vault.store, txn, &key)? {
-            return Err(invalid("a candidate's held-out decision is made once"));
-        }
-        BASIS.put(&vault.store, txn, &key, &basis)?;
-        Ok(basis)
-    })
+    let key = (*root.as_bytes(), *candidate.as_bytes());
+    if BASIS.contains(&vault.store, txn, &key)? {
+        return Err(invalid("a candidate's held-out decision is made once"));
+    }
+    BASIS.put(&vault.store, txn, &key, &basis)?;
+    Ok(basis)
 }
 
 fn update_basis(
