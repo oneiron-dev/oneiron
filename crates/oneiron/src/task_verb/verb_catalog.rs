@@ -336,6 +336,10 @@ pub enum AgentVerb {
     VaultClaimsRetract,
     VaultForget,
     VaultBookingPageToken,
+    VaultCalendarCreate,
+    VaultCalendarIcsImport,
+    VaultCalendarOccurrences,
+    VaultCalendarInstancesMove,
     VaultCalendarRead,
     VaultCalendarSearch,
     VaultCalendarFreebusy,
@@ -765,6 +769,10 @@ impl AgentVerb {
         Self::VaultClaimsRetract,
         Self::VaultForget,
         Self::VaultBookingPageToken,
+        Self::VaultCalendarCreate,
+        Self::VaultCalendarIcsImport,
+        Self::VaultCalendarOccurrences,
+        Self::VaultCalendarInstancesMove,
         Self::VaultCalendarRead,
         Self::VaultCalendarSearch,
         Self::VaultCalendarFreebusy,
@@ -1201,6 +1209,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
             Self::VaultBookingPageToken => "vault.booking.page_token",
+            Self::VaultCalendarCreate => "vault.calendar.create",
+            Self::VaultCalendarIcsImport => "vault.calendar.ics.import",
+            Self::VaultCalendarOccurrences => "vault.calendar.occurrences",
+            Self::VaultCalendarInstancesMove => "vault.calendar.instances.move",
             Self::VaultCalendarRead => "vault.calendar.read",
             Self::VaultCalendarSearch => "vault.calendar.search",
             Self::VaultCalendarFreebusy => "vault.calendar.freebusy",
@@ -1593,6 +1605,10 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarOccurrences
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2029,6 +2045,10 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarOccurrences
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2202,6 +2222,7 @@ impl AgentVerb {
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
                 | Self::VaultCommit
+                | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
                 | Self::VaultCalendarSearch
                 | Self::VaultCalendarFreebusy
@@ -2542,6 +2563,9 @@ impl AgentVerb {
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
                 | Self::VaultBookingPageToken
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultWritesPending
@@ -2827,6 +2851,9 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultCalendarCreate
+                | Self::VaultCalendarIcsImport
+                | Self::VaultCalendarInstancesMove
                 | Self::VaultCalendarTranscriptIngest
                 | Self::VaultDelete
                 | Self::VaultStructuralPut
@@ -3246,6 +3273,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarCreate => &["spec"],
+            Self::VaultCalendarIcsImport => &["spec"],
+            Self::VaultCalendarOccurrences => &["spec"],
+            Self::VaultCalendarInstancesMove => &["spec"],
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
@@ -3676,6 +3707,10 @@ impl AgentVerb {
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
+            Self::VaultCalendarCreate => &["spec"],
+            Self::VaultCalendarIcsImport => &["spec"],
+            Self::VaultCalendarOccurrences => &["spec"],
+            Self::VaultCalendarInstancesMove => &["spec"],
             Self::VaultCalendarRead => &["spec"],
             Self::VaultCalendarSearch => &["spec"],
             Self::VaultCalendarFreebusy => &["spec"],
@@ -4680,6 +4715,18 @@ impl AgentVerb {
             }
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
+            }
+            Self::VaultCalendarCreate => {
+                "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time."
+            }
+            Self::VaultCalendarIcsImport => {
+                "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent."
+            }
+            Self::VaultCalendarOccurrences => {
+                "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions."
+            }
+            Self::VaultCalendarInstancesMove => {
+                "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances."
             }
             Self::VaultCalendarRead => {
                 "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt."

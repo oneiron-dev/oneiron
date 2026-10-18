@@ -2705,6 +2705,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_calendar_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.create", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_ics_import(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.ics.import", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_occurrences(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.occurrences", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_calendar_instances_move(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.instances.move", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_calendar_read(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.calendar.read", input)

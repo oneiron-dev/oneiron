@@ -5277,6 +5277,59 @@
       "section": false
     },
     {
+      "name": "vault.calendar.create",
+      "description": "Creates a native or evidence-linked dreamer EVENT as the caller, with atomic projector-recorded origin and engine-stamped recorded time.",
+      "input": "crate::calendar::door::CalendarEventCreateRequest",
+      "output": "crate::calendar::door::CalendarEventCreated",
+      "call": "memory.calendar_create(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.calendar.ics.import",
+      "description": "The owner imports one exact uploaded ICS version through the existing UID diff and imported-claim gate; the receipt exposes pending claim refs without granting consent.",
+      "input": "crate::calendar::ingest::door::CalendarIcsImportRequest",
+      "output": "crate::calendar::ingest::door::CalendarIcsImportReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.ics.import\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.calendar.occurrences",
+      "description": "Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions.",
+      "input": "crate::calendar::query::CalendarOccurrencesRequest",
+      "output": "crate::claim::ScopedReadResult<Vec<crate::calendar::query::CalendarOccurrenceView>>",
+      "call": "memory.calendar_occurrences(&input)?",
+      "scope": "Read",
+      "admission": {
+        "lane_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false
+    },
+    {
+      "name": "vault.calendar.instances.move",
+      "description": "The owner applies one uploaded detached-instance amendment matching its UID, original start and new interval, through the import gate without changing other instances.",
+      "input": "crate::calendar::ingest::door::CalendarInstanceMoveRequest",
+      "output": "crate::calendar::ingest::door::CalendarIcsImportReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.calendar.instances.move\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.calendar.read",
       "description": "Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt.",
       "input": "crate::calendar::CalendarReadRequest",

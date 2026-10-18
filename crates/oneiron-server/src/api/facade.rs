@@ -29,6 +29,7 @@ mod agent_definition_doors;
 mod agent_verbs;
 mod booking_doors;
 mod call_context;
+mod calendar_doors;
 mod campaign_split_doors;
 mod channel_doors;
 mod connector_call_doors;
