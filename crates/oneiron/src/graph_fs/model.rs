@@ -430,6 +430,7 @@ impl GraphFsCommandOutput {
 pub struct GraphFsResolver<'read, 'vault> {
     pub(super) scoped_read: &'read ScopedRead<'vault>,
     pub(super) options: GraphFsOptions,
+    pub(super) snapshot: Option<(crate::entity_id::EntityId, [u8; 32])>,
 }
 
 impl<'vault> ScopedRead<'vault> {

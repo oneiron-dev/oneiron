@@ -45,6 +45,7 @@ feedbackSend(input: unknown): unknown
 vaultReportsDisclosure(input: unknown): unknown
 vaultReportsRoute(input: unknown): unknown
 vaultReportsOutbound(input: unknown): unknown
+selfFocusWakes(input: unknown): unknown
 selfFocusScratchpadRecall(input: unknown): unknown
 selfFocusScratchpadAppend(input: unknown): unknown
 selfFocusScratchpadSeal(input: unknown): unknown
@@ -93,6 +94,11 @@ vaultBudgetsHold(input: unknown): unknown
 vaultBudgetsHoldResume(input: unknown): unknown
 vaultBudgetsLocal(input: unknown): unknown
 vaultBudgetsSettlements(input: unknown): unknown
+vaultBudgetsRsiConfigure(input: unknown): unknown
+vaultBudgetsRsi(input: unknown): unknown
+vaultBudgetsRsiTopUp(input: unknown): unknown
+vaultBudgetsRsiHold(input: unknown): unknown
+vaultBudgetsRsiHoldResume(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -275,6 +281,11 @@ vaultSharedExecute(input: unknown): unknown
 vaultSharedReceipt(input: unknown): unknown
 vaultSharedOutcomes(input: unknown): unknown
 vaultSharedDeletion(input: unknown): unknown
+vaultOrgAdminConfigure(input: unknown): unknown
+vaultOrgAdminPowers(input: unknown): unknown
+vaultMembersResetProjectAccess(input: unknown): unknown
+vaultMembersDelegate(input: unknown): unknown
+vaultMembersProjection(input: unknown): unknown
 vaultMembersAdd(input: unknown): unknown
 vaultMembersInvitationSlip(input: unknown): unknown
 vaultMembersChange(input: unknown): unknown
@@ -340,6 +351,15 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+vaultOffRecordRoomsStatus(input: unknown): unknown
+vaultOffRecordRoomsStart(input: unknown): unknown
+vaultOffRecordRoomsWitness(input: unknown): unknown
+vaultOffRecordRoomsSave(input: unknown): unknown
+vaultOffRecordRoomsSaveFromHere(input: unknown): unknown
+vaultOffRecordRoomsExport(input: unknown): unknown
+vaultOffRecordRoomsSuggestSave(input: unknown): unknown
+vaultOffRecordRoomsConfirmSave(input: unknown): unknown
+vaultOffRecordRoomsDeclineSave(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
 vaultRecordsEraseSweep(input: unknown): unknown
@@ -391,6 +411,8 @@ vaultResearchPromote(input: unknown): unknown
 vaultResearchReserveWork(input: unknown): unknown
 vaultResearchSettleWork(input: unknown): unknown
 vaultResearchRefundWork(input: unknown): unknown
+vaultResearchReserveExploration(input: unknown): unknown
+vaultResearchBudget(input: unknown): unknown
 vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
@@ -515,6 +537,16 @@ vaultArtifactsThreadsRead(input: unknown): unknown
 vaultArtifactsThreadsList(input: unknown): unknown
 vaultArtifactsThreadsAssign(input: unknown): unknown
 vaultArtifactsThreadsState(input: unknown): unknown
+mount(input: unknown): unknown
+graphFsReaddir(input: unknown): unknown
+graphFsReadFile(input: unknown): unknown
+graphFsReadLink(input: unknown): unknown
+graphFsLs(input: unknown): unknown
+graphFsFind(input: unknown): unknown
+graphFsGrep(input: unknown): unknown
+graphFsCat(input: unknown): unknown
+graphFsHead(input: unknown): unknown
+graphFsWc(input: unknown): unknown
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
@@ -675,6 +707,19 @@ aiVoiceTool(input: unknown): unknown
 aiVoiceEnd(input: unknown): unknown
 aiVoiceClose(input: unknown): unknown
 aiAnonymousChat(input: unknown): unknown
+vaultModelsCatalogRefresh(input: unknown): unknown
+vaultModelsCatalogGet(input: unknown): unknown
+vaultModelsCatalogDiff(input: unknown): unknown
+vaultModelsTrialsNominate(input: unknown): unknown
+vaultModelsTrialsGet(input: unknown): unknown
+vaultModelsTrialsApprove(input: unknown): unknown
+vaultModelsTrialsRun(input: unknown): unknown
+vaultModelsTrialsComplete(input: unknown): unknown
+vaultModelsBindingsPropose(input: unknown): unknown
+vaultModelsBindingsGet(input: unknown): unknown
+vaultModelsBindingsRead(input: unknown): unknown
+vaultModelsBindingsAccept(input: unknown): unknown
+vaultModelsBindingsDeny(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown
@@ -759,6 +804,8 @@ vaultHydrate(input: unknown): unknown
 vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
 vaultRefsLinks(input: unknown): unknown
+vaultSearchVectorConfig(input: unknown): unknown
+vaultVectorsPut(input: unknown): unknown
 vaultSearchHybrid(input: unknown): unknown
 vaultSearchTemporal(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
@@ -775,6 +822,11 @@ vaultEsignLinksIssue(input: unknown): unknown
 vaultEsignSendForSignature(input: unknown): unknown
 vaultEsignRemind(input: unknown): unknown
 vaultEsignVoid(input: unknown): unknown
+vaultEsignSigningAct(input: unknown): unknown
+vaultEsignSigningPdf(input: unknown): unknown
+vaultEsignSigningImage(input: unknown): unknown
+vaultEsignSigningSignature(input: unknown): unknown
+vaultEsignSealGet(input: unknown): unknown
 vaultConversationsCreate(input: unknown): unknown
 vaultConversationsTurnsCreate(input: unknown): unknown
 vaultConversationsRecordsAppend(input: unknown): unknown
@@ -931,6 +983,9 @@ selfReportBlocked(input: unknown): unknown
 selfAgentsSpawn(input: unknown): unknown
 selfLeaderSplit(input: unknown): unknown
 selfSkillsCall(input: unknown): unknown
+selfFocusRefresh(input: unknown): unknown
+selfFocusSubscribe(input: unknown): unknown
+selfFocusUnsubscribe(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient
