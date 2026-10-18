@@ -445,6 +445,14 @@ export class Oneiron {
       namespaces: (request: KeyValueNamespaces): string[][] => this.#call(() => { const { maxDepth, ...rest } = request; const result = JSON.parse(this.#client.vaultKvNamespaces(keyedJson({ ...rest, max_depth: maxDepth }))) as string[][]; return result.map(item => item) }),
     },
     campaign: {
+      /** Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing. */
+      enroll: (input: Facade.CampaignEnrollRequest): Facade.CampaignEnrollmentReceipt => this.#call(() => this.#client.vaultCampaignEnroll(input) as Facade.CampaignEnrollmentReceipt),
+      stage: {
+        /** Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing. */
+        evidence: (input: Facade.CampaignStageEvidenceRequest): Facade.CampaignStageEvidenceReceipt => this.#call(() => this.#client.vaultCampaignStageEvidence(input) as Facade.CampaignStageEvidenceReceipt),
+      },
+      /** Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction. */
+      unsubscribe: (input: Facade.CampaignUnsubscribeRequest): Facade.CampaignUnsubscribeReceipt => this.#call(() => this.#client.vaultCampaignUnsubscribe(input) as Facade.CampaignUnsubscribeReceipt),
       program: {
         /** Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns. */
         create: (input: Facade.CreateCampaignProgramRequest): Facade.CampaignProgramRecord => this.#call(() => this.#client.vaultCampaignProgramCreate(input) as Facade.CampaignProgramRecord),

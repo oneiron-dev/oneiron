@@ -36,6 +36,7 @@ mod browser_doors;
 mod budget_doors;
 mod calendar_doors;
 mod call_context;
+mod campaign_doors;
 mod campaign_split_doors;
 mod channel_doors;
 mod claim_settle_doors;

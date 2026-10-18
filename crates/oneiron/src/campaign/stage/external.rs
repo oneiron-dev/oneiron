@@ -5,7 +5,7 @@ use super::ladder::{
     proposal_boundary_index, stage_index, transition_rule, validate_ladder,
 };
 use super::projector::{
-    StageProjectResult, StageProjectorInput, invalid, project_stage_transition, stage_position,
+    StageProjectResult, StageProjectorInput, invalid, project_stage_transition_in_txn, live_stage_head_in,
 };
 use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageKey};
 use crate::{EntityId, Result, Vault};
@@ -52,25 +52,40 @@ pub fn apply_external_stage_evidence(
     hook: &ExternalStageEvidenceHook,
     mode: PromotionMode,
 ) -> Result<StageProjectResult> {
+    vault.with_write_txn_grouped(|txn| {
+        apply_external_stage_evidence_in_txn(vault, txn, definition, hook, mode, None)
+    })
+}
+
+/// The public evidence door shares this ingress with native projectors. The
+/// current stage, transition rule and every write use the caller's snapshot.
+pub(crate) fn apply_external_stage_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    definition: &StageLadderDefinition,
+    hook: &ExternalStageEvidenceHook,
+    mode: PromotionMode,
+    envelope: Option<&crate::WriteEnvelope>,
+) -> Result<StageProjectResult> {
     validate_ladder(definition)?;
     if hook.evidence.evidence_refs.is_empty() {
         return Err(invalid("external stage evidence requires evidence refs"));
     }
-    let (previous_stage_claim_ref, from) =
-        stage_position(vault, &hook.party_ref, &hook.campaign_ref)?;
-    let Some(rule) = transition_rule(definition, from.as_ref(), &hook.target_stage) else {
+    let head = live_stage_head_in(vault, txn, &hook.party_ref, &hook.campaign_ref)?;
+    let previous_stage_claim_ref = head.as_ref().map(|(id, _)| *id);
+    let from = head.as_ref().map(|(_, value)| &value.stage);
+    let Some(rule) = transition_rule(definition, from, &hook.target_stage) else {
         return Ok(StageProjectResult::NoChange);
     };
     if hook.evidence.class != rule.evidence_class {
-        return Err(invalid(
-            "external stage evidence class does not match the transition",
-        ));
+        return Err(invalid("external stage evidence class does not match the transition"));
     }
     if hook.evidence.basis == EvidenceBasis::OwnerAttested {
         require_owner_attestable(definition, rule)?;
     }
-    project_stage_transition(
+    project_stage_transition_in_txn(
         vault,
+        txn,
         &StageProjectorInput {
             party_ref: hook.party_ref,
             previous_stage_claim_ref,
@@ -84,6 +99,7 @@ pub fn apply_external_stage_evidence(
             },
         },
         mode,
+        envelope,
     )
 }
 

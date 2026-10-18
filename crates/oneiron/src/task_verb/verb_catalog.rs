@@ -90,6 +90,9 @@ pub enum AgentVerb {
     VaultKvDelete,
     VaultKvSearch,
     VaultKvNamespaces,
+    VaultCampaignEnroll,
+    VaultCampaignStageEvidence,
+    VaultCampaignUnsubscribe,
     VaultCampaignProgramCreate,
     VaultCampaignProgramRead,
     VaultCampaignProgramUpdate,
@@ -793,6 +796,9 @@ impl AgentVerb {
         Self::VaultKvDelete,
         Self::VaultKvSearch,
         Self::VaultKvNamespaces,
+        Self::VaultCampaignEnroll,
+        Self::VaultCampaignStageEvidence,
+        Self::VaultCampaignUnsubscribe,
         Self::VaultCampaignProgramCreate,
         Self::VaultCampaignProgramRead,
         Self::VaultCampaignProgramUpdate,
@@ -1499,6 +1505,9 @@ impl AgentVerb {
             Self::VaultKvDelete => "vault.kv.delete",
             Self::VaultKvSearch => "vault.kv.search",
             Self::VaultKvNamespaces => "vault.kv.namespaces",
+            Self::VaultCampaignEnroll => "vault.campaign.enroll",
+            Self::VaultCampaignStageEvidence => "vault.campaign.stage.evidence",
+            Self::VaultCampaignUnsubscribe => "vault.campaign.unsubscribe",
             Self::VaultCampaignProgramCreate => "vault.campaign.program.create",
             Self::VaultCampaignProgramRead => "vault.campaign.program.read",
             Self::VaultCampaignProgramUpdate => "vault.campaign.program.update",
@@ -2217,6 +2226,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -2942,6 +2954,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -3727,6 +3742,9 @@ impl AgentVerb {
                 | Self::VaultKvDelete
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramRead
                 | Self::VaultCampaignProgramUpdate
@@ -4357,6 +4375,9 @@ impl AgentVerb {
                 | Self::VaultRetrievalOutcomesEnd
                 | Self::VaultKvPut
                 | Self::VaultKvDelete
+                | Self::VaultCampaignEnroll
+                | Self::VaultCampaignStageEvidence
+                | Self::VaultCampaignUnsubscribe
                 | Self::VaultCampaignProgramCreate
                 | Self::VaultCampaignProgramUpdate
                 | Self::VaultCampaignProgramArchive
@@ -4864,6 +4885,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -5568,6 +5592,9 @@ impl AgentVerb {
             Self::VaultKvDelete => &["spec"],
             Self::VaultKvSearch => &["spec"],
             Self::VaultKvNamespaces => &["spec"],
+            Self::VaultCampaignEnroll => &["spec"],
+            Self::VaultCampaignStageEvidence => &["spec"],
+            Self::VaultCampaignUnsubscribe => &["spec"],
             Self::VaultCampaignProgramCreate => &["spec"],
             Self::VaultCampaignProgramRead => &["spec"],
             Self::VaultCampaignProgramUpdate => &["spec"],
@@ -6438,6 +6465,15 @@ impl AgentVerb {
             }
             Self::VaultKvNamespaces => {
                 "The caller's distinct live namespaces, with exact segment prefix and suffix matching."
+            }
+            Self::VaultCampaignEnroll => {
+                "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing."
+            }
+            Self::VaultCampaignStageEvidence => {
+                "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing."
+            }
+            Self::VaultCampaignUnsubscribe => {
+                "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction."
             }
             Self::VaultCampaignProgramCreate => {
                 "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns."

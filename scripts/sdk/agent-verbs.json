@@ -1588,6 +1588,48 @@
       }
     },
     {
+      "name": "vault.campaign.enroll",
+      "description": "Enrolls a person in a campaign the caller owns, with evidence-backed channels and sticky senders. Writes no earned stage and sends nothing.",
+      "input": "crate::campaign::surface::CampaignEnrollRequest",
+      "output": "crate::campaign::surface::CampaignEnrollmentReceipt",
+      "call": "memory.campaign_enroll(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "openapi": true,
+      "section": false
+    },
+    {
+      "name": "vault.campaign.stage.evidence",
+      "description": "Records earned-stage evidence under an authored ladder transition, in AUTO or propose mode. Owner-attested evidence requires the request owner proof; elapsed time earns nothing.",
+      "input": "crate::campaign::surface::CampaignStageEvidenceRequest",
+      "output": "crate::campaign::surface::CampaignStageEvidenceReceipt",
+      "call": "memory.campaign_stage_evidence(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "openapi": true,
+      "section": false,
+      "host_door": true,
+      "host_door_caller": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.campaign.unsubscribe",
+      "description": "Immediately honors an unsubscribe with a channel-scoped enforcement claim and every suppressed membership head in one transaction.",
+      "input": "crate::campaign::surface::CampaignUnsubscribeRequest",
+      "output": "crate::campaign::surface::CampaignUnsubscribeReceipt",
+      "call": "memory.campaign_unsubscribe(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "openapi": true,
+      "section": false
+    },
+    {
       "name": "vault.campaign.program.create",
       "description": "Creates a campaign program (ordered steps and an optional saved-query audience) under a campaign the caller owns.",
       "input": "crate::campaign::surface::CreateCampaignProgramRequest",

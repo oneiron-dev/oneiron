@@ -23,7 +23,7 @@ pub const NO_SHOW_BUMP_AFTER_SECS: u64 = 3 * 24 * 60 * 60;
 /// [`Self::Auto`] is the default posture: evidence that satisfies a configured
 /// transition advances the stage. [`Self::Propose`] is a per-call dial for a
 /// host that wants a human between evidence and pipeline movement.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PromotionMode {
     /// Earned evidence writes the stage head.
@@ -53,7 +53,7 @@ pub struct StageEvidence {
 
 /// One declared stage. Position in [`StageLadderDefinition::stages`] IS the
 /// ladder order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageDefinition {
     /// Opaque stage token, owned by CA-01's [`StageKey`].
     pub key: StageKey,
@@ -62,7 +62,7 @@ pub struct StageDefinition {
 }
 
 /// One configured way to earn a stage.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageTransitionRule {
     /// `None` means no live `crm.stage` head yet; `campaign.member` is not a stage.
     pub from: Option<StageKey>,
@@ -77,7 +77,7 @@ pub struct StageTransitionRule {
 }
 
 /// The six ratified reply codes. Consultancy-neutral by construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ReplyCode {
     /// Wants to move now.
@@ -96,7 +96,7 @@ pub enum ReplyCode {
 
 /// What a coded reply does. The LADDER decides which code lands on which
 /// disposition; no code-to-action mapping is hidden in this module's code.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ReplyDisposition {
     /// Earn a stage, subject to a configured transition.
@@ -118,7 +118,7 @@ pub enum ReplyDisposition {
 }
 
 /// One code-to-disposition row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReplyRouteRule {
     /// The coded reply this row routes.
     pub code: ReplyCode,
@@ -128,7 +128,7 @@ pub struct ReplyRouteRule {
 
 /// The ratified no-show recovery shape: same-day reschedule, then a bump, then
 /// snooze. Each leg is a dial; the ORDER is not.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct NoShowRecoveryRule {
     /// Offer a same-day reschedule first.
     pub same_day_reschedule: bool,
@@ -139,7 +139,7 @@ pub struct NoShowRecoveryRule {
 }
 
 /// A whole stage ladder, as pure data.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct StageLadderDefinition {
     /// Ladder identity, host-assigned.
     pub key: String,

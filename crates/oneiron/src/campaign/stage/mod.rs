@@ -55,6 +55,7 @@ mod reply;
 /// one. This module adds no attempt kind of its own.
 pub use crate::campaign::enrollment::CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND;
 
+pub(crate) use self::external::apply_external_stage_evidence_in_txn;
 pub use self::external::{ExternalStageEvidenceHook, apply_external_stage_evidence};
 pub use self::ladder::{
     NO_SHOW_BUMP_AFTER_SECS, NoShowRecoveryRule, PromotionMode, ReplyCode, ReplyDisposition,
