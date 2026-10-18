@@ -480,6 +480,16 @@ export class Oneiron {
         consolidate: (input: Facade.AffectClaimConsolidateRequest): Facade.AffectClaimConsolidation => this.#call(() => this.#client.vaultAffectClaimsConsolidate(input) as Facade.AffectClaimConsolidation),
       },
     },
+    tagging: {
+      /** Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason. */
+      status: (input: Facade.TaggingTurnRequest): Facade.TaggingStatusView => this.#call(() => this.#client.vaultTaggingStatus(input) as Facade.TaggingStatusView),
+      /** Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them. */
+      tags: (input: Facade.TaggingTurnRequest): Facade.TaggingTagsView => this.#call(() => this.#client.vaultTaggingTags(input) as Facade.TaggingTagsView),
+      /** Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome. */
+      history: (input: Facade.TaggingTurnRequest): Facade.TaggingHistoryView => this.#call(() => this.#client.vaultTaggingHistory(input) as Facade.TaggingHistoryView),
+      /** Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller. */
+      mentions: (input: Facade.TaggingMentionsRequest): Facade.TaggingMentionsView => this.#call(() => this.#client.vaultTaggingMentions(input) as Facade.TaggingMentionsView),
+    },
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): MemoryExport => this.#call(() => this.#client.vaultExport({format: format}) as MemoryExport), {
       /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */

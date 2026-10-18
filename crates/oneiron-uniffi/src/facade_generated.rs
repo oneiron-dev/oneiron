@@ -242,6 +242,26 @@ export_facade! {
     let output = client.vault_affect_annotations_put(&input)?;
     Lift::lift(output)
 };
+"vault.tagging.status" => fn vault_tagging_status(&self, input: TaggingTurnRequest) -> TaggingStatusView = |client| {
+    let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.status", input)?;
+    let output = client.vault_tagging_status(&input)?;
+    crate::codec::lift_record("vault.tagging.status", &output)
+};
+"vault.tagging.tags" => fn vault_tagging_tags(&self, input: TaggingTurnRequest) -> TaggingTagsView = |client| {
+    let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.tags", input)?;
+    let output = client.vault_tagging_tags(&input)?;
+    crate::codec::lift_record("vault.tagging.tags", &output)
+};
+"vault.tagging.history" => fn vault_tagging_history(&self, input: TaggingTurnRequest) -> TaggingHistoryView = |client| {
+    let input: oneiron::tagging::TaggingTurnRequest = crate::codec::lower_record("vault.tagging.history", input)?;
+    let output = client.vault_tagging_history(&input)?;
+    crate::codec::lift_record("vault.tagging.history", &output)
+};
+"vault.tagging.mentions" => fn vault_tagging_mentions(&self, input: TaggingMentionsRequest) -> TaggingMentionsView = |client| {
+    let input: oneiron::tagging::TaggingMentionsRequest = crate::codec::lower_record("vault.tagging.mentions", input)?;
+    let output = client.vault_tagging_mentions(&input)?;
+    crate::codec::lift_record("vault.tagging.mentions", &output)
+};
 "vault.affect.claims.consolidate" => fn vault_affect_claims_consolidate(&self, input: AffectClaimConsolidateRequest) -> AffectClaimConsolidation = |client| {
     let input: oneiron::memory::affect::AffectClaimConsolidateRequest = crate::codec::lower_record("vault.affect.claims.consolidate", input)?;
     let output = client.vault_affect_claims_consolidate(&input)?;
