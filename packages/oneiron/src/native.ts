@@ -159,6 +159,10 @@ vaultSharedMatured(input: unknown): unknown
 vaultSharedEraseAsk(input: unknown): unknown
 vaultSharedEraseAsks(input: unknown): unknown
 vaultSharedCloseEraseAsk(input: unknown): unknown
+vaultSharedPolicyGet(input: unknown): unknown
+vaultSharedPolicyPropose(input: unknown): unknown
+vaultSharedPolicyAnswer(input: unknown): unknown
+vaultSharedPolicyChange(input: unknown): unknown
 vaultGuestsRevoke(input: unknown): unknown
 vaultGuestsMintSlip(input: unknown): unknown
 vaultResidenceMode(input: unknown): unknown
@@ -333,6 +337,8 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+aiReply(input: unknown): unknown
+vaultReceiptsContext(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown

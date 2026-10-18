@@ -127,13 +127,19 @@ fn key(logical_ref: &str, receipt: &ReceiptRecord) -> [u8; 32] {
 /// and neither can a replay that only restates a stored result with less
 /// evidence. The pipeline result, not a host-authored imitation, supplies the
 /// receipt body.
-pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
+pub(crate) fn record(vault: &Vault, receipt: ReceiptRecord) -> Result<()> {
+    record_with_ref(vault, receipt).map(drop)
+}
+
+/// The same first-observation writer, returning the durable receipt ref.
+pub(crate) fn record_with_ref(vault: &Vault, mut receipt: ReceiptRecord) -> Result<String> {
     if receipt.receipt_kind != ReceiptKind::Outbound {
         return Err(Error::InvariantViolation("direct dispatch receipt kind"));
     }
     let logical_ref = receipt.receipt_id.clone();
     let key = key(&logical_ref, &receipt);
     receipt.receipt_id = format!("{}:{}", logical_ref, evidence(&receipt));
+    let receipt_ref = receipt.receipt_id.clone();
     let mut row = DirectReceipt {
         version: VERSION,
         logical_ref,
@@ -152,7 +158,8 @@ pub(crate) fn record(vault: &Vault, mut receipt: ReceiptRecord) -> Result<()> {
             DIRECT.put(&vault.store, txn, &key, &row)?;
         }
         Ok(())
-    })
+    })?;
+    Ok(receipt_ref)
 }
 
 /// Existing outbound receipt-family source, alongside connector-send audits.

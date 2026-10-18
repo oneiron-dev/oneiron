@@ -62,6 +62,7 @@ mod origin_doors;
 mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;
+mod reply_doors;
 mod residence_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
@@ -70,6 +71,7 @@ mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
 mod shared_member_doors;
+mod shared_policy_doors;
 #[cfg(test)]
 pub(super) mod tests;
 pub(super) mod ui_action_routes;
