@@ -1208,6 +1208,9 @@ impl OneironClient {
                 "vault.refs.links" => {
                     remote_agent_verb_output::<oneiron::lens::RecordLinks>(client, verb, &input)
                 }
+                "vault.search.hybrid" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::HybridSearchHit>>,
+                >(client, verb, &input),
                 "vault.search.bm25" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
                 >(client, verb, &input),
@@ -6206,6 +6209,20 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.refs.links", value)
+    }
+    pub fn vault_search_hybrid(
+        &self,
+        input: &oneiron::memory::HybridSearchRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::HybridSearchHit>>, MemoryError>
+    {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.search.hybrid", value)
     }
     pub fn vault_search_bm25(
         &self,

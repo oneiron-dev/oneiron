@@ -37,6 +37,7 @@ pub struct PipelineBuilder<'a> {
     pub(super) vector_search: Option<(Vec<f32>, usize)>,
     pub(super) text_search: Option<(String, usize)>,
     pub(super) rank_profile: Option<crate::config::Bm25RankProfile>,
+    pub(super) blend_weights_override: Option<crate::store::RetrievalBlendWeights>,
     pub(super) phonetic_search: Option<Vec<String>>,
     /// Typed media queries, one ranked list per declared space (OF-370).
     pub(super) media_search: Vec<super::media_channel::MediaQuery>,
@@ -134,6 +135,7 @@ impl<'a> PipelineBuilder<'a> {
             vector_search: None,
             text_search: None,
             rank_profile: None,
+            blend_weights_override: None,
             phonetic_search: None,
             media_search: Vec::new(),
             temporal_search: None,

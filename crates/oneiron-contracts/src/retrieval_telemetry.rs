@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalSignal {
     Vector,
@@ -60,7 +60,7 @@ pub enum RetrievalBlendSignal {
     Gravity,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalBlendWeights {
     pub recency: f32,
     pub salience: f32,
@@ -118,7 +118,7 @@ impl RetrievalBlendWeights {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalScoreComponent {
     pub signal: RetrievalSignal,
     pub rank: u32,

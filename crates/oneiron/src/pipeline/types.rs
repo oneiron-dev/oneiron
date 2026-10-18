@@ -291,6 +291,8 @@ pub(crate) struct PipelineOutput {
     pub(crate) words_bound: std::collections::HashSet<EntityId>,
     pub(crate) retrieval_quality: RetrievalQualityReport,
     pub(crate) scores: Vec<ScoredEntity>,
+    /// The exact engine score evidence, independent of telemetry persistence.
+    pub(crate) score_breakdown: Vec<crate::store::RetrievalScoreBreakdown>,
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
     /// first. Empty unless the run folds messages into their turns.
     pub(crate) cited_messages: HashMap<EntityId, Vec<EntityId>>,

@@ -285,7 +285,7 @@ impl ScopedRead<'_> {
         clippy::too_many_arguments,
         reason = "final scoring admission conjoins plan authority, fresh authority and source frontiers"
     )]
-    pub(super) fn filter_search_results(
+    pub(crate) fn filter_search_results(
         &self,
         results: Vec<ScoredEntity>,
         limit: usize,
