@@ -1905,8 +1905,24 @@ export class Oneiron {
       search: (input: Facade.CalendarSearchRequest): Facade.ScopedReadResult<Facade.CalendarEventView[]> => this.#call(() => this.#client.vaultCalendarSearch(input) as Facade.ScopedReadResult<Facade.CalendarEventView[]>),
       /** Projects source-redacted busy occupancy over an inclusive UTC range under the caller's scoped read, as half-open intervals with a mandatory narrowing receipt. */
       freebusy: (input: Facade.CalendarFreebusyRequest): Facade.ScopedReadResult<Facade.CalendarFreebusyDto> => this.#call(() => this.#client.vaultCalendarFreebusy(input) as Facade.ScopedReadResult<Facade.CalendarFreebusyDto>),
+      /** Builds a fresh caller-scoped meeting PrepPack with commitments first and a 250-word ceiling, or deliberately returns no pack. */
+      prep: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.PrepPack | null> => this.#call(() => this.#client.vaultCalendarPrep(input) as Facade.ScopedReadResult<Facade.PrepPack | null>),
+      /** Reads the caller-visible meeting outcome and its recorded basis; silence projects to unknown and never to held or no_show. */
+      event_outcome: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.CalendarEventOutcome | null> => this.#call(() => this.#client.vaultCalendarEventOutcome(input) as Facade.ScopedReadResult<Facade.CalendarEventOutcome | null>),
+      check_in: {
+        /** Observes whether a meeting check-in is due under owner proof, live evidence and the engine clock, without advancing time or recording an outcome. */
+        due: (input: Facade.CalendarMeetingRequest): Facade.ScopedReadResult<Facade.CalendarCheckInDue | null> => this.#call(() => this.#client.vaultCalendarCheckInDue(input) as Facade.ScopedReadResult<Facade.CalendarCheckInDue | null>),
+        /** The owner answers a due check-in as held, no_show or rescheduled; the caller cannot assert machine evidence or replace it. */
+        answer: (input: Facade.CalendarCheckInRequest): Facade.CalendarCheckInReceipt => this.#call(() => this.#client.vaultCalendarCheckInAnswer(input) as Facade.CalendarCheckInReceipt),
+      },
+      outcome_policy: {
+        /** Reads the owner-configured post-meeting grace policy, including the default 1800 seconds when no override exists. */
+        get: (input: Facade.EmptyRequest = {}): Facade.CalendarOutcomePolicy => this.#call(() => this.#client.vaultCalendarOutcomePolicyGet(input) as Facade.CalendarOutcomePolicy),
+        /** Sets the post-meeting grace in real seconds under owner proof, without changing event times or minting attendance evidence. */
+        set: (input: Facade.CalendarOutcomePolicy): Facade.CalendarOutcomePolicy => this.#call(() => this.#client.vaultCalendarOutcomePolicySet(input) as Facade.CalendarOutcomePolicy),
+      },
       transcript: {
-        /** Ingests an uploaded UTF-8 transcript as the caller, retaining source labels and atomically closing its SESSION with ordered TURNs and extraction wake receipts. */
+        /** Ingests verified uploaded UTF-8 transcript bytes as a closed SESSION with ordered TURNs; an optional meeting link earns a machine outcome through the caller gate. */
         ingest: (input: Facade.TranscriptFileDropInput): Facade.TranscriptIngestOutcome => this.#call(() => this.#client.vaultCalendarTranscriptIngest(input) as Facade.TranscriptIngestOutcome),
       },
     },
