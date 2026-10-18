@@ -1,0 +1,21 @@
+{
+  "name": "@oneiron/e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "packageManager": "bun@1.3.4",
+  "scripts": {
+    "e2e": "bun support/run.ts --profile deterministic --workers 4",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "oneiron": "file:../../packages/oneiron",
+    "@oneiron/client": "file:../../packages/oneiron-client",
+    "@msgpack/msgpack": "3.1.2",
+    "@noble/hashes": "1.8.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.4",
+    "typescript": "5.7.3"
+  }
+}
