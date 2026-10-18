@@ -569,6 +569,7 @@ pub use super::sdk_off_record::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
+pub use super::sdk_campaign_archive::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
 pub use super::sdk_scratchpad::*;

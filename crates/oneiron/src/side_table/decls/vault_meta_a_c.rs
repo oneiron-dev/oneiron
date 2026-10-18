@@ -158,6 +158,10 @@ side_tables! {
     /// search and held-out evidence, buggy, weave and prune receipts. Key: id16 (root attempt) +
     /// id16 (node attempt).
     AUTORESEARCH_NODE: VaultMeta b"autoresearch:node:v1:" Named;
+    /// Immutable output descriptor and original placement/scoring receipts. Key: root attempt id16.
+    AUTORESEARCH_OUTPUT_ARCHIVE: VaultMeta b"autoresearch:output-archive:v1:" Named;
+    /// Exact output refs produced by one campaign replay arm. Key: root id16 + node id16.
+    AUTORESEARCH_OUTPUT_REPLAY: VaultMeta b"autoresearch:output-replay:v1:" Named;
     /// One RSI reservation an autoresearch campaign holds or held. Key: id16 (root attempt) +
     /// id16 (reservation id).
     AUTORESEARCH_RESERVATION: VaultMeta b"autoresearch:reservation:v1:" Named;
