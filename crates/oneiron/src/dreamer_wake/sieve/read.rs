@@ -289,7 +289,7 @@ impl Reader {
                     let mention = &tags.mentions[index];
                     let origin = SpanOrigin::SavedTag {
                         envelope,
-                        index: u32::try_from(index).unwrap_or(u32::MAX),
+                        index: index as u64,
                     };
                     let confidence = percent(mention.confidence);
                     let range = (start, mention.end);
@@ -335,10 +335,9 @@ impl Reader {
         origin: SpanOrigin,
         confidence: u8,
     ) -> SieveSpan {
-        let start = u32::try_from(start).unwrap_or(u32::MAX);
-        let end = u32::try_from(end).unwrap_or(u32::MAX);
+        let (start, end) = (start as u64, end as u64);
         let mut id = blake3::Hasher::new();
-        id.update(b"oneiron:dreamer-sieve:span:v1");
+        id.update(b"oneiron:dreamer-sieve:span:v2");
         id.update(turn.as_bytes());
         id.update(chunk.source.as_bytes());
         id.update(&start.to_be_bytes());

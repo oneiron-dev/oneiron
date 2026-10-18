@@ -12,6 +12,10 @@
  * Intentionally absent: start_sync and stop_sync are not exported while sync
  * remains disabled pre-launch.
  *
+ * Bound handles (OF-063): oneiron_vault_bind opens a handle over the same
+ * open vault whose writes run as the app's principal, inside the off-record
+ * session it names, if any. Every other handle writes as the host.
+ *
  * Embedded engine (OF-237): oneiron_engine_start runs the full server in this
  * process with the app's OneironAppHost callbacks; oneiron_engine_request
  * sends it one buffered HTTP/1.1 request, oneiron_engine_vault shares its
@@ -94,7 +98,8 @@ typedef struct OneironEngineConnection OneironEngineConnection;
 typedef struct OneironSecretSink OneironSecretSink;
 
 /**
- * Opaque vault handle returned by `oneiron_vault_open`.
+ * Opaque vault handle returned by `oneiron_vault_open`,
+ * `oneiron_engine_vault` and `oneiron_vault_bind`.
  *
  * Release the handle with `oneiron_vault_free` exactly once.
  */
@@ -373,7 +378,8 @@ enum OneironStatus oneiron_engine_stop(struct OneironEngine *engine);
  * A storage handle over the engine's SAME open vault, so every
  * `oneiron_vault_*` function works on it; the path is never opened again.
  * Release it with `oneiron_vault_free`. It keeps the vault open, not the
- * engine serving.
+ * engine serving. It writes as the host; `oneiron_vault_bind` opens one
+ * that writes as the app's principal, inside its session.
  *
  * # Safety
  *
@@ -539,6 +545,45 @@ enum OneironStatus oneiron_vault_open(const uint8_t *path_ptr,
                                       struct OneironVault **out_vault);
 
 /**
+ * Open a NEW handle over `vault`'s same open vault whose writes run as one
+ * caller (OF-063): the principal `actor_key` names, inside the off-record
+ * session `session` names. `vault` itself is unchanged, and the path is
+ * never opened again.
+ *
+ * `actor_key` is UTF-8 `human:<ref>`, `agent:<ref>` or `system:<ref>`; the
+ * named entity must exist and its stored type admit the class. Pass a null
+ * pointer with length 0 to bind the embedded owner instead, as an embedded
+ * facade client does. `session` is the UTF-8 off-record session reference;
+ * pass a null pointer with length 0 to bind none, so the handle writes
+ * outside any session. Binding a bound handle binds the new handle to the
+ * caller named here alone.
+ *
+ * The bound handle's puts, batch puts, edges and vectors commit as that
+ * caller, below owner grade, once the write's own transaction proves the
+ * actor and a shared vault's content-write grant. Its delete runs the
+ * `vault.delete` door: owner-only, and an id naming no record is refused
+ * `NotFound` with a refusal receipt, which an anonymous off-record session
+ * the actor is verified in does not keep. A refusal is `InvalidArg`,
+ * `NotFound` or `EngineError`. Reads are the same on every handle.
+ *
+ * On success `out_vault` receives a handle to release with
+ * `oneiron_vault_free` exactly once; it keeps the vault open.
+ *
+ * # Safety
+ *
+ * `vault` is null or a live handle from `oneiron_vault_open`,
+ * `oneiron_engine_vault` or `oneiron_vault_bind`, not freed during the call.
+ * Each non-null input pointer covers its length in readable bytes, and a
+ * non-null `out_vault` is writable, for the whole call.
+ */
+enum OneironStatus oneiron_vault_bind(struct OneironVault *vault,
+                                      const uint8_t *actor_key_ptr,
+                                      size_t actor_key_len,
+                                      const uint8_t *session_ptr,
+                                      size_t session_len,
+                                      struct OneironVault **out_vault);
+
+/**
  * Free an opaque vault handle returned by `oneiron_vault_open`.
  *
  * # Safety
@@ -567,7 +612,8 @@ enum OneironStatus oneiron_vault_health_json(struct OneironVault *vault,
                                              struct OneironBuffer *out_buffer);
 
 /**
- * Store an entity blob.
+ * Store an entity blob. A bound handle stores it as its caller
+ * (`oneiron_vault_bind`).
  *
  * # Safety
  *
@@ -589,7 +635,8 @@ enum OneironStatus oneiron_vault_put_entity(struct OneironVault *vault,
  * Store multiple entity blobs in one vault transaction.
  *
  * `entities` may be null only when `entities_len == 0`. Each payload pointer
- * inside the array must be non-null for its byte length.
+ * inside the array must be non-null for its byte length. A bound handle
+ * stores them as its caller (`oneiron_vault_bind`).
  *
  * # Safety
  *
@@ -622,7 +669,9 @@ enum OneironStatus oneiron_vault_get_entity(struct OneironVault *vault,
 /**
  * Delete an entity by ID.
  *
- * `out_existed` receives `1` if the entity existed and `0` otherwise.
+ * `out_existed` receives `1` if the entity existed and `0` otherwise. A
+ * bound handle deletes as its caller through the `vault.delete` door
+ * (`oneiron_vault_bind`), so an id naming no record is `NotFound`.
  *
  * # Safety
  *
@@ -652,7 +701,8 @@ enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
                                                uint8_t *out_exists);
 
 /**
- * Store a directed edge between two entities.
+ * Store a directed edge between two entities. A bound handle stores it as
+ * its caller (`oneiron_vault_bind`).
  *
  * # Safety
  *
@@ -742,7 +792,8 @@ enum OneironStatus oneiron_vault_search_text(struct OneironVault *vault,
 /**
  * Store a vector embedding for an entity.
  *
- * `vector_len` must equal the vault dimensions.
+ * `vector_len` must equal the vault dimensions. A bound handle stores it as
+ * its caller (`oneiron_vault_bind`).
  *
  * # Safety
  *

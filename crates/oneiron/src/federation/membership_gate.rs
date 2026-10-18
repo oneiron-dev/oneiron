@@ -290,10 +290,7 @@ impl Vault {
                 || grant
                     .expires_at
                     .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
-                || matches!(
-                    federation_grant_activation(&fold, &id),
-                    FederationGrantActivation::Inactive(_)
-                )
+                || !super::pact_admits_grant(&fold, &id, &grant)
             {
                 continue;
             }
@@ -325,9 +322,11 @@ impl Vault {
     /// carry `scope`, be unexpired and not inactive under its pact. A vault
     /// scope must be this shared vault's own id. A role in
     /// [`FIRST_PARTY_MEMBER_ROLES`] is a `Member`; any other live grant is a
-    /// `ScopedGuest`. `None` (no such live grant, a personal or deleted
-    /// vault) is a refusal, never a member. Proving the transport stays the
-    /// caller's.
+    /// `ScopedGuest`. A Connect guest grant stands on a personal vault too,
+    /// and only while one Active pact with its peer binds it (FIX 3016).
+    /// `None` (no such live grant, a deleted vault, a personal vault for any
+    /// other purpose) is a refusal, never a member. Proving the transport
+    /// stays the caller's.
     pub(crate) fn authenticated_grant_membership_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -338,12 +337,15 @@ impl Vault {
         if self.shared_vault_deletion_in_txn(txn)?.is_some() {
             return Ok(None);
         }
-        let Some(creation) = self.shared_vault_creation_in_txn(txn)? else {
-            return Ok(None);
+        let creation = self.shared_vault_creation_in_txn(txn)?;
+        let stands = match scope {
+            FederationGrantScope::Connect { .. } => true,
+            FederationGrantScope::Vault { vault_id } => {
+                creation.is_some_and(|creation| vault_id != 0 && vault_id == creation.vault_id)
+            }
+            FederationGrantScope::Ask { .. } => creation.is_some(),
         };
-        if let FederationGrantScope::Vault { vault_id } = scope
-            && (vault_id == 0 || vault_id != creation.vault_id)
-        {
+        if !stands {
             return Ok(None);
         }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
@@ -367,10 +369,7 @@ impl Vault {
             || grant
                 .expires_at
                 .is_some_and(|expires| self.store.clock.now_recorded_at() >= expires)
-            || matches!(
-                federation_grant_activation(&fold, &grant_id),
-                FederationGrantActivation::Inactive(_)
-            )
+            || !super::pact_admits_grant(&fold, &grant_id, &grant)
         {
             return Ok(None);
         }

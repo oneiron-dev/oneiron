@@ -40,9 +40,9 @@ pub use self::posterior::{
     ProvenanceTrustClass, SKILL_RELIABILITY_SCHEMA_VERSION, SkillReliabilityPosterior,
 };
 pub use self::projector::{
-    FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF, PREDICATE_SKILL_RELIABILITY,
-    SKILL_OUTCOME_AXIS, project_skill_reliability, project_skill_reliability_for,
-    project_skill_reliability_for_executor,
+    FIELD_SKILL_GOAL_REVISION, FIELD_SKILL_LEARNING_ANCHOR, FIELD_SKILL_TYPE_REF,
+    PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,
+    project_skill_reliability_for, project_skill_reliability_for_executor,
 };
 pub(crate) use self::provenance::skill_reliability_sources;
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
