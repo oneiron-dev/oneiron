@@ -265,6 +265,13 @@ pub enum AgentVerb {
     VaultCodeSnapshotsGet,
     VaultCodeSnapshotsRead,
     VaultCodeSymbolsDefinitions,
+    VaultCodeMergeQueueEnqueue,
+    VaultCodeMergeQueueStage,
+    VaultCodeMergeQueueObserve,
+    VaultCodeMergeQueueRequeueSurvivors,
+    VaultCodeMergeQueueLandReviewed,
+    VaultCodeMergeQueueSettleSlow,
+    VaultCodeMergeQueueRecover,
     VaultArtifactsExport,
     VaultAgentsCreate,
     VaultAgentsGet,
@@ -777,6 +784,13 @@ impl AgentVerb {
         Self::VaultCodeSnapshotsGet,
         Self::VaultCodeSnapshotsRead,
         Self::VaultCodeSymbolsDefinitions,
+        Self::VaultCodeMergeQueueEnqueue,
+        Self::VaultCodeMergeQueueStage,
+        Self::VaultCodeMergeQueueObserve,
+        Self::VaultCodeMergeQueueRequeueSurvivors,
+        Self::VaultCodeMergeQueueLandReviewed,
+        Self::VaultCodeMergeQueueSettleSlow,
+        Self::VaultCodeMergeQueueRecover,
         Self::VaultArtifactsExport,
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
@@ -1298,6 +1312,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => "vault.code.snapshots.get",
             Self::VaultCodeSnapshotsRead => "vault.code.snapshots.read",
             Self::VaultCodeSymbolsDefinitions => "vault.code.symbols.definitions",
+            Self::VaultCodeMergeQueueEnqueue => "vault.code.merge_queue.enqueue",
+            Self::VaultCodeMergeQueueStage => "vault.code.merge_queue.stage",
+            Self::VaultCodeMergeQueueObserve => "vault.code.merge_queue.observe",
+            Self::VaultCodeMergeQueueRequeueSurvivors => "vault.code.merge_queue.requeue_survivors",
+            Self::VaultCodeMergeQueueLandReviewed => "vault.code.merge_queue.land_reviewed",
+            Self::VaultCodeMergeQueueSettleSlow => "vault.code.merge_queue.settle_slow",
+            Self::VaultCodeMergeQueueRecover => "vault.code.merge_queue.recover",
             Self::VaultArtifactsExport => "vault.artifacts.export",
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
@@ -1813,6 +1834,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2332,6 +2360,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -2894,6 +2929,13 @@ impl AgentVerb {
                 | Self::VaultCodeSnapshotsGet
                 | Self::VaultCodeSnapshotsRead
                 | Self::VaultCodeSymbolsDefinitions
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueObserve
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultArtifactsExport
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
@@ -3292,6 +3334,12 @@ impl AgentVerb {
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeSnapshotsIngest
+                | Self::VaultCodeMergeQueueEnqueue
+                | Self::VaultCodeMergeQueueStage
+                | Self::VaultCodeMergeQueueRequeueSurvivors
+                | Self::VaultCodeMergeQueueLandReviewed
+                | Self::VaultCodeMergeQueueSettleSlow
+                | Self::VaultCodeMergeQueueRecover
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
                 | Self::VaultWorkspaceEstablish
@@ -3728,6 +3776,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeMergeQueueEnqueue => &["spec"],
+            Self::VaultCodeMergeQueueStage => &["spec"],
+            Self::VaultCodeMergeQueueObserve => &["spec"],
+            Self::VaultCodeMergeQueueRequeueSurvivors => &["spec"],
+            Self::VaultCodeMergeQueueLandReviewed => &["spec"],
+            Self::VaultCodeMergeQueueSettleSlow => &["spec"],
+            Self::VaultCodeMergeQueueRecover => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -4241,6 +4296,13 @@ impl AgentVerb {
             Self::VaultCodeSnapshotsGet => &["spec"],
             Self::VaultCodeSnapshotsRead => &["spec"],
             Self::VaultCodeSymbolsDefinitions => &["spec"],
+            Self::VaultCodeMergeQueueEnqueue => &["spec"],
+            Self::VaultCodeMergeQueueStage => &["spec"],
+            Self::VaultCodeMergeQueueObserve => &["spec"],
+            Self::VaultCodeMergeQueueRequeueSurvivors => &["spec"],
+            Self::VaultCodeMergeQueueLandReviewed => &["spec"],
+            Self::VaultCodeMergeQueueSettleSlow => &["spec"],
+            Self::VaultCodeMergeQueueRecover => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
@@ -5244,6 +5306,27 @@ impl AgentVerb {
             }
             Self::VaultCodeSymbolsDefinitions => {
                 "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
+            }
+            Self::VaultCodeMergeQueueEnqueue => {
+                "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
+            }
+            Self::VaultCodeMergeQueueStage => {
+                "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."
+            }
+            Self::VaultCodeMergeQueueObserve => {
+                "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt."
+            }
+            Self::VaultCodeMergeQueueRequeueSurvivors => {
+                "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written."
+            }
+            Self::VaultCodeMergeQueueLandReviewed => {
+                "Advance the fast-tested head by one ready batch through reviewed-stack admission alone. Owner only. Each proposal still needs unanimous critic approval and exact bytes and base; the owner proof approves nothing."
+            }
+            Self::VaultCodeMergeQueueSettleSlow => {
+                "Settle stored slow results in landing order: green advances past passing ones, and a red one rolls the ungreen suffix back. Owner only. The caller names no commit or result."
+            }
+            Self::VaultCodeMergeQueueRecover => {
+                "Reconcile an interrupted landing or rollback with its persisted mutation receipts. Owner only. Unreceipted divergence refuses; nothing is approved or rebased."
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."

@@ -59,6 +59,7 @@ mod key_value;
 mod lifted_view;
 mod locality;
 mod machine_write;
+pub mod merge_queue_doors;
 mod message_result;
 mod note_tombstone;
 mod notes;

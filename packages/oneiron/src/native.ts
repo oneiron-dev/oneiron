@@ -291,6 +291,13 @@ vaultCodeSnapshotsIngest(input: unknown): unknown
 vaultCodeSnapshotsGet(input: unknown): unknown
 vaultCodeSnapshotsRead(input: unknown): unknown
 vaultCodeSymbolsDefinitions(input: unknown): unknown
+vaultCodeMergeQueueEnqueue(input: unknown): unknown
+vaultCodeMergeQueueStage(input: unknown): unknown
+vaultCodeMergeQueueObserve(input: unknown): unknown
+vaultCodeMergeQueueRequeueSurvivors(input: unknown): unknown
+vaultCodeMergeQueueLandReviewed(input: unknown): unknown
+vaultCodeMergeQueueSettleSlow(input: unknown): unknown
+vaultCodeMergeQueueRecover(input: unknown): unknown
 vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
