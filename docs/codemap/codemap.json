@@ -23705,7 +23705,7 @@
       "const": 1,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -50315,7 +50315,7 @@
      "surface": {
       "enum": 1,
       "fn": 13,
-      "re-export": 50,
+      "re-export": 51,
       "struct": 36
      }
     },
@@ -50476,6 +50476,24 @@
      "purpose": "Typed, source-bound connector-pack admission and delta re-consent",
      "surface": {
       "struct": 13
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CoreferenceLinkReceipt",
+      "CoreferenceLinkRequest",
+      "CoreferencePairRequest",
+      "CoreferenceShareConsentReceipt",
+      "CoreferenceShareConsentRequest",
+      "CoreferenceUnlinkReceipt"
+     ],
+     "path": "src/task_verb/sdk_coreference.rs",
+     "purpose": "Typed cross-vault identity links",
+     "surface": {
+      "fn": 5,
+      "struct": 6
      }
     },
     {
@@ -50656,7 +50674,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 659
+      "fn": 663
      }
     },
     {
@@ -57718,7 +57736,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 164,
+     "files": 165,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57888,7 +57906,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3528,
+   "source_files": 3529,
    "test_files": 902
   },
   "oneiron-android": {
@@ -66397,7 +66415,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 609
+      "fn": 613
      }
     },
     {
@@ -67446,7 +67464,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 610
+      "fn": 614
      }
     },
     {
@@ -70556,6 +70574,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/coreference_doors.rs",
+     "purpose": "Owner coreference doors: every transport reaches the engine's typed operations",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/courtesy_delete_doors.rs",
      "purpose": "The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`…",
      "surface": {
@@ -70719,7 +70747,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 116
+      "crate-vis": 117
      }
     },
     {
@@ -78387,7 +78415,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 376,
+     "files": 377,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -78809,7 +78837,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 712,
+   "source_files": 713,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -79477,6 +79505,13 @@
       "CoreDagQuoteInput",
       "CoreEntityWriteReceipt",
       "CoreWriteTextField",
+      "CoreferenceLinkReceipt",
+      "CoreferenceLinkRequest",
+      "CoreferencePairRequest",
+      "CoreferenceShareConsentReceipt",
+      "CoreferenceShareConsentRequest",
+      "CoreferenceStatus",
+      "CoreferenceUnlinkReceipt",
       "CostEnvelope",
       "CourtesyDeleteAnswerRequest",
       "CourtesyDeleteAskedWorld",
@@ -81227,8 +81262,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 581,
-      "struct": 1639
+      "enum": 582,
+      "struct": 1645
      }
     },
     {
