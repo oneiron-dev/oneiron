@@ -238,6 +238,11 @@ pub enum AgentVerb {
     VaultCodeDiff,
     VaultCodeBlame,
     VaultCodeProposalView,
+    VaultCodeSymbolsDeclare,
+    VaultCodeSymbolsRenew,
+    VaultCodeSymbolsRelease,
+    VaultCodeProposalSubmit,
+    VaultCodeOplog,
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeOriginAuthorityGet,
@@ -726,6 +731,11 @@ impl AgentVerb {
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
+        Self::VaultCodeSymbolsDeclare,
+        Self::VaultCodeSymbolsRenew,
+        Self::VaultCodeSymbolsRelease,
+        Self::VaultCodeProposalSubmit,
+        Self::VaultCodeOplog,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeOriginAuthorityGet,
@@ -1221,6 +1231,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
+            Self::VaultCodeSymbolsDeclare => "vault.code.symbols.declare",
+            Self::VaultCodeSymbolsRenew => "vault.code.symbols.renew",
+            Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
+            Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
+            Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
@@ -1712,6 +1727,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2207,6 +2227,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2743,6 +2768,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -3128,6 +3158,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsComment
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -3538,6 +3572,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeSymbolsDeclare => &["spec"],
+            Self::VaultCodeSymbolsRenew => &["spec"],
+            Self::VaultCodeSymbolsRelease => &["spec"],
+            Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4027,6 +4066,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeSymbolsDeclare => &["spec"],
+            Self::VaultCodeSymbolsRenew => &["spec"],
+            Self::VaultCodeSymbolsRelease => &["spec"],
+            Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4952,6 +4996,21 @@ impl AgentVerb {
             }
             Self::VaultCodeProposalView => {
                 "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied."
+            }
+            Self::VaultCodeSymbolsDeclare => {
+                "Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."
+            }
+            Self::VaultCodeSymbolsRenew => {
+                "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."
+            }
+            Self::VaultCodeSymbolsRelease => {
+                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."
+            }
+            Self::VaultCodeProposalSubmit => {
+                "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."
+            }
+            Self::VaultCodeOplog => {
+                "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
             }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."

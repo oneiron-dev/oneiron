@@ -114,7 +114,7 @@ pub const OF366_SEED_LENS_CATALOG_JSON: &str = r#"{
   ]
 }"#;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CriticLens {
     pub id: String,
     pub prompt_contract: String,
@@ -143,7 +143,7 @@ impl CriticLens {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LensCatalog {
     pub schema_version: u64,
     pub lenses: Vec<CriticLens>,

@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 442 facade rows, 1698 declarations.
-Inputs: 393 of 442 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 390 of 442 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 447 facade rows, 1712 declarations.
+Inputs: 398 of 447 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 395 of 447 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -4899,6 +4899,76 @@ class CodeProposalView(TypedDict):
     changes: list[CodeChangeView]
     landed: NotRequired[CodeOperationView | None]
     rendered: str
+class CodeSymbolsDeclareRequest(TypedDict):
+    repo: EntityId
+    task: EntityId
+    symbols: list[EntityId]
+    ttl_seconds: int
+class CodeSymbolLeaseView(TypedDict):
+    task: EntityId
+    holder: EntityId
+    symbols: list[EntityId]
+    expires_at: int
+    held: bool
+class CodeSymbolsDeclared(TypedDict):
+    declaration: CodeSymbolLeaseView
+    blockers: list[EntityId]
+class CodeSymbolsTaskRequest(TypedDict):
+    task: EntityId
+class CodeSymbolsReleased(TypedDict):
+    task: EntityId
+    released: bool
+class CodeOpProvenance(TypedDict):
+    turn: NotRequired[EntityId | None]
+    activity: NotRequired[EntityId | None]
+    intent: NotRequired[EntityId | None]
+    substrate_ref: NotRequired[EntityId | None]
+    reasoning_effort: NotRequired[str | None]
+class CriticLens(TypedDict):
+    id: str
+    prompt_contract: str
+    output_schema: str
+    hard_check: bool
+    domain: str
+class LensCatalog(TypedDict):
+    schema_version: int
+    lenses: list[CriticLens]
+class CodeProposalSubmitRequest(TypedDict):
+    repo: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    path: str
+    content: list[int]
+    message: str
+    op_provenance: CodeOpProvenance
+    catalog: LensCatalog
+class CodeProposalSubmitted(TypedDict):
+    proposal: EntityId
+    repo: EntityId
+    actor: EntityId
+    session: EntityId
+    provenance_claim: EntityId
+    base: str
+    status: RepoProposalStatus
+class CodeRepoRequest(TypedDict):
+    repo: EntityId
+CodeMutationState = Literal["prepared", "applied", "failed"]
+class CodeMutationEntry(TypedDict):
+    repo_ref: str
+    seq: int
+    operation_kind: str
+    operation_subject: NotRequired[str | None]
+    actor: NotRequired[EntityId | None]
+    session: NotRequired[EntityId | None]
+    started_at_ms: int
+    finished_at_ms: NotRequired[int | None]
+    pre_action_fork_hash: str
+    expected_post_action_fork_hash: NotRequired[str | None]
+    status: CodeMutationState
+    failure: NotRequired[str | None]
+class CodeMutationLog(TypedDict):
+    repo: EntityId
+    entries: list[CodeMutationEntry]
 class CodeTreeRequest(TypedDict):
     revision_ref: NotRequired[str | None]
     repo: NotRequired[str | None]

@@ -44,6 +44,7 @@ pub mod caps;
 pub mod channel_doors;
 mod chat;
 mod claims;
+pub mod code_doors;
 mod conversation_list;
 mod credential_key;
 mod dreamer;
