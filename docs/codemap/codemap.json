@@ -19839,7 +19839,7 @@
      "purpose": "The Dreamer runner store: queue lifecycle, park/resume, and readers",
      "surface": {
       "crate-vis": 21,
-      "fn": 15,
+      "fn": 16,
       "struct": 1
      }
     },
@@ -48029,6 +48029,7 @@
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
       "crate-vis": 34,
+      "fn": 1,
       "mod": 2,
       "re-export": 25
      }
