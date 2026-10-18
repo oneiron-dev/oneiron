@@ -2020,8 +2020,10 @@ export type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; re
 export type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null }
 /** `oneiron::receipt::guest_revoke::GuestRevokeResponse` */
 export type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] }
+/** `oneiron_authority::authority::comm_reach::CommReach` */
+export type CommReach = "parent" | "subtree" | "project" | "vault"
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMintRequest` */
-export type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number }
+export type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number; comm?: CommReach | null }
 /** `oneiron::task_verb::sdk_shared_members::GuestSlipMinted` */
 export type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number }
 /** `oneiron::authority::support_grant::SupportHolderClass` */
@@ -5732,8 +5734,6 @@ export type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max"
 export type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T }
 /** `oneiron::code_run::run_verbs::SpawnPattern` */
 export type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation"
-/** `oneiron::agent_dispatch::comm::CommReach` */
-export type CommReach = "parent" | "subtree" | "project" | "vault"
 /** `oneiron::code_run::run_verbs::AgentSpawnInput` */
 export type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null }
 /** `oneiron::code_run::run_verbs::AgentSpawnKind` */
