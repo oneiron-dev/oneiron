@@ -47,6 +47,19 @@ struct TombstonePersistence<'a> {
     scrubbed_update_keys: &'a [String],
 }
 
+/// What a write does when the pad tombstones it staged fail to publish after
+/// its commit (FIX 3334; a call, canon is silent). The commit stands either
+/// way, and no timer or retry count is added.
+#[cfg(feature = "sync")]
+enum PadTombstonePublishFailure {
+    /// Keep the durable `pt:` markers for each window's next load, and warn.
+    KeepPendingAndWarn,
+}
+
+#[cfg(feature = "sync")]
+const PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY: PadTombstonePublishFailure =
+    PadTombstonePublishFailure::KeepPendingAndWarn;
+
 impl Vault {
     #[cfg(feature = "sync")]
     pub(super) fn write_crdt_tombstone(
@@ -324,11 +337,12 @@ impl Vault {
         Ok(true)
     }
 
-    /// Publishes the `pt:` tombstones an erase staged for its world's key pads
-    /// in `windows` once the erase has committed, rather than at each window's
-    /// next load (FIX 343). The markers are durable, so a failure here leaves
-    /// them to that load and is never a failure of the erase.
-    pub(super) fn publish_pad_tombstones_after_commit(
+    /// Publishes the `pt:` tombstones an erase or a batch WORLD delete staged
+    /// for its world's key pads in `windows` once it has committed, rather than
+    /// at each window's next load (FIX 343, FIX 3334). The markers are durable,
+    /// so a failure here leaves them to that load and is never a failure of
+    /// the write (`PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY`).
+    pub(crate) fn publish_pad_tombstones_after_commit(
         &self,
         windows: &std::collections::BTreeSet<String>,
     ) {
@@ -336,11 +350,13 @@ impl Vault {
         for window in windows {
             let key = crate::sync::WindowKey::new(window.as_str());
             if let Err(error) = crate::sync::window::publish_pending_tombstones(self, &key) {
-                tracing::warn!(
-                    %error,
-                    window = %window,
-                    "erased world's pad tombstones left to the window's next load"
-                );
+                match PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY {
+                    PadTombstonePublishFailure::KeepPendingAndWarn => tracing::warn!(
+                        %error,
+                        window = %window,
+                        "erased world's pad tombstones left to the window's next load"
+                    ),
+                }
             }
         }
         #[cfg(not(feature = "sync"))]

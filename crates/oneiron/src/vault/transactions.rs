@@ -453,7 +453,7 @@ impl Vault {
             result,
             approved_vad_ids,
             proactivity_changed,
-            (task_ids, rows, room_joins),
+            (task_ids, rows, room_joins, pad_windows),
             retirement_staged,
         ) = self.store.group_write_as(callback, None, |wtxn| {
             let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
@@ -493,7 +493,12 @@ impl Vault {
                     result,
                     approved,
                     postcommit.proactivity_changed,
-                    (postcommit.task_ids, postcommit.rows, postcommit.room_joins),
+                    (
+                        postcommit.task_ids,
+                        postcommit.rows,
+                        postcommit.room_joins,
+                        postcommit.pad_windows,
+                    ),
                     staged != retirements_before,
                 )),
                 Err(err) => Rows::Discard(Err(E::from(err))),
@@ -517,6 +522,9 @@ impl Vault {
             let joins: Vec<&str> = room_joins.iter().map(String::as_str).collect();
             self.refresh_room_rows_in_live_windows(&joins, &[]);
         }
+        // FIX 3334: a WORLD delete this write applied staged its pads'
+        // tombstones; they publish now, not at each window's next load.
+        self.publish_pad_tombstones_after_commit(&pad_windows);
         if retirement_staged {
             self.finish_gate_decision_retirements_after_commit();
         }
