@@ -167,6 +167,18 @@ both bindings and their export-census tests in one change.
 - `vault.skills.permissions.approve`
 - `vault.skills.optimize.start`
 - `vault.skills.optimize.result`
+- `vault.projects.goal.intake.complete`
+- `vault.projects.goal.get`
+- `vault.skills.optimize.propose`
+- `vault.skills.optimize.measure`
+- `vault.skills.optimize.score`
+- `vault.skills.optimize.admit`
+- `vault.skills.optimize.goal.get`
+- `vault.skills.optimize.goal.bind`
+- `vault.skills.optimize.preferences.get`
+- `vault.skills.optimize.preferences.set`
+- `vault.skills.optimize.tradeoff_asks`
+- `vault.skills.optimize.tradeoff_asks.pick`
 - `vault.skills.governance.get`
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
@@ -249,6 +261,9 @@ both bindings and their export-census tests in one change.
 - `vault.trusted_contacts.concern.authorize`
 - `vault.trusted_contacts.concern.propose`
 - `vault.trusted_contacts.concern.deliver`
+- `vault.guests.share`
+- `vault.guests.export_envelope`
+- `vault.guests.reshare`
 - `vault.guests.revoke`
 - `vault.guests.mint_slip`
 - `vault.support_grants.mint`
@@ -269,6 +284,7 @@ both bindings and their export-census tests in one change.
 - `self.off_record.execute`
 - `vault.records.erase_preview`
 - `vault.records.erase_confirm`
+- `vault.records.erase_sweep`
 - `vault.research.create_child`
 - `vault.research.archive`
 - `vault.research.archive.install`

@@ -191,6 +191,18 @@ vaultSkillsCodeAutoInstallSet(input: unknown): unknown
 vaultSkillsPermissionsApprove(input: unknown): unknown
 vaultSkillsOptimizeStart(input: unknown): unknown
 vaultSkillsOptimizeResult(input: unknown): unknown
+vaultProjectsGoalIntakeComplete(input: unknown): unknown
+vaultProjectsGoalGet(input: unknown): unknown
+vaultSkillsOptimizePropose(input: unknown): unknown
+vaultSkillsOptimizeMeasure(input: unknown): unknown
+vaultSkillsOptimizeScore(input: unknown): unknown
+vaultSkillsOptimizeAdmit(input: unknown): unknown
+vaultSkillsOptimizeGoalGet(input: unknown): unknown
+vaultSkillsOptimizeGoalBind(input: unknown): unknown
+vaultSkillsOptimizePreferencesGet(input: unknown): unknown
+vaultSkillsOptimizePreferencesSet(input: unknown): unknown
+vaultSkillsOptimizeTradeoffAsks(input: unknown): unknown
+vaultSkillsOptimizeTradeoffAsksPick(input: unknown): unknown
 vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
@@ -296,6 +308,7 @@ vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
 vaultRecordsErasePreview(input: unknown): unknown
 vaultRecordsEraseConfirm(input: unknown): unknown
+vaultRecordsEraseSweep(input: unknown): unknown
 vaultResearchCreateChild(input: unknown): unknown
 vaultResearchArchive(input: unknown): unknown
 vaultResearchArchiveInstall(input: unknown): unknown

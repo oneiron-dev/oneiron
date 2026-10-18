@@ -308,6 +308,7 @@ mod sdk_federation;
 mod sdk_feedback;
 mod sdk_guest_document;
 mod sdk_guest_revoke;
+mod sdk_goal_optimize;
 mod sdk_host;
 mod sdk_hub;
 mod sdk_legal_hold;

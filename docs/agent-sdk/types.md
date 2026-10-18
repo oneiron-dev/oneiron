@@ -905,6 +905,8 @@ class Oneiron:
         @property
         def skills(self) -> "Oneiron._VaultSkillsVerbs": ...
         @property
+        def projects(self) -> "Oneiron._VaultProjectsVerbs": ...
+        @property
         def connectors(self) -> "Oneiron._VaultConnectorsVerbs": ...
         @property
         def authority(self) -> "Oneiron._VaultAuthorityVerbs": ...
@@ -998,8 +1000,6 @@ class Oneiron:
         def critic(self) -> "Oneiron._VaultCriticVerbs": ...
         @property
         def rooms(self) -> "Oneiron._VaultRoomsVerbs": ...
-        @property
-        def projects(self) -> "Oneiron._VaultProjectsVerbs": ...
         @property
         def conversations(self) -> "Oneiron._VaultConversationsVerbs": ...
         @property
@@ -1526,6 +1526,35 @@ class Oneiron:
             """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
         def result(self, spec: Facade.SkillOptimizeResultRequest) -> Facade.SkillOptimizeResultView:
             """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+        def propose(self, spec: Facade.SkillOptimizeProposeRequest) -> Facade.SkillOptimizeProposalReceipt:
+            """Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules."""
+        def measure(self, spec: Facade.SkillOptimizeMeasureRequest) -> Facade.SkillOptimizeMeasurement:
+            """Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms."""
+        def score(self, spec: Facade.SkillOptimizeProposalRequest) -> Facade.SkillOptimizeResultView:
+            """Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it."""
+        def admit(self, spec: Facade.SkillOptimizeProposalRequest) -> Facade.SkillOptimizeResultView:
+            """Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks."""
+        @property
+        def goal(self) -> "Oneiron._VaultSkillsOptimizeGoalVerbs": ...
+        @property
+        def preferences(self) -> "Oneiron._VaultSkillsOptimizePreferencesVerbs": ...
+        @property
+        def tradeoff_asks(self) -> "Oneiron._VaultSkillsOptimizeTradeoffAsksVerbs": ...
+    class _VaultSkillsOptimizeGoalVerbs:
+        def get(self, spec: Facade.SkillOptimizeGoalRequest) -> Facade.SkillOptimizeGoalView:
+            """Reads the optimizer goal identity, effective axes, revision and joined project goal claim."""
+        def bind(self, spec: Facade.SkillOptimizeGoalBindRequest) -> Facade.SkillOptimizeGoalRevision:
+            """Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision."""
+    class _VaultSkillsOptimizePreferencesVerbs:
+        def get(self, spec: Facade.SkillOptimizeGoalRequest) -> Facade.SkillTradeoffPreferences | None:
+            """Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority."""
+        def set(self, spec: Facade.SkillOptimizePreferencesSetRequest) -> Facade.SkillOptimizeGoalRevision:
+            """The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp."""
+    class _VaultSkillsOptimizeTradeoffAsksVerbs:
+        def __call__(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.SkillOptimizeTradeoffAskView]:
+            """Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence."""
+        def pick(self, spec: Facade.SkillOptimizeTradeoffPickRequest) -> Facade.SkillOptimizeResultView:
+            """Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."""
     class _VaultSkillsGovernanceVerbs:
         def get(self, spec: Facade.HubSkillRequest) -> Facade.SkillGovernanceView:
             """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
@@ -1536,6 +1565,38 @@ class Oneiron:
             """Projects the owner's anchored verdict through existing attributed pack outcomes; loading or calling alone never earns a reliability win."""
         def get(self, spec: Facade.SkillPackCreditRequest) -> Facade.LateCreditReceipt | None:
             """Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner."""
+    class _VaultProjectsVerbs:
+        @property
+        def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...
+        def propose(self, spec: Facade.ProjectProposalRequest) -> Facade.ProjectProposalCard:
+            """The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."""
+        def proposals(self, spec: Facade.ProjectConversationRequest) -> list[Facade.ProjectCardRecord]:
+            """The project cards shown in a conversation, each with its state."""
+        def dismiss_card(self, spec: Facade.ProjectCardRequest) -> Facade.ProjectCardDismissal:
+            """The card's person dismisses a project card so it never mints; false when it was dismissed already."""
+        def confirm(self, spec: Facade.ProjectCardConfirmRequest) -> Facade.ProjectMintReceipt:
+            """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
+        @property
+        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs": ...
+        def route_tradeoff(self, spec: Facade.ProjectTradeoffRouteRequest) -> Facade.TaskAskReceipt:
+            """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
+    class _VaultProjectsGoalVerbs:
+        @property
+        def intake(self) -> "Oneiron._VaultProjectsGoalIntakeVerbs": ...
+        def get(self, spec: Facade.ProjectRefRequest) -> Facade.ProjectGoalView:
+            """Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it."""
+        def revisions(self, spec: Facade.ProjectRefRequest) -> list[Facade.ProjectGoalRevisionProposal]:
+            """The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first."""
+        def dismiss(self, spec: Facade.ProjectGoalDismissRequest) -> Facade.ProjectGoalDismissReceipt:
+            """The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry."""
+    class _VaultProjectsGoalIntakeVerbs:
+        def __call__(self, spec: Facade.ProjectRefRequest) -> Facade.ProjectGoalInterviewContext:
+            """What a project's goal-intake interview starts from, for a member of its home room."""
+        def complete(self, spec: Facade.ProjectGoalIntakeCompleteRequest) -> Facade.ProjectGoalIntakeReceipt:
+            """Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal."""
+    class _VaultProjectsRosterVerbs:
+        def write(self, spec: Facade.ProjectRosterWriteRequest) -> Facade.ProjectRosterWriteOutcome:
+            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
     class _VaultConnectorsVerbs:
         @property
         def subscriptions(self) -> "Oneiron._VaultConnectorsSubscriptionsVerbs": ...
@@ -1711,9 +1772,15 @@ class Oneiron:
         def deliver(self, spec: Facade.TrustedContactDeliverRequest) -> Facade.TrustedContactDeliveryReceipt | None:
             """The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."""
     class _VaultGuestsVerbs:
+        def share(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
+            """The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch."""
+        def export_envelope(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
+            """The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."""
+        def reshare(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
+            """The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."""
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
         def mint_slip(self, spec: Facade.GuestSlipMintRequest) -> Facade.GuestSlipMinted:
-            """The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device."""
+            """The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device."""
     class _VaultSupportGrantsVerbs:
         def mint(self, spec: Facade.SupportGrantMintRequest) -> Facade.SupportGrantMintAnswer:
             """The owner mints our support person or agent a time-limited, revocable grant, bound to that party's own key, inside explicit bounds."""
@@ -1758,6 +1825,8 @@ class Oneiron:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
         def erase_confirm(self, spec: Facade.RecordEraseConfirmRequest) -> Facade.RecordEraseOutcome:
             """Erase the record the caller previewed, once its preview still has the digest they confirmed; in a shared vault a held record starts its own erase act instead."""
+        def erase_sweep(self, spec: Facade.RecordEraseSweepRequest) -> Facade.RecordEraseSweep | None:
+            """Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep."""
     class _VaultResearchVerbs:
         def create_child(self, spec: Facade.ResearchChildWire) -> Facade.ResearchChildReceipt:
             """The owner enqueues an experiment child through ordinary agent dispatch under an unpruned campaign parent; record its actual candidate afterward with research.fork or research.weave."""
@@ -2456,31 +2525,6 @@ class Oneiron:
             """Pins an agent as a room's host, or clears the stored host, pin or handoff."""
         def hand(self, spec: Facade.RoomHostHand) -> Facade.RoomStanding:
             """The room's current host hands the hosting duty to another agent that may host."""
-    class _VaultProjectsVerbs:
-        def propose(self, spec: Facade.ProjectProposalRequest) -> Facade.ProjectProposalCard:
-            """The drafting agent proposes a project card on a source message; the card writes no project and confers no authority."""
-        def proposals(self, spec: Facade.ProjectConversationRequest) -> list[Facade.ProjectCardRecord]:
-            """The project cards shown in a conversation, each with its state."""
-        def dismiss_card(self, spec: Facade.ProjectCardRequest) -> Facade.ProjectCardDismissal:
-            """The card's person dismisses a project card so it never mints; false when it was dismissed already."""
-        def confirm(self, spec: Facade.ProjectCardConfirmRequest) -> Facade.ProjectMintReceipt:
-            """The owner's tap that confirms a host-held project card; only the host's own door can complete it."""
-        @property
-        def roster(self) -> "Oneiron._VaultProjectsRosterVerbs": ...
-        @property
-        def goal(self) -> "Oneiron._VaultProjectsGoalVerbs": ...
-        def route_tradeoff(self, spec: Facade.ProjectTradeoffRouteRequest) -> Facade.TaskAskReceipt:
-            """Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room."""
-    class _VaultProjectsRosterVerbs:
-        def write(self, spec: Facade.ProjectRosterWriteRequest) -> Facade.ProjectRosterWriteOutcome:
-            """Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent."""
-    class _VaultProjectsGoalVerbs:
-        def intake(self, spec: Facade.ProjectRefRequest) -> Facade.ProjectGoalInterviewContext:
-            """What a project's goal-intake interview starts from, for a member of its home room."""
-        def revisions(self, spec: Facade.ProjectRefRequest) -> list[Facade.ProjectGoalRevisionProposal]:
-            """The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first."""
-        def dismiss(self, spec: Facade.ProjectGoalDismissRequest) -> Facade.ProjectGoalDismissReceipt:
-            """The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry."""
     class _VaultConversationsVerbs:
         @property
         def turn(self) -> "Oneiron._VaultConversationsTurnVerbs": ...

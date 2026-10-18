@@ -76,6 +76,7 @@ mod fold_doors;
 mod foreign_code_doors;
 mod gate_policy_doors;
 mod graduation_doors;
+mod goal_optimize_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
