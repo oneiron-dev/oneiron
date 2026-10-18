@@ -242,6 +242,11 @@ pub enum AgentVerb {
     VaultCodeDiff,
     VaultCodeBlame,
     VaultCodeProposalView,
+    VaultCodeSymbolsDeclare,
+    VaultCodeSymbolsRenew,
+    VaultCodeSymbolsRelease,
+    VaultCodeProposalSubmit,
+    VaultCodeOplog,
     VaultCodeRepoDiff,
     VaultCodeExport,
     VaultCodeOriginAuthorityGet,
@@ -453,6 +458,8 @@ pub enum AgentVerb {
     VaultArtifactsRead,
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
+    VaultMemorySignalExtraction,
+    VaultMemorySignalExtractionResult,
     VaultClaimsSeed,
     VaultChannelIdentitiesProvision,
     VaultChannelIdentitiesBind,
@@ -488,6 +495,7 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
     SelfUnfold,
@@ -738,6 +746,11 @@ impl AgentVerb {
         Self::VaultCodeDiff,
         Self::VaultCodeBlame,
         Self::VaultCodeProposalView,
+        Self::VaultCodeSymbolsDeclare,
+        Self::VaultCodeSymbolsRenew,
+        Self::VaultCodeSymbolsRelease,
+        Self::VaultCodeProposalSubmit,
+        Self::VaultCodeOplog,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
         Self::VaultCodeOriginAuthorityGet,
@@ -949,6 +962,8 @@ impl AgentVerb {
         Self::VaultArtifactsRead,
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
+        Self::VaultMemorySignalExtraction,
+        Self::VaultMemorySignalExtractionResult,
         Self::VaultClaimsSeed,
         Self::VaultChannelIdentitiesProvision,
         Self::VaultChannelIdentitiesBind,
@@ -984,6 +999,7 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
         Self::SelfUnfold,
@@ -1241,6 +1257,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => "vault.code.diff",
             Self::VaultCodeBlame => "vault.code.blame",
             Self::VaultCodeProposalView => "vault.code.proposal_view",
+            Self::VaultCodeSymbolsDeclare => "vault.code.symbols.declare",
+            Self::VaultCodeSymbolsRenew => "vault.code.symbols.renew",
+            Self::VaultCodeSymbolsRelease => "vault.code.symbols.release",
+            Self::VaultCodeProposalSubmit => "vault.code.proposal_submit",
+            Self::VaultCodeOplog => "vault.code.oplog",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
@@ -1452,6 +1473,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => "vault.artifacts.read",
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
+            Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
+            Self::VaultMemorySignalExtractionResult => "vault.memory.signal_extraction.result",
             Self::VaultClaimsSeed => "vault.claims.seed",
             Self::VaultChannelIdentitiesProvision => "vault.channel_identities.provision",
             Self::VaultChannelIdentitiesBind => "vault.channel_identities.bind",
@@ -1491,6 +1514,7 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
             Self::SelfUnfold => "self.unfold",
@@ -1740,6 +1764,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -1911,6 +1940,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -1946,6 +1977,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -2243,6 +2275,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2414,6 +2451,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -2449,6 +2488,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -2787,6 +2827,11 @@ impl AgentVerb {
                 | Self::VaultCodeDiff
                 | Self::VaultCodeBlame
                 | Self::VaultCodeProposalView
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
+                | Self::VaultCodeOplog
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthorityGet
@@ -2985,6 +3030,8 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultMemorySignalExtraction
+                | Self::VaultMemorySignalExtractionResult
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
                 | Self::VaultChannelIdentitiesFulfill
@@ -3015,6 +3062,7 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -3178,6 +3226,10 @@ impl AgentVerb {
                 | Self::VaultArtifactsThreadsComment
                 | Self::VaultArtifactsThreadsAssign
                 | Self::VaultArtifactsThreadsState
+                | Self::VaultCodeSymbolsDeclare
+                | Self::VaultCodeSymbolsRenew
+                | Self::VaultCodeSymbolsRelease
+                | Self::VaultCodeProposalSubmit
                 | Self::VaultCodeExport
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
@@ -3296,6 +3348,7 @@ impl AgentVerb {
                 | Self::VaultArtifactsBodyDeckOracle
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
+                | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
                 | Self::VaultChannelIdentitiesProvision
                 | Self::VaultChannelIdentitiesBind
@@ -3314,6 +3367,7 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
                 | Self::SelfUnfold
@@ -3593,6 +3647,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeSymbolsDeclare => &["spec"],
+            Self::VaultCodeSymbolsRenew => &["spec"],
+            Self::VaultCodeSymbolsRelease => &["spec"],
+            Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -3804,6 +3863,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultMemorySignalExtraction => &["spec"],
+            Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -3839,6 +3900,7 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
@@ -4090,6 +4152,11 @@ impl AgentVerb {
             Self::VaultCodeDiff => &["spec"],
             Self::VaultCodeBlame => &["spec"],
             Self::VaultCodeProposalView => &["spec"],
+            Self::VaultCodeSymbolsDeclare => &["spec"],
+            Self::VaultCodeSymbolsRenew => &["spec"],
+            Self::VaultCodeSymbolsRelease => &["spec"],
+            Self::VaultCodeProposalSubmit => &["spec"],
+            Self::VaultCodeOplog => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
@@ -4301,6 +4368,8 @@ impl AgentVerb {
             Self::VaultArtifactsRead => &["spec"],
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
+            Self::VaultMemorySignalExtraction => &["spec"],
+            Self::VaultMemorySignalExtractionResult => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
             Self::VaultChannelIdentitiesProvision => &["spec"],
             Self::VaultChannelIdentitiesBind => &["spec"],
@@ -4336,6 +4405,7 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
             Self::SelfUnfold => &["spec"],
@@ -5032,6 +5102,21 @@ impl AgentVerb {
             Self::VaultCodeProposalView => {
                 "One repo proposal as a reviewer reads it: its candidate against the file at its base, unit by unit, under the provenance it was proposed with, and the operation it landed as once applied."
             }
+            Self::VaultCodeSymbolsDeclare => {
+                "Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."
+            }
+            Self::VaultCodeSymbolsRenew => {
+                "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."
+            }
+            Self::VaultCodeSymbolsRelease => {
+                "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."
+            }
+            Self::VaultCodeProposalSubmit => {
+                "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."
+            }
+            Self::VaultCodeOplog => {
+                "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
+            }
             Self::VaultCodeRepoDiff => {
                 "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it."
             }
@@ -5601,6 +5686,12 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => {
                 "Reads the status of one consolidation attempt by its durable job reference."
             }
+            Self::VaultMemorySignalExtraction => {
+                "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."
+            }
+            Self::VaultMemorySignalExtractionResult => {
+                "Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."
+            }
             Self::VaultClaimsSeed => {
                 "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
@@ -5705,6 +5796,9 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::VaultClaimsSupersede => {
+                "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
             }
             Self::SelfFold => {
                 "Marks a span of the attached run as pending; compaction leaves its raw steps untouched until a batch lands."

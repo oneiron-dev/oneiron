@@ -759,6 +759,9 @@ class Oneiron:
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
         @property
+        def memory(self) -> "Oneiron._VaultMemoryVerbs":
+            return Oneiron._VaultMemoryVerbs(self._client)
+        @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs":
             return Oneiron._VaultChannelIdentitiesVerbs(self._client)
         @property
@@ -869,6 +872,9 @@ class Oneiron:
         def seed(self, input: dict[str, Any]) -> Any:
             """Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."""
             return json.loads(_translate(lambda: self._client.vault_claims_seed(json.dumps(input, allow_nan=False))))
+        def supersede(self, spec):
+            """Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."""
+            return json.loads(_translate(lambda: self._client.vault_claims_supersede(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1838,6 +1844,15 @@ class Oneiron:
         def proposal_view(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """One repo proposal's semantic change from its base, under the provenance it was proposed with."""
             return json.loads(_translate(lambda: self._client.vault_code_proposal_view(json.dumps(request, allow_nan=False))))
+        @property
+        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
+            return Oneiron._VaultCodeSymbolsVerbs(self._client)
+        def proposal_submit(self, spec):
+            """Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed."""
+            return json.loads(_translate(lambda: self._client.vault_code_proposal_submit(json.dumps(spec))))
+        def oplog(self, spec):
+            """Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."""
+            return json.loads(_translate(lambda: self._client.vault_code_oplog(json.dumps(spec))))
         def repo_diff(self, request: dict[str, Any]) -> dict[str, Any] | None:
             """Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."""
             return json.loads(_translate(lambda: self._client.vault_code_repo_diff(json.dumps(request, allow_nan=False))))
@@ -1853,9 +1868,21 @@ class Oneiron:
         @property
         def snapshots(self) -> "Oneiron._VaultCodeSnapshotsVerbs":
             return Oneiron._VaultCodeSnapshotsVerbs(self._client)
-        @property
-        def symbols(self) -> "Oneiron._VaultCodeSymbolsVerbs":
-            return Oneiron._VaultCodeSymbolsVerbs(self._client)
+    class _VaultCodeSymbolsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def declare(self, spec):
+            """Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_declare(json.dumps(spec))))
+        def renew(self, spec):
+            """Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_renew(json.dumps(spec))))
+        def release(self, spec):
+            """Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_release(json.dumps(spec))))
+        def definitions(self, spec):
+            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
+            return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
     class _VaultCodeOriginVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1892,12 +1919,6 @@ class Oneiron:
         def read(self, spec):
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
             return json.loads(_translate(lambda: self._client.vault_code_snapshots_read(json.dumps(spec))))
-    class _VaultCodeSymbolsVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def definitions(self, spec):
-            """Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."""
-            return json.loads(_translate(lambda: self._client.vault_code_symbols_definitions(json.dumps(spec))))
     class _VaultAgentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2300,6 +2321,21 @@ class Oneiron:
         def status(self, spec):
             """Reads the status of one consolidation attempt by its durable job reference."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_status(json.dumps(spec))))
+    class _VaultMemoryVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs":
+            return Oneiron._VaultMemorySignalExtractionVerbs(self._client)
+    class _VaultMemorySignalExtractionVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates."""
+            return json.loads(_translate(lambda: self._client.vault_memory_signal_extraction(json.dumps(spec))))
+        def result(self, spec):
+            """Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them."""
+            return json.loads(_translate(lambda: self._client.vault_memory_signal_extraction_result(json.dumps(spec))))
     class _VaultChannelIdentitiesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -3773,6 +3773,76 @@
       }
     },
     {
+      "name": "vault.code.symbols.declare",
+      "description": "Declare the current repository symbols a task will touch, held by the caller until host time plus ttl_seconds. Owner only. An overlap waits behind the tasks it names, never refused; it grants no write, approval or landing.",
+      "input": "crate::memory::code_doors::CodeSymbolsDeclareRequest",
+      "output": "crate::memory::code_doors::CodeSymbolsDeclared",
+      "call": "memory.code_symbols_declare_as(&memory.embedded_owner(\"vault.code.symbols.declare\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.symbols.renew",
+      "description": "Renew the live symbol declaration the caller holds for one task by its declared lifetime. Owner only.",
+      "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
+      "output": "crate::memory::code_doors::CodeSymbolLeaseView",
+      "call": "memory.code_symbols_renew_as(&memory.embedded_owner(\"vault.code.symbols.renew\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.symbols.release",
+      "description": "Release the symbol declaration the caller holds for one task. Owner only. Keyed by task and holder with no epoch fence; it applies, approves and schedules nothing.",
+      "input": "crate::memory::code_doors::CodeSymbolsTaskRequest",
+      "output": "crate::memory::code_doors::CodeSymbolsReleased",
+      "call": "memory.code_symbols_release_as(&memory.embedded_owner(\"vault.code.symbols.release\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.proposal_submit",
+      "description": "Stage one file change of a repository as a Proposed proposal with its retained base, under the review lens catalog the owner sends. Owner only. The engine mints the proposal id; nothing is approved, queued or landed.",
+      "input": "crate::memory::code_doors::CodeProposalSubmitRequest",
+      "output": "crate::memory::code_doors::CodeProposalSubmitted",
+      "call": "memory.code_proposal_submit_as(&memory.embedded_owner(\"vault.code.proposal_submit\")?, input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
+      "name": "vault.code.oplog",
+      "description": "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal.",
+      "input": "crate::memory::code_doors::CodeRepoRequest",
+      "output": "crate::memory::code_doors::CodeMutationLog",
+      "call": "memory.code_mutation_log_as(&memory.embedded_owner(\"vault.code.oplog\")?, input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door": true,
+      "host_door_lists": true
+    },
+    {
       "name": "vault.code.repo_diff",
       "description": "Every file changed between two repository trees, each a code revision or a git snapshot: added, removed, modified or renamed, each unit with the operations that wrote it.",
       "input": "crate::code_document::CodeRepoDiffRequest",
@@ -7623,6 +7693,40 @@
       "section": false
     },
     {
+      "name": "vault.memory.signal_extraction",
+      "description": "Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates.",
+      "input": "crate::memory::SignalExtractionRequest",
+      "output": "crate::memory::SignalExtractionTicket",
+      "call": "memory.signal_extraction_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.memory.signal_extraction.result",
+      "description": "Reads extraction completion, accepted claims, generated prospective queries and parent-verified source ranges and MESSAGE revisions as the owner may read them.",
+      "input": "crate::memory::SignalExtractionResultRequest",
+      "output": "Option<crate::memory::SignalExtractionResult>",
+      "call": "memory.signal_extraction_result_as_owner(&memory.embedded_owner(\"vault.memory.signal_extraction.result\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.claims.seed",
       "description": "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt.",
       "refs": [
@@ -7917,7 +8021,11 @@
       "output": "crate::code_run::MemoryWriteOutput",
       "scope": "Write",
       "context": "run",
-      "effect": "MemorySupersedeClaim"
+      "effect": "MemorySupersedeClaim",
+      "host": {
+        "input": "crate::task_verb::sdk::LiveRunRequest<crate::code_run::MemorySupersedeInput>",
+        "description": "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."
+      }
     },
     {
       "name": "vault.edges.put",

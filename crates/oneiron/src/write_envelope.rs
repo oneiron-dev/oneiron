@@ -236,6 +236,14 @@ impl WriteEnvelope {
         self.approval
     }
 
+    /// A synthetic query hint is generated, retaining its writer and lineage.
+    pub(crate) fn for_lexical_hint(&self) -> Self {
+        let mut hint = self.clone();
+        hint.source = ClaimSource::Generated;
+        hint.lineage = hint.lineage.with(ClaimSource::Generated);
+        hint
+    }
+
     /// Narrow the approval requested by a typed writer while preserving lineage.
     #[must_use]
     pub(crate) fn with_approval(mut self, approval: ClaimApprovalStatus) -> Self {
@@ -293,6 +301,7 @@ pub struct ClaimCandidate {
     facet_stamp: Option<EntityId>,
     project_stamp: Option<EntityId>,
     stale: bool,
+    lexical_hints: Vec<String>,
 }
 
 impl ClaimCandidate {
@@ -320,7 +329,18 @@ impl ClaimCandidate {
             facet_stamp: None,
             project_stamp: None,
             stale: false,
+            lexical_hints: Vec::new(),
         }
+    }
+
+    /// Prospective queries from the extractor, never claim value or evidence.
+    pub(crate) fn with_lexical_hints(mut self, hints: Vec<String>) -> Self {
+        self.lexical_hints = hints;
+        self
+    }
+
+    pub(crate) fn lexical_hints(&self) -> &[String] {
+        &self.lexical_hints
     }
 
     /// Adds candidate-local salience.

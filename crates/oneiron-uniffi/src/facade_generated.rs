@@ -1191,6 +1191,31 @@ export_facade! {
     let output = client.vault_code_proposal_view(&input)?;
     crate::codec::lift_record("vault.code.proposal_view", &output)
 };
+"vault.code.symbols.declare" => fn vault_code_symbols_declare(&self, input: CodeSymbolsDeclareRequest) -> CodeSymbolsDeclared = |client| {
+    let input: oneiron::memory::code_doors::CodeSymbolsDeclareRequest = crate::codec::lower_record("vault.code.symbols.declare", input)?;
+    let output = client.vault_code_symbols_declare(&input)?;
+    crate::codec::lift_record("vault.code.symbols.declare", &output)
+};
+"vault.code.symbols.renew" => fn vault_code_symbols_renew(&self, input: CodeSymbolsTaskRequest) -> CodeSymbolLeaseView = |client| {
+    let input: oneiron::memory::code_doors::CodeSymbolsTaskRequest = crate::codec::lower_record("vault.code.symbols.renew", input)?;
+    let output = client.vault_code_symbols_renew(&input)?;
+    crate::codec::lift_record("vault.code.symbols.renew", &output)
+};
+"vault.code.symbols.release" => fn vault_code_symbols_release(&self, input: CodeSymbolsTaskRequest) -> CodeSymbolsReleased = |client| {
+    let input: oneiron::memory::code_doors::CodeSymbolsTaskRequest = crate::codec::lower_record("vault.code.symbols.release", input)?;
+    let output = client.vault_code_symbols_release(&input)?;
+    crate::codec::lift_record("vault.code.symbols.release", &output)
+};
+"vault.code.proposal_submit" => fn vault_code_proposal_submit(&self, input: CodeProposalSubmitRequest) -> CodeProposalSubmitted = |client| {
+    let input: oneiron::memory::code_doors::CodeProposalSubmitRequest = crate::codec::lower_record("vault.code.proposal_submit", input)?;
+    let output = client.vault_code_proposal_submit(&input)?;
+    crate::codec::lift_record("vault.code.proposal_submit", &output)
+};
+"vault.code.oplog" => fn vault_code_oplog(&self, input: CodeRepoRequest) -> CodeMutationLog = |client| {
+    let input: oneiron::memory::code_doors::CodeRepoRequest = crate::codec::lower_record("vault.code.oplog", input)?;
+    let output = client.vault_code_oplog(&input)?;
+    crate::codec::lift_record("vault.code.oplog", &output)
+};
 "vault.code.repo_diff" => fn vault_code_repo_diff(&self, input: CodeRepoDiffRequest) -> Option<CodeRepoDiffView> = |client| {
     let input: oneiron::code_document::CodeRepoDiffRequest = crate::codec::lower_record("vault.code.repo_diff", input)?;
     let output = client.vault_code_repo_diff(&input)?;
@@ -2046,6 +2071,16 @@ export_facade! {
     let output = client.vault_consolidation_status(&input)?;
     Lift::lift(output)
 };
+"vault.memory.signal_extraction" => fn vault_memory_signal_extraction(&self, input: SignalExtractionRequest) -> SignalExtractionTicket = |client| {
+    let input: oneiron::memory::SignalExtractionRequest = crate::codec::lower_record("vault.memory.signal_extraction", input)?;
+    let output = client.vault_memory_signal_extraction(&input)?;
+    crate::codec::lift_record("vault.memory.signal_extraction", &output)
+};
+"vault.memory.signal_extraction.result" => fn vault_memory_signal_extraction_result(&self, input: SignalExtractionResultRequest) -> Option<SignalExtractionResult> = |client| {
+    let input: oneiron::memory::SignalExtractionResultRequest = crate::codec::lower_record("vault.memory.signal_extraction.result", input)?;
+    let output = client.vault_memory_signal_extraction_result(&input)?;
+    crate::codec::lift_record("vault.memory.signal_extraction.result", &output)
+};
 "vault.claims.seed" => fn vault_claims_seed(&self, input: ScopedCommitRequest) -> Vec<WireCommitOutcome> = |client| {
     let input: oneiron::memory::ScopedCommitRequest = crate::codec::lower_record("vault.claims.seed", input)?;
     let output = client.vault_claims_seed(&input)?;
@@ -2220,6 +2255,11 @@ export_facade! {
     let input: oneiron::code_run::fold_api::FoldHistoryRequest = crate::codec::lower_record("self.history", input)?;
     let output = client.self_history(&input)?;
     crate::codec::lift_record("self.history", &output)
+};
+"vault.claims.supersede" => fn vault_claims_supersede(&self, input: LiveRunRequestMemorySupersedeInput) -> MemoryWriteOutput = |client| {
+    let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::MemorySupersedeInput> = crate::codec::lower_record("vault.claims.supersede", input)?;
+    let output = client.vault_claims_supersede(&input)?;
+    crate::codec::lift_record("vault.claims.supersede", &output)
 };
 "self.fold" => fn self_fold(&self, input: FoldMarkRequest) -> FoldReplyFoldMarked = |client| {
     let input: oneiron::code_run::fold_api::FoldMarkRequest = crate::codec::lower_record("self.fold", input)?;

@@ -164,6 +164,8 @@ fn ask_spec(
     let who = match request.recipient {
         CommWidenRecipient::Agent(actor_ref) => TaskAssignee::Child { actor_ref },
         CommWidenRecipient::Owner(actor_ref) => TaskAssignee::Human { actor_ref },
+        // An erase takes out every pending request it names (FIX 3520).
+        CommWidenRecipient::Erased => return Err(MemoryError::from(ask_record::invalid())),
     };
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::Responder(who)),
@@ -236,11 +238,12 @@ fn routed_in(
 }
 
 /// The source the asked recipient's own word takes: an agent parent answers
-/// as an executor, the owner as a person.
+/// as an executor, the owner as a person. An erased recipient's actor
+/// matches no word, whatever its source.
 const fn recipient_source(recipient: CommWidenRecipient) -> TaskAskSource {
     match recipient {
         CommWidenRecipient::Agent(_) => TaskAskSource::Executor,
-        CommWidenRecipient::Owner(_) => TaskAskSource::Human,
+        CommWidenRecipient::Owner(_) | CommWidenRecipient::Erased => TaskAskSource::Human,
     }
 }
 
@@ -270,7 +273,7 @@ pub(super) fn guard_word(
             .as_ref()
             .is_some_and(|option| matches!(option.as_str(), APPROVE | DECLINE))
         || request.state != CommWidenState::Pending
-        || actor != request.recipient.actor()
+        || request.recipient.actor() != Some(actor)
         || source != recipient_source(request.recipient)
         || !ask_record::owns_revision(vault, txn, id, group)?
     {
@@ -307,7 +310,7 @@ pub(super) fn resolve_answer_in(
                 .evidence
                 .iter()
                 .filter(|entry| {
-                    entry.answer.actor_ref == recipient.actor()
+                    recipient.actor() == Some(entry.answer.actor_ref)
                         && entry.source == recipient_source(recipient)
                 })
                 .min_by_key(|entry| entry.order)

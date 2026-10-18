@@ -2142,6 +2142,48 @@ impl NativeClient {
         serde_json::to_string(&output).map_err(|error| boundary_error(error.to_string()))
     }
     #[napi]
+    pub fn vault_code_symbols_declare(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.declare", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_symbols_renew(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.renew", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_symbols_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.symbols.release", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_proposal_submit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.proposal_submit", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_oplog(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.oplog", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_code_repo_diff(&self, request_json: String) -> napi::Result<String> {
         let input: serde_json::Value = serde_json::from_str(&request_json).map_err(|error| {
             facade_error(oneiron::memory::MemoryError {
@@ -3940,6 +3982,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_memory_signal_extraction(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.memory.signal_extraction", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_memory_signal_extraction_result(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.memory.signal_extraction.result", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_seed(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.seed", input)
@@ -4280,6 +4340,15 @@ impl NativeClient {
     pub fn self_history(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.history", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_claims_supersede(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.claims.supersede", input)
             .map_err(facade_error)
     }
     #[napi]

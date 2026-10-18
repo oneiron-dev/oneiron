@@ -64,6 +64,7 @@ pub(crate) use super::shared_policy_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
+pub(crate) use super::extraction_doors::*;
 pub(crate) use super::model_step_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -128,6 +129,8 @@ pub(crate) use super::research_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
+// The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
+pub(crate) use super::code_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
 pub(crate) use super::ui_action_routes::vault_lenses_default;
 // The explain receipts' doors (OF-278), beside their HTTP routes, likewise.
@@ -1092,6 +1095,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.widen_proposals.decline"
         | "vault.craft_candidates"
         | "vault.craft_candidates.answer"
+        | "vault.memory.signal_extraction"
+        | "vault.memory.signal_extraction.result"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.settings.wake_policy.set"
@@ -1143,6 +1148,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.research.create_child"
         | "vault.evals.inventory"
         | "vault.evals.cohorts.setup"
+        | "vault.code.symbols.declare"
+        | "vault.code.symbols.renew"
+        | "vault.code.symbols.release"
+        | "vault.code.proposal_submit"
+        | "vault.code.oplog"
         | "vault.code.export"
         | "vault.code.origin.authority.get"
         | "vault.code.origin.authority.set"
