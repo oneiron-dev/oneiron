@@ -288,6 +288,7 @@ fn feed_pattern_payoff_in_txn(
         on_judge_model: false,
         outcome_label: None,
         pack_attribution: None,
+        goal_revision: None,
     };
     crate::learning::prior::capture_borrowed_prior_in_txn(
         vault,

@@ -51,6 +51,10 @@ pub struct ContributionPair {
     pub attempt_receipt: String,
     pub skill: EntityId,
     pub axis: String,
+    /// The goal revision the credited outcome was checked under; a check
+    /// joins only an outcome of the same revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_revision: Option<String>,
     /// The correctness anchor both forks were scored against.
     pub anchor: Anchor,
     pub with_skill: ContributionFork,
@@ -74,6 +78,8 @@ pub struct ContributionCandidate {
     pub outcome_receipt: String,
     pub skill: EntityId,
     pub axis: String,
+    /// The credit's frozen goal revision, for the pair to carry.
+    pub goal_revision: Option<String>,
     pub anchor: Anchor,
     /// The pinned executor, `id@revision`.
     pub executor: String,
@@ -208,6 +214,7 @@ pub fn contribution_check_candidates(
                 outcome_receipt: credit.outcome_receipt.clone(),
                 skill,
                 axis: credit.axis.clone(),
+                goal_revision: credit.goal_revision.clone(),
                 anchor: credit.anchor,
                 executor: credit.attribution.executor.clone(),
                 type_ref: credit.attribution.type_ref.clone(),
@@ -301,9 +308,10 @@ pub fn record_contribution_pair(
     })
 }
 
-/// The skill's own win on every outcome of the check's run and axis that
-/// was credited before the check landed, recorded under a receipt naming
-/// both the credit and the check. The credit receipt stays as sealed.
+/// The skill's own win on every outcome of the check's run, axis and goal
+/// revision that was credited before the check landed, recorded under a
+/// receipt naming both the credit and the check. The credit receipt stays as
+/// sealed.
 fn join_credited_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -319,6 +327,7 @@ fn join_credited_in_txn(
         .filter(|credit| {
             credit.attempt_receipt == pair.attempt_receipt
                 && credit.axis == pair.axis
+                && credit.goal_revision == pair.goal_revision
                 && joins(credit, followed, pair.skill)
         })
         .collect();
@@ -341,6 +350,7 @@ fn join_credited_in_txn(
             outcome_receipt: credit.outcome_receipt.clone(),
             attribution,
         });
+        learning.goal_revision = credit.goal_revision.clone();
         crate::learning::record_evidence_in_txn(vault, txn, &cell, &learning, now)?;
     }
     Ok(())
@@ -362,8 +372,9 @@ fn with_check(
     fields
 }
 
-/// `fields` with every check recorded for `attempt_receipt` on `axis` joined
-/// as a contribution: the attribution an outcome on that axis projects.
+/// `fields` with every check recorded for `attempt_receipt` on `axis` under
+/// `goal_revision` joined as a contribution: the attribution an outcome on
+/// that axis and revision projects.
 ///
 /// # Errors
 ///
@@ -373,11 +384,15 @@ pub(super) fn with_recorded_checks_in_txn(
     txn: &heed::RoTxn<'_>,
     attempt_receipt: &str,
     axis: &str,
+    goal_revision: Option<&str>,
     mut fields: PackAttributionFields,
 ) -> Result<PackAttributionFields> {
     let prefix = format!("{attempt_receipt}\0");
     for (_, record) in CHECK.scan_from(store, txn, prefix.as_bytes())? {
-        if record.pair.attempt_receipt == attempt_receipt && record.pair.axis == axis {
+        if record.pair.attempt_receipt == attempt_receipt
+            && record.pair.axis == axis
+            && record.pair.goal_revision.as_deref() == goal_revision
+        {
             fields = with_check(fields, record.pair.skill, &record.check);
         }
     }

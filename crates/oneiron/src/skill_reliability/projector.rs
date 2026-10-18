@@ -30,6 +30,10 @@ pub const PREDICATE_SKILL_RELIABILITY: &str = crate::learning::PREDICATE_LEARNIN
 pub const FIELD_SKILL_TYPE_REF: &str = "typeRef";
 /// Receipt anchor: a serialized learning::Anchor, not agent agreement.
 pub const FIELD_SKILL_LEARNING_ANCHOR: &str = "learning.anchor";
+/// The effective skill-edit goal revision the run's `axis` was measured under,
+/// stamped by whoever stamps `axis` and `learning.anchor`. Copied as is, never
+/// looked up at projection.
+pub const FIELD_SKILL_GOAL_REVISION: &str = "learning.goal_revision";
 /// The existing attempt success lane measures this axis unless explicitly stamped.
 pub const SKILL_OUTCOME_AXIS: &str = "quality";
 
@@ -269,6 +273,8 @@ pub(super) fn project_in_txn(
         evidence.on_judge_model =
             receipt.fields.get("judge.model").map(String::as_str) == Some(executor);
         evidence.judge = judge;
+        // The revision frozen beside the outcome; a re-projection keeps it.
+        evidence.goal_revision = receipt.fields.get(FIELD_SKILL_GOAL_REVISION).cloned();
         desired
             .entry(cell)
             .or_insert_with(|| (query, Vec::new()))

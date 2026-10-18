@@ -37,6 +37,10 @@ pub struct LateCreditReceipt {
     pub succeeded: bool,
     pub axis: String,
     pub at: u64,
+    /// The goal revision the outcome was checked under, as the host froze it;
+    /// `None` is unscoped credit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_revision: Option<String>,
     pub attribution: PackAttributionFields,
     pub direct_subjects: Vec<EntityId>,
     pub shares: Vec<LateCreditShare>,

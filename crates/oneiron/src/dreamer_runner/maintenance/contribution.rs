@@ -126,6 +126,7 @@ fn measure(
             attempt_receipt: candidate.attempt_receipt.clone(),
             skill: candidate.skill,
             axis: candidate.axis.clone(),
+            goal_revision: candidate.goal_revision.clone(),
             anchor: candidate.anchor,
             with_skill: forks.with_skill,
             without_skill: forks.without_skill,
