@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 477 facade rows, 1737 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 441.
+// UniFFI census: 484 facade rows, 1752 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 9; generated in and out: 448.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -16360,6 +16360,244 @@ pub struct CodeSnapshotDefinitionsView {
     pub snapshot: String,
     #[serde(rename = "definitions")]
     pub definitions: Vec<CodeSnapshotDefinition>,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueEnqueueRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueEnqueueRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "proposals")]
+    pub proposals: Vec<String>,
+    #[serde(rename = "base_green")]
+    pub base_green: String,
+}
+
+/// `oneiron::merge_queue::types::BatchState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum BatchState {
+    #[serde(rename = "Queued")]
+    Queued,
+    #[serde(rename = "Staged")]
+    Staged,
+    #[serde(rename = "Ready")]
+    Ready,
+    #[serde(rename = "Landing")]
+    Landing,
+    #[serde(rename = "HeadAdvanced")]
+    HeadAdvanced,
+    #[serde(rename = "GreenAdvanced")]
+    GreenAdvanced,
+    #[serde(rename = "Quarantined")]
+    Quarantined,
+    #[serde(rename = "RollingBack")]
+    RollingBack,
+    #[serde(rename = "RolledBack")]
+    RolledBack,
+    #[serde(rename = "Cancelled")]
+    Cancelled,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueuePathView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueuePathView {
+    #[serde(rename = "mask")]
+    pub mask: u64,
+    #[serde(rename = "commit")]
+    pub commit: String,
+    #[serde(rename = "tree")]
+    pub tree: String,
+    #[serde(
+        rename = "verdict_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub verdict_ref: Option<String>,
+}
+
+/// `oneiron::merge_queue::types::Quarantine`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct Quarantine {
+    #[serde(rename = "proposal_ids")]
+    pub proposal_ids: Vec<String>,
+    #[serde(rename = "failing_mask")]
+    pub failing_mask: u64,
+    #[serde(rename = "verdict")]
+    pub verdict: String,
+}
+
+/// `oneiron::contract_oracle::graph::AffectedTests`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AffectedTests {
+    #[serde(rename = "packages")]
+    pub packages: Vec<String>,
+    #[serde(rename = "targets")]
+    pub targets: std::collections::HashMap<String, Vec<String>>,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueBatchView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueueBatchView {
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+    #[serde(rename = "baseline_ref")]
+    pub baseline_ref: String,
+    #[serde(rename = "expected_head")]
+    pub expected_head: String,
+    #[serde(rename = "base_green")]
+    pub base_green: String,
+    #[serde(rename = "proposals")]
+    pub proposals: Vec<String>,
+    #[serde(rename = "state")]
+    pub state: BatchState,
+    #[serde(rename = "paths")]
+    pub paths: Vec<MergeQueuePathView>,
+    #[serde(
+        rename = "landed_head",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub landed_head: Option<String>,
+    #[serde(
+        rename = "slow_verdict_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub slow_verdict_ref: Option<String>,
+    #[serde(
+        rename = "quarantine",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub quarantine: Option<Quarantine>,
+    #[serde(rename = "selected_tests")]
+    pub selected_tests: AffectedTests,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueBatchRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueBatchRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "batch_ref")]
+    pub batch_ref: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueObserveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueObserveRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "batches")]
+    pub batches: Vec<String>,
+}
+
+/// `oneiron::contract_oracle::types::CommandOutput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct CommandOutput {
+    #[serde(rename = "status")]
+    pub status: i32,
+    #[serde(rename = "stdout")]
+    pub stdout: Vec<u8>,
+    #[serde(rename = "stderr")]
+    pub stderr: Vec<u8>,
+}
+
+/// `oneiron::contract_oracle::types::ContractDiff`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ContractDiff {
+    #[serde(rename = "RemovedPublicName")]
+    RemovedPublicName {
+        #[serde(rename = "name")]
+        name: String,
+    },
+    #[serde(rename = "SchemaDrift")]
+    SchemaDrift {
+        #[serde(rename = "contract")]
+        contract: String,
+        #[serde(rename = "pointer")]
+        pointer: String,
+        #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+        before: Option<crate::WireJson>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<crate::WireJson>,
+    },
+    #[serde(rename = "OutputDrift")]
+    OutputDrift {
+        #[serde(rename = "contract")]
+        contract: String,
+        #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+        before: Option<CommandOutput>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<CommandOutput>,
+    },
+}
+
+/// `oneiron::contract_oracle::types::ContractVerdict`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ContractVerdict {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u8,
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "baseline_id")]
+    pub baseline_id: String,
+    #[serde(rename = "candidate")]
+    pub candidate: String,
+    #[serde(rename = "tests_passed")]
+    pub tests_passed: bool,
+    #[serde(rename = "diffs")]
+    pub diffs: Vec<ContractDiff>,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueObservation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueueObservation {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "head_commit")]
+    pub head_commit: String,
+    #[serde(rename = "green_commit")]
+    pub green_commit: String,
+    #[serde(rename = "pending_slow_batch_refs")]
+    pub pending_slow_batch_refs: Vec<String>,
+    #[serde(rename = "batches")]
+    pub batches: Vec<MergeQueueBatchView>,
+    #[serde(rename = "verdicts")]
+    pub verdicts: Vec<ContractVerdict>,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueRequeueView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueueRequeueView {
+    #[serde(rename = "source_batch_ref")]
+    pub source_batch_ref: String,
+    #[serde(rename = "batch", default, skip_serializing_if = "Option::is_none")]
+    pub batch: Option<MergeQueueBatchView>,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueueRepoRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct MergeQueueRepoRequest {
+    #[serde(rename = "repo")]
+    pub repo: String,
+}
+
+/// `oneiron::memory::merge_queue_doors::types::MergeQueuePointersView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct MergeQueuePointersView {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "head_commit")]
+    pub head_commit: String,
+    #[serde(rename = "green_commit")]
+    pub green_commit: String,
+    #[serde(rename = "pending_slow_batch_refs")]
+    pub pending_slow_batch_refs: Vec<String>,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactExportRequest`.
