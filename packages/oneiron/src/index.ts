@@ -1087,6 +1087,31 @@ export class Oneiron {
       registry: (input: Facade.ConsentRegistryQuery): Facade.ConsentRegistry => this.#call(() => this.#client.vaultConsentRegistry(input) as Facade.ConsentRegistry),
       /** The owner immediately revokes a standing consent grant by the reference its receipt or registry emitted. */
       revoke: (input: Facade.RevokeGrantRequest): Facade.ConsentActReceipt => this.#call(() => this.#client.vaultConsentRevoke(input) as Facade.ConsentActReceipt),
+      graduation: {
+        /** Reads runtime consent-graduation policy rows and the effective row for an optional exact scope. */
+        policy: Object.assign((input: Facade.GraduationPolicyRequest): Facade.GraduationPolicies => this.#call(() => this.#client.vaultConsentGraduationPolicy(input) as Facade.GraduationPolicies), {
+          /** The owner sets a scope-pattern streak, posterior guard and two snooze backoffs; zero-second backoff is supported. */
+          set: (input: Facade.GraduationPolicySetRequest): Facade.GraduationChanged => this.#call(() => this.#client.vaultConsentGraduationPolicySet(input) as Facade.GraduationChanged),
+          /** The owner clears one runtime graduation policy row; scopes fall back to the next matching policy. */
+          clear: (input: Facade.GraduationPolicyClearRequest): Facade.GraduationChanged => this.#call(() => this.#client.vaultConsentGraduationPolicyClear(input) as Facade.GraduationChanged),
+        }),
+        /** Reads one exact graduation scope outcome history and current consent posture. */
+        stats: (input: Facade.GraduationScopeRequest): Facade.GraduationStats | null => this.#call(() => this.#client.vaultConsentGraduationStats(input) as Facade.GraduationStats | null),
+        /** The owner records an untouched, amended or rejected proposal ruling, receipted and folded through the existing ramp. */
+        outcome: (input: Facade.GraduationOutcomeRequest): Facade.GraduationStats => this.#call(() => this.#client.vaultConsentGraduationOutcome(input) as Facade.GraduationStats),
+        /** Reads earned, unsuppressed graduation offers with thresholds, streaks and before/after reach; reading grants nothing. */
+        offers: (input: Facade.EmptyRequest): Facade.GraduationOffer[] => this.#call(() => this.#client.vaultConsentGraduationOffers(input) as Facade.GraduationOffer[]),
+        /** The owner answers auto, not-now or manual_pinned; only auto mints the existing standing grant, and not-now resets the streak. */
+        answer: (input: Facade.GraduationAnswerRequest): Facade.GraduationAnswerReceipt => this.#call(() => this.#client.vaultConsentGraduationAnswer(input) as Facade.GraduationAnswerReceipt),
+        /** Reads the owner trust table: scope, counts, effective threshold, snooze or manual pin, live grant and offer reach. */
+        trust_table: (input: Facade.EmptyRequest): Facade.GraduationTrustRow[] => this.#call(() => this.#client.vaultConsentGraduationTrustTable(input) as Facade.GraduationTrustRow[]),
+        settings: {
+          /** The owner reopens a pinned or snoozed graduation scope in settings; no grant is created. */
+          unpin: (input: Facade.GraduationScopeRequest): Facade.GraduationChanged => this.#call(() => this.#client.vaultConsentGraduationSettingsUnpin(input) as Facade.GraduationChanged),
+        },
+        /** The owner demotes an exact scope to propose, revoking its live grant and recording the existing durable demotion receipt. */
+        demote: (input: Facade.GraduationDemoteRequest): Facade.GraduationChanged => this.#call(() => this.#client.vaultConsentGraduationDemote(input) as Facade.GraduationChanged),
+      },
     },
     gate: {
       policy: {
@@ -2005,6 +2030,12 @@ export class Oneiron {
     off_record: {
       /** The session's creator or the vault's owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close. */
       execute: (input: Facade.OffRecordExecuteRequest): Facade.OffRecordExecuted => this.#call(() => this.#client.selfOffRecordExecute(input) as Facade.OffRecordExecuted),
+    },
+    consent: {
+      graduation: {
+        /** The bound actor transparently gives up only its own ramp scope authority, with the existing durable demotion receipt. */
+        demote: (input: Facade.GraduationScopeRequest): Facade.GraduationChanged => this.#call(() => this.#client.selfConsentGraduationDemote(input) as Facade.GraduationChanged),
+      },
     },
     /** Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value. */
     use: (input: Facade.SecretUseRequest): Facade.SecretUseAnswer => this.#call(() => this.#client.selfUse(input) as Facade.SecretUseAnswer),

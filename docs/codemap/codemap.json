@@ -15681,6 +15681,39 @@
     {
      "bucket": "m",
      "kind": "src",
+     "notable": [
+      "GraduationAnswer",
+      "GraduationAnswerReceipt",
+      "GraduationAnswerRequest",
+      "GraduationChanged",
+      "GraduationDemoteRequest",
+      "GraduationDemotionReason",
+      "GraduationMode",
+      "GraduationOffer",
+      "GraduationOutcome",
+      "GraduationOutcomeRequest",
+      "GraduationPolicies",
+      "GraduationPolicy",
+      "GraduationPolicyClearRequest",
+      "GraduationPolicyRequest",
+      "GraduationPolicySetRequest",
+      "GraduationScope",
+      "GraduationScopeRequest",
+      "GraduationSnooze",
+      "GraduationStats",
+      "GraduationTrustRow"
+     ],
+     "path": "src/consent_graduation/api.rs",
+     "purpose": "Typed consent-graduation public door",
+     "surface": {
+      "enum": 5,
+      "fn": 11,
+      "struct": 15
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
      "notable": [],
      "path": "src/consent_graduation/doors.rs",
      "purpose": "Public Vault doors plus the shared accept-offer txn helper used by ED-05",
@@ -15696,7 +15729,7 @@
      "path": "src/consent_graduation/fold.rs",
      "purpose": "Txn-level counters projection, incremental maintenance, and CID-7 rebuild fold",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -15707,6 +15740,7 @@
      "purpose": "DEC-0006 consent-graduation ramp (ARCH-0055 r7 / ONE-1748, MS-06): the per-scope outcome statistics that…",
      "surface": {
       "crate-vis": 3,
+      "mod": 1,
       "re-export": 3
      }
     },
@@ -20608,7 +20642,7 @@
      "purpose": "The seal's checks, run (ARCH-0079 #stuck-confession-and-the-seal, OF-544, OF-420): \"A confession triggers a…",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1,
       "trait": 1
      }
@@ -21646,9 +21680,9 @@
      "path": "src/edit_distance/graduation/answers.rs",
      "purpose": "Offer answers and the snooze-state machine",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 3,
-      "fn": 5
+      "fn": 7
      }
     },
     {
@@ -21712,9 +21746,9 @@
      "path": "src/edit_distance/graduation/threshold_policy.rs",
      "purpose": "Threshold rows and graduation-policy resolution",
      "surface": {
-      "const": 1,
+      "const": 2,
       "crate-vis": 4,
-      "fn": 7,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -42915,10 +42949,29 @@
      "path": "src/self_heal/audit.rs",
      "purpose": "OF-544: immutable attempt confessions, directed rechecks and random audit draws",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 7,
+      "mod": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealAttemptRequest",
+      "SealCompleteRequest",
+      "SealPendingRequest",
+      "SealReceiptView",
+      "SealRunReceipt",
+      "SealRunRequest"
+     ],
+     "path": "src/self_heal/audit/doors.rs",
+     "purpose": "Typed owner doors for the seal's existing receipts and check lifecycle",
+     "surface": {
+      "fn": 6,
+      "struct": 6
      }
     },
     {
@@ -51754,7 +51807,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 794
+      "fn": 811
      }
     },
     {
@@ -57998,7 +58051,7 @@
      "purpose": "DEC-0006 unified consent-mode — bounded standing grants"
     },
     "consent_graduation": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -58824,7 +58877,7 @@
      "purpose": "Snapshot-time secret custody filtering (ARCH-0069 S4/S5)"
     },
     "self_heal": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -59169,7 +59222,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3611,
+   "source_files": 3613,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67701,7 +67754,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 763
+      "fn": 780
      }
     },
     {
@@ -68750,7 +68803,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 764
+      "fn": 781
      }
     },
     {
@@ -72117,6 +72170,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/graduation_doors.rs",
+     "purpose": "Consent-graduation host doors, under the consent lifecycle's owner proof",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -72153,7 +72216,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 131
+      "crate-vis": 133
      }
     },
     {
@@ -72384,6 +72447,16 @@
      "purpose": "Owner-only reads of committed run state (DOOR-141 A/B): a settled model step and a code run's checkpoints…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/seal_doors.rs",
+     "purpose": "Owner-authorized seal lifecycle, shared by generated HTTP, SDK and MCP calls",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -79942,7 +80015,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 394,
+     "files": 396,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -80371,7 +80444,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 737,
+   "source_files": 739,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80734,6 +80807,7 @@
       "AttemptCancelReceiptKind",
       "AttemptCancelState",
       "AttemptCancellation",
+      "AttemptConfession",
       "AttemptHandle",
       "AttemptId",
       "AttemptLanding",
@@ -80741,6 +80815,7 @@
       "AttemptResumePoint",
       "AttemptState",
       "AttemptView",
+      "AuditDraw",
       "AuthorBriefRequest",
       "AuthorTakeRequest",
       "AuthorTakeTarget",
@@ -81527,6 +81602,26 @@
       "GeneratedUiResultSetSelectAll",
       "GeometryProps",
       "GoalPreference",
+      "GraduationAnswer",
+      "GraduationAnswerReceipt",
+      "GraduationAnswerRequest",
+      "GraduationChanged",
+      "GraduationDemoteRequest",
+      "GraduationDemotionReason",
+      "GraduationMode",
+      "GraduationOffer",
+      "GraduationOutcome",
+      "GraduationOutcomeRequest",
+      "GraduationPolicies",
+      "GraduationPolicy",
+      "GraduationPolicyClearRequest",
+      "GraduationPolicyRequest",
+      "GraduationPolicySetRequest",
+      "GraduationScope",
+      "GraduationScopeRequest",
+      "GraduationSnooze",
+      "GraduationStats",
+      "GraduationTrustRow",
       "GrantAskReceipt",
       "GrantAskRequest",
       "GrantAskScope",
@@ -81950,6 +82045,8 @@
       "NotificationPage",
       "NotificationRow",
       "NotificationSource",
+      "ObjectiveConfession",
+      "ObjectiveFinding",
       "Observation",
       "Observation2",
       "ObservationIssue",
@@ -82602,8 +82699,19 @@
       "ScreenshotOutput",
       "ScreenshotTrigger",
       "ScrollDirection",
+      "SealAssessment",
       "SealAtom",
+      "SealAttemptRequest",
+      "SealCheckKind",
+      "SealCheckOutcome",
+      "SealCheckReceipt",
+      "SealCheckRequest",
+      "SealCompleteRequest",
       "SealLevel",
+      "SealPendingRequest",
+      "SealReceiptView",
+      "SealRunReceipt",
+      "SealedAttemptReceipt",
       "SearchAxis",
       "SearchEvidence",
       "SeatInventory",
@@ -83220,8 +83328,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 657,
-      "struct": 1994
+      "enum": 663,
+      "struct": 2023
      }
     },
     {

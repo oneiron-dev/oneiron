@@ -331,6 +331,17 @@ both bindings and their export-census tests in one change.
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
 - `vault.consent.revoke`
+- `vault.consent.graduation.policy`
+- `vault.consent.graduation.policy.set`
+- `vault.consent.graduation.policy.clear`
+- `vault.consent.graduation.stats`
+- `vault.consent.graduation.outcome`
+- `vault.consent.graduation.offers`
+- `vault.consent.graduation.answer`
+- `vault.consent.graduation.trust_table`
+- `vault.consent.graduation.settings.unpin`
+- `vault.consent.graduation.demote`
+- `self.consent.graduation.demote`
 - `vault.gate.policy.get`
 - `vault.gate.policy.put`
 - `vault.gate.policy.propose`
