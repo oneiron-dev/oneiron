@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 466 facade rows, 1775 declarations.
-Inputs: 417 of 466 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 413 of 466 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 477 facade rows, 1812 declarations.
+Inputs: 428 of 477 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 424 of 477 fully typed, 53 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -1502,6 +1502,11 @@ class MemoryProvenance(TypedDict):
     source: str
     source_revision_ids: list[str]
     evidence_turn_ids: list[str]
+class MemoryStaleStamp(TypedDict):
+    stale_since: NotRequired[int | None]
+    age_secs: NotRequired[int | None]
+    reason: str
+    pact_epoch: int
 class CitedMessage(TypedDict):
     short_id: str
     value_text: str
@@ -1515,6 +1520,7 @@ class MemoryItem(TypedDict):
     confidence: float
     hedge_bucket: str
     provenance: MemoryProvenance
+    stale: NotRequired[MemoryStaleStamp | None]
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
     project_ref: NotRequired[str | None]
@@ -3236,6 +3242,101 @@ class SharedActPolicyAnswerRequest(TypedDict):
     approve: bool
 class SharedActPolicyChangeRequest(TypedDict):
     change_id: str
+class ConnectIdentity(TypedDict):
+    vault: str
+    host_key: str
+class MintConnectGrant(TypedDict):
+    peer_vault: str
+    authority_scope: Scope
+    expires_at: NotRequired[int | None]
+class ConnectGrant(TypedDict):
+    grant: str
+    guest_actor: str
+    resolved_scope: Scope
+    expires_at: NotRequired[int | None]
+TypeByteFamily = Literal["Conversation", "People", "World", "Content", "AgentsAndSurfacing", "CoreOverflow", "AuthorityPolicyCustody", "AuditObservability", "OutboundCommunicationConsent", "RegistriesDerived", "Productivity", "Code", "Documents", "Companion", "PackOverflow"]
+class SelectorRangeFamily(TypedDict):
+    Family: TypeByteFamily
+SelectorRange = Literal["Semantic", "Core", "Maintenance"] | SelectorRangeFamily
+class FederationDirectionScope(TypedDict):
+    worlds: ScopeAxis[ScopeId]
+    facets: ScopeAxis[ScopeId]
+    bands: ScopeAxis[SelectorRange]
+class OfferConnect(TypedDict):
+    peer_vault: str
+    grant: str
+    outbound: FederationDirectionScope
+    inbound: FederationDirectionScope
+class FederationPactScope(TypedDict):
+    lo_to_hi: FederationDirectionScope
+    hi_to_lo: FederationDirectionScope
+Offer = TypedDict("Offer", {"pact": str, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+class AcceptConnect(TypedDict):
+    offer: Offer
+    grant: str
+class ConnectAccepted(TypedDict):
+    pact: str
+    status: str
+    peer_key: str
+    counter: Offer
+class NarrowConnect(TypedDict):
+    pact: str
+    epoch: int
+    outbound: FederationDirectionScope
+FederationPactStatus = Literal["Active", "Suspended", "Promoted", "Disconnected", "Dissolved"]
+class ConnectPactReceipt(TypedDict):
+    pact: str
+    status: FederationPactStatus
+    epoch: int
+    scope: FederationPactScope
+    effective_scope: FederationDirectionScope
+class RescopeConnect(TypedDict):
+    pact: str
+    epoch: int
+    outbound: FederationDirectionScope
+    inbound: FederationDirectionScope
+RescopeOffer = TypedDict("RescopeOffer", {"pact": str, "epoch": int, "nonce": str, "from": str, "to": str, "scope": FederationPactScope, "signer": str, "signature": str})
+class AcceptRescopeConnect(TypedDict):
+    offer: RescopeOffer
+class ConnectRescoped(TypedDict):
+    receipt: ConnectPactReceipt
+    counter: RescopeOffer
+class ConnectPactRequest(TypedDict):
+    pact: str
+GuestCopyState = Literal["unknown"]
+class ConnectDisconnected(TypedDict):
+    receipt: ConnectPactReceipt
+    outbound_access: bool
+    inbound_access: bool
+    sync_stopped: bool
+    copied_bytes_recallable: bool
+    recipient_copy_state: GuestCopyState
+class ConnectExportRequest(TypedDict):
+    pact: str
+    window_key: str
+    world_ref: EntityId
+    facets: NotRequired[list[EntityId]]
+    bands: NotRequired[list[SelectorRange]]
+class ConnectWindow(TypedDict):
+    pact: str
+    epoch: int
+    source_vault: str
+    recipient_vault: str
+    world_ref: EntityId
+    facets: list[EntityId]
+    bands: list[SelectorRange]
+    window_key: str
+    update: list[int]
+class ConnectDelivery(TypedDict):
+    body: ConnectWindow
+    signature: str
+ConnectRejoinStatus = Literal["imported", "deferred"]
+class ConnectRejoined(TypedDict):
+    pact: str
+    epoch: int
+    world_ref: EntityId
+    status: ConnectRejoinStatus
+    request: NotRequired[str | None]
 class TrustedContactReach(TypedDict):
     sender: EntityId
     channel: str
@@ -3324,7 +3425,6 @@ class GuestRevokeRequest(TypedDict):
     peer: NotRequired[str | None]
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
 NotRecallable = bool
-GuestCopyState = Literal["unknown"]
 GuestDeletionRequestStatus = Literal["not_requested", "queued", "sent"]
 class GuestRevokeDisclosure(TypedDict):
     copied_bytes_recallable: NotRecallable
@@ -3363,6 +3463,14 @@ class ResidenceModeChanged(TypedDict):
     retained: list[str]
     unsynced: list[str]
     pruned_items: int
+class ResidenceQueued(TypedDict):
+    directive: EntityId
+    machine: EntityId
+class ResidenceModeAnswerApplied(ResidenceModeChanged):
+    state: Literal["applied"]
+class ResidenceModeAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceModeAnswer = ResidenceModeAnswerApplied | ResidenceModeAnswerQueued
 class NoteReadSpan(TypedDict):
     start: int
     end: int
@@ -3397,6 +3505,11 @@ class ResidenceOpened(TypedDict):
     bytes: int
     source: NoteReadSource
     note: NotRequired[NoteReadView | None]
+class ResidenceOpenAnswerApplied(ResidenceOpened):
+    state: Literal["applied"]
+class ResidenceOpenAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceOpenAnswer = ResidenceOpenAnswerApplied | ResidenceOpenAnswerQueued
 class ResidenceMachineRequest(TypedDict):
     machine: EntityId
 class ResidenceIndexEntry(TypedDict):
@@ -3408,11 +3521,21 @@ class ResidenceIndexWindowView(TypedDict):
     items: list[ResidenceIndexEntry]
 class ResidenceIndex(TypedDict):
     windows: list[ResidenceIndexWindowView]
+class ResidenceIndexAnswerApplied(ResidenceIndex):
+    state: Literal["applied"]
+class ResidenceIndexAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidenceIndexAnswer = ResidenceIndexAnswerApplied | ResidenceIndexAnswerQueued
 class ResidencePruneRequest(TypedDict):
     machine: EntityId
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+class ResidencePruneAnswerApplied(ResidencePruned):
+    state: Literal["applied"]
+class ResidencePruneAnswerQueued(ResidenceQueued):
+    state: Literal["queued"]
+ResidencePruneAnswer = ResidencePruneAnswerApplied | ResidencePruneAnswerQueued
 OffRecordEnterMode = Literal["off_record", "anonymous"]
 OffRecordBackendClass = Literal["local", "remote_provider"]
 class OffRecordStartRequest(TypedDict):
@@ -7292,6 +7415,34 @@ class RecordLinks(TypedDict):
     texts: list[LinkedText]
     narrowing: NotRequired[ScopedReadReceipt | None]
     next_after: NotRequired[str | None]
+class HybridPprQuery(TypedDict):
+    seeds: list[str]
+    depth: int
+class HybridTemporalQuery(TypedDict):
+    start: int
+    end: int
+class RetrievalBlendWeights(TypedDict):
+    recency: float
+    salience: float
+    confidence: float
+    gravity: float
+class HybridRankReplay(TypedDict):
+    now: int
+    blend_weights: RetrievalBlendWeights
+class HybridSearchRequest(TypedDict):
+    query: NotRequired[str | None]
+    query_vector: NotRequired[list[float] | None]
+    phonetic_codes: NotRequired[list[str]]
+    ppr: NotRequired[HybridPprQuery | None]
+    temporal: NotRequired[HybridTemporalQuery | None]
+    replay: NotRequired[HybridRankReplay | None]
+    limit: int
+class HybridSearchHit(TypedDict):
+    entity_ref: str
+    source_revision_ref: NotRequired[str | None]
+    score: float
+    access_factor: NotRequired[float | None]
+    components: list[RetrievalScoreComponent]
 class QueryBm25Request(TypedDict):
     query: str
     limit: int

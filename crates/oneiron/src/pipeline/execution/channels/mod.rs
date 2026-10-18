@@ -168,7 +168,10 @@ impl PipelineBuilder<'_> {
             let mut fused_trace_scores = None;
             let mut vector_channel_index = None;
             let mut phonetic_channel_index = None;
-            let blend_weights = retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?;
+            let blend_weights = match self.blend_weights_override {
+                Some(weights) => weights,
+                None => retrieval_blend_weights_for_scoring(&self.vault.store, rtxn)?,
+            };
             let mut metadata_cache = EntityMetadataCache::default();
             let mut deferred_ppr_cache_writes = Vec::new();
             let mut community_diversity = None;

@@ -5,30 +5,36 @@
 //! it (`crate::residence_machines`), applies it. A machine with no
 //! connection registered here gets the row as the owner's residence
 //! directive instead, which that machine's own connection applies once when
-//! it next syncs; no other machine is ever acted on.
+//! it next syncs; no other machine is ever acted on. That answer is typed
+//! (FIX 3570): `state: "queued"` with the directive and its machine, beside
+//! `state: "applied"` with what the machine did.
 //!
 //! Each lists its rows (`host_door_lists`): the item an open fetched, and
 //! each entry the thin index shows (its title is that row's). A mode switch
 //! and a prune answer the machine's windows and counts, and list none; a
-//! relayed directive answers its refusal, which lists none.
+//! queued directive lists none.
 use std::sync::Arc;
 
 use oneiron::authority::{HostSlipIssuer, ResidenceAct};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError,
-    MemoryResult,
-};
+use oneiron::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::sync::SyncConnection;
 use oneiron::task_verb::sdk::{
-    ResidenceIndex, ResidenceMachineRequest, ResidenceModeChanged, ResidenceModeName,
-    ResidenceModeRequest, ResidenceOpenRequest, ResidenceOpened, ResidencePruneRequest,
-    ResidencePruned,
+    ResidenceIndexAnswer, ResidenceMachineRequest, ResidenceModeAnswer, ResidenceModeName,
+    ResidenceModeRequest, ResidenceOpenAnswer, ResidenceOpenRequest, ResidenceOpened,
+    ResidencePruneAnswer, ResidencePruneRequest, ResidencePruned, ResidenceQueued,
 };
 
 use super::host_doors::{Listed, naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
+
+/// Where a residence row runs: the named machine's connection here, or the
+/// directive [`relay`] queued for it.
+enum Reach {
+    Connection(Arc<SyncConnection>),
+    Queued(ResidenceQueued),
+}
 
 /// The owner's proof, then the connection the named machine runs here, or
 /// `act` relayed to it as a residence directive ([`relay`]).
@@ -38,7 +44,7 @@ fn machine_connection(
     verb: &str,
     machine: &oneiron::EntityId,
     act: ResidenceAct,
-) -> MemoryResult<Arc<SyncConnection>> {
+) -> MemoryResult<Reach> {
     let owner = crate::api::owner_routes::owner(auth, server).map_err(|_| {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
@@ -46,24 +52,25 @@ fn machine_connection(
             &["Present the owner's own verified, unattenuated credential."],
         )
     })?;
-    crate::residence_machines::connection(machine)
-        .ok_or_else(|| relay(server, &owner, verb, *machine, act))
+    match crate::residence_machines::connection(machine) {
+        Some(connection) => Ok(Reach::Connection(connection)),
+        None => relay(server, &owner, *machine, act).map(Reach::Queued),
+    }
 }
 
 /// `act` as the owner's residence directive to `machine`, which runs no
 /// connection here (FIX 531): the machine applies it once when it next
 /// syncs. A directive still pending with the same act is answered again, so
 /// a repeated row queues it once. Nothing has run yet, so the answer is the
-/// refusal it was, naming the directive.
+/// queued directive (FIX 3570), never a result.
 fn relay(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
-    verb: &str,
     machine: oneiron::EntityId,
     act: ResidenceAct,
-) -> MemoryError {
+) -> MemoryResult<ResidenceQueued> {
     let vault = server.vault();
-    let queued = vault
+    let state = vault
         .residence_directives_as(owner, Some(machine))
         .and_then(|states| {
             if let Some(state) = states
@@ -85,23 +92,12 @@ fn relay(
                 machine,
                 act,
             )
-        });
-    match queued {
-        Ok(state) => MemoryError::new(
-            MEMORY_CODE_MODEL_UNAVAILABLE,
-            format!(
-                "machine {} runs no sync connection this host can reach; {verb} is queued for \
-                 it as residence directive {}, which it applies when it next syncs",
-                machine.to_hex(),
-                state.directive.id.to_hex()
-            ),
-            &[
-                "The machine records the directive's result when it applies it; calling again \
-               queues nothing new.",
-            ],
-        ),
-        Err(error) => MemoryError::from(error),
-    }
+        })
+        .map_err(MemoryError::from)?;
+    Ok(ResidenceQueued {
+        directive: state.directive.id,
+        machine: state.directive.machine,
+    })
 }
 
 /// The machine's refusal of a residence step, as the row's.
@@ -118,18 +114,23 @@ async fn residence_mode(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceModeRequest,
-) -> MemoryResult<ResidenceModeChanged> {
+) -> MemoryResult<ResidenceModeAnswer> {
     const VERB: &str = "vault.residence.mode";
     let act = match input.mode {
         ResidenceModeName::All => ResidenceAct::SyncAll,
         ResidenceModeName::Opened => ResidenceAct::SyncOpened,
     };
-    let connection = machine_connection(server, auth, VERB, &input.machine, act)?;
-    Ok(connection
-        .set_residence_mode(input.mode.into())
-        .await
-        .map_err(|error| refused(VERB, &error))?
-        .into())
+    let connection = match machine_connection(server, auth, VERB, &input.machine, act)? {
+        Reach::Connection(connection) => connection,
+        Reach::Queued(queued) => return Ok(ResidenceModeAnswer::Queued(queued)),
+    };
+    Ok(ResidenceModeAnswer::Applied(
+        connection
+            .set_residence_mode(input.mode.into())
+            .await
+            .map_err(|error| refused(VERB, &error))?
+            .into(),
+    ))
 }
 
 /// [`vault_residence_open`]'s answer: opens one item on the named machine.
@@ -137,7 +138,7 @@ async fn residence_open(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceOpenRequest,
-) -> MemoryResult<ResidenceOpened> {
+) -> MemoryResult<ResidenceOpenAnswer> {
     const VERB: &str = "vault.residence.open";
     let window = oneiron::sync::WindowKey::try_new(input.window)
         .ok_or_else(|| MemoryError::bad_request("window must be YYYY-MM"))?;
@@ -145,7 +146,10 @@ async fn residence_open(
         window: window.as_str().to_owned(),
         item: input.item,
     };
-    let connection = machine_connection(server, auth, VERB, &input.machine, act)?;
+    let connection = match machine_connection(server, auth, VERB, &input.machine, act)? {
+        Reach::Connection(connection) => connection,
+        Reach::Queued(queued) => return Ok(ResidenceOpenAnswer::Queued(queued)),
+    };
     let local = connection
         .item_is_local(input.item)
         .map_err(|error| refused(VERB, &error))?;
@@ -171,7 +175,9 @@ async fn residence_open(
     if let Some(note) = &mut note {
         note.source = source;
     }
-    Ok(ResidenceOpened::from_opened(opened, source, note))
+    Ok(ResidenceOpenAnswer::Applied(Box::new(
+        ResidenceOpened::from_opened(opened, source, note),
+    )))
 }
 
 /// [`vault_residence_index`]'s answer: the named machine's thin index.
@@ -179,13 +185,19 @@ async fn residence_index(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceMachineRequest,
-) -> MemoryResult<ResidenceIndex> {
+) -> MemoryResult<ResidenceIndexAnswer> {
     const VERB: &str = "vault.residence.index";
-    let connection = machine_connection(server, auth, VERB, &input.machine, ResidenceAct::Index)?;
-    Ok(connection
-        .residence_index()
-        .map_err(|error| refused(VERB, &error))?
-        .into())
+    let connection =
+        match machine_connection(server, auth, VERB, &input.machine, ResidenceAct::Index)? {
+            Reach::Connection(connection) => connection,
+            Reach::Queued(queued) => return Ok(ResidenceIndexAnswer::Queued(queued)),
+        };
+    Ok(ResidenceIndexAnswer::Applied(
+        connection
+            .residence_index()
+            .map_err(|error| refused(VERB, &error))?
+            .into(),
+    ))
 }
 
 /// [`vault_residence_prune`]'s answer: drops the named machine's opened-item caches
@@ -194,17 +206,20 @@ async fn residence_prune(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidencePruneRequest,
-) -> MemoryResult<ResidencePruned> {
+) -> MemoryResult<ResidencePruneAnswer> {
     const VERB: &str = "vault.residence.prune";
     let act = ResidenceAct::Prune {
         before: input.before,
     };
-    let connection = machine_connection(server, auth, VERB, &input.machine, act)?;
-    Ok(ResidencePruned {
+    let connection = match machine_connection(server, auth, VERB, &input.machine, act)? {
+        Reach::Connection(connection) => connection,
+        Reach::Queued(queued) => return Ok(ResidencePruneAnswer::Queued(queued)),
+    };
+    Ok(ResidencePruneAnswer::Applied(ResidencePruned {
         dropped: connection
             .prune_opened_items(input.before)
             .map_err(|error| refused(VERB, &error))?,
-    })
+    }))
 }
 
 /// `vault.residence.mode`: switches the named machine's residence mode, listing no row.
@@ -212,7 +227,7 @@ pub(crate) async fn vault_residence_mode(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceModeRequest,
-) -> Listed<ResidenceModeChanged> {
+) -> Listed<ResidenceModeAnswer> {
     naming(residence_mode(server, auth, input).await, |_| Vec::new())
 }
 
@@ -221,10 +236,14 @@ pub(crate) async fn vault_residence_open(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceOpenRequest,
-) -> Listed<ResidenceOpened> {
-    naming(residence_open(server, auth, input).await, |opened| {
-        vec![opened.item]
-    })
+) -> Listed<ResidenceOpenAnswer> {
+    naming(
+        residence_open(server, auth, input).await,
+        |answer| match answer {
+            ResidenceOpenAnswer::Applied(opened) => vec![opened.item],
+            ResidenceOpenAnswer::Queued(_) => Vec::new(),
+        },
+    )
 }
 
 /// `vault.residence.index`: the named machine's thin index, listing each row it shows.
@@ -232,15 +251,19 @@ pub(crate) async fn vault_residence_index(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidenceMachineRequest,
-) -> Listed<ResidenceIndex> {
-    naming(residence_index(server, auth, input).await, |index| {
-        index
-            .windows
-            .iter()
-            .flat_map(|window| window.items.iter())
-            .filter_map(|entry| oneiron::EntityId::from_hex(&entry.entity_id).ok())
-            .collect()
-    })
+) -> Listed<ResidenceIndexAnswer> {
+    naming(
+        residence_index(server, auth, input).await,
+        |answer| match answer {
+            ResidenceIndexAnswer::Applied(index) => index
+                .windows
+                .iter()
+                .flat_map(|window| window.items.iter())
+                .filter_map(|entry| oneiron::EntityId::from_hex(&entry.entity_id).ok())
+                .collect(),
+            ResidenceIndexAnswer::Queued(_) => Vec::new(),
+        },
+    )
 }
 
 /// `vault.residence.prune`: drops the named machine's opened-item caches
@@ -249,6 +272,6 @@ pub(crate) async fn vault_residence_prune(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ResidencePruneRequest,
-) -> Listed<ResidencePruned> {
+) -> Listed<ResidencePruneAnswer> {
     naming(residence_prune(server, auth, input).await, |_| Vec::new())
 }

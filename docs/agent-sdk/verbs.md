@@ -139,6 +139,16 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.federation.connect.identity`
+- `vault.federation.connect.grants.mint`
+- `vault.federation.connect.offer`
+- `vault.federation.connect.accept`
+- `vault.federation.connect.narrow`
+- `vault.federation.connect.rescope.offer`
+- `vault.federation.connect.rescope.accept`
+- `vault.federation.connect.disconnect`
+- `vault.federation.connect.export`
+- `vault.federation.connect.rejoin`
 - `vault.trusted_contacts.name`
 - `vault.trusted_contacts.list`
 - `vault.trusted_contacts.consent`
@@ -387,6 +397,7 @@ both bindings and their export-census tests in one change.
 - `vault.get`
 - `vault.refs.resolve`
 - `vault.refs.links`
+- `vault.search.hybrid`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`

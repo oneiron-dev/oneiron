@@ -782,7 +782,10 @@ fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
                 !refs.is_empty() && refs.iter().all(|cited| decode_model_locator(cited).is_ok())
             }),
         ),
-        ("prospective_queries", prospective_queries(candidate).is_ok()),
+        (
+            "prospective_queries",
+            prospective_queries(candidate).is_ok(),
+        ),
     ]
     .into_iter()
     .find_map(|(field, met)| (!met).then_some(field))

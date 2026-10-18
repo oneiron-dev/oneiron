@@ -91,7 +91,17 @@ pub struct FederationLifecycleAction {
 
 /// Fold-derived status of one federation pact.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 pub enum FederationPactStatus {
     /// Pact is live; its grant confers access.

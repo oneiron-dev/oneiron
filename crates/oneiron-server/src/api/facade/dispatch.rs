@@ -3053,6 +3053,260 @@ async fn vault_shared_policy_change(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_federation_connect_identity(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.identity")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.identity", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.identity", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_identity(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_grants_mint(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.grants.mint")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.grants.mint", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.federation.connect.grants.mint", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_grants_mint(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_offer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.offer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.offer", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.offer", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_offer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_accept(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.accept")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.accept", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.accept", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_accept(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_narrow(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.narrow")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.narrow", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.narrow", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_narrow(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_rescope_offer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.rescope.offer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.rescope.offer", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.connect.rescope.offer",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_rescope_offer(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_rescope_accept(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.rescope.accept")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.rescope.accept", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.federation.connect.rescope.accept",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_rescope_accept(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_disconnect(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.disconnect")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.disconnect", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.federation.connect.disconnect", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_disconnect(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_export(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.export")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.export", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.export", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_export(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_federation_connect_rejoin(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.federation.connect.rejoin")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.federation.connect.rejoin", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.federation.connect.rejoin", value).await?;
+    let (output, listed) = super::host_doors::vault_federation_connect_rejoin(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_trusted_contacts_name(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -8687,6 +8941,28 @@ async fn vault_refs_links(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_search_hybrid(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.search.hybrid",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_search_bm25(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -11004,6 +11280,36 @@ pub(crate) async fn call_verb(
         "vault.shared.policy.propose" => vault_shared_policy_propose(server, call, input).await,
         "vault.shared.policy.answer" => vault_shared_policy_answer(server, call, input).await,
         "vault.shared.policy.change" => vault_shared_policy_change(server, call, input).await,
+        "vault.federation.connect.identity" => {
+            vault_federation_connect_identity(server, call, input).await
+        }
+        "vault.federation.connect.grants.mint" => {
+            vault_federation_connect_grants_mint(server, call, input).await
+        }
+        "vault.federation.connect.offer" => {
+            vault_federation_connect_offer(server, call, input).await
+        }
+        "vault.federation.connect.accept" => {
+            vault_federation_connect_accept(server, call, input).await
+        }
+        "vault.federation.connect.narrow" => {
+            vault_federation_connect_narrow(server, call, input).await
+        }
+        "vault.federation.connect.rescope.offer" => {
+            vault_federation_connect_rescope_offer(server, call, input).await
+        }
+        "vault.federation.connect.rescope.accept" => {
+            vault_federation_connect_rescope_accept(server, call, input).await
+        }
+        "vault.federation.connect.disconnect" => {
+            vault_federation_connect_disconnect(server, call, input).await
+        }
+        "vault.federation.connect.export" => {
+            vault_federation_connect_export(server, call, input).await
+        }
+        "vault.federation.connect.rejoin" => {
+            vault_federation_connect_rejoin(server, call, input).await
+        }
         "vault.trusted_contacts.name" => vault_trusted_contacts_name(server, call, input).await,
         "vault.trusted_contacts.list" => vault_trusted_contacts_list(server, call, input).await,
         "vault.trusted_contacts.consent" => {
@@ -11330,6 +11636,7 @@ pub(crate) async fn call_verb(
         "vault.get" => vault_get(server, call, input).await,
         "vault.refs.resolve" => vault_refs_resolve(server, call, input).await,
         "vault.refs.links" => vault_refs_links(server, call, input).await,
+        "vault.search.hybrid" => vault_search_hybrid(server, call, input).await,
         "vault.search.bm25" => vault_search_bm25(server, call, input).await,
         "vault.neighbors" => vault_neighbors(server, call, input).await,
         "vault.structural.put" => vault_structural_put(server, call, input).await,

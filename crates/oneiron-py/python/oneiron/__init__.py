@@ -615,6 +615,9 @@ class Oneiron:
         def members(self) -> "Oneiron._VaultMembersVerbs":
             return Oneiron._VaultMembersVerbs(self._client)
         @property
+        def federation(self) -> "Oneiron._VaultFederationVerbs":
+            return Oneiron._VaultFederationVerbs(self._client)
+        @property
         def trusted_contacts(self) -> "Oneiron._VaultTrustedContactsVerbs":
             return Oneiron._VaultTrustedContactsVerbs(self._client)
         @property
@@ -1304,6 +1307,57 @@ class Oneiron:
         def withdraw_invitation(self, spec):
             """An Admin with the add_member power takes back a pending invitation."""
             return json.loads(_translate(lambda: self._client.vault_members_withdraw_invitation(json.dumps(spec))))
+    class _VaultFederationVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def connect(self) -> "Oneiron._VaultFederationConnectVerbs":
+            return Oneiron._VaultFederationConnectVerbs(self._client)
+    class _VaultFederationConnectVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def identity(self, spec):
+            """The owner reads this vault identity and the host key used for reciprocal Connect consent."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_identity(json.dumps(spec))))
+        @property
+        def grants(self) -> "Oneiron._VaultFederationConnectGrantsVerbs":
+            return Oneiron._VaultFederationConnectGrantsVerbs(self._client)
+        def offer(self, spec):
+            """The owner asks the host to sign one disclosed Connect half without activating it."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_offer(json.dumps(spec))))
+        def accept(self, spec):
+            """The owner accepts the peer host signed Connect half and receives the matching host counter-half."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_accept(json.dumps(spec))))
+        def narrow(self, spec):
+            """The owner narrows the current outbound scope without breaking the reciprocal relationship."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_narrow(json.dumps(spec))))
+        @property
+        def rescope(self) -> "Oneiron._VaultFederationConnectRescopeVerbs":
+            return Oneiron._VaultFederationConnectRescopeVerbs(self._client)
+        def disconnect(self, spec):
+            """The owner unilaterally ends both directions of a pact without claiming to erase the peer retained copy."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_disconnect(json.dumps(spec))))
+        def export(self, spec):
+            """The owner exports one grant-filtered named-world update signed by the host for its live pact and epoch."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_export(json.dumps(spec))))
+        def rejoin(self, spec):
+            """The owner admits a peer host signed update through guest admission into the retained foreign-world vault."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_rejoin(json.dumps(spec))))
+    class _VaultFederationConnectGrantsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def mint(self, spec):
+            """The owner mints an inert Connect guest grant inside the named local-world ceiling."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_grants_mint(json.dumps(spec))))
+    class _VaultFederationConnectRescopeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def offer(self, spec):
+            """The owner discloses both directions at a new epoch and asks the host to sign a reciprocal re-scope proposal."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_rescope_offer(json.dumps(spec))))
+        def accept(self, spec):
+            """The owner accepts the peer host signed re-scope and receives the matching signed counter-half."""
+            return json.loads(_translate(lambda: self._client.vault_federation_connect_rescope_accept(json.dumps(spec))))
     class _VaultTrustedContactsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1361,16 +1415,16 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def mode(self, spec):
-            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it."""
+            """Switches one of the owner's machines between opened and all residence; that machine's own sync connection applies it. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_mode(json.dumps(spec))))
         def open(self, spec):
-            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors."""
+            """Opens one item on the named machine and reports local or home residence; a NOTE includes typed text, its version and requested stable anchors. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_open(json.dumps(spec))))
         def index(self, spec):
-            """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
+            """The thin index one of the owner's machines holds, window by window: what exists, never a body. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_index(json.dumps(spec))))
         def prune(self, spec):
-            """Drops the opened-item caches one of the owner's machines last touched before a time."""
+            """Drops the opened-item caches one of the owner's machines last touched before a time. A machine this host does not reach answers state queued, naming the directive."""
             return json.loads(_translate(lambda: self._client.vault_residence_prune(json.dumps(spec))))
     class _VaultOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
@@ -2318,6 +2372,9 @@ class Oneiron:
     class _VaultSearchVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        def hybrid(self, input: dict[str, Any]) -> Any:
+            """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
+            return json.loads(_translate(lambda: self._client.vault_search_hybrid(json.dumps(input, allow_nan=False))))
         def bm25(self, input: dict[str, Any]) -> Any:
             """BM25 text search over the engine index; surfaceable claims only."""
             return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
