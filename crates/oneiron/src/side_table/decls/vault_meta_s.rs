@@ -201,6 +201,10 @@ side_tables! {
     /// The owner's Responses `store` switch (OF-602): on, a provider keeps each response and a
     /// reconnected socket resumes the chain. Absent is off. Key: ().
     MODEL_OWNER_RESPONSES_STORE: VaultMeta b"settings:models:v1:responses_store" Named;
+    /// The owner's act on a vault-wide setting (the dreamer's wake policy, the inference
+    /// defaults), recorded in the commit that changed it (WILL-PLAN L13 row 01). Key:
+    /// u64be(sequence).
+    POLICY_SETTING_ACT: VaultMeta b"settings:owner_act:v1:" Named;
     /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
     EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw;
     /// Install-profile default for the publisher share dial. Key: ().

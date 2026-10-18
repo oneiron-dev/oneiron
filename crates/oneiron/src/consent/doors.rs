@@ -548,6 +548,28 @@ impl Vault {
         Ok(())
     }
 
+    /// The vault owner's read key for the person `owner` proves, held to
+    /// that proof (WILL-PLAN L13 row 01): a request that authenticated its
+    /// owner with no slip of its own (a managed vault's attested owner) reads
+    /// as that owner, and every read proves `owner` again in its own snapshot
+    /// as an owner act does ([`AuthenticatedOwner::revalidate_in_txn`]), so
+    /// the key reads nothing once the owner lapses. The door sets where its
+    /// caller sits (`ScopedReadActorKey::at`). A read key alone authorizes
+    /// no act: each committing door still revalidates the proof itself.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the proof no longer holds now.
+    pub fn owner_proof_read_key(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<crate::claim::ScopedReadActorKey> {
+        let txn = self.store.env.read_txn()?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        Ok(crate::claim::ScopedReadActorKey::vault_owner(actor)
+            .guarded_by_owner_proof(owner.clone()))
+    }
+
     fn is_store_truth_human_actor(&self, actor: &EntityId) -> Result<bool> {
         let rtxn = self.store.env.read_txn()?;
         let Some(raw) = self.store.port_entity_record(&rtxn, actor)? else {

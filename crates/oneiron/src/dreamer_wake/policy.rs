@@ -544,6 +544,34 @@ impl Vault {
             Ok(())
         })
     }
+
+    /// [`Self::set_dreamer_wake_policy`], recording the owner's act with the
+    /// policy it replaces when `surface` names where the owner said so
+    /// (WILL-PLAN L13 row 01), in the same commit.
+    pub(crate) fn set_dreamer_wake_policy_as(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        surface: Option<crate::authority::ActSurface>,
+        policy: DreamerWakePolicy,
+    ) -> Result<()> {
+        policy.validate()?;
+        self.with_write_txn_grouped(|txn| {
+            let actor =
+                crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
+            let prior = policy_in_txn(self, txn)?;
+            POLICY
+                .put(&self.store, txn, &(), &policy)
+                .map_err(|e| row_error(e, invalid()))?;
+            crate::policy_setting_doors::record_policy_setting_act_in_txn(
+                self,
+                txn,
+                crate::policy_setting_doors::PolicySetting::DreamerWakePolicy,
+                actor,
+                surface,
+                &prior,
+            )
+        })
+    }
     /// Update just the grain on the same owner-authenticated policy row used
     /// by the host tick scheduler and the projector's turn door.
     pub fn set_wake_grain(

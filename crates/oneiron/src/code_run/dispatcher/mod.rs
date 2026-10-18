@@ -64,6 +64,9 @@ pub struct HostSelfDispatcher<'a> {
     /// Host-authenticated owner for a single governed agent action. No guest
     /// call, transcript, or replay row can mint or carry this proof.
     pub(super) owner_proof: Option<&'a crate::consent::AuthenticatedOwner>,
+    /// Where that owner's say-so reached the host, for the owner's act an
+    /// owner setting records (WILL-PLAN L13 row 01). Audit only.
+    pub(super) owner_surface: Option<crate::authority::ActSurface>,
     /// ONE-1314. Whether this run's effect history is already known to carry
     /// an EXTERNAL effect, so the memory writes it seals afterwards must be
     /// stamped with tool-output lineage rather than bare `Generated`.
@@ -222,6 +225,7 @@ impl<'a> HostSelfDispatcher<'a> {
             human_wait_target: None,
             code_emission: None,
             owner_proof: None,
+            owner_surface: None,
             external_effect_seen: Cell::new(false),
             agent_verbs: None,
             hook_view: RefCell::new(None),
@@ -325,6 +329,17 @@ impl<'a> HostSelfDispatcher<'a> {
         owner: &'a crate::consent::AuthenticatedOwner,
     ) -> Self {
         self.owner_proof = Some(owner);
+        self
+    }
+
+    /// Where the bound owner's say-so reached the host (WILL-PLAN L13 row
+    /// 01): an owner setting records it in the owner's act. Audit only; no
+    /// admission reads it.
+    pub(crate) fn with_owner_surface(
+        mut self,
+        surface: Option<crate::authority::ActSurface>,
+    ) -> Self {
+        self.owner_surface = surface;
         self
     }
 
@@ -607,7 +622,26 @@ impl HostSelfDispatcher<'_> {
                     txn,
                     self.actor,
                     crate::agent_def::AgentCeiling::Auto,
-                )
+                )?;
+                // WILL-PLAN L13 row 01: a host-authenticated owner's proof
+                // holds in this same transaction, beside the Auto ceiling
+                // above, and the owner's act is recorded with the table it
+                // replaces.
+                if let Some(owner) = self.owner_proof {
+                    let actor = crate::dreamer_runner::maintenance::validate_owner_in_txn(
+                        vault, txn, owner,
+                    )?;
+                    let prior = crate::llm::read_effective_defaults(&vault.store, txn)?;
+                    crate::policy_setting_doors::record_policy_setting_act_in_txn(
+                        vault,
+                        txn,
+                        crate::policy_setting_doors::PolicySetting::InferenceDefaults,
+                        actor,
+                        self.owner_surface,
+                        prior.table(),
+                    )?;
+                }
+                Ok(())
             })?;
         }
         let active = vault.purpose_default_table()?;

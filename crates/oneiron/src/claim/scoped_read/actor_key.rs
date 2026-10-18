@@ -53,6 +53,9 @@ pub struct ScopedReadActorKey {
     /// Set only on a host action's key (FIX 2222); see
     /// [`Self::guarded_by_host_action`].
     host_action: Option<crate::authority::HostActionGuard>,
+    /// Set only on an owner key held to a request's own owner proof; see
+    /// [`Self::guarded_by_owner_proof`].
+    owner_proof: Option<Box<crate::consent::AuthenticatedOwner>>,
 }
 
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
@@ -358,6 +361,7 @@ impl ScopedReadActorKey {
             worlds: None,
             off_device: false,
             host_action: None,
+            owner_proof: None,
         })
     }
 
@@ -394,6 +398,7 @@ impl ScopedReadActorKey {
             worlds: None,
             off_device: false,
             host_action: None,
+            owner_proof: None,
         }
     }
 
@@ -413,6 +418,26 @@ impl ScopedReadActorKey {
     /// The host action this key reads for, when it is one's.
     pub(crate) fn host_action_guard(&self) -> Option<&crate::authority::HostActionGuard> {
         self.host_action.as_ref()
+    }
+
+    /// This key, held to the owner proof a request authenticated (WILL-PLAN
+    /// L13 row 01): every read revalidates `owner` in its own snapshot, as an
+    /// owner act does (`AuthenticatedOwner::revalidate_in_txn`: this vault, a
+    /// live person who owns it now, any credential or host action the proof
+    /// bound), so a key built before the owner lapsed reads nothing after.
+    /// Only [`crate::Vault::owner_proof_read_key`] builds one.
+    #[must_use]
+    pub(crate) fn guarded_by_owner_proof(
+        mut self,
+        owner: crate::consent::AuthenticatedOwner,
+    ) -> Self {
+        self.owner_proof = Some(Box::new(owner));
+        self
+    }
+
+    /// The owner proof this key reads for, when it is one's.
+    pub(crate) fn owner_proof_guard(&self) -> Option<&crate::consent::AuthenticatedOwner> {
+        self.owner_proof.as_deref()
     }
 
     /// The owner this key was minted for, when it is the vault owner's key.

@@ -20,6 +20,10 @@
 //! "callbackId"}`, and a card a person's view or a system job emitted
 //! answers `409`.
 //!
+//! A managed vault's attested owner drives the cards it rendered the same
+//! way: render, event and close are each attested at managed ingress, and a
+//! tool binds through [`action_bound`] (WILL-PLAN L13 row 01).
+//!
 //! `DELETE /v1/core/lens-frames/{card_id}` closes the card and frees its
 //! frame. A card this server does not hold (closed, evicted at the memory
 //! floor, or held before a restart) answers `NOT_FOUND`: render it again.

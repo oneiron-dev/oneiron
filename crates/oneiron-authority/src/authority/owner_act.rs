@@ -87,6 +87,13 @@ pub enum OwnerActKind {
     /// A federation grant's travel choice (`GrantTravelSet`; Engine 10-19
     /// 02:0x). Its `seen` is over the grant's live choices.
     GrantTravel,
+    /// A vault-wide policy setting the owner changed: the dreamer's wake
+    /// policy or the inference defaults (Engine 10-19 02:4x). Its `target`
+    /// names the setting, its `seen` the setting as it stood.
+    PolicySetting,
+    /// A whole-vault export the owner made (Engine 10-19 02:4x). It changes
+    /// nothing, so its `seen` is zero.
+    Export,
 }
 
 impl OwnerActKind {
@@ -104,6 +111,8 @@ impl OwnerActKind {
             Self::TopologySeal => "topology_seal",
             Self::CheckpointPolicy => "checkpoint_policy",
             Self::GrantTravel => "grant_travel",
+            Self::PolicySetting => "policy_setting",
+            Self::Export => "export",
         }
     }
 
@@ -121,6 +130,8 @@ impl OwnerActKind {
             "topology_seal" => Self::TopologySeal,
             "checkpoint_policy" => Self::CheckpointPolicy,
             "grant_travel" => Self::GrantTravel,
+            "policy_setting" => Self::PolicySetting,
+            "export" => Self::Export,
             _ => return None,
         })
     }

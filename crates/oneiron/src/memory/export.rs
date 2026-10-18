@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
-use crate::authority::{HostActionAuthority, VerifiedSlip};
+use crate::authority::{ActSurface, HostActionAuthority, OwnerAct, OwnerActKind, VerifiedSlip};
 use crate::claim::CallerLocality;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -54,6 +54,12 @@ pub struct ExportReceipt {
     pub by: String,
     /// OF-490: each agent whose diaries this export read, with the reason.
     pub diary_reads: Vec<crate::batch::export::ExportDiaryRead>,
+    /// The owner's act this export carried out, on a door that records one
+    /// (Engine 10-19 02:4x): kind [`OwnerActKind::Export`], on the whole
+    /// vault's reserved target, by the owner the export's snapshot
+    /// revalidated, with where he said so (audit only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act: Option<OwnerAct>,
 }
 
 const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
@@ -130,7 +136,7 @@ impl Memory<'_> {
         let (receipt, sources) = render_export_to(
             self.vault,
             opts,
-            &self.actor.to_hex(),
+            ExportBy::plain(&self.actor.to_hex()),
             self.locality,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, None),
@@ -150,7 +156,7 @@ impl Memory<'_> {
         let (export, sources) = render_export(
             self.vault,
             opts,
-            &self.actor.to_hex(),
+            ExportBy::plain(&self.actor.to_hex()),
             self.locality,
             WriteActor::new(self.actor, EdgeActorClass::Human),
             |txn| self.export_admitted_in_txn(txn, proof),
@@ -259,7 +265,8 @@ impl Vault {
         // (OF-490, FIX 2222), resolved by the rule every host action takes.
         let owner = self.admit_host_owner(proof)?;
         let reader = WriteActor::new(owner, EdgeActorClass::Human);
-        render_export(self, opts, "host", locality, reader, |txn| {
+        let by = ExportBy::plain("host");
+        render_export(self, opts, by, locality, reader, |txn| {
             if host_owner_export_admitted(self, txn, proof)? == owner {
                 Ok(())
             } else {
@@ -291,7 +298,8 @@ impl Vault {
                 .holds_in(self, &txn)
                 .map_err(MemoryError::from)?;
         }
-        render_export(self, opts, "host", locality, action.actor(), |txn| {
+        let by = ExportBy::plain("host");
+        render_export(self, opts, by, locality, action.actor(), |txn| {
             action
                 .guard()
                 .holds_in(self, txn)
@@ -307,16 +315,29 @@ impl Vault {
     /// must be the export's reader. The same archive and served listing as
     /// the slip path, read at the caller's own `locality`: a caller off this
     /// device takes no device-local world with it (DEC-0005). The proof is
-    /// this request's alone, never a durable owner authorization.
+    /// this request's alone, never a durable owner authorization. The
+    /// export's receipt records the owner's act (Engine 10-19 02:4x), with
+    /// the `surface` he said so from, audit only.
     pub fn export_with_authenticated_owner_listing(
         &self,
         opts: &ExportOptions,
         owner: &AuthenticatedOwner,
+        surface: ActSurface,
         locality: CallerLocality,
     ) -> MemoryResult<(MemoryExport, Vec<EntityId>)> {
         let actor = self.admit_authenticated_owner(owner)?;
         let reader = WriteActor::new(actor, EdgeActorClass::Human);
-        render_export(self, opts, &actor.to_hex(), locality, reader, |txn| {
+        // The act names the owner the export's own snapshot revalidates
+        // below: a snapshot that names anyone else releases nothing. An
+        // export changes nothing, so its `seen` is zero.
+        let target = crate::policy_setting_doors::owner_act_target("vault.export")?;
+        let act = OwnerAct::by_owner(actor, OwnerActKind::Export, target, surface, [0; 32]);
+        let name = actor.to_hex();
+        let by = ExportBy {
+            name: &name,
+            act: Some(act),
+        };
+        render_export(self, opts, by, locality, reader, |txn| {
             if authenticated_owner_export_admitted(self, txn, owner)? == actor {
                 Ok(())
             } else {
@@ -420,6 +441,21 @@ fn validate_verified_owner(
     Ok(())
 }
 
+/// Who an export is by, as its receipt records it: the exporting actor as
+/// hex (or `host`), and the owner's act when the door named where the owner
+/// said so.
+struct ExportBy<'a> {
+    name: &'a str,
+    act: Option<OwnerAct>,
+}
+
+impl<'a> ExportBy<'a> {
+    /// An export by `name` that records no owner act.
+    fn plain(name: &'a str) -> Self {
+        Self { name, act: None }
+    }
+}
+
 /// The export both owner paths render in one frame, for a door that answers
 /// with the whole archive, beside the rows its snapshot read: built through a
 /// spool file under the vault's staging directory (FIX 2766) and read back
@@ -427,7 +463,7 @@ fn validate_verified_owner(
 fn render_export(
     vault: &Vault,
     opts: &ExportOptions,
-    by: &str,
+    by: ExportBy<'_>,
     locality: CallerLocality,
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
@@ -456,7 +492,7 @@ fn render_export(
 fn render_export_to<W: Read + Write + Seek>(
     vault: &Vault,
     opts: &ExportOptions,
-    by: &str,
+    by: ExportBy<'_>,
     locality: CallerLocality,
     reader: WriteActor,
     admit: impl FnOnce(&heed::RoTxn<'_>) -> MemoryResult<()>,
@@ -487,8 +523,9 @@ fn render_export_to<W: Read + Write + Seek>(
         format: name.to_owned(),
         bytes,
         digest: digest.clone(),
-        by: by.to_owned(),
+        by: by.name.to_owned(),
         diary_reads: export.diary_reads().to_vec(),
+        act: by.act,
     };
     // Export is never gated: a vault that cannot take one more write (a full
     // map, a failing disk) still hands the owner their data, and says so.

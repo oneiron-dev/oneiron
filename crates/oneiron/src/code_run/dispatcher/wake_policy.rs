@@ -20,7 +20,9 @@ impl HostSelfDispatcher<'_> {
                 "wake policy action requires a canonical vault".into(),
             ));
         };
-        vault.set_dreamer_wake_policy(owner, call.policy)?;
+        // WILL-PLAN L13 row 01: the owner's act is recorded with the policy
+        // it replaces, where the host named the surface the owner spoke from.
+        vault.set_dreamer_wake_policy_as(owner, self.owner_surface, call.policy)?;
         Ok(SelfDispatchOutcome::WakePolicyWritten(call.policy))
     }
 }

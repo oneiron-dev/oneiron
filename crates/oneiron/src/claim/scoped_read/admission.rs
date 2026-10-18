@@ -467,6 +467,17 @@ impl<'a> ScopedRead<'a> {
         if let Some(action) = self.actor_key.host_action_guard() {
             action.holds_in(self.vault, txn)?;
         }
+        // A key held to a request's owner proof (WILL-PLAN L13 row 01) proves
+        // that proof again here, as an owner act does in its transaction. The
+        // proof was built only for this vault's recorded, live owner, so its
+        // revalidation stands in for the binding check below.
+        if let Some(owner) = self.actor_key.owner_proof_guard() {
+            return owner_proof_holds_in(self.vault, txn, owner).map_err(|error| {
+                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                    crate::memory::MemoryError::from(error),
+                )))
+            });
+        }
         let Some(owner) = self.actor_key.vault_owner_ref() else {
             return Ok(());
         };
@@ -493,6 +504,17 @@ impl<'a> ScopedRead<'a> {
             match action.holds_in(self.vault, txn) {
                 Ok(()) => {}
                 Err(error) if crate::authority::host_action_refused(&error) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
+        // A key held to a request's owner proof reads nothing once that
+        // proof no longer holds in this snapshot (WILL-PLAN L13 row 01).
+        if let Some(owner) = self.actor_key.owner_proof_guard() {
+            match owner_proof_holds_in(self.vault, txn, owner) {
+                Ok(()) => {}
+                Err(Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(_))) => {
+                    return Ok(false);
+                }
                 Err(error) => return Err(error),
             }
         }
@@ -820,4 +842,14 @@ impl ScopedRead<'_> {
                 .map(|allowed| allowed.then_some(()))
         })
     }
+}
+
+/// A request's owner proof, revalidated in `txn` the way an owner act
+/// revalidates it in its own transaction (WILL-PLAN L13 row 01).
+fn owner_proof_holds_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    owner: &crate::consent::AuthenticatedOwner,
+) -> Result<()> {
+    owner.revalidate_in_txn(vault, txn).map(drop)
 }

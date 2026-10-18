@@ -7,9 +7,17 @@
 //! the caller's credential: the wake policy still needs the host's owner
 //! proof, and the inference defaults the caller's Auto ceiling. Nothing here
 //! writes a policy itself.
+//!
+//! The owner's act on either setting is recorded in the commit that changes
+//! it (WILL-PLAN L13 row 01, Engine 10-19 02:4x): an [`OwnerAct`] of kind
+//! [`OwnerActKind::PolicySetting`], on the setting's reserved target
+//! ([`owner_act_target`]), with where the owner said so (audit only) and the
+//! setting as it stood. This install keeps it ([`Vault::policy_setting_acts`]);
+//! no signed op carries it to another machine yet.
 
 use serde::{Deserialize, Serialize};
 
+use crate::authority::{ActSurface, OwnerAct, OwnerActKind};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::actions::{
     ActionArgument, ActionDispatch, ActionHostBinding, ActionRegistry, AgentActionCall,
@@ -17,7 +25,8 @@ use crate::code_run::actions::{
 use crate::consent::AuthenticatedOwner;
 use crate::lens::{LensPrincipalBinding, LensText, SelfUiActionId};
 use crate::memory::{Memory, MemoryResult};
-use crate::{EdgeActorClass, EntityId, Error, Result, WriteActor};
+use crate::side_table::{self, Named, SideTable};
+use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
 
 /// `vault.settings.wake_policy.set`'s input.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -145,6 +154,8 @@ fn run_embedded(
         ActionHostBinding {
             verb_door: None,
             owner,
+            // An embedded handle's call is this install's own.
+            owner_surface: owner.map(|_| ActSurface::ThisInstall),
             live_run: None,
             planner: None,
         },
@@ -179,4 +190,110 @@ pub fn inference_defaults_replace_embedded(
     input: InferenceDefaultsReplaceRequest,
 ) -> MemoryResult<PolicyActionOutcome> {
     run_embedded(memory, input.into_action()?, None)
+}
+
+/// A vault-wide setting an owner act of kind [`OwnerActKind::PolicySetting`]
+/// changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicySetting {
+    /// The dreamer's wake policy (`dreamer.wake_policy.set`).
+    DreamerWakePolicy,
+    /// The per-purpose inference defaults (`inference.defaults.replace`).
+    InferenceDefaults,
+}
+
+impl PolicySetting {
+    /// The setting's name, which its act's target is derived from.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DreamerWakePolicy => "settings.dreamer_wake_policy",
+            Self::InferenceDefaults => "settings.inference_defaults",
+        }
+    }
+}
+
+/// The target an owner act names when it changes no row of its own: a
+/// vault-wide setting, by its name, or a whole-vault export
+/// (`vault.export`). Reserved and derived from the name (BLAKE3 under a
+/// fixed context, first 16 bytes), so every install names the same target.
+///
+/// # Errors
+/// A derived id that lands on a reserved pattern (never in practice).
+pub fn owner_act_target(name: &str) -> Result<EntityId> {
+    let digest = blake3::derive_key("oneiron owner act target v1", name.as_bytes());
+    let mut id = [0_u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    EntityId::from_bytes(id)
+}
+
+/// One owner act on a vault-wide setting, as this install recorded it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PolicySettingActReceipt {
+    pub setting: PolicySetting,
+    pub act: OwnerAct,
+    /// Vault clock seconds.
+    pub at: u64,
+}
+
+const ACTS: SideTable<u64, PolicySettingActReceipt, Named> =
+    SideTable::new(&side_table::POLICY_SETTING_ACT);
+
+/// Records, in the caller's write transaction, the act of the owner `owner`
+/// (the person the caller revalidated in that transaction) on `setting`,
+/// whose value before the write was `prior`. The act's `seen` is BLAKE3 over
+/// `prior` as JSON. With no `surface`, the host named none, so nothing is
+/// recorded and the write stands as it is.
+pub(crate) fn record_policy_setting_act_in_txn<T: Serialize>(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    setting: PolicySetting,
+    owner: EntityId,
+    surface: Option<ActSurface>,
+    prior: &T,
+) -> Result<()> {
+    let Some(surface) = surface else {
+        return Ok(());
+    };
+    let prior = serde_json::to_vec(prior)
+        .map_err(|_| Error::InvariantViolation("policy setting act encoding"))?;
+    let act = OwnerAct::by_owner(
+        owner,
+        OwnerActKind::PolicySetting,
+        owner_act_target(setting.as_str())?,
+        surface,
+        *blake3::hash(&prior).as_bytes(),
+    );
+    let sequence = match ACTS.iter_rev_from(&vault.store, txn, &[])?.next() {
+        None => 0,
+        Some(row) => row?
+            .0
+            .checked_add(1)
+            .ok_or(Error::IndexOverflow("policy setting act sequence"))?,
+    };
+    let at = vault.instant_in_txn(txn)?.secs();
+    ACTS.put(
+        &vault.store,
+        txn,
+        &sequence,
+        &PolicySettingActReceipt { setting, act, at },
+    )
+}
+
+impl Vault {
+    /// Every owner act on a vault-wide setting this install recorded, oldest
+    /// first.
+    ///
+    /// # Errors
+    /// A store read that fails.
+    pub fn policy_setting_acts(&self) -> Result<Vec<PolicySettingActReceipt>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ACTS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, receipt)| receipt)
+            .collect())
+    }
 }

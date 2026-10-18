@@ -221,6 +221,8 @@ pub(crate) struct ActionBound {
     class: EdgeActorClass,
     key: oneiron::claim::ScopedReadActorKey,
     owner: Option<AuthenticatedOwner>,
+    /// Where the owner spoke from, for an owner setting's act record.
+    surface: Option<oneiron::authority::ActSurface>,
     /// The live run the action acts for, resolved from its handle.
     live_run: Option<ResolvedLiveRun>,
 }
@@ -230,35 +232,42 @@ pub(crate) struct ActionBound {
 /// action runs under it. A self-hosted root, or the dev mode, binds the
 /// owner its host action names, with that owner's guarded key at the
 /// caller's locality and the owner's proof; a hosted operator's root is
-/// refused, never left to a fallback (FIX 2222).
+/// refused, never left to a fallback (FIX 2222). A managed vault's attested
+/// owner binds its request's own proof (WILL-PLAN L13 row 01).
 pub(crate) fn action_bound(
     server: &SyncServer,
     auth: &CoreAuth,
 ) -> Result<Option<ActionBound>, FacadeApiError> {
-    if let Some(action) = crate::api::host_action::facade_host_action(server, auth)? {
-        let actor = action.actor();
-        return Ok(Some(ActionBound {
-            actor: actor.entity_ref(),
-            class: actor.actor_class(),
-            key: action.read_key().at(auth.locality()),
-            owner: owner_authorship(auth, server)?,
-            live_run: None,
-        }));
-    }
-    let Ok((actor, class)) = facade_actor(server, auth) else {
-        return Ok(None);
-    };
-    let Some(proof) = auth.verified_slip() else {
-        return Ok(None);
-    };
-    let Some(key) = server.vault.credential_read_key(proof).map_err(engine)? else {
-        return Ok(None);
-    };
+    let (actor, class, key, owner) =
+        if let Some(action) = crate::api::host_action::facade_host_action(server, auth)? {
+            let actor = action.actor();
+            let key = action.read_key().at(auth.locality());
+            let owner = owner_authorship(auth, server)?;
+            (actor.entity_ref(), actor.actor_class(), key, owner)
+        } else {
+            let Ok((actor, class)) = facade_actor(server, auth) else {
+                return Ok(None);
+            };
+            match super::owner_binding::managed_owner_binding(server, auth)? {
+                Some(bound) => (bound.actor, bound.class, bound.key, Some(bound.owner)),
+                None => {
+                    let Some(proof) = auth.verified_slip() else {
+                        return Ok(None);
+                    };
+                    let Some(key) = server.vault.credential_read_key(proof).map_err(engine)? else {
+                        return Ok(None);
+                    };
+                    let owner = owner_authorship(auth, server)?;
+                    (actor, class, key.at(auth.locality()), owner)
+                }
+            }
+        };
     Ok(Some(ActionBound {
         actor,
         class,
-        key: key.at(auth.locality()),
-        owner: owner_authorship(auth, server)?,
+        key,
+        owner,
+        surface: Some(super::owner_binding::act_surface(auth)),
         live_run: None,
     }))
 }
@@ -384,6 +393,7 @@ where
         class,
         key,
         owner,
+        surface,
         live_run,
     } = bound;
     let door: Arc<dyn AgentVerbDoor> =
@@ -419,6 +429,7 @@ where
         let binding = ActionHostBinding {
             verb_door: Some(door),
             owner: owner.as_ref(),
+            owner_surface: surface,
             live_run: held.as_ref().map(HeldLiveRun::proof),
             planner,
         };
