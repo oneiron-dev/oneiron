@@ -76,11 +76,18 @@ const LINE_MONTHLY_LIMIT: &str = "monthly limit";
 /// How long the month-usage read before a push may take.
 const LINE_USAGE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The check-in line a trusted contact's notice (OF-527) reads, the same
+/// every time: the fact of concern, never a word of the conversation.
+const TRUSTED_CONTACT_CHECK_IN_TEXT: &str = "Having a hard night, please check in.";
+
 impl Vault {
     /// The plain text an outbound content ref sends, when this engine has a
-    /// typed loader for it: an agent's connector reply body, or a commitment
-    /// reminder.
+    /// typed loader for it: an agent's connector reply body, a commitment
+    /// reminder, or a trusted contact's fixed check-in line.
     pub fn outbound_content_text(&self, content_ref: &str) -> Result<Option<String>> {
+        if content_ref == crate::counterparty_contact::TRUSTED_CONTACT_NOTICE_CONTENT_REF {
+            return Ok(Some(TRUSTED_CONTACT_CHECK_IN_TEXT.to_owned()));
+        }
         if content_ref.starts_with(CONNECTOR_REPLY_BODY_PREFIX) {
             return self.connector_reply_body_text(content_ref);
         }

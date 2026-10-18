@@ -761,6 +761,16 @@ export_facade! {
     let output = client.vault_trusted_contacts_concern_authorize(&input)?;
     crate::codec::lift_record("vault.trusted_contacts.concern.authorize", &output)
 };
+"vault.trusted_contacts.concern.propose" => fn vault_trusted_contacts_concern_propose(&self, input: TrustedContactConcernRequest) -> TrustedContactConcernProposal = |client| {
+    let input: oneiron::task_verb::sdk::TrustedContactConcernRequest = crate::codec::lower_record("vault.trusted_contacts.concern.propose", input)?;
+    let output = client.vault_trusted_contacts_concern_propose(&input)?;
+    crate::codec::lift_record("vault.trusted_contacts.concern.propose", &output)
+};
+"vault.trusted_contacts.concern.deliver" => fn vault_trusted_contacts_concern_deliver(&self) -> Option<TrustedContactDeliveryReceipt> = |client| {
+    let input: oneiron::task_verb::sdk::TrustedContactDeliverRequest = crate::codec::lower_empty("vault.trusted_contacts.concern.deliver")?;
+    let output = client.vault_trusted_contacts_concern_deliver(&input)?;
+    crate::codec::lift_record("vault.trusted_contacts.concern.deliver", &output)
+};
 "vault.guests.revoke" => fn vault_guests_revoke(&self, input: GuestRevokeRequest) -> GuestRevokeResponse = |client| {
     let input: oneiron::task_verb::sdk::GuestRevokeRequest = crate::codec::lower_record("vault.guests.revoke", input)?;
     let output = client.vault_guests_revoke(&input)?;

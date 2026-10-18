@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 573 code-mode rows (552 host rows, 21 run rows), 1995 declarations.
-// Replies: 506 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 575 code-mode rows (554 host rows, 21 run rows), 2001 declarations.
+// Replies: 508 fully typed, 63 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 94; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -700,6 +700,12 @@ declare namespace Sdk {
   type GateSystemNoticeAction = { label: string; target: string };
   type GateSystemNoticeRecord = { notice_type: string; channel: string; voice: string; audience: string; body: string; row_ref?: string | null; setting_change_offer?: GateSystemNoticeAction | null; policy_plane?: string | null; policy_version?: string | null; docs_url?: string | null };
   type TrustedContactAuthorization = { ask_ref: string; yes: boolean; outcome: TrustedContactAuthorizationOutcome; system_notices: GateSystemNoticeRecord[] };
+  type TrustedContactConcernRequest = { content_ref: string };
+  type TrustedContactConcernFact = "fact_of_concern";
+  type TrustedContactConcernProposal = { action: string; fact?: TrustedContactConcernFact | null; gate_receipt_ref?: string | null; open_asks: TrustedContactAsk[]; system_notices: GateSystemNoticeRecord[] };
+  type TrustedContactDeliverRequest = Record<string, never>;
+  type TrustedContactNoticeAuthorization = { origin: "ask"; ask_ref: string } | { origin: "policy"; row_ref: string; tier: TrustedContactTier };
+  type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -3353,6 +3359,10 @@ declare const vault: Sdk.VaultHost & {
       asks(input: Sdk.TrustedContactAsksRequest): Promise<Sdk.TrustedContactAsk[] | StoredResult>;
       /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
       authorize(input: Sdk.TrustedContactAuthorizeRequest): Promise<Sdk.TrustedContactAuthorization | StoredResult>;
+      /** The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice. */
+      deliver(input: Sdk.TrustedContactDeliverRequest): Promise<Sdk.TrustedContactDeliveryReceipt | null | StoredResult>;
+      /** The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices. */
+      propose(input: Sdk.TrustedContactConcernRequest): Promise<Sdk.TrustedContactConcernProposal | StoredResult>;
     };
     /** The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this. */
     consent(input: Sdk.TrustedContactConsentRequest): Promise<Sdk.TrustedContact | StoredResult>;

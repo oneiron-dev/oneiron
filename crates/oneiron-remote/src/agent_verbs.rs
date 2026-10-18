@@ -511,6 +511,12 @@ impl OneironClient {
                         client, verb, &input,
                     )
                 }
+                "vault.trusted_contacts.concern.propose" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::TrustedContactConcernProposal,
+                >(client, verb, &input),
+                "vault.trusted_contacts.concern.deliver" => remote_agent_verb_output::<
+                    Option<oneiron::task_verb::sdk::TrustedContactDeliveryReceipt>,
+                >(client, verb, &input),
                 "vault.guests.revoke" => remote_agent_verb_output::<
                     oneiron::receipt::GuestRevokeResponse,
                 >(client, verb, &input),
@@ -3562,6 +3568,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.trusted_contacts.concern.authorize", value)
+    }
+    pub fn vault_trusted_contacts_concern_propose(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactConcernRequest,
+    ) -> Result<oneiron::task_verb::sdk::TrustedContactConcernProposal, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.concern.propose", value)
+    }
+    pub fn vault_trusted_contacts_concern_deliver(
+        &self,
+        input: &oneiron::task_verb::sdk::TrustedContactDeliverRequest,
+    ) -> Result<Option<oneiron::task_verb::sdk::TrustedContactDeliveryReceipt>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.trusted_contacts.concern.deliver", value)
     }
     pub fn vault_guests_revoke(
         &self,
