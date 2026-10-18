@@ -716,6 +716,31 @@ export_facade! {
     let output = client.vault_embedding_spaces_probes_delete(&input)?;
     crate::codec::lift_record("vault.embedding_spaces.probes.delete", &output)
 };
+"vault.gate.policy.get" => fn vault_gate_policy_get(&self, input: PolicyManifestRead) -> PolicyManifestsView = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestRead = crate::codec::lower_record("vault.gate.policy.get", input)?;
+    let output = client.vault_gate_policy_get(&input)?;
+    crate::codec::lift_record("vault.gate.policy.get", &output)
+};
+"vault.gate.policy.put" => fn vault_gate_policy_put(&self, input: PolicyManifestPut) -> PolicyManifestReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestPut = crate::codec::lower_record("vault.gate.policy.put", input)?;
+    let output = client.vault_gate_policy_put(&input)?;
+    crate::codec::lift_record("vault.gate.policy.put", &output)
+};
+"vault.gate.policy.propose" => fn vault_gate_policy_propose(&self, input: PolicyManifestPropose) -> PolicyManifestReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::PolicyManifestPropose = crate::codec::lower_record("vault.gate.policy.propose", input)?;
+    let output = client.vault_gate_policy_propose(&input)?;
+    crate::codec::lift_record("vault.gate.policy.propose", &output)
+};
+"vault.gate.checker.get" => fn vault_gate_checker_get(&self) -> GateCheckerView = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.gate.checker.get")?;
+    let output = client.vault_gate_checker_get(&input)?;
+    crate::codec::lift_record("vault.gate.checker.get", &output)
+};
+"vault.gate.checker.set" => fn vault_gate_checker_set(&self, input: GateCheckerSet) -> GateCheckerReceipt = |client| {
+    let input: oneiron::policy_manifest_doors::GateCheckerSet = crate::codec::lower_record("vault.gate.checker.set", input)?;
+    let output = client.vault_gate_checker_set(&input)?;
+    crate::codec::lift_record("vault.gate.checker.set", &output)
+};
 "vault.settings.learning" => fn vault_settings_learning(&self, input: LearningSettingsRequest) -> LearningSettingsView = |client| {
     let input: oneiron::learning_setting_doors::LearningSettingsRequest = crate::codec::lower_record("vault.settings.learning", input)?;
     let output = client.vault_settings_learning(&input)?;

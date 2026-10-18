@@ -147,6 +147,11 @@ pub enum AgentVerb {
     VaultEmbeddingSpacesProbesList,
     VaultEmbeddingSpacesProbesPut,
     VaultEmbeddingSpacesProbesDelete,
+    VaultGatePolicyGet,
+    VaultGatePolicyPut,
+    VaultGatePolicyPropose,
+    VaultGateCheckerGet,
+    VaultGateCheckerSet,
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
@@ -519,6 +524,11 @@ impl AgentVerb {
         Self::VaultEmbeddingSpacesProbesList,
         Self::VaultEmbeddingSpacesProbesPut,
         Self::VaultEmbeddingSpacesProbesDelete,
+        Self::VaultGatePolicyGet,
+        Self::VaultGatePolicyPut,
+        Self::VaultGatePolicyPropose,
+        Self::VaultGateCheckerGet,
+        Self::VaultGateCheckerSet,
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
@@ -896,6 +906,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => "vault.embedding_spaces.probes.list",
             Self::VaultEmbeddingSpacesProbesPut => "vault.embedding_spaces.probes.put",
             Self::VaultEmbeddingSpacesProbesDelete => "vault.embedding_spaces.probes.delete",
+            Self::VaultGatePolicyGet => "vault.gate.policy.get",
+            Self::VaultGatePolicyPut => "vault.gate.policy.put",
+            Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
+            Self::VaultGateCheckerGet => "vault.gate.checker.get",
+            Self::VaultGateCheckerSet => "vault.gate.checker.set",
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
@@ -1269,6 +1284,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyGet
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerGet
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -1648,6 +1668,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyGet
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerGet
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -2059,6 +2084,11 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesProbesList
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyGet
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerGet
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -2370,6 +2400,9 @@ impl AgentVerb {
                 | Self::VaultEmbeddingSpacesMoveAbandon
                 | Self::VaultEmbeddingSpacesProbesPut
                 | Self::VaultEmbeddingSpacesProbesDelete
+                | Self::VaultGatePolicyPut
+                | Self::VaultGatePolicyPropose
+                | Self::VaultGateCheckerSet
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
@@ -2503,6 +2536,7 @@ impl AgentVerb {
             Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
+                | Self::VaultGatePolicyPropose
                 | Self::VaultLensesPropose
                 | Self::VaultDisclosureOffer
                 | Self::Reveal
@@ -2673,6 +2707,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultGatePolicyGet => &["spec"],
+            Self::VaultGatePolicyPut => &["spec"],
+            Self::VaultGatePolicyPropose => &["spec"],
+            Self::VaultGateCheckerGet => &["spec"],
+            Self::VaultGateCheckerSet => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -3046,6 +3085,11 @@ impl AgentVerb {
             Self::VaultEmbeddingSpacesProbesList => &[],
             Self::VaultEmbeddingSpacesProbesPut => &["spec"],
             Self::VaultEmbeddingSpacesProbesDelete => &["spec"],
+            Self::VaultGatePolicyGet => &["spec"],
+            Self::VaultGatePolicyPut => &["spec"],
+            Self::VaultGatePolicyPropose => &["spec"],
+            Self::VaultGateCheckerGet => &["spec"],
+            Self::VaultGateCheckerSet => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -3679,6 +3723,21 @@ impl AgentVerb {
             }
             Self::VaultEmbeddingSpacesProbesDelete => {
                 "Removes one stored embedding space probe by its id."
+            }
+            Self::VaultGatePolicyGet => {
+                "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions."
+            }
+            Self::VaultGatePolicyPut => {
+                "The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions."
+            }
+            Self::VaultGatePolicyPropose => {
+                "Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert."
+            }
+            Self::VaultGateCheckerGet => {
+                "The owner reads the calibrated checker verdict role from the vault model manifest."
+            }
+            Self::VaultGateCheckerSet => {
+                "The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."
             }
             Self::VaultSettingsLearning => {
                 "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."

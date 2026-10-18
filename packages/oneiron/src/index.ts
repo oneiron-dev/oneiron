@@ -637,6 +637,22 @@ export class Oneiron {
         delete: (input: Facade.EmbeddingSpaceProbeDeleteRequest): Facade.EmbeddingSpaceProbeDeleted => this.#call(() => this.#client.vaultEmbeddingSpacesProbesDelete(input) as Facade.EmbeddingSpaceProbeDeleted),
       },
     },
+    gate: {
+      policy: {
+        /** The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions. */
+        get: (input: Facade.PolicyManifestRead): Facade.PolicyManifestsView => this.#call(() => this.#client.vaultGatePolicyGet(input) as Facade.PolicyManifestsView),
+        /** The owner installs or edits typed Gate write axes, preserving other tables and meeting independently installed contributions. */
+        put: (input: Facade.PolicyManifestPut): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPut(input) as Facade.PolicyManifestReceipt),
+        /** Propose a Gate policy under the caller's own authority; even a tighter contribution remains untrusted and inert. */
+        propose: (input: Facade.PolicyManifestPropose): Facade.PolicyManifestReceipt => this.#call(() => this.#client.vaultGatePolicyPropose(input) as Facade.PolicyManifestReceipt),
+      },
+      checker: {
+        /** The owner reads the calibrated checker verdict role from the vault model manifest. */
+        get: (input: Facade.EmptyRequest = {}): Facade.GateCheckerView => this.#call(() => this.#client.vaultGateCheckerGet(input) as Facade.GateCheckerView),
+        /** The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings. */
+        set: (input: Facade.GateCheckerSet): Facade.GateCheckerReceipt => this.#call(() => this.#client.vaultGateCheckerSet(input) as Facade.GateCheckerReceipt),
+      },
+    },
     settings: {
       /** The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type. */
       learning: Object.assign((input: Facade.LearningSettingsRequest): Facade.LearningSettingsView => this.#call(() => this.#client.vaultSettingsLearning(input) as Facade.LearningSettingsView), {

@@ -484,6 +484,21 @@ impl OneironClient {
                 "vault.embedding_spaces.probes.delete" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleted,
                 >(client, verb, &input),
+                "vault.gate.policy.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::PolicyManifestsView,
+                >(client, verb, &input),
+                "vault.gate.policy.put" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::PolicyManifestReceipt,
+                >(client, verb, &input),
+                "vault.gate.policy.propose" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::PolicyManifestReceipt,
+                >(client, verb, &input),
+                "vault.gate.checker.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::GateCheckerView,
+                >(client, verb, &input),
+                "vault.gate.checker.set" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::GateCheckerReceipt,
+                >(client, verb, &input),
                 "vault.settings.learning" => remote_agent_verb_output::<
                     oneiron::learning_setting_doors::LearningSettingsView,
                 >(client, verb, &input),
@@ -2870,6 +2885,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.embedding_spaces.probes.delete", value)
+    }
+    pub fn vault_gate_policy_get(
+        &self,
+        input: &oneiron::policy_manifest_doors::PolicyManifestRead,
+    ) -> Result<oneiron::policy_manifest_doors::PolicyManifestsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.policy.get", value)
+    }
+    pub fn vault_gate_policy_put(
+        &self,
+        input: &oneiron::policy_manifest_doors::PolicyManifestPut,
+    ) -> Result<oneiron::policy_manifest_doors::PolicyManifestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.policy.put", value)
+    }
+    pub fn vault_gate_policy_propose(
+        &self,
+        input: &oneiron::policy_manifest_doors::PolicyManifestPropose,
+    ) -> Result<oneiron::policy_manifest_doors::PolicyManifestReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.policy.propose", value)
+    }
+    pub fn vault_gate_checker_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::GateCheckerView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.checker.get", value)
+    }
+    pub fn vault_gate_checker_set(
+        &self,
+        input: &oneiron::policy_manifest_doors::GateCheckerSet,
+    ) -> Result<oneiron::policy_manifest_doors::GateCheckerReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.gate.checker.set", value)
     }
     pub fn vault_settings_learning(
         &self,

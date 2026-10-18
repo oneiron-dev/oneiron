@@ -10,9 +10,10 @@ use std::sync::Arc;
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use oneiron::EntityId;
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND,
-    MemoryError, MemoryResult,
+    MemoryError,
 };
 use oneiron::task_verb::sdk::{
     ExplainGateReply, ExplainGateRequest, ExplainMemoryReply, ExplainMemoryRequest,
@@ -25,6 +26,7 @@ use super::super::{
     scoped_read_for_core_auth,
 };
 use super::{resolved_session_id, session_read_set};
+use crate::api::facade::host_doors::Listed;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError, ErrorCode};
 use crate::server::SyncServer;
@@ -214,26 +216,47 @@ fn explained_gate(
 
 /// `vault.explain.memory`: why a memory appeared in the caller's session,
 /// from the lookup GET /v1/core/explain/memory/{entity} takes. A memory the
-/// session was not served, or the caller cannot read, reads as none.
+/// session was not served, or the caller cannot read, reads as none. Beside
+/// it, the memory it explains (`host_door_lists`): the session's read set
+/// and the run's telemetry it is placed by hold no row.
 pub(crate) async fn vault_explain_memory(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ExplainMemoryRequest,
-) -> MemoryResult<Option<ExplainMemoryReply>> {
-    explained_memory(server, auth, &input.entity, input.session_id.as_deref())
+) -> Listed<Option<ExplainMemoryReply>> {
+    let answer = explained_memory(server, auth, &input.entity, input.session_id.as_deref())
         .await
-        .map_err(explain_refusal)
+        .map_err(explain_refusal);
+    let rows = match &answer {
+        Ok(Some(reply)) => hex_rows([reply.id.as_str()]),
+        _ => Vec::new(),
+    };
+    (answer, rows)
 }
 
 /// `vault.explain.gate`: why a write needed approval, from the lookup GET
 /// /v1/core/explain/gate/{receipt} takes. A receipt the caller may not
-/// read reads as none.
+/// read reads as none. Beside it, the writer and the claim the reply names
+/// (`host_door_lists`): the gate decision lives in the gate's store, and the
+/// policy rows it cites are opaque references.
 pub(crate) async fn vault_explain_gate(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ExplainGateRequest,
-) -> MemoryResult<Option<ExplainGateReply>> {
-    explained_gate(server, auth, &input.receipt).map_err(explain_refusal)
+) -> Listed<Option<ExplainGateReply>> {
+    let answer = explained_gate(server, auth, &input.receipt).map_err(explain_refusal);
+    let rows = match &answer {
+        Ok(Some(reply)) => hex_rows(reply.actor_ref.iter().chain(reply.claim_ref.iter())),
+        _ => Vec::new(),
+    };
+    (answer, rows)
+}
+
+/// The rows hex ids name; a value that is no id names none.
+fn hex_rows<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> Vec<EntityId> {
+    ids.into_iter()
+        .filter_map(|hex| EntityId::from_hex(hex.as_ref()).ok())
+        .collect()
 }
 
 /// A lookup's refusal in the facade's vocabulary: its code picks the memory
