@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 690 code-mode rows (669 host rows, 21 run rows), 2437 declarations.
-// Replies: 611 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 694 code-mode rows (673 host rows, 21 run rows), 2445 declarations.
+// Replies: 615 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -607,6 +607,14 @@ declare namespace Sdk {
   type SkillHashRuleRequest = { content_hash: string; blocked: boolean };
   type SkillCodeAutoInstallRequest = { enabled: boolean };
   type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
+  type SkillOptimizeStartRequest = { skill?: EntityId | null; resident?: EntityId | null; run_id?: string | null; dedupe_key?: string | null; now?: number | null };
+  type SkillGovernanceView = { entity: EntityId; skill_id: string; version: string; lifecycle: SkillLibraryLifecycle; verdict: string; tier?: string | null; protected: boolean; optimizable: boolean };
+  type SkillOptimizeStartReceipt = { outcome: string; job_ref?: string | null; state?: string | null; skill?: EntityId | null; governance?: SkillGovernanceView | null };
+  type SkillOptimizeResultRequest = { job_ref?: string | null; proposal?: EntityId | null };
+  type SkillOptimizeAxisView = { axis: string; before: number; after: number };
+  type SkillOptimizeVerdictView = { id: EntityId; proposal: EntityId; skill: EntityId; disposition: string; accepted: boolean; before: number; after: number; goal_axes: SkillOptimizeAxisView[]; goal_revision: string; judge_revision?: string | null; cycle: string; held_out_receipts: string[]; held_out_count: number; held_out_digest: string; held_out_truncated: boolean; proposal_digest: string; target_digest: string; proposal_tier?: string | null; at: number };
+  type SkillOptimizeResultView = { job_ref?: string | null; state?: string | null; kind?: string | null; last_error?: string | null; skill?: EntityId | null; proposal?: EntityId | null; proposal_lifecycle?: SkillLibraryLifecycle | null; incumbent_lifecycle?: SkillLibraryLifecycle | null; governance?: SkillGovernanceView | null; verdict?: SkillOptimizeVerdictView | null; verdicts: SkillOptimizeVerdictView[] };
+  type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
   type HookPhase = "pre" | "post" | "fact";
@@ -3975,10 +3983,22 @@ declare const vault: Sdk.VaultHost & {
     fork(input: Sdk.SkillLibraryForkRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
     /** Reads skill lifecycle, exact source, provenance, source availability, scan and admission receipts, and retained fork ancestry. */
     get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillLibraryView | StoredResult>;
+    governance: {
+      /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
+      get(input: Sdk.HubSkillRequest): Promise<Sdk.SkillGovernanceView | StoredResult>;
+      /** The owner marks or clears one skill governance tier; the mark changes no instruction content or version. */
+      set(input: Sdk.SkillGovernanceSetRequest): Promise<Sdk.SkillGovernanceView | StoredResult>;
+    };
     /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
     import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
+    optimize: {
+      /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
+      result(input: Sdk.SkillOptimizeResultRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
+      start(input: Sdk.SkillOptimizeStartRequest): Promise<Sdk.SkillOptimizeStartReceipt | StoredResult>;
+    };
     outcomes: {
       /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
       get(input: Sdk.SkillPackCreditRequest): Promise<Sdk.LateCreditReceipt | null | StoredResult>;

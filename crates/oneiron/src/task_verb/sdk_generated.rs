@@ -570,6 +570,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<HubSkillPermissionRequest>(),
             ),
             (
+                "vault.skills.optimize.start",
+                crate::code_run::vault_read::request_schema::<SkillOptimizeStartRequest>(),
+            ),
+            (
+                "vault.skills.optimize.result",
+                crate::code_run::vault_read::request_schema::<SkillOptimizeResultRequest>(),
+            ),
+            (
+                "vault.skills.governance.get",
+                crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
+            ),
+            (
+                "vault.skills.governance.set",
+                crate::code_run::vault_read::request_schema::<SkillGovernanceSetRequest>(),
+            ),
+            (
                 "vault.packs.hooks.bind",
                 crate::code_run::vault_read::request_schema::<HubHookBindRequest>(),
             ),
@@ -3682,6 +3698,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.rules.set",
     "vault.skills.code_auto_install.set",
     "vault.skills.permissions.approve",
+    "vault.skills.optimize.start",
+    "vault.skills.optimize.result",
+    "vault.skills.governance.get",
+    "vault.skills.governance.set",
     "vault.packs.hooks.bind",
     "vault.packs.hooks.list",
     "vault.packs.hooks.qualify",
@@ -4063,6 +4083,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.skills.permissions.approve" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::HubConsentReceipt,
+        >(),
+        "vault.skills.optimize.start" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillOptimizeStartReceipt,
+        >(),
+        "vault.skills.optimize.result" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillOptimizeResultView,
+        >(),
+        "vault.skills.governance.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillGovernanceView,
+        >(),
+        "vault.skills.governance.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::SkillGovernanceView,
         >(),
         "vault.packs.hooks.bind" => {
             crate::code_run::vault_read::request_schema::<Vec<crate::EntityId>>()
@@ -5645,6 +5677,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.permissions.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.optimize.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.optimize.result" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.governance.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.governance.set" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9667,6 +9727,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.skills.permissions.approve" => {
             let _input: HubSkillPermissionRequest = decode(value.clone())?;
         }
+        "vault.skills.optimize.start" => {
+            let _input: SkillOptimizeStartRequest = decode(value.clone())?;
+        }
+        "vault.skills.optimize.result" => {
+            let _input: SkillOptimizeResultRequest = decode(value.clone())?;
+        }
+        "vault.skills.governance.get" => {
+            let _input: HubSkillRequest = decode(value.clone())?;
+        }
+        "vault.skills.governance.set" => {
+            let _input: SkillGovernanceSetRequest = decode(value.clone())?;
+        }
         "vault.packs.hooks.bind" => {
             let _input: HubHookBindRequest = decode(value.clone())?;
         }
@@ -11651,6 +11723,18 @@ pub fn invoke(
         }
         "vault.skills.permissions.approve" => {
             encode(vault_skills_permissions_approve(memory, decode(value)?)?)
+        }
+        "vault.skills.optimize.start" => {
+            encode(vault_skills_optimize_start(memory, decode(value)?)?)
+        }
+        "vault.skills.optimize.result" => {
+            encode(vault_skills_optimize_result(memory, decode(value)?)?)
+        }
+        "vault.skills.governance.get" => {
+            encode(vault_skills_governance_get(memory, decode(value)?)?)
+        }
+        "vault.skills.governance.set" => {
+            encode(vault_skills_governance_set(memory, decode(value)?)?)
         }
         "vault.packs.hooks.bind" => encode(vault_packs_hooks_bind(memory, decode(value)?)?),
         "vault.packs.hooks.list" => encode(vault_packs_hooks_list(memory, decode(value)?)?),
@@ -13754,6 +13838,46 @@ pub fn vault_skills_permissions_approve(
     crate::task_verb::sdk::hub_skill_permissions_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.skills.permissions.approve")?,
+        &input,
+    )
+}
+pub fn vault_skills_optimize_start(
+    memory: &Memory<'_>,
+    input: SkillOptimizeStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillOptimizeStartReceipt> {
+    crate::task_verb::sdk::skill_optimize_start_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.optimize.start")?,
+        &input,
+    )
+}
+pub fn vault_skills_optimize_result(
+    memory: &Memory<'_>,
+    input: SkillOptimizeResultRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillOptimizeResultView> {
+    crate::task_verb::sdk::skill_optimize_result_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.optimize.result")?,
+        &input,
+    )
+}
+pub fn vault_skills_governance_get(
+    memory: &Memory<'_>,
+    input: HubSkillRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillGovernanceView> {
+    crate::task_verb::sdk::skill_governance_get_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.governance.get")?,
+        &input,
+    )
+}
+pub fn vault_skills_governance_set(
+    memory: &Memory<'_>,
+    input: SkillGovernanceSetRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillGovernanceView> {
+    crate::task_verb::sdk::skill_governance_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.governance.set")?,
         &input,
     )
 }

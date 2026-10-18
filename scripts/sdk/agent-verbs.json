@@ -1973,6 +1973,66 @@
       "openapi": true
     },
     {
+      "name": "vault.skills.optimize.start",
+      "description": "The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued.",
+      "input": "SkillOptimizeStartRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeStartReceipt",
+      "call": "crate::task_verb::sdk::skill_optimize_start_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.start\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.optimize.result",
+      "description": "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal.",
+      "input": "SkillOptimizeResultRequest",
+      "output": "crate::task_verb::sdk::SkillOptimizeResultView",
+      "call": "crate::task_verb::sdk::skill_optimize_result_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.optimize.result\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.governance.get",
+      "description": "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it.",
+      "input": "HubSkillRequest",
+      "output": "crate::task_verb::sdk::SkillGovernanceView",
+      "call": "crate::task_verb::sdk::skill_governance_get_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.get\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.skills.governance.set",
+      "description": "The owner marks or clears one skill governance tier; the mark changes no instruction content or version.",
+      "input": "SkillGovernanceSetRequest",
+      "output": "crate::task_verb::sdk::SkillGovernanceView",
+      "call": "crate::task_verb::sdk::skill_governance_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.governance.set\")?, &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.packs.hooks.bind",
       "description": "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign.",
       "input": "HubHookBindRequest",

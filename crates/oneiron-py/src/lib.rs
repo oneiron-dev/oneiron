@@ -1193,6 +1193,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_skills_optimize_start(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.optimize.start")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.optimize.start", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_optimize_result(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.optimize.result")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.optimize.result", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_governance_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.governance.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.governance.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_skills_governance_set(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.skills.governance.set")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.skills.governance.set", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_packs_hooks_bind(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.packs.hooks.bind")?;
         let output = py

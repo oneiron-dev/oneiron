@@ -994,6 +994,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_skills_optimize_start(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.optimize.start", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_optimize_result(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.optimize.result", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_governance_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.governance.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_governance_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.skills.governance.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_packs_hooks_bind(
         &self,
         input: serde_json::Value,

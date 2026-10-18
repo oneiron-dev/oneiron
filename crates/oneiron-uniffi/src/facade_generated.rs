@@ -566,6 +566,26 @@ export_facade! {
     let output = client.vault_skills_permissions_approve(&input)?;
     crate::codec::lift_record("vault.skills.permissions.approve", &output)
 };
+"vault.skills.optimize.start" => fn vault_skills_optimize_start(&self, input: SkillOptimizeStartRequest) -> SkillOptimizeStartReceipt = |client| {
+    let input: oneiron::task_verb::sdk::SkillOptimizeStartRequest = crate::codec::lower_record("vault.skills.optimize.start", input)?;
+    let output = client.vault_skills_optimize_start(&input)?;
+    crate::codec::lift_record("vault.skills.optimize.start", &output)
+};
+"vault.skills.optimize.result" => fn vault_skills_optimize_result(&self, input: SkillOptimizeResultRequest) -> SkillOptimizeResultView = |client| {
+    let input: oneiron::task_verb::sdk::SkillOptimizeResultRequest = crate::codec::lower_record("vault.skills.optimize.result", input)?;
+    let output = client.vault_skills_optimize_result(&input)?;
+    crate::codec::lift_record("vault.skills.optimize.result", &output)
+};
+"vault.skills.governance.get" => fn vault_skills_governance_get(&self, input: HubSkillRequest) -> SkillGovernanceView = |client| {
+    let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.governance.get", input)?;
+    let output = client.vault_skills_governance_get(&input)?;
+    crate::codec::lift_record("vault.skills.governance.get", &output)
+};
+"vault.skills.governance.set" => fn vault_skills_governance_set(&self, input: SkillGovernanceSetRequest) -> SkillGovernanceView = |client| {
+    let input: oneiron::task_verb::sdk::SkillGovernanceSetRequest = crate::codec::lower_record("vault.skills.governance.set", input)?;
+    let output = client.vault_skills_governance_set(&input)?;
+    crate::codec::lift_record("vault.skills.governance.set", &output)
+};
 "vault.packs.hooks.bind" => fn vault_packs_hooks_bind(&self, input: HubHookBindRequest) -> Vec<String> = |client| {
     let input: oneiron::task_verb::sdk::HubHookBindRequest = crate::codec::lower_record("vault.packs.hooks.bind", input)?;
     let output = client.vault_packs_hooks_bind(&input)?;

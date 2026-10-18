@@ -394,6 +394,18 @@ impl OneironClient {
                 "vault.skills.permissions.approve" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::HubConsentReceipt,
                 >(client, verb, &input),
+                "vault.skills.optimize.start" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillOptimizeStartReceipt,
+                >(client, verb, &input),
+                "vault.skills.optimize.result" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillOptimizeResultView,
+                >(client, verb, &input),
+                "vault.skills.governance.get" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillGovernanceView,
+                >(client, verb, &input),
+                "vault.skills.governance.set" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::SkillGovernanceView,
+                >(client, verb, &input),
                 "vault.packs.hooks.bind" => {
                     remote_agent_verb_output::<Vec<oneiron::EntityId>>(client, verb, &input)
                 }
@@ -3463,6 +3475,54 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.skills.permissions.approve", value)
+    }
+    pub fn vault_skills_optimize_start(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillOptimizeStartRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillOptimizeStartReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.optimize.start", value)
+    }
+    pub fn vault_skills_optimize_result(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillOptimizeResultRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillOptimizeResultView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.optimize.result", value)
+    }
+    pub fn vault_skills_governance_get(
+        &self,
+        input: &oneiron::task_verb::sdk::HubSkillRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillGovernanceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.governance.get", value)
+    }
+    pub fn vault_skills_governance_set(
+        &self,
+        input: &oneiron::task_verb::sdk::SkillGovernanceSetRequest,
+    ) -> Result<oneiron::task_verb::sdk::SkillGovernanceView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.skills.governance.set", value)
     }
     pub fn vault_packs_hooks_bind(
         &self,

@@ -1371,6 +1371,12 @@ class Oneiron:
         @property
         def permissions(self) -> "Oneiron._VaultSkillsPermissionsVerbs":
             return Oneiron._VaultSkillsPermissionsVerbs(self._client)
+        @property
+        def optimize(self) -> "Oneiron._VaultSkillsOptimizeVerbs":
+            return Oneiron._VaultSkillsOptimizeVerbs(self._client)
+        @property
+        def governance(self) -> "Oneiron._VaultSkillsGovernanceVerbs":
+            return Oneiron._VaultSkillsGovernanceVerbs(self._client)
         def pack_receipt(self, spec):
             """Reads a terminal pack receipt with its frozen loaded versions and actual-use attribution as the owner."""
             return json.loads(_translate(lambda: self._client.vault_skills_pack_receipt(json.dumps(spec))))
@@ -1395,6 +1401,24 @@ class Oneiron:
         def approve(self, spec):
             """The owner answers one imported skill permission ask at its exact hub source."""
             return json.loads(_translate(lambda: self._client.vault_skills_permissions_approve(json.dumps(spec))))
+    class _VaultSkillsOptimizeVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def start(self, spec):
+            """The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_start(json.dumps(spec))))
+        def result(self, spec):
+            """Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_result(json.dumps(spec))))
+    class _VaultSkillsGovernanceVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec):
+            """Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."""
+            return json.loads(_translate(lambda: self._client.vault_skills_governance_get(json.dumps(spec))))
+        def set(self, spec):
+            """The owner marks or clears one skill governance tier; the mark changes no instruction content or version."""
+            return json.loads(_translate(lambda: self._client.vault_skills_governance_set(json.dumps(spec))))
     class _VaultSkillsOutcomesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

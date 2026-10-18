@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 635 facade rows, 2351 declarations.
-Inputs: 583 of 635 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 566 of 635 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 639 facade rows, 2359 declarations.
+Inputs: 587 of 639 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 570 of 639 fully typed, 69 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 92; unread shapes: 0.
 """
 
@@ -3023,6 +3023,69 @@ class SkillCodeAutoInstallRequest(TypedDict):
 class HubSkillPermissionRequest(TypedDict):
     entity: EntityId
     hub_ref: HubRef
+class SkillOptimizeStartRequest(TypedDict):
+    skill: NotRequired[EntityId | None]
+    resident: NotRequired[EntityId | None]
+    run_id: NotRequired[str | None]
+    dedupe_key: NotRequired[str | None]
+    now: NotRequired[int | None]
+class SkillGovernanceView(TypedDict):
+    entity: EntityId
+    skill_id: str
+    version: str
+    lifecycle: SkillLibraryLifecycle
+    verdict: str
+    tier: NotRequired[str | None]
+    protected: bool
+    optimizable: bool
+class SkillOptimizeStartReceipt(TypedDict):
+    outcome: str
+    job_ref: NotRequired[str | None]
+    state: NotRequired[str | None]
+    skill: NotRequired[EntityId | None]
+    governance: NotRequired[SkillGovernanceView | None]
+class SkillOptimizeResultRequest(TypedDict):
+    job_ref: NotRequired[str | None]
+    proposal: NotRequired[EntityId | None]
+class SkillOptimizeAxisView(TypedDict):
+    axis: str
+    before: float
+    after: float
+class SkillOptimizeVerdictView(TypedDict):
+    id: EntityId
+    proposal: EntityId
+    skill: EntityId
+    disposition: str
+    accepted: bool
+    before: float
+    after: float
+    goal_axes: list[SkillOptimizeAxisView]
+    goal_revision: str
+    judge_revision: NotRequired[str | None]
+    cycle: str
+    held_out_receipts: list[str]
+    held_out_count: int
+    held_out_digest: str
+    held_out_truncated: bool
+    proposal_digest: str
+    target_digest: str
+    proposal_tier: NotRequired[str | None]
+    at: int
+class SkillOptimizeResultView(TypedDict):
+    job_ref: NotRequired[str | None]
+    state: NotRequired[str | None]
+    kind: NotRequired[str | None]
+    last_error: NotRequired[str | None]
+    skill: NotRequired[EntityId | None]
+    proposal: NotRequired[EntityId | None]
+    proposal_lifecycle: NotRequired[SkillLibraryLifecycle | None]
+    incumbent_lifecycle: NotRequired[SkillLibraryLifecycle | None]
+    governance: NotRequired[SkillGovernanceView | None]
+    verdict: NotRequired[SkillOptimizeVerdictView | None]
+    verdicts: list[SkillOptimizeVerdictView]
+class SkillGovernanceSetRequest(TypedDict):
+    entity: EntityId
+    tier: NotRequired[str | None]
 class HubHookBindRequest(TypedDict):
     pack: str
 HookActorClass = Literal["human", "agent", "system"]
