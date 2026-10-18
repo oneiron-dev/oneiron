@@ -267,9 +267,9 @@ impl SyncClient {
 }
 
 /// [`SyncClient::relay_sealed_bundle`] on the window manager and a client
-/// config alone, for a task off the live sync loop. Every tick reaches the
-/// home, an erase or a slot due or not, so an old reader serves the
-/// admissions waiting there (FIX 4271); a home out of reach then is no error
+/// config alone, for a task off the live sync loop. Every tick reaches for
+/// the home, an erase or a slot due or not, so an old reader serves the
+/// admissions waiting there (FIX 4271); a home out of reach is no error
 /// unless an erase or the slot was due.
 pub(crate) async fn relay_sealed_bundle(
     manager: &Arc<WindowManager>,
@@ -290,12 +290,17 @@ pub(crate) async fn relay_sealed_bundle(
     let erased = sweep::erased_due(vault, now_slot).map_err(storage)?;
     // A phone takes no generation in and uploads none (FIX 3349).
     let slot_due = cursor.slot < now_slot && holds_sealed_bundle(vault.config.machine_device_class);
-    let budgets = residence_budgets(vault)?;
-    let Some(mut rpc) = ResidenceRpc::connect(vault, config, budgets).await? else {
-        if erased.is_empty() && !slot_due {
-            return Ok(relay);
-        }
-        return Err(TransportError::Storage("home node offline".into()));
+    let connected = match residence_budgets(vault) {
+        Ok(budgets) => ResidenceRpc::connect(vault, config, budgets).await,
+        Err(error) => Err(error),
+    };
+    let mut rpc = match connected {
+        Ok(Some(rpc)) => rpc,
+        // With no erase or slot due, a home out of reach is no failure: the
+        // next tick serves the admissions.
+        _ if erased.is_empty() && !slot_due => return Ok(relay),
+        Ok(None) => return Err(TransportError::Storage("home node offline".into())),
+        Err(error) => return Err(error),
     };
     // The admissions first: an old reader with no erase or slot work still
     // grants (FIX 4271). A home that refuses them still takes the rest.
