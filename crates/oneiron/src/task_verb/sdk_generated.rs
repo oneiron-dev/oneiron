@@ -358,6 +358,29 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.budgets.rsi.configure",
+                crate::code_run::vault_read::request_schema::<crate::llm::RsiBudgetConfig>(),
+            ),
+            (
+                "vault.budgets.rsi",
+                crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineRequest>(
+                ),
+            ),
+            (
+                "vault.budgets.rsi.top_up",
+                crate::code_run::vault_read::request_schema::<crate::llm::RsiTopUp>(),
+            ),
+            (
+                "vault.budgets.rsi.hold",
+                crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineRequest>(
+                ),
+            ),
+            (
+                "vault.budgets.rsi.hold.resume",
+                crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineRequest>(
+                ),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -1916,6 +1939,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.research.refund_work",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::ResearchRefundWire,
+                >(),
+            ),
+            (
+                "vault.research.reserve_exploration",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchExplorationWire,
+                >(),
+            ),
+            (
+                "vault.research.budget",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::ResearchArchiveWire,
                 >(),
             ),
             (
@@ -3510,6 +3545,84 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.models.catalog.refresh",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelCatalogRefresh,
+                >(),
+            ),
+            (
+                "vault.models.catalog.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelCatalogGet,
+                >(),
+            ),
+            (
+                "vault.models.catalog.diff",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelCatalogDiffRequest,
+                >(),
+            ),
+            (
+                "vault.models.trials.nominate",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialNominate,
+                >(),
+            ),
+            (
+                "vault.models.trials.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialRef,
+                >(),
+            ),
+            (
+                "vault.models.trials.approve",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialRef,
+                >(),
+            ),
+            (
+                "vault.models.trials.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialRef,
+                >(),
+            ),
+            (
+                "vault.models.trials.complete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelTrialComplete,
+                >(),
+            ),
+            (
+                "vault.models.bindings.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelBindingPropose,
+                >(),
+            ),
+            (
+                "vault.models.bindings.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelBindingProposalRef,
+                >(),
+            ),
+            (
+                "vault.models.bindings.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelBindingRead,
+                >(),
+            ),
+            (
+                "vault.models.bindings.accept",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelBindingAccept,
+                >(),
+            ),
+            (
+                "vault.models.bindings.deny",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::catalog_doors::ModelBindingProposalRef,
+                >(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -4121,6 +4234,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.esign.void",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::esign::EsignVoidRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.act",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.pdf",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningPdfRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.image",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningImageRequest,
+                >(),
+            ),
+            (
+                "vault.esign.signing.signature",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSigningSignatureRequest,
+                >(),
+            ),
+            (
+                "vault.esign.seal.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignSealGetRequest,
                 >(),
             ),
             (
@@ -5122,6 +5265,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.hold.resume",
     "vault.budgets.local",
     "vault.budgets.settlements",
+    "vault.budgets.rsi.configure",
+    "vault.budgets.rsi",
+    "vault.budgets.rsi.top_up",
+    "vault.budgets.rsi.hold",
+    "vault.budgets.rsi.hold.resume",
     "vault.commit_message",
     "vault.begin_message_stream",
     "vault.append_to_stream",
@@ -5333,6 +5481,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.coach.training_offers.pilots.prepare",
     "vault.coach.training_offers.pilots.complete",
     "vault.coach.training_offers.pilots.get",
+    "vault.research.reserve_exploration",
+    "vault.research.budget",
     "vault.cleanup.run",
     "vault.entities.mention",
     "vault.policy.owner.get",
@@ -5483,6 +5633,19 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.voice.end",
     "ai.voice.close",
     "ai.anonymous_chat",
+    "vault.models.catalog.refresh",
+    "vault.models.catalog.get",
+    "vault.models.catalog.diff",
+    "vault.models.trials.nominate",
+    "vault.models.trials.get",
+    "vault.models.trials.approve",
+    "vault.models.trials.run",
+    "vault.models.trials.complete",
+    "vault.models.bindings.propose",
+    "vault.models.bindings.get",
+    "vault.models.bindings.read",
+    "vault.models.bindings.accept",
+    "vault.models.bindings.deny",
     "ai.speech",
     "vault.voices.packs.put",
     "vault.voices.render_consent",
@@ -5537,6 +5700,11 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
+    "vault.esign.signing.act",
+    "vault.esign.signing.pdf",
+    "vault.esign.signing.image",
+    "vault.esign.signing.signature",
+    "vault.esign.seal.get",
     "vault.consolidation.status",
     "vault.runs.step",
     "vault.runs.checkpoint",
@@ -5751,6 +5919,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.budgets.settlements" => crate::code_run::vault_read::request_schema::<
             crate::agent_dispatch::budget_doors::RunSettlementsView,
         >(),
+        "vault.budgets.rsi.configure" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi.top_up" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi.hold" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
+        "vault.budgets.rsi.hold.resume" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::rsi_doors::RsiLineView>()
+        }
         "vault.commit_message" => {
             crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
         }
@@ -6392,6 +6575,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.coach.training_offers.pilots.get" => crate::code_run::vault_read::request_schema::<
             Option<crate::skill_optimize::offer_pilot::OfferPilot>,
         >(),
+        "vault.research.reserve_exploration" => {
+            crate::code_run::vault_read::request_schema::<crate::entity_id::EntityId>()
+        }
+        "vault.research.budget" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ResearchBudgetView,
+        >(),
         "vault.cleanup.run" => crate::code_run::vault_read::request_schema::<
             crate::vault_cleanup::surface::CleanupRunView,
         >(),
@@ -6846,6 +7035,45 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "ai.anonymous_chat" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AnonymousChatResponse,
         >(),
+        "vault.models.catalog.refresh" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelCatalogRevision,
+        >(),
+        "vault.models.catalog.get" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelCatalogRevision,
+        >(),
+        "vault.models.catalog.diff" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelCatalogDiff,
+        >(),
+        "vault.models.trials.nominate" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.trials.get" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.trials.approve" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.trials.run" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.trials.complete" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelTrialView,
+        >(),
+        "vault.models.bindings.propose" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelBindingProposal,
+        >(),
+        "vault.models.bindings.get" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelBindingProposal,
+        >(),
+        "vault.models.bindings.read" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::manifest::ModelBinding>()
+        }
+        "vault.models.bindings.accept" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelBindingProposal,
+        >(),
+        "vault.models.bindings.deny" => crate::code_run::vault_read::request_schema::<
+            crate::llm::catalog_doors::ModelBindingProposal,
+        >(),
         "ai.speech" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiAnswer>()
         }
@@ -7011,6 +7239,21 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.productivity.tree" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::memory::ProductivityTree>>,
+        >(),
+        "vault.esign.signing.act" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::SigningOutcome,
+        >(),
+        "vault.esign.signing.pdf" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningPdfView,
+        >(),
+        "vault.esign.signing.image" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningImageView,
+        >(),
+        "vault.esign.signing.signature" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSigningSignatureView,
+        >(),
+        "vault.esign.seal.get" => crate::code_run::vault_read::request_schema::<
+            crate::blob_artifact::esign::EsignSealView,
         >(),
         "vault.consolidation.status" => crate::code_run::vault_read::request_schema::<
             Option<crate::memory::DreamerAttemptView>,
@@ -7870,6 +8113,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.budgets.settlements" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.top_up" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.hold" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.budgets.rsi.hold.resume" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -9952,6 +10230,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.research.reserve_exploration" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.research.budget" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.research.record_benchmark" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11924,6 +12216,97 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.models.catalog.refresh" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.catalog.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.catalog.diff" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.trials.nominate" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.trials.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.trials.approve" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.trials.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.trials.complete" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.bindings.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.bindings.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.bindings.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.bindings.accept" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.models.bindings.deny" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -12626,6 +13009,41 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.esign.void" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.act" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.pdf" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.image" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.signing.signature" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.esign.seal.get" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -13962,6 +14380,21 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::agent_dispatch::budget_doors::RunSettlementsRequest =
                 decode(value.clone())?;
         }
+        "vault.budgets.rsi.configure" => {
+            let _input: crate::llm::RsiBudgetConfig = decode(value.clone())?;
+        }
+        "vault.budgets.rsi" => {
+            let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.budgets.rsi.top_up" => {
+            let _input: crate::llm::RsiTopUp = decode(value.clone())?;
+        }
+        "vault.budgets.rsi.hold" => {
+            let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
+        "vault.budgets.rsi.hold.resume" => {
+            let _input: crate::llm::rsi_doors::RsiLineRequest = decode(value.clone())?;
+        }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
@@ -14931,6 +15364,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.research.refund_work" => {
             let _input: crate::task_verb::sdk::ResearchRefundWire = decode(value.clone())?;
         }
+        "vault.research.reserve_exploration" => {
+            let _input: crate::task_verb::sdk::ResearchExplorationWire = decode(value.clone())?;
+        }
+        "vault.research.budget" => {
+            let _input: crate::task_verb::sdk::ResearchArchiveWire = decode(value.clone())?;
+        }
         "vault.research.record_benchmark" => {
             let _input: crate::task_verb::sdk::ResearchBenchmarkWire = decode(value.clone())?;
         }
@@ -15880,6 +16319,45 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.anonymous_chat" => {
             let _input: crate::task_verb::sdk::AnonymousChatRequest = decode(value.clone())?;
         }
+        "vault.models.catalog.refresh" => {
+            let _input: crate::llm::catalog_doors::ModelCatalogRefresh = decode(value.clone())?;
+        }
+        "vault.models.catalog.get" => {
+            let _input: crate::llm::catalog_doors::ModelCatalogGet = decode(value.clone())?;
+        }
+        "vault.models.catalog.diff" => {
+            let _input: crate::llm::catalog_doors::ModelCatalogDiffRequest = decode(value.clone())?;
+        }
+        "vault.models.trials.nominate" => {
+            let _input: crate::llm::catalog_doors::ModelTrialNominate = decode(value.clone())?;
+        }
+        "vault.models.trials.get" => {
+            let _input: crate::llm::catalog_doors::ModelTrialRef = decode(value.clone())?;
+        }
+        "vault.models.trials.approve" => {
+            let _input: crate::llm::catalog_doors::ModelTrialRef = decode(value.clone())?;
+        }
+        "vault.models.trials.run" => {
+            let _input: crate::llm::catalog_doors::ModelTrialRef = decode(value.clone())?;
+        }
+        "vault.models.trials.complete" => {
+            let _input: crate::llm::catalog_doors::ModelTrialComplete = decode(value.clone())?;
+        }
+        "vault.models.bindings.propose" => {
+            let _input: crate::llm::catalog_doors::ModelBindingPropose = decode(value.clone())?;
+        }
+        "vault.models.bindings.get" => {
+            let _input: crate::llm::catalog_doors::ModelBindingProposalRef = decode(value.clone())?;
+        }
+        "vault.models.bindings.read" => {
+            let _input: crate::llm::catalog_doors::ModelBindingRead = decode(value.clone())?;
+        }
+        "vault.models.bindings.accept" => {
+            let _input: crate::llm::catalog_doors::ModelBindingAccept = decode(value.clone())?;
+        }
+        "vault.models.bindings.deny" => {
+            let _input: crate::llm::catalog_doors::ModelBindingProposalRef = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -16279,6 +16757,24 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.esign.void" => {
             let _input: crate::blob_artifact::esign::EsignVoidRequest = decode(value.clone())?;
+        }
+        "vault.esign.signing.act" => {
+            let _input: crate::blob_artifact::esign::EsignSigningRequest = decode(value.clone())?;
+        }
+        "vault.esign.signing.pdf" => {
+            let _input: crate::blob_artifact::esign::EsignSigningPdfRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.signing.image" => {
+            let _input: crate::blob_artifact::esign::EsignSigningImageRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.signing.signature" => {
+            let _input: crate::blob_artifact::esign::EsignSigningSignatureRequest =
+                decode(value.clone())?;
+        }
+        "vault.esign.seal.get" => {
+            let _input: crate::blob_artifact::esign::EsignSealGetRequest = decode(value.clone())?;
         }
         "vault.conversations.create" => {
             let _input: crate::core_write::ConversationCreateInput = decode(value.clone())?;
@@ -17056,6 +17552,15 @@ pub fn invoke(
         "vault.budgets.hold.resume" => encode(vault_budgets_hold_resume(memory, decode(value)?)?),
         "vault.budgets.local" => encode(vault_budgets_local(memory, decode(value)?)?),
         "vault.budgets.settlements" => encode(vault_budgets_settlements(memory, decode(value)?)?),
+        "vault.budgets.rsi.configure" => {
+            encode(vault_budgets_rsi_configure(memory, decode(value)?)?)
+        }
+        "vault.budgets.rsi" => encode(vault_budgets_rsi(memory, decode(value)?)?),
+        "vault.budgets.rsi.top_up" => encode(vault_budgets_rsi_top_up(memory, decode(value)?)?),
+        "vault.budgets.rsi.hold" => encode(vault_budgets_rsi_hold(memory, decode(value)?)?),
+        "vault.budgets.rsi.hold.resume" => {
+            encode(vault_budgets_rsi_hold_resume(memory, decode(value)?)?)
+        }
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -17629,6 +18134,10 @@ pub fn invoke(
         }
         "vault.research.settle_work" => encode(vault_research_settle_work(memory, decode(value)?)?),
         "vault.research.refund_work" => encode(vault_research_refund_work(memory, decode(value)?)?),
+        "vault.research.reserve_exploration" => {
+            encode(vault_research_reserve_exploration(memory, decode(value)?)?)
+        }
+        "vault.research.budget" => encode(vault_research_budget(memory, decode(value)?)?),
         "vault.research.record_benchmark" => {
             encode(vault_research_record_benchmark(memory, decode(value)?)?)
         }
@@ -18114,6 +18623,31 @@ pub fn invoke(
         "ai.voice.end" => encode(ai_voice_end(memory, decode(value)?)?),
         "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
         "ai.anonymous_chat" => encode(ai_anonymous_chat(memory, decode(value)?)?),
+        "vault.models.catalog.refresh" => {
+            encode(vault_models_catalog_refresh(memory, decode(value)?)?)
+        }
+        "vault.models.catalog.get" => encode(vault_models_catalog_get(memory, decode(value)?)?),
+        "vault.models.catalog.diff" => encode(vault_models_catalog_diff(memory, decode(value)?)?),
+        "vault.models.trials.nominate" => {
+            encode(vault_models_trials_nominate(memory, decode(value)?)?)
+        }
+        "vault.models.trials.get" => encode(vault_models_trials_get(memory, decode(value)?)?),
+        "vault.models.trials.approve" => {
+            encode(vault_models_trials_approve(memory, decode(value)?)?)
+        }
+        "vault.models.trials.run" => encode(vault_models_trials_run(memory, decode(value)?)?),
+        "vault.models.trials.complete" => {
+            encode(vault_models_trials_complete(memory, decode(value)?)?)
+        }
+        "vault.models.bindings.propose" => {
+            encode(vault_models_bindings_propose(memory, decode(value)?)?)
+        }
+        "vault.models.bindings.get" => encode(vault_models_bindings_get(memory, decode(value)?)?),
+        "vault.models.bindings.read" => encode(vault_models_bindings_read(memory, decode(value)?)?),
+        "vault.models.bindings.accept" => {
+            encode(vault_models_bindings_accept(memory, decode(value)?)?)
+        }
+        "vault.models.bindings.deny" => encode(vault_models_bindings_deny(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -18252,6 +18786,13 @@ pub fn invoke(
         }
         "vault.esign.remind" => encode(vault_esign_remind(memory, decode(value)?)?),
         "vault.esign.void" => encode(vault_esign_void(memory, decode(value)?)?),
+        "vault.esign.signing.act" => encode(vault_esign_signing_act(memory, decode(value)?)?),
+        "vault.esign.signing.pdf" => encode(vault_esign_signing_pdf(memory, decode(value)?)?),
+        "vault.esign.signing.image" => encode(vault_esign_signing_image(memory, decode(value)?)?),
+        "vault.esign.signing.signature" => {
+            encode(vault_esign_signing_signature(memory, decode(value)?)?)
+        }
+        "vault.esign.seal.get" => encode(vault_esign_seal_get(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
         "vault.conversations.turns.create" => {
             encode(vault_conversations_turns_create(memory, decode(value)?)?)
@@ -19316,6 +19857,61 @@ pub fn vault_budgets_settlements(
     input: crate::agent_dispatch::budget_doors::RunSettlementsRequest,
 ) -> MemoryResult<crate::agent_dispatch::budget_doors::RunSettlementsView> {
     crate::task_verb::sdk::host_only(memory, "vault.budgets.settlements", &input)
+}
+pub fn vault_budgets_rsi_configure(
+    memory: &Memory<'_>,
+    input: crate::llm::RsiBudgetConfig,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::configure_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.configure")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi(
+    memory: &Memory<'_>,
+    input: crate::llm::rsi_doors::RsiLineRequest,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::rsi_line_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi_top_up(
+    memory: &Memory<'_>,
+    input: crate::llm::RsiTopUp,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::top_up_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.top_up")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi_hold(
+    memory: &Memory<'_>,
+    input: crate::llm::rsi_doors::RsiLineRequest,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::hold_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.hold")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_budgets_rsi_hold_resume(
+    memory: &Memory<'_>,
+    input: crate::llm::rsi_doors::RsiLineRequest,
+) -> MemoryResult<crate::llm::rsi_doors::RsiLineView> {
+    crate::llm::rsi_doors::resume_rsi_budget_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.budgets.rsi.hold.resume")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_fanout_resume(
     memory: &Memory<'_>,
@@ -21765,6 +22361,18 @@ pub fn vault_research_refund_work(
 ) -> MemoryResult<crate::autoreason_campaign::research::ResearchReservation> {
     crate::task_verb::sdk::research_refund_work(memory, input)
 }
+pub fn vault_research_reserve_exploration(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchExplorationWire,
+) -> MemoryResult<crate::entity_id::EntityId> {
+    crate::task_verb::sdk::research_reserve_exploration(memory, input)
+}
+pub fn vault_research_budget(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::ResearchArchiveWire,
+) -> MemoryResult<crate::task_verb::sdk::ResearchBudgetView> {
+    crate::task_verb::sdk::research_budget(memory, input)
+}
 pub fn vault_research_record_benchmark(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::ResearchBenchmarkWire,
@@ -24094,6 +24702,155 @@ pub fn ai_anonymous_chat(
 ) -> MemoryResult<crate::task_verb::sdk::AnonymousChatResponse> {
     crate::task_verb::sdk::host_only(memory, "ai.anonymous_chat", &input)
 }
+pub fn vault_models_catalog_refresh(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelCatalogRefresh,
+) -> MemoryResult<crate::llm::catalog_doors::ModelCatalogRevision> {
+    memory
+        .vault()
+        .refresh_model_catalog_as_owner(
+            &memory.embedded_owner("vault.models.catalog.refresh")?,
+            input,
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_catalog_get(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelCatalogGet,
+) -> MemoryResult<crate::llm::catalog_doors::ModelCatalogRevision> {
+    memory
+        .vault()
+        .model_catalog_as_owner(&memory.embedded_owner("vault.models.catalog.get")?, input)
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_catalog_diff(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelCatalogDiffRequest,
+) -> MemoryResult<crate::llm::catalog_doors::ModelCatalogDiff> {
+    memory
+        .vault()
+        .diff_model_catalog_as_owner(&memory.embedded_owner("vault.models.catalog.diff")?, input)
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_trials_nominate(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialNominate,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    memory
+        .vault()
+        .nominate_model_trial_as_owner(
+            &memory.embedded_owner("vault.models.trials.nominate")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_trials_get(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    memory
+        .vault()
+        .model_trial_as_owner(
+            &memory.embedded_owner("vault.models.trials.get")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_trials_approve(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    memory
+        .vault()
+        .approve_model_trial_as_owner(
+            &memory.embedded_owner("vault.models.trials.approve")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_trials_run(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    crate::task_verb::sdk::host_only(memory, "vault.models.trials.run", &input)
+}
+pub fn vault_models_trials_complete(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelTrialComplete,
+) -> MemoryResult<crate::llm::catalog_doors::ModelTrialView> {
+    memory
+        .vault()
+        .complete_model_trial_as_owner(
+            &memory.embedded_owner("vault.models.trials.complete")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_bindings_propose(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelBindingPropose,
+) -> MemoryResult<crate::llm::catalog_doors::ModelBindingProposal> {
+    memory
+        .vault()
+        .propose_model_binding_as_owner(
+            &memory.embedded_owner("vault.models.bindings.propose")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_bindings_get(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelBindingProposalRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelBindingProposal> {
+    memory
+        .vault()
+        .model_binding_proposal_as_owner(
+            &memory.embedded_owner("vault.models.bindings.get")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_bindings_read(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelBindingRead,
+) -> MemoryResult<crate::llm::manifest::ModelBinding> {
+    memory
+        .vault()
+        .model_binding_as_owner(&memory.embedded_owner("vault.models.bindings.read")?, input)
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_bindings_accept(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelBindingAccept,
+) -> MemoryResult<crate::llm::catalog_doors::ModelBindingProposal> {
+    memory
+        .vault()
+        .accept_model_binding_as_owner(
+            &memory.embedded_owner("vault.models.bindings.accept")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_models_bindings_deny(
+    memory: &Memory<'_>,
+    input: crate::llm::catalog_doors::ModelBindingProposalRef,
+) -> MemoryResult<crate::llm::catalog_doors::ModelBindingProposal> {
+    memory
+        .vault()
+        .deny_model_binding_as_owner(
+            &memory.embedded_owner("vault.models.bindings.deny")?,
+            input,
+            memory.locality(),
+        )
+        .map_err(crate::memory::MemoryError::from)
+}
 pub fn ai_options(
     memory: &Memory<'_>,
     input: AiOptionsRequest,
@@ -24964,6 +25721,42 @@ pub fn vault_esign_void(
         &["/document_ref"],
     )?;
     memory.esign_void(&input)
+}
+pub fn vault_esign_signing_act(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningRequest,
+) -> MemoryResult<crate::blob_artifact::esign::SigningOutcome> {
+    memory.esign_signing_act(&input)
+}
+pub fn vault_esign_signing_pdf(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningPdfRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningPdfView> {
+    memory.esign_signing_pdf(&input)
+}
+pub fn vault_esign_signing_image(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningImageRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningImageView> {
+    memory.esign_signing_image(&input)
+}
+pub fn vault_esign_signing_signature(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSigningSignatureRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSigningSignatureView> {
+    memory.esign_signing_signature(&input)
+}
+pub fn vault_esign_seal_get(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignSealGetRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignSealView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.seal.get",
+        &input,
+        &["/document_ref"],
+    )?;
+    memory.esign_seal_get(&input)
 }
 pub fn vault_conversations_create(
     memory: &Memory<'_>,

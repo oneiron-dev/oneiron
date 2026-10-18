@@ -79,6 +79,7 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::model_catalog_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 pub(crate) use super::run_review_doors::*;
@@ -1117,6 +1118,19 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
             .map_err(|error| super::FacadeApiError::from(error).into_memory_error()),
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "vault.models.catalog.refresh"
+        | "vault.models.catalog.get"
+        | "vault.models.catalog.diff"
+        | "vault.models.trials.nominate"
+        | "vault.models.trials.get"
+        | "vault.models.trials.approve"
+        | "vault.models.trials.run"
+        | "vault.models.trials.complete"
+        | "vault.models.bindings.propose"
+        | "vault.models.bindings.get"
+        | "vault.models.bindings.read"
+        | "vault.models.bindings.accept"
+        | "vault.models.bindings.deny"
         | "vault.runs.step"
         | "vault.runs.checkpoint"
         | "vault.runs.review"
@@ -1443,6 +1457,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.budgets.hold.resume"
         | "vault.budgets.local"
         | "vault.budgets.settlements"
+        | "vault.budgets.rsi.configure"
+        | "vault.budgets.rsi"
+        | "vault.budgets.rsi.top_up"
+        | "vault.budgets.rsi.hold"
+        | "vault.budgets.rsi.hold.resume"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"
