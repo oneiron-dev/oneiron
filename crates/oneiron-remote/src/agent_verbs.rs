@@ -984,6 +984,9 @@ impl OneironClient {
                 "vault.task_types.get" => remote_agent_verb_output::<
                     oneiron::team::doors::TaskTypeTreeReadReply,
                 >(client, verb, &input),
+                "vault.agents.spawn.get" => remote_agent_verb_output::<
+                    oneiron::team::doors::PlannedSpawnObservation,
+                >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
                 >(client, verb, &input),
@@ -5501,6 +5504,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.task_types.get", value)
+    }
+    pub fn vault_agents_spawn_get(
+        &self,
+        input: &oneiron::team::doors::PlannedSpawnRead,
+    ) -> Result<oneiron::team::doors::PlannedSpawnObservation, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.agents.spawn.get", value)
     }
     pub fn vault_workspace_establish(
         &self,

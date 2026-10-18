@@ -4828,6 +4828,21 @@
       "openapi": true
     },
     {
+      "name": "vault.agents.spawn.get",
+      "description": "The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning.",
+      "input": "crate::team::doors::PlannedSpawnRead",
+      "output": "crate::team::doors::PlannedSpawnObservation",
+      "call": "crate::team::doors::observe_spawn_as(memory.vault(), &memory.embedded_owner(\"vault.agents.spawn.get\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.workspace.establish",
       "description": "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted.",
       "input": "crate::task_verb::sdk::WorkspacePresetRequest",
