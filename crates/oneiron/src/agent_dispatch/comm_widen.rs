@@ -123,10 +123,17 @@ impl CommWidenRecord {
     /// widens the child to at least its reach, declined is final for it.
     /// Anything else (no such request, another round, already settled) is a
     /// no-op; returns whether it moved.
-    pub(crate) fn settle(&mut self, ask: EntityId, approve: bool, decision: CommWidenDecision) -> bool {
-        let Some(request) = self.requests.iter_mut().find(|request| {
-            request.ask == Some(ask) && request.state == CommWidenState::Pending
-        }) else {
+    pub(crate) fn settle(
+        &mut self,
+        ask: EntityId,
+        approve: bool,
+        decision: CommWidenDecision,
+    ) -> bool {
+        let Some(request) = self
+            .requests
+            .iter_mut()
+            .find(|request| request.ask == Some(ask) && request.state == CommWidenState::Pending)
+        else {
             return false;
         };
         let needed = request.needed;
@@ -150,9 +157,11 @@ impl CommWidenRecord {
     /// refused send asks a fresh round. Silence never approves. Returns
     /// whether it moved.
     pub(crate) fn close_round(&mut self, ask: EntityId) -> bool {
-        let Some(request) = self.requests.iter_mut().find(|request| {
-            request.ask == Some(ask) && request.state == CommWidenState::Pending
-        }) else {
+        let Some(request) = self
+            .requests
+            .iter_mut()
+            .find(|request| request.ask == Some(ask) && request.state == CommWidenState::Pending)
+        else {
             return false;
         };
         request.question = None;
@@ -203,7 +212,11 @@ pub(crate) fn comm_widen_recipient_in_txn(
         .ok_or_else(|| invalid("the vault has no owner to ask"))
 }
 
-fn approved_reach(vault: &Vault, txn: &heed::RoTxn<'_>, child: AttemptId) -> Result<Option<CommReach>> {
+fn approved_reach(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    child: AttemptId,
+) -> Result<Option<CommReach>> {
     Ok(comm_widen_in(vault, txn, child)?
         .and_then(|record| record.approved)
         .map(|approval| approval.reach))
@@ -236,8 +249,9 @@ pub(crate) fn effective_comm_in_txn(
         if hops > MAX_LINEAGE_HOPS || id == child {
             return Err(invalid("dispatch lineage bound or cycle"));
         }
-        let own = approved_reach(vault, txn, id)?
-            .map_or(parent_input.comm, |approved| approved.max(parent_input.comm));
+        let own = approved_reach(vault, txn, id)?.map_or(parent_input.comm, |approved| {
+            approved.max(parent_input.comm)
+        });
         reach = reach.min(own);
         cursor = id;
     }

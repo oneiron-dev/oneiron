@@ -27,7 +27,9 @@ use crate::agent_dispatch::{
 };
 use crate::attempt_queue::AttemptId;
 use crate::error::Result;
-use crate::memory::{Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn};
+use crate::memory::{
+    Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessTurn,
+};
 use crate::{EdgeActorClass, EntityId, Vault};
 
 /// Every comm widen ask's intent key starts so:
@@ -143,12 +145,19 @@ fn intent_parts(intent_key: &str) -> Option<(AttemptId, CommReach, EntityId)> {
 
 /// The ask a request's question carries: its recipient, approve or decline,
 /// holding by default.
-fn ask_spec(child: AttemptId, request: &CommWidenRequest, turn: EntityId) -> MemoryResult<TaskAskSpec> {
+fn ask_spec(
+    child: AttemptId,
+    request: &CommWidenRequest,
+    turn: EntityId,
+) -> MemoryResult<TaskAskSpec> {
     let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(turn));
     what.options = BTreeMap::from([
         (
             TaskAskOptionId::new(APPROVE)?,
-            format!("Approve: widen its comm reach to {}", request.needed.as_str()),
+            format!(
+                "Approve: widen its comm reach to {}",
+                request.needed.as_str()
+            ),
         ),
         (TaskAskOptionId::new(DECLINE)?, "Decline".to_owned()),
     ]);
@@ -178,19 +187,24 @@ pub(super) fn reserved_ask_in(
     let Some((child, needed, turn)) = intent_parts(&input.intent_key) else {
         return Ok(false);
     };
-    if !super::message_dispatch_in_txn(memory, txn)?
-        .is_some_and(|(attempt, _)| attempt.id == child)
+    if !super::message_dispatch_in_txn(memory, txn)?.is_some_and(|(attempt, _)| attempt.id == child)
     {
         return Ok(false);
     }
     let Some(record) = comm_widen_in(memory.vault(), txn, child)? else {
         return Ok(false);
     };
-    let Some(request) = record.requests.iter().find(|request| request.needed == needed) else {
+    let Some(request) = record
+        .requests
+        .iter()
+        .find(|request| request.needed == needed)
+    else {
         return Ok(false);
     };
     Ok(request.state == CommWidenState::Pending
-        && request.question.is_some_and(|question| question.turn == turn)
+        && request
+            .question
+            .is_some_and(|question| question.turn == turn)
         && ask_spec(child, request, turn)? == *input)
 }
 
@@ -214,7 +228,9 @@ fn routed_in(
         .find(|request| {
             request.needed == needed
                 && request.ask == Some(id)
-                && request.question.is_some_and(|question| question.turn == turn)
+                && request
+                    .question
+                    .is_some_and(|question| question.turn == turn)
         })
         .map(|request| (child, request)))
 }
@@ -435,7 +451,9 @@ impl Memory<'_> {
         let vault = self.vault();
         let landed = {
             let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-            vault.get_entity_type_in_txn(&txn, &question.message)?.is_some()
+            vault
+                .get_entity_type_in_txn(&txn, &question.message)?
+                .is_some()
         };
         if !landed {
             self.witness(&WitnessTurn {
@@ -498,7 +516,9 @@ fn bind_ask_in(
     let mut record = comm_widen_in(vault, txn, child)?.unwrap_or_default();
     if let Some(stored) = record.request_mut(needed)
         && stored.ask.is_none()
-        && stored.question.is_some_and(|question| question.turn == turn)
+        && stored
+            .question
+            .is_some_and(|question| question.turn == turn)
     {
         stored.ask = Some(group);
         put_comm_widen_in(vault, txn, child, &record)?;
