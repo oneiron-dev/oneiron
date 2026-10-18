@@ -25,7 +25,11 @@ use oneiron::skill_optimize::{
     model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
     training_offer_checks, training_offer_skill_id, training_offers,
 };
-use oneiron::training_pack::{ComputeChoice, TrainingRun, TrainingState};
+use oneiron::training_pack::{TrainingRun, TrainingState};
+use oneiron::skill_optimize::offer_pilot::{
+    model_offer_pin as pin, model_offer_licence as licence,
+    training_base_pin as base_pin, training_destination as destination,
+};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
 use serde::Deserialize;
 
@@ -33,6 +37,10 @@ use super::code_fix::{HostModels, clip, message};
 use crate::config::models::role_key;
 use crate::server::SyncServer;
 use crate::usage::SeatUsage;
+
+mod cost;
+mod pilot;
+use cost::{candidate_monthly, monthly, payback};
 
 const DAY_SECS: u64 = 24 * 60 * 60;
 /// The workload an offer is priced from, and the window its check reads.
@@ -189,11 +197,12 @@ pub(super) fn draft(
             // No seat took the call: the next night asks again.
             return Ok(());
         };
-        let Some(draft) =
+        let Some(mut draft) =
             parse_answer(&text).and_then(|answer| brief.draft(answer, offer_skill.clone(), now))
         else {
             continue;
         };
+        pilot::ground(vault, &mut draft)?;
         let _ = vault.measure_limit(
             EngineLimit::MaintenanceRowItems,
             draft.evidence.losses.len() as u64,
@@ -414,6 +423,7 @@ impl Brief {
         if choices.is_empty() {
             return Ok(None);
         }
+        pilot::brief(vault, &seat, &incumbent, &mut choices)?;
         for (index, choice) in choices.iter_mut().enumerate() {
             choice.id = format!("option-{}", index + 1);
         }
@@ -631,121 +641,12 @@ fn bounded_label(value: &str) -> String {
     clip(value, REF_BYTES).to_owned()
 }
 
-/// A registry row's pin and the backend that serves it: its first registered
-/// backend at that backend's serving revision. A row with no backend has no
-/// revision to pin, so no offer names it.
-fn pin(row: &ModelRegistryRow) -> Option<(OfferModelPin, String)> {
-    let backend = row.backends().ok()?.into_iter().next()?;
-    let model = row.catalog.model.as_str();
-    (bounded(model, REF_BYTES)
-        && bounded(&backend.pin.serving_revision, REF_BYTES)
-        && bounded(&backend.pin.backend, REF_BYTES))
-    .then(|| {
-        (
-            OfferModelPin {
-                model: model.to_owned(),
-                revision: backend.pin.serving_revision.clone(),
-                content_hash: None,
-            },
-            backend.pin.backend.clone(),
-        )
-    })
-}
 
-/// A recipe's base: the starting checkpoint at its source revision and the
-/// content hash of its first file.
-fn base_pin(run: &TrainingRun) -> Option<OfferModelPin> {
-    let checkpoint = &run.plan.starting_checkpoint;
-    let file = checkpoint.files.first()?;
-    let model = checkpoint.model.as_str();
-    (bounded(model, REF_BYTES) && bounded(&file.source.revision, REF_BYTES)).then(|| {
-        OfferModelPin {
-            model: model.to_owned(),
-            revision: file.source.revision.clone(),
-            content_hash: Some(
-                file.content
-                    .blake3
-                    .iter()
-                    .map(|byte| format!("{byte:02x}"))
-                    .collect(),
-            ),
-        }
-    })
-}
 
-/// Where a recipe ran before, and the rows that left with it.
-fn destination(run: &TrainingRun) -> Option<ComputeDestination> {
-    let compute = &run.compute;
-    Some(match compute.choice {
-        ComputeChoice::OwnerMachines if compute.locality == ModelLocality::OnDevice => {
-            ComputeDestination::OnDevice
-        }
-        ComputeChoice::OwnerMachines => ComputeDestination::SelfHosted {
-            host: bounded(&compute.origin, REF_BYTES).then(|| compute.origin.clone())?,
-        },
-        ComputeChoice::External => ComputeDestination::Hosted {
-            provider: bounded(&compute.connector, REF_BYTES).then(|| compute.connector.clone())?,
-            rows_leaving: u64::try_from(run.corpus.rows.len()).ok()?,
-        },
-    })
-}
 
-/// The licence a registry row names, if it names one.
-fn licence(row: &ModelRegistryRow) -> Option<String> {
-    ["licence", "license"]
-        .iter()
-        .find_map(|key| row.catalog.metadata.get(*key)?.as_str())
-        .map(str::trim)
-        .filter(|licence| bounded(licence, REF_BYTES))
-        .map(str::to_owned)
-}
 
-/// A month of the workload at a row's list price; `None` when the window was
-/// not metered throughout or the row's price does not read. A partial window
-/// is never multiplied into a bill.
-fn monthly(row: &ModelRegistryRow, workload: &SeatWorkload) -> Option<f64> {
-    if !workload.complete {
-        return None;
-    }
-    let price = row.catalog.cost.as_ref()?;
-    let input: f64 = price.input_per_million.parse().ok()?;
-    let output: f64 = price.output_per_million.parse().ok()?;
-    let window = workload
-        .until
-        .checked_sub(workload.from)
-        .filter(|window| *window > 0)?;
-    let bill =
-        (workload.input_tokens? as f64 * input + workload.output_tokens? as f64 * output) / 1e6;
-    Some(bill * MONTH_SECS as f64 / window as f64).filter(|bill| bill.is_finite())
-}
 
-/// A month of the workload at a candidate `row`'s list price, its counts the
-/// incumbent's scaled to the candidate's tokenizer: by the two rows'
-/// measured tokens per o200k token. With either unmeasured the counts stay
-/// the incumbent's, and the figure is an estimate (`true`).
-fn candidate_monthly(
-    incumbent: &ModelRegistryRow,
-    row: &ModelRegistryRow,
-    workload: &SeatWorkload,
-) -> (Option<f64>, bool) {
-    let bill = monthly(row, workload);
-    match (row.tokens_per_o200k, incumbent.tokens_per_o200k) {
-        (Some(candidate), Some(incumbent)) => (
-            bill.map(|bill| bill * candidate / incumbent)
-                .filter(|bill| bill.is_finite()),
-            false,
-        ),
-        _ => (bill, bill.is_some()),
-    }
-}
 
-/// Months until the one-off cost is paid back; `None` when any side is
-/// unknown or nothing is saved.
-fn payback(before: Option<f64>, after: Option<f64>, one_off: Option<f64>) -> Option<f64> {
-    let saving = before? - after?;
-    let one_off = one_off?;
-    (saving > 0.0).then(|| one_off / saving)
-}
 
 /// The model an offer proposes.
 fn offered_model(offer: &TrainingOffer) -> &str {
