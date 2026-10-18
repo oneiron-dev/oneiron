@@ -86,13 +86,20 @@ server-verified slip, and every authority decision is made server-side. A
 connected handle's `as_actor` therefore raises `FORBIDDEN` — pair a link
 created for the actor you want to act as instead.
 
+`Oneiron.pair(link)` returns a dict: `memory` (the connected handle),
+`credential`, and `pin`, the checkpoint pin the link named, already checked
+against it and stored nowhere by this package. A machine that will run a local
+replica keeps the pin beside the server origin and the credential, and
+supplies it when that replica starts; a remote-only caller needs only the
+credential.
+
 ## API
 
 | method | returns |
 |---|---|
 | `Oneiron.open(path=None, *, dimensions=None)` | an embedded handle |
 | `Oneiron.connect(url, key)` | a remote handle |
-| `Oneiron.pair(link)` | `(handle, credential)`: a remote handle and the credential to store |
+| `Oneiron.pair(link)` | `{"memory", "credential", "pin"}` (`Paired`): a remote handle, the credential to store, and the checkpoint pin the link named (`None` when the vault has none) for a local replica to adopt by |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |
 | `handle.in_room_turn(room_ref)` | a new handle whose every verb runs as a turn in that room |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |

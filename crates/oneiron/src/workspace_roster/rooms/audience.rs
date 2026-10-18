@@ -474,3 +474,30 @@ impl Memory<'_> {
         Ok(true)
     }
 }
+
+impl Vault {
+    /// The room and thread the stored TURN `turn` sits in, as a join files
+    /// them (FIX 3572): its birth binding's canonical room and its thread's
+    /// root, the branch a thread-filed join and its receipt key by. `None`
+    /// for a trunk TURN, whose place is its room alone, or for an id that is
+    /// no live TURN here.
+    pub fn turn_room_work(
+        &self,
+        turn: EntityId,
+    ) -> Result<Option<crate::workspace_roster::RoomWork>> {
+        let txn = self.store.env.read_txn()?;
+        let LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_TURN,
+            body,
+        } = live_entity_row_in_txn(&self.store, &txn, &turn)?
+        else {
+            return Ok(None);
+        };
+        Ok(
+            thread_binding(&body)?.map(|binding| crate::workspace_roster::RoomWork {
+                room: binding.room,
+                branch: Some(binding.root),
+            }),
+        )
+    }
+}
