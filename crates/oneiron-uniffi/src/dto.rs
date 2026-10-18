@@ -43,16 +43,21 @@ pub struct OpenOptions {
     pub dimensions: Option<u32>,
 }
 
-/// What `pair` returns: the server origin and the credential `connect` takes.
+/// What `pair` returns: the server origin, the credential `connect` takes,
+/// and the checkpoint pin the link named (OF-469).
 ///
 /// Store the credential as one secret; the pairing link cannot be redeemed
-/// twice.
+/// twice. A device that will run a local replica keeps the pin beside the
+/// origin and the credential and supplies it when that replica starts.
 #[derive(Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Paired {
     /// The server origin to pass to `connect`.
     pub url: String,
     /// The credential to pass to `connect`.
     pub credential: String,
+    /// The pin, already checked against the link's challenge and digest and
+    /// stored nowhere; `None` when the vault has no attested checkpoint.
+    pub pin: Option<crate::pairing::CheckpointPin>,
 }
 
 // ── witness ─────────────────────────────────────────────────────────────

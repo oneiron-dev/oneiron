@@ -25,6 +25,8 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde::Deserialize;
 
+mod pairing;
+
 /// One message inside a witnessed turn, with the SDK's optional fields.
 ///
 /// Mirrors the engine DTO except that `is_visible` may be omitted (it defaults
@@ -199,11 +201,14 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Redeems a pairing link once; returns `(url, credential)`.
+    /// Redeems a pairing link once; returns the `{url, credential, pin}`
+    /// JSON `pairing::Paired` writes, the pin the link named or `null`.
     #[staticmethod]
-    fn pair(py: Python<'_>, link: String) -> PyResult<(String, String)> {
-        py.detach(|| oneiron_remote::OneironClient::pair(&link))
-            .map_err(raise)
+    fn pair(py: Python<'_>, link: String) -> PyResult<String> {
+        let paired = py
+            .detach(|| oneiron_remote::OneironClient::pair_pinned(&link))
+            .map_err(raise)?;
+        encode(&pairing::Paired::from_engine(paired))
     }
 
     /// Returns a NEW handle bound to another actor; refuses when connected.

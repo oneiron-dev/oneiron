@@ -38,7 +38,7 @@
 |---|---|---|
 | `open(path: Option<String>, options: Option<OpenOptions>)` | `Oneiron.open(path:options:)` | embedded vault; an omitted path is `~/.oneiron/default`; `OpenOptions.dimensions` is the embedding width. Installs the engine panic hook first |
 | `connect(url: String, key: String)` | `Oneiron.connect(url:key:)` | remote server; the key is the credential `pair` returned, passed verbatim and never parsed here |
-| `pair(link: String) -> Paired` | `pair(link:)` | redeems a one-use pairing link for `{url, credential}` |
+| `pair(link: String) -> Paired` | `pair(link:)` | redeems a one-use pairing link for `{url, credential, pin}`: `pin` is the checkpoint pin the link named (`CheckpointPin`, bytes as `Data`), `nil` when the vault has no attested checkpoint; keep it beside the origin and credential for a local replica to adopt by |
 | `as_actor(actor_key: String)` | `client.asActor(actorKey:)` | a NEW handle for another actor; a connected handle refuses `FORBIDDEN` |
 | `in_room_turn(room_ref: String)` | `client.inRoomTurn(roomRef:)` | a NEW handle whose every verb runs as a turn in that room |
 | `last_receipt_ref() -> Option<String>` | `client.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated; `nil` when embedded |

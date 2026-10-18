@@ -24,6 +24,7 @@ import type { CalibrationPair, TaskAskAnswer, TaskAskDefault, TaskAskHandle, Tas
 import { itemFromWire, keyedJson } from "./key-value.js"
 import type { WireItem } from "./key-value.js"
 import type {
+  CheckpointPin,
   KeyValueAddress,
   KeyValuePut,
   KeyValueItem,
@@ -66,6 +67,17 @@ export type LensFrameEventReply =
 /** What a lens-card close answers: whether the server held its frame. */
 export interface CloseLensFrameReply {
   readonly closed: boolean
+}
+
+/**
+ * What {@link Oneiron.pair} returns: a handle connected with the credential,
+ * the credential to store, and the checkpoint pin the link named (OF-469),
+ * `null` when the vault has no attested checkpoint.
+ */
+export interface Paired {
+  readonly memory: Oneiron
+  readonly credential: string
+  readonly pin: CheckpointPin | null
 }
 
 /** A handle on one Oneiron memory, embedded or remote. */
@@ -117,16 +129,23 @@ export class Oneiron {
   /**
    * Redeems a one-use pairing link and connects with the credential it
    * returns. Store the credential as `ONEIRON_KEY`; the link cannot be
-   * redeemed twice.
+   * redeemed twice. The pin is already checked against the link and is
+   * stored nowhere: a machine that will run a local replica keeps it beside
+   * the server origin and the credential, and supplies it when that replica
+   * starts.
    */
-  static pair(link: string): { memory: Oneiron; credential: string } {
-    let paired: { url: string; credential: string }
+  static pair(link: string): Paired {
+    let paired: { url: string; credential: string; pin?: CheckpointPin }
     try {
       paired = NativeClient.pair(link)
     } catch (error) {
       throw translateNativeError(error)
     }
-    return { memory: Oneiron.connect(paired.url, paired.credential), credential: paired.credential }
+    return {
+      memory: Oneiron.connect(paired.url, paired.credential),
+      credential: paired.credential,
+      pin: paired.pin ?? null,
+    }
   }
 
   /**

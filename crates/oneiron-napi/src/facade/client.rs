@@ -14,6 +14,7 @@ use super::dtos::{
 };
 use super::input_error::witness_input_error;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
+use super::pairing::{NapiCheckpointPin, pin_from_engine};
 
 // ── ONE-1441 WIRE-P1: the shared-backend client behind the `oneiron` npm
 //    package ───────────────────────────────────────────────────────────────
@@ -68,11 +69,16 @@ impl NapiWitnessTurnInput {
     }
 }
 
-/// What `pair` returns: the server origin and the credential `connect` takes.
+/// What `pair` returns: the server origin, the credential `connect` takes,
+/// and the checkpoint pin the link named (OF-469).
 #[napi(object)]
 pub struct NapiPaired {
     pub url: String,
     pub credential: String,
+    /// The pin, already checked against the link's challenge and digest;
+    /// omitted when the vault has no attested checkpoint. The caller keeps
+    /// it beside the credential for a local replica to adopt by.
+    pub pin: Option<NapiCheckpointPin>,
 }
 
 /// The private native handle behind `packages/oneiron`.
@@ -108,11 +114,17 @@ impl NativeClient {
         Ok(Self { inner })
     }
 
-    /// Redeems a pairing link once; returns the origin and the credential.
+    /// Redeems a pairing link once; returns the origin, the credential and
+    /// the checkpoint pin the link named, if any.
     #[napi]
     pub fn pair(link: String) -> napi::Result<NapiPaired> {
-        let (url, credential) = oneiron_remote::OneironClient::pair(&link).map_err(facade_error)?;
-        Ok(NapiPaired { url, credential })
+        let (url, credential, pin) =
+            oneiron_remote::OneironClient::pair_pinned(&link).map_err(facade_error)?;
+        Ok(NapiPaired {
+            url,
+            credential,
+            pin: pin.as_ref().map(pin_from_engine).transpose()?,
+        })
     }
 
     /// Returns a NEW handle bound to another actor; refuses when connected.
