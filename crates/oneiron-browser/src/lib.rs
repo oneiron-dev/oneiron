@@ -152,7 +152,9 @@ pub struct OpenInput {
     pub url: String,
 }
 
-/// Rows whose role equals `role` and whose name contains `name`, ignoring case.
+/// Rows whose role equals `role` and whose name contains `name`, ignoring
+/// case; or, with `cursor`, the next page of a `find` or `wait_for` answer
+/// an earlier call paged (its `next`), as the rows were then.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FindInput {
@@ -160,11 +162,19 @@ pub struct FindInput {
     pub role: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
+/// One page of matching rows (Rule 5): as many as fit one answer. Many
+/// rows are never cut: `next` names where the rest goes on, and
+/// `find({cursor: next})` reads it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FindOutput {
     pub rows: Vec<Row>,
+    /// The cursor of the next page; absent on the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -208,7 +218,9 @@ pub struct SelectInput {
 }
 
 /// Waits until some row `targets` names is on the page, or, with none named,
-/// some row matches `role` and `name`, as `find` matches them.
+/// some row matches `role` and `name`, as `find` matches them. With
+/// `cursor` alone it waits for nothing and reads the next page of an
+/// earlier answer, as `find` does.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WaitForInput {
@@ -220,18 +232,25 @@ pub struct WaitForInput {
     pub name: Option<String>,
     #[serde(default)]
     pub timeout_ms: Option<u32>,
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
+/// The rows a wait found, in pages as a `find` answer is.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WaitForOutput {
     pub rows: Vec<Row>,
     pub timed_out: bool,
     pub waited_ms: u64,
+    /// The cursor of the next page of `rows`; absent on the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 /// A check on the page as it is now: the row named by `ref`, or else the
 /// first row `role` and `name` match, is present (or absent) and, when
-/// `value` is given, holds exactly that value.
+/// `value` is given, holds exactly that value. Its answer holds at most
+/// that one row, which is always one page.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExpectInput {
@@ -488,6 +507,19 @@ pub enum BrowserPersonInput {
     },
     /// Goes to an http or https page.
     Navigate { url: String },
+}
+
+/// One tab of a run's browser as its owner sees it (CUA-001): the run's own
+/// page, or a tab or popup opened from it since (an OAuth sign-in window, a
+/// `target=_blank` link). `tab` names it to the owner's screen and input.
+/// The tab in `front` is the one the owner's screen shows and the agent's
+/// verbs drive.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BrowserTab {
+    pub tab: String,
+    pub url: String,
+    pub title: String,
+    pub front: bool,
 }
 
 /// The effect classes a browser control can fall in. A vault grant names one
@@ -1042,6 +1074,7 @@ pub trait BrowserDriver: Send {
                         role,
                         name,
                         timeout_ms,
+                        cursor: None,
                     })
                     .and_then(|waited| {
                         if waited.timed_out {
@@ -1187,6 +1220,7 @@ impl Routine<'_> {
         let query = FindInput {
             role: step.role.clone(),
             name: step.name.clone(),
+            cursor: None,
         };
         let mut trigger = step.locate.then_some(ScreenshotTrigger::OutlineThin);
         let no_row = || BrowserError::AskUp("no row on the page matches the step".to_owned());
@@ -1235,6 +1269,7 @@ impl Routine<'_> {
                     role: step.role.clone(),
                     name: step.name.clone(),
                     timeout_ms: Some(wait),
+                    cursor: None,
                 })?;
                 if rows.timed_out {
                     return Err(no_row());
@@ -1376,6 +1411,7 @@ impl WaitForInput {
         FindInput {
             role: self.role.clone(),
             name: self.name.clone(),
+            cursor: None,
         }
     }
 
@@ -1397,6 +1433,7 @@ impl ExpectInput {
         FindInput {
             role: self.role.clone(),
             name: self.name.clone(),
+            cursor: None,
         }
     }
 }
