@@ -31,6 +31,7 @@ mod campaign_split_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
+mod craft_candidate_doors;
 mod critic_review_doors;
 mod decision_ask_doors;
 pub(super) mod decision_role_asks;

@@ -336,6 +336,18 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "get",
+        path: "/craft-candidates",
+        summary: "The candidates waiting on a verdict, newest first.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/craft-candidates/answer",
+        summary: "The owner's verdict on one candidate, bound to the content hash its card showed.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
         path: "/decisions/asks",
         summary: "The asks after after, oldest first.",
         row: None,

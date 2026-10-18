@@ -659,6 +659,11 @@ export class Oneiron {
       /** The owner, as the board above, declines one context-widen proposal for good; the decline stays on record. */
       decline: (input: Facade.WidenProposalAnswer): Facade.WidenProposalView => this.#call(() => this.#client.vaultWidenProposalsDecline(input) as Facade.WidenProposalView),
     }),
+    /** The owner lists the craft notes residents' dreaming proposed about themselves that wait on a verdict, newest first, or one resident's, each with the content hash an answer pins. */
+    craft_candidates: Object.assign((input: Facade.CraftCandidatesRequest): Facade.CraftCandidatesView => this.#call(() => this.#client.vaultCraftCandidates(input) as Facade.CraftCandidatesView), {
+      /** The owner approves or rejects one craft candidate, bound to the content hash its card showed: an Approved or Rejected row supersedes it, with one receipt. The same answer again returns the first. */
+      answer: (input: Facade.CraftCandidateAnswer): Facade.CraftVerdictView => this.#call(() => this.#client.vaultCraftCandidatesAnswer(input) as Facade.CraftVerdictView),
+    }),
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),

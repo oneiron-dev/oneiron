@@ -741,6 +741,16 @@ export_facade! {
     let output = client.vault_widen_proposals_decline(&input)?;
     crate::codec::lift_record("vault.widen_proposals.decline", &output)
 };
+"vault.craft_candidates" => fn vault_craft_candidates(&self, input: CraftCandidatesRequest) -> CraftCandidatesView = |client| {
+    let input: oneiron::actor_claims::CraftCandidatesRequest = crate::codec::lower_record("vault.craft_candidates", input)?;
+    let output = client.vault_craft_candidates(&input)?;
+    crate::codec::lift_record("vault.craft_candidates", &output)
+};
+"vault.craft_candidates.answer" => fn vault_craft_candidates_answer(&self, input: CraftCandidateAnswer) -> CraftVerdictView = |client| {
+    let input: oneiron::actor_claims::CraftCandidateAnswer = crate::codec::lower_record("vault.craft_candidates.answer", input)?;
+    let output = client.vault_craft_candidates_answer(&input)?;
+    crate::codec::lift_record("vault.craft_candidates.answer", &output)
+};
 "vault.settings.wake_policy.set" => fn vault_settings_wake_policy_set(&self, input: WakePolicySetRequest) -> PolicyActionOutcome = |client| {
     let input: oneiron::policy_setting_doors::WakePolicySetRequest = crate::codec::lower_record("vault.settings.wake_policy.set", input)?;
     let output = client.vault_settings_wake_policy_set(&input)?;
