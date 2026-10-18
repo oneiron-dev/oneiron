@@ -18204,11 +18204,16 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "CarrierActorMerge",
+      "CarrierEraseSource"
+     ],
      "path": "src/deletion/actor_fields.rs",
      "purpose": "An erased actor's name, out of the rows that record it outside its own record (FIX 3520)",
      "surface": {
-      "crate-vis": 3
+      "const": 2,
+      "crate-vis": 5,
+      "enum": 2
      }
     },
     {
@@ -18487,8 +18492,8 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 26,
-      "re-export": 9
+      "crate-vis": 27,
+      "re-export": 10
      }
     },
     {
@@ -27347,6 +27352,7 @@
      "purpose": "Human-assigned TASK follow-up and the identity-bound human response signal (ONE-1708)",
      "surface": {
       "crate-vis": 2,
+      "fn": 1,
       "re-export": 3
      }
     },
@@ -27629,7 +27635,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -32241,6 +32247,59 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/clustering/doors.rs",
+     "purpose": "Scoped clustering and authenticated judgments through the existing topology gate",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClusterClaimInput",
+      "ClusterCohort",
+      "ClusterEvidence",
+      "ClusterMerge",
+      "ClusterMergeRequest",
+      "ClusterOperation",
+      "ClusterPartition",
+      "ClusterProposal",
+      "ClusterProposalRequest",
+      "ClusterProposalView",
+      "ClusterProposeRequest",
+      "ClusterReassignment",
+      "ClusterReassignmentTarget",
+      "ClusterRequest",
+      "ClusterResolveRequest",
+      "ClusterRuling",
+      "ClusterSplit",
+      "ClusterSplitRequest",
+      "ClusterSurvivorship",
+      "ClusterTopologyOutcome",
+      "ClusterTopologyReceipt"
+     ],
+     "path": "src/memory/clustering/mod.rs",
+     "purpose": "Typed clustering diagnostics and the merge/split judgments they may inform",
+     "surface": {
+      "enum": 5,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/clustering/operation.rs",
+     "purpose": "Wire projection only",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CodeConflictHistory",
       "CodeConflictRecordRequest",
@@ -33016,7 +33075,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 20,
+      "mod": 21,
       "re-export": 49
      }
     },
@@ -34501,7 +34560,7 @@
       "crate-vis": 38,
       "enum": 3,
       "fn": 4,
-      "re-export": 15,
+      "re-export": 16,
       "struct": 2
      }
     },
@@ -34560,6 +34619,16 @@
      "surface": {
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/note/carrier_erase.rs",
+     "purpose": "A NOTE workflow row as a carrier holds it (FIX 3878): a window's copy, or a recovery artifact's",
+     "surface": {
+      "crate-vis": 8
      }
     },
     {
@@ -35021,11 +35090,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "NoteRequestReceiptErase"
+     ],
      "path": "src/note/sync_rows.rs",
      "purpose": "The NOTE-adjacent per-entity `sync_state` workflow rows swept alongside the canonical entity-document family",
      "surface": {
-      "crate-vis": 7
+      "const": 1,
+      "crate-vis": 7,
+      "enum": 1
      }
     },
     {
@@ -41198,7 +41271,7 @@
      "path": "src/recovery/document.rs",
      "purpose": "Canonical entity-local documents and their bound workflows",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "fn": 1,
       "struct": 3
      }
@@ -41220,7 +41293,7 @@
      "path": "src/recovery/document/workflow.rs",
      "purpose": "Durable NOTE workflow capture and reference validation without CRDT op IDs",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -50013,7 +50086,17 @@
      "path": "src/sync/room_facts.rs",
      "purpose": "FIX 1794 (OF-522): a room's side rows on the window plane",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/room_facts/erased.rs",
+     "purpose": "The room side rows a carrier holds that name an actor this vault erased (FIX 4227, 4228): each is rewritten…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -51385,7 +51468,7 @@
      "path": "src/task_verb/consult_result.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "struct": 7
      }
@@ -52448,7 +52531,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 902
+      "fn": 908
      }
     },
     {
@@ -53401,7 +53484,7 @@
      "path": "src/task_verb/terminal_state.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 5,
       "enum": 4,
       "fn": 4,
       "struct": 1
@@ -56124,6 +56207,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "RosterBindingErase"
+     ],
+     "path": "src/workspace_roster/join_history.rs",
+     "purpose": "A settled join of an erased party, as stored (FIX 4228): history only",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "JoinParticipation",
       "JoinReceipt",
       "JoinReceiptRef",
@@ -56135,7 +56232,7 @@
      "purpose": "The join receipt (OF-531): one typed record per join intent",
      "surface": {
       "const": 1,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 3,
       "fn": 7,
       "struct": 3
@@ -56148,8 +56245,8 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 23,
-      "re-export": 17
+      "crate-vis": 24,
+      "re-export": 19
      }
     },
     {
@@ -56850,6 +56947,30 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/carrier_erase.rs",
+     "purpose": "A room side row as this vault takes it from a carrier (FIX 4227, 4228): another machine's copy, a window's…",
+     "surface": {
+      "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ParticipationKeyErase"
+     ],
+     "path": "src/workspace_roster/rooms/fact_subject.rs",
+     "purpose": "Who a participation fact's key names (FIX 4228): a live subject, or no one once that subject was erased",
+     "surface": {
+      "const": 1,
+      "crate-vis": 8,
+      "enum": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -56918,10 +57039,10 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 2,
       "fn": 6,
-      "re-export": 9,
+      "re-export": 11,
       "struct": 6
      }
     },
@@ -56946,7 +57067,18 @@
      "path": "src/workspace_roster/rooms/offer_erase.rs",
      "purpose": "An erased actor out of the offer cards (FIX 3520)",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/offer_history.rs",
+     "purpose": "A settled offer card of an erased agent or payer, as stored (FIX 4228): history only",
+     "surface": {
+      "const": 1,
+      "crate-vis": 7
      }
     },
     {
@@ -57010,7 +57142,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "ParticipantView",
@@ -59339,7 +59471,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 201,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59360,7 +59492,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 48,
+     "files": 49,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -59822,7 +59954,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 185,
+     "files": 186,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -59997,7 +60129,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 91,
+     "files": 95,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60020,7 +60152,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3662,
+   "source_files": 3671,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68595,7 +68727,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 871
+      "fn": 877
      }
     },
     {
@@ -69658,7 +69790,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 872
+      "fn": 878
      }
     },
     {
@@ -72758,6 +72890,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/clustering_doors.rs",
+     "purpose": "The typed clustering judgments bind only the caller's own owner proof or agent Grant",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/coach_offer_doors.rs",
      "purpose": "Typed owner doors for Coach offers and counted pilot evidence",
      "surface": {
@@ -73141,7 +73283,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 145
+      "crate-vis": 146
      }
     },
     {
@@ -79924,6 +80066,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/consult_settle.rs",
+     "purpose": "Consult settlement on every housekeeping pass (DOOR-063), on every substrate",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/cooperative_deletion.rs",
      "purpose": "Delivers queued courtesy deletion asks and answers (OF-273)",
      "surface": {
@@ -81061,7 +81213,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 409,
+     "files": 410,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81418,7 +81570,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 42,
+     "files": 43,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -81490,7 +81642,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 758,
+   "source_files": 760,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82144,6 +82296,27 @@
       "CleanupRunView",
       "ClickInput",
       "CloseLensFrameReply",
+      "ClusterClaimInput",
+      "ClusterCohort",
+      "ClusterEvidence",
+      "ClusterMerge",
+      "ClusterMergeRequest",
+      "ClusterOperation",
+      "ClusterPartition",
+      "ClusterProposal",
+      "ClusterProposalRequest",
+      "ClusterProposalView",
+      "ClusterProposeRequest",
+      "ClusterReassignment",
+      "ClusterReassignmentTarget",
+      "ClusterRequest",
+      "ClusterResolveRequest",
+      "ClusterRuling",
+      "ClusterSplit",
+      "ClusterSplitRequest",
+      "ClusterSurvivorship",
+      "ClusterTopologyOutcome",
+      "ClusterTopologyReceipt",
       "CoachInspectRequest",
       "CoachInspectionView",
       "CoachProposalView",
@@ -83949,6 +84122,8 @@
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
       "ScopedReadResultCalendarPassportRevisionList",
+      "ScopedReadResultClusterProposal",
+      "ScopedReadResultClusterProposalView",
       "ScopedReadResultCoachInspectionView",
       "ScopedReadResultConsolidationEvidenceSourceList",
       "ScopedReadResultDiagnosticEventViewList",
@@ -84659,8 +84834,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 732,
-      "struct": 2239
+      "enum": 737,
+      "struct": 2257
      }
     },
     {

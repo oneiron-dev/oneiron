@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 878 facade rows, 3023 declarations.
-Inputs: 826 of 878 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 794 of 878 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 884 facade rows, 3044 declarations.
+Inputs: 832 of 884 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 800 of 884 fully typed, 84 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 101; unread shapes: 0.
 """
 
@@ -2417,6 +2417,87 @@ class WellnessProjection(TypedDict):
     coping: CopingAggregate
     source_refs: list[str]
     receipt_ref: NotRequired[str | None]
+class ClusterClaimInput(TypedDict):
+    claim_ref: str
+    embedding: list[float]
+class ClusterRequest(TypedDict):
+    claims: list[ClusterClaimInput]
+    cohesion_threshold: NotRequired[float | None]
+class ClusterPartition(TypedDict):
+    subject_ref: str
+    predicate_root: str
+    world_ref: NotRequired[str | None]
+    facet_ref: NotRequired[str | None]
+class ClusterCohort(TypedDict):
+    cohort_id: list[int]
+    partition: ClusterPartition
+    member_refs: list[str]
+    cohesion: float
+class ClusterProposal(TypedDict):
+    cohorts: list[ClusterCohort]
+class ClusterProposalRequest(TypedDict):
+    proposal_ref: str
+class ClusterEvidence(TypedDict):
+    refs: list[str]
+    rationale: str
+ClusterSurvivorship = Literal["read_through"]
+class ClusterMerge(TypedDict):
+    sources: list[str]
+    survivor: str
+    evidence: ClusterEvidence
+    survivorship_plan: NotRequired[ClusterSurvivorship]
+class ClusterReassignmentTargetHead(TypedDict):
+    kind: Literal["head"]
+    entity_ref: str
+class ClusterReassignmentTargetResidue(TypedDict):
+    kind: Literal["residue"]
+ClusterReassignmentTarget = ClusterReassignmentTargetHead | ClusterReassignmentTargetResidue
+class ClusterReassignment(TypedDict):
+    item: str
+    target: ClusterReassignmentTarget
+class ClusterSplit(TypedDict):
+    entity: str
+    heads: list[str]
+    reassignment_map: list[ClusterReassignment]
+    evidence: ClusterEvidence
+class ClusterOperationMerge(ClusterMerge):
+    kind: Literal["merge"]
+class ClusterOperationSplit(ClusterSplit):
+    kind: Literal["split"]
+ClusterOperation = ClusterOperationMerge | ClusterOperationSplit
+ClusterTopologyOutcome = Literal["applied", "proposed", "approved_untouched", "approved_amended", "rejected"]
+class ClusterProposalView(TypedDict):
+    proposal_ref: str
+    operation: ClusterOperation
+    seen: list[int]
+    resolution: NotRequired[ClusterTopologyOutcome | None]
+    moot: bool
+class ClusterProposeRequest(TypedDict):
+    operation: ClusterOperation
+    grant_ref: NotRequired[str | None]
+class ClusterTopologyReceipt(TypedDict):
+    receipt_ref: str
+    proposal_ref: NotRequired[str | None]
+    outcome: ClusterTopologyOutcome
+class ClusterMergeRequest(TypedDict):
+    merge: ClusterMerge
+    grant_ref: NotRequired[str | None]
+class ClusterSplitRequest(TypedDict):
+    split: ClusterSplit
+    grant_ref: NotRequired[str | None]
+class ClusterRulingApprove(TypedDict):
+    verdict: Literal["approve"]
+class ClusterRulingAmendThenApprove(TypedDict):
+    verdict: Literal["amend_then_approve"]
+    operation: ClusterOperation
+class ClusterRulingReject(TypedDict):
+    verdict: Literal["reject"]
+ClusterRuling = ClusterRulingApprove | ClusterRulingAmendThenApprove | ClusterRulingReject
+class ClusterResolveRequest(TypedDict):
+    proposal_ref: str
+    seen: list[int]
+    ruling: ClusterRuling
+    grant_ref: NotRequired[str | None]
 class RetrievalRunsRequest(TypedDict):
     limit: NotRequired[int | None]
 RetrievalAction = Literal["pipeline", "context_pack", "vault_search", "graph_fs_coreutils", "speculative"]

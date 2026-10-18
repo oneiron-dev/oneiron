@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 915 code-mode rows (891 host rows, 24 run rows), 3070 declarations.
-// Replies: 824 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 921 code-mode rows (897 host rows, 24 run rows), 3091 declarations.
+// Replies: 830 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -485,6 +485,27 @@ declare namespace Sdk {
   type ModeGateInputs = { affect: number; goal_velocity: number; engagement: number };
   type StateIndex = { value: number; inputs?: ModeGateInputs | null; claim?: string | null; observed_at?: number | null };
   type WellnessProjection = { affected_person_ref: string; policy?: ActionModePolicy | null; state_index: StateIndex; mode?: ActionModeRule | null; coping: CopingAggregate; source_refs: string[]; receipt_ref?: string | null };
+  type ClusterClaimInput = { claim_ref: string; embedding: number[] };
+  type ClusterRequest = { claims: ClusterClaimInput[]; cohesion_threshold?: number | null };
+  type ClusterPartition = { subject_ref: string; predicate_root: string; world_ref?: string | null; facet_ref?: string | null };
+  type ClusterCohort = { cohort_id: number[]; partition: ClusterPartition; member_refs: string[]; cohesion: number };
+  type ClusterProposal = { cohorts: ClusterCohort[] };
+  type ClusterProposalRequest = { proposal_ref: string };
+  type ClusterEvidence = { refs: string[]; rationale: string };
+  type ClusterSurvivorship = "read_through";
+  type ClusterMerge = { sources: string[]; survivor: string; evidence: ClusterEvidence; survivorship_plan?: ClusterSurvivorship };
+  type ClusterReassignmentTarget = { kind: "head"; entity_ref: string } | { kind: "residue" };
+  type ClusterReassignment = { item: string; target: ClusterReassignmentTarget };
+  type ClusterSplit = { entity: string; heads: string[]; reassignment_map: ClusterReassignment[]; evidence: ClusterEvidence };
+  type ClusterOperation = (ClusterMerge & { kind: "merge" }) | (ClusterSplit & { kind: "split" });
+  type ClusterTopologyOutcome = "applied" | "proposed" | "approved_untouched" | "approved_amended" | "rejected";
+  type ClusterProposalView = { proposal_ref: string; operation: ClusterOperation; seen: number[]; resolution?: ClusterTopologyOutcome | null; moot: boolean };
+  type ClusterProposeRequest = { operation: ClusterOperation; grant_ref?: string | null };
+  type ClusterTopologyReceipt = { receipt_ref: string; proposal_ref?: string | null; outcome: ClusterTopologyOutcome };
+  type ClusterMergeRequest = { merge: ClusterMerge; grant_ref?: string | null };
+  type ClusterSplitRequest = { split: ClusterSplit; grant_ref?: string | null };
+  type ClusterRuling = { verdict: "approve" } | { verdict: "amend_then_approve"; operation: ClusterOperation } | { verdict: "reject" };
+  type ClusterResolveRequest = { proposal_ref: string; seen: number[]; ruling: ClusterRuling; grant_ref?: string | null };
   type RetrievalRunsRequest = { limit?: number | null };
   type RetrievalAction = "pipeline" | "context_pack" | "vault_search" | "graph_fs_coreutils" | "speculative";
   type RetrievalState = { top_score_norm?: number; score_gap_ratio?: number; mean_score_norm?: number; entity_coverage?: number; novelty_vs_prior?: number; signal_agreement?: number; result_count?: number; iteration?: number; budget_remaining?: number; frontier_size?: number; avg_edge_weight?: number; graph_degree?: number; temporal_spread?: number; hops?: number; last_action?: number; intent_class?: number };
@@ -3850,6 +3871,19 @@ declare const vault: Sdk.VaultHost & {
   cleanup: {
     /** The owner runs one archive-cleanup pass under the current posture; propose-first opens a proposal and archives nothing. */
     run(input: Sdk.CleanupRunRequest): Promise<Sdk.CleanupRunView | StoredResult>;
+  };
+  /** Proposes deterministic complete-link cohorts from readable stored claims and supplied embeddings; exact subject, predicate-root, world and facet partitions never decide truth. */
+  cluster: ((input: Sdk.ClusterRequest) => Promise<Sdk.ScopedReadResult<Sdk.ClusterProposal> | StoredResult>) & {
+    /** Applies a merge judgment through the existing topology gate, preserving claim subjects and recording its redirect shells, evidence and receipt. */
+    merge(input: Sdk.ClusterMergeRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Inspects a parked merge or split, its original evidence, current resolution and revision for a gated ruling; every reference must remain readable. */
+    proposal(input: Sdk.ClusterProposalRequest): Promise<Sdk.ScopedReadResult<Sdk.ClusterProposalView> | StoredResult>;
+    /** Parks an explicit merge or split judgment with zero topology effects, under the caller's own owner proof or topology_seal Grant. */
+    propose(input: Sdk.ClusterProposeRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Approves, amends then approves, or rejects a parked merge or split under the caller's own authority, comparing its revision and recording the ruling atomically. */
+    resolve_proposal(input: Sdk.ClusterResolveRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
+    /** Applies a split judgment through the existing topology gate, including zero-head retirement, evidence-guided reassignment and explicit residue. */
+    split(input: Sdk.ClusterSplitRequest): Promise<Sdk.ClusterTopologyReceipt | StoredResult>;
   };
   coach: {
     /** Inspects one blocked report as the Coach reads it: its fenced receipt, linked diagnostic band, working set, and the repair proposal the Coach filed, through the caller's own lane. */
