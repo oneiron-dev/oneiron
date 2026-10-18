@@ -78,6 +78,13 @@ both bindings and their export-census tests in one change.
 - `vault.tagging.history`
 - `vault.tagging.mentions`
 - `vault.affect.claims.consolidate`
+- `vault.affect.coping.record`
+- `vault.affect.coping.update`
+- `vault.affect.coping.aggregate`
+- `vault.affect.wellness.policy.get`
+- `vault.affect.wellness.policy.configure`
+- `vault.affect.wellness.derive`
+- `vault.affect.wellness.get`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
 - `vault.retrieval.run`
