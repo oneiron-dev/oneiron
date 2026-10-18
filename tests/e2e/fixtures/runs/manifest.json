@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "area": "runs",
+  "assets": [
+    {
+      "id": "runs-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-runs-e2e-20261018",
+        "revision": "91e166f705721229e91515f053960d45db2aa5f052444d06067b033726ad43ca"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "91e166f705721229e91515f053960d45db2aa5f052444d06067b033726ad43ca",
+      "expectedFacts": {
+        "scenarioCount": 9,
+        "authoredContent": true,
+        "oracle": "Pinned canon, registry rulings and independently authored scenario inputs; not engine output.",
+        "bindingHead": "6f2446660ef09f823131d6faaa7e586a75df0b72",
+        "blockedIds": [
+          "RUNS-01",
+          "RUNS-02",
+          "RUNS-03",
+          "RUNS-04",
+          "RUNS-05",
+          "RUNS-06",
+          "RUNS-07",
+          "RUNS-08",
+          "RUNS-09"
+        ],
+        "canonWakeCeilingMs": 180000,
+        "defaultEngineConstantsChanged": false,
+        "prerequisiteHandling": "Missing public doors are per-ID suite.todo reasons, not fabricated runtime assets or global data-fixture capabilities."
+      },
+      "scenarios": [
+        "RUNS-01",
+        "RUNS-02",
+        "RUNS-03",
+        "RUNS-04",
+        "RUNS-05",
+        "RUNS-06",
+        "RUNS-07",
+        "RUNS-08",
+        "RUNS-09"
+      ],
+      "requires": []
+    }
+  ]
+}
