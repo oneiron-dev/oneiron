@@ -1781,6 +1781,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.seal.confess",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::AttemptConfession,
+                >(),
+            ),
+            (
+                "vault.seal.audit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealAttemptRequest,
+                >(),
+            ),
+            (
+                "vault.seal.receipt",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealAttemptRequest,
+                >(),
+            ),
+            (
+                "vault.seal.pending",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealPendingRequest,
+                >(),
+            ),
+            (
+                "vault.seal.run",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealRunRequest,
+                >(),
+            ),
+            (
+                "vault.seal.complete",
+                crate::code_run::vault_read::request_schema::<
+                    crate::self_heal::audit::doors::SealCompleteRequest,
+                >(),
+            ),
+            (
                 "vault.settings.learning",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingsRequest,
@@ -4495,6 +4531,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.gate.checker.set",
     "vault.learning.read",
     "vault.learning.projection",
+    "vault.seal.confess",
+    "vault.seal.audit",
+    "vault.seal.receipt",
+    "vault.seal.pending",
+    "vault.seal.run",
+    "vault.seal.complete",
     "vault.claims.review",
     "vault.claims.settle",
     "self.secrets.materialize",
@@ -5299,6 +5341,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.learning.projection" => crate::code_run::vault_read::request_schema::<
             crate::learning::doors::LearningProjectionView,
+        >(),
+        "vault.seal.confess" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealReceiptView,
+        >(),
+        "vault.seal.audit" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealReceiptView,
+        >(),
+        "vault.seal.receipt" => crate::code_run::vault_read::request_schema::<
+            Option<crate::self_heal::audit::doors::SealReceiptView>,
+        >(),
+        "vault.seal.pending" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::self_heal::audit::SealCheckRequest>,
+        >(),
+        "vault.seal.run" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealRunReceipt,
+        >(),
+        "vault.seal.complete" => crate::code_run::vault_read::request_schema::<
+            crate::self_heal::audit::doors::SealReceiptView,
         >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
@@ -8347,6 +8407,48 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.learning.projection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.confess" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.audit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.receipt" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.pending" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.run" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.seal.complete" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12498,6 +12600,25 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.learning.projection" => {
             let _input: crate::learning::doors::LearningProjectionRequest = decode(value.clone())?;
         }
+        "vault.seal.confess" => {
+            let _input: crate::self_heal::audit::AttemptConfession = decode(value.clone())?;
+        }
+        "vault.seal.audit" => {
+            let _input: crate::self_heal::audit::doors::SealAttemptRequest = decode(value.clone())?;
+        }
+        "vault.seal.receipt" => {
+            let _input: crate::self_heal::audit::doors::SealAttemptRequest = decode(value.clone())?;
+        }
+        "vault.seal.pending" => {
+            let _input: crate::self_heal::audit::doors::SealPendingRequest = decode(value.clone())?;
+        }
+        "vault.seal.run" => {
+            let _input: crate::self_heal::audit::doors::SealRunRequest = decode(value.clone())?;
+        }
+        "vault.seal.complete" => {
+            let _input: crate::self_heal::audit::doors::SealCompleteRequest =
+                decode(value.clone())?;
+        }
         "vault.settings.learning" => {
             let _input: crate::learning_setting_doors::LearningSettingsRequest =
                 decode(value.clone())?;
@@ -14776,6 +14897,12 @@ pub fn invoke(
         "vault.gate.checker.set" => encode(vault_gate_checker_set(memory, decode(value)?)?),
         "vault.learning.read" => encode(vault_learning_read(memory, decode(value)?)?),
         "vault.learning.projection" => encode(vault_learning_projection(memory, decode(value)?)?),
+        "vault.seal.confess" => encode(vault_seal_confess(memory, decode(value)?)?),
+        "vault.seal.audit" => encode(vault_seal_audit(memory, decode(value)?)?),
+        "vault.seal.receipt" => encode(vault_seal_receipt(memory, decode(value)?)?),
+        "vault.seal.pending" => encode(vault_seal_pending(memory, decode(value)?)?),
+        "vault.seal.run" => encode(vault_seal_run(memory, decode(value)?)?),
+        "vault.seal.complete" => encode(vault_seal_complete(memory, decode(value)?)?),
         "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
         "vault.settings.learning.put" => {
             encode(vault_settings_learning_put(memory, decode(value)?)?)
@@ -18514,6 +18641,72 @@ pub fn vault_learning_projection(
     crate::learning::doors::learning_projection_as_owner(
         memory.vault(),
         &memory.embedded_owner("vault.learning.projection")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_confess(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::AttemptConfession,
+) -> MemoryResult<crate::self_heal::audit::doors::SealReceiptView> {
+    crate::self_heal::audit::doors::confess_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.confess")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_audit(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealAttemptRequest,
+) -> MemoryResult<crate::self_heal::audit::doors::SealReceiptView> {
+    crate::self_heal::audit::doors::audit_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.audit")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_receipt(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealAttemptRequest,
+) -> MemoryResult<Option<crate::self_heal::audit::doors::SealReceiptView>> {
+    crate::self_heal::audit::doors::receipt_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.receipt")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_pending(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealPendingRequest,
+) -> MemoryResult<Vec<crate::self_heal::audit::SealCheckRequest>> {
+    crate::self_heal::audit::doors::pending_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.pending")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_run(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealRunRequest,
+) -> MemoryResult<crate::self_heal::audit::doors::SealRunReceipt> {
+    crate::self_heal::audit::doors::run_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.run")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_seal_complete(
+    memory: &Memory<'_>,
+    input: crate::self_heal::audit::doors::SealCompleteRequest,
+) -> MemoryResult<crate::self_heal::audit::doors::SealReceiptView> {
+    crate::self_heal::audit::doors::complete_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.seal.complete")?,
         &input,
     )
     .map_err(crate::memory::MemoryError::from)

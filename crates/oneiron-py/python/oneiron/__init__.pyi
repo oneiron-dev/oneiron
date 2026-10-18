@@ -503,6 +503,8 @@ class Oneiron:
         @property
         def learning(self) -> "Oneiron._VaultLearningVerbs": ...
         @property
+        def seal(self) -> "Oneiron._VaultSealVerbs": ...
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs": ...
         @property
         def secrets(self) -> "Oneiron._VaultSecretsVerbs": ...
@@ -1451,6 +1453,19 @@ class Oneiron:
             """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
         def projection(self, spec: Facade.LearningProjectionRequest) -> Facade.LearningProjectionView:
             """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
+    class _VaultSealVerbs:
+        def confess(self, spec: Facade.AttemptConfession) -> Facade.SealReceiptView:
+            """Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks."""
+        def audit(self, spec: Facade.SealAttemptRequest) -> Facade.SealReceiptView:
+            """Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs."""
+        def receipt(self, spec: Facade.SealAttemptRequest) -> Facade.SealReceiptView | None:
+            """Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward."""
+        def pending(self, spec: Facade.SealPendingRequest) -> list[Facade.SealCheckRequest]:
+            """Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker."""
+        def run(self, spec: Facade.SealRunRequest) -> Facade.SealRunReceipt:
+            """Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority."""
+        def complete(self, spec: Facade.SealCompleteRequest) -> Facade.SealReceiptView:
+            """Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate."""
     class _VaultSettingsVerbs:
         @property
         def learning(self) -> "Oneiron._VaultSettingsLearningVerbs": ...

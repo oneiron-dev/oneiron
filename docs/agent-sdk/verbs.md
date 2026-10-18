@@ -338,6 +338,12 @@ both bindings and their export-census tests in one change.
 - `vault.gate.checker.set`
 - `vault.learning.read`
 - `vault.learning.projection`
+- `vault.seal.confess`
+- `vault.seal.audit`
+- `vault.seal.receipt`
+- `vault.seal.pending`
+- `vault.seal.run`
+- `vault.seal.complete`
 - `vault.settings.learning`
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`

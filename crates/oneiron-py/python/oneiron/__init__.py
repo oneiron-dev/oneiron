@@ -521,6 +521,9 @@ class Oneiron:
         def learning(self) -> "Oneiron._VaultLearningVerbs":
             return Oneiron._VaultLearningVerbs(self._client)
         @property
+        def seal(self) -> "Oneiron._VaultSealVerbs":
+            return Oneiron._VaultSealVerbs(self._client)
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
@@ -2118,6 +2121,27 @@ class Oneiron:
         def projection(self, spec):
             """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
             return json.loads(_translate(lambda: self._client.vault_learning_projection(json.dumps(spec))))
+    class _VaultSealVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def confess(self, spec):
+            """Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks."""
+            return json.loads(_translate(lambda: self._client.vault_seal_confess(json.dumps(spec))))
+        def audit(self, spec):
+            """Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs."""
+            return json.loads(_translate(lambda: self._client.vault_seal_audit(json.dumps(spec))))
+        def receipt(self, spec):
+            """Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward."""
+            return json.loads(_translate(lambda: self._client.vault_seal_receipt(json.dumps(spec))))
+        def pending(self, spec):
+            """Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker."""
+            return json.loads(_translate(lambda: self._client.vault_seal_pending(json.dumps(spec))))
+        def run(self, spec):
+            """Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority."""
+            return json.loads(_translate(lambda: self._client.vault_seal_run(json.dumps(spec))))
+        def complete(self, spec):
+            """Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate."""
+            return json.loads(_translate(lambda: self._client.vault_seal_complete(json.dumps(spec))))
     class _VaultSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

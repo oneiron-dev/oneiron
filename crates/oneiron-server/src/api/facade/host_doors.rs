@@ -119,6 +119,7 @@ pub(crate) use super::budget_doors::*;
 pub(crate) use super::fanout_doors::*;
 // The owner's learned-setting doors, likewise.
 pub(crate) use super::learning_doors::*;
+pub(crate) use super::seal_doors::*;
 pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
@@ -1210,6 +1211,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.retrieval.replay"
         | "vault.learning.read"
         | "vault.learning.projection"
+        | "vault.seal.confess"
+        | "vault.seal.audit"
+        | "vault.seal.receipt"
+        | "vault.seal.pending"
+        | "vault.seal.run"
+        | "vault.seal.complete"
         | "vault.settings.learning"
         | "vault.settings.learning.put"
         | "vault.settings.learning.clear"

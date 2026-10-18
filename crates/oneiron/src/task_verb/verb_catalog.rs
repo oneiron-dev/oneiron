@@ -336,6 +336,12 @@ pub enum AgentVerb {
     VaultGateCheckerSet,
     VaultLearningRead,
     VaultLearningProjection,
+    VaultSealConfess,
+    VaultSealAudit,
+    VaultSealReceipt,
+    VaultSealPending,
+    VaultSealRun,
+    VaultSealComplete,
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
@@ -1125,6 +1131,12 @@ impl AgentVerb {
         Self::VaultGateCheckerSet,
         Self::VaultLearningRead,
         Self::VaultLearningProjection,
+        Self::VaultSealConfess,
+        Self::VaultSealAudit,
+        Self::VaultSealReceipt,
+        Self::VaultSealPending,
+        Self::VaultSealRun,
+        Self::VaultSealComplete,
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
@@ -1929,6 +1941,12 @@ impl AgentVerb {
             Self::VaultGateCheckerSet => "vault.gate.checker.set",
             Self::VaultLearningRead => "vault.learning.read",
             Self::VaultLearningProjection => "vault.learning.projection",
+            Self::VaultSealConfess => "vault.seal.confess",
+            Self::VaultSealAudit => "vault.seal.audit",
+            Self::VaultSealReceipt => "vault.seal.receipt",
+            Self::VaultSealPending => "vault.seal.pending",
+            Self::VaultSealRun => "vault.seal.run",
+            Self::VaultSealComplete => "vault.seal.complete",
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
@@ -2727,6 +2745,12 @@ impl AgentVerb {
                 | Self::VaultGateCheckerSet
                 | Self::VaultLearningRead
                 | Self::VaultLearningProjection
+                | Self::VaultSealConfess
+                | Self::VaultSealAudit
+                | Self::VaultSealReceipt
+                | Self::VaultSealPending
+                | Self::VaultSealRun
+                | Self::VaultSealComplete
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -3543,6 +3567,12 @@ impl AgentVerb {
                 | Self::VaultGateCheckerSet
                 | Self::VaultLearningRead
                 | Self::VaultLearningProjection
+                | Self::VaultSealConfess
+                | Self::VaultSealAudit
+                | Self::VaultSealReceipt
+                | Self::VaultSealPending
+                | Self::VaultSealRun
+                | Self::VaultSealComplete
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -4027,6 +4057,7 @@ impl AgentVerb {
                 | Self::VaultLegalHoldsLog
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
+                | Self::VaultSealPending
                 | Self::VaultHooksReplay
                 | Self::VaultHooksRegenDue
                 | Self::VaultArtifactsThreadsList
@@ -4426,6 +4457,12 @@ impl AgentVerb {
                 | Self::VaultGateCheckerSet
                 | Self::VaultLearningRead
                 | Self::VaultLearningProjection
+                | Self::VaultSealConfess
+                | Self::VaultSealAudit
+                | Self::VaultSealReceipt
+                | Self::VaultSealPending
+                | Self::VaultSealRun
+                | Self::VaultSealComplete
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -5065,6 +5102,10 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPut
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerSet
+                | Self::VaultSealConfess
+                | Self::VaultSealAudit
+                | Self::VaultSealRun
+                | Self::VaultSealComplete
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
                 | Self::VaultSecretsLiftHistory
@@ -5699,6 +5740,12 @@ impl AgentVerb {
             Self::VaultGateCheckerSet => &["spec"],
             Self::VaultLearningRead => &["spec"],
             Self::VaultLearningProjection => &["spec"],
+            Self::VaultSealConfess => &["spec"],
+            Self::VaultSealAudit => &["spec"],
+            Self::VaultSealReceipt => &["spec"],
+            Self::VaultSealPending => &["spec"],
+            Self::VaultSealRun => &["spec"],
+            Self::VaultSealComplete => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -6489,6 +6536,12 @@ impl AgentVerb {
             Self::VaultGateCheckerSet => &["spec"],
             Self::VaultLearningRead => &["spec"],
             Self::VaultLearningProjection => &["spec"],
+            Self::VaultSealConfess => &["spec"],
+            Self::VaultSealAudit => &["spec"],
+            Self::VaultSealReceipt => &["spec"],
+            Self::VaultSealPending => &["spec"],
+            Self::VaultSealRun => &["spec"],
+            Self::VaultSealComplete => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -7915,6 +7968,24 @@ impl AgentVerb {
             }
             Self::VaultLearningProjection => {
                 "The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."
+            }
+            Self::VaultSealConfess => {
+                "Confess an attempt's objectives without changing any score; named flaws and uncertainty create durable directed rechecks."
+            }
+            Self::VaultSealAudit => {
+                "Draw a passing sealed attempt once at the current audit rate, saving the rate and selection before any checker runs."
+            }
+            Self::VaultSealReceipt => {
+                "Read a sealed attempt, its stamped audit draw, directed and random check completions, weighted findings and separate honesty reward."
+            }
+            Self::VaultSealPending => {
+                "Read pending directed rechecks and random audits, optionally for one attempt, without executing a checker."
+            }
+            Self::VaultSealRun => {
+                "Queue the existing Coach seal checker under its ordinary lease, Grant and budget; the returned job never grants extra authority."
+            }
+            Self::VaultSealComplete => {
+                "Attest an independent external seal check as the owner; admit immutable findings and project them using the request's stamped rate."
             }
             Self::VaultSettingsLearning => {
                 "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."

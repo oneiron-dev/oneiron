@@ -3239,6 +3239,48 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_seal_confess(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.seal.confess")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.seal.confess", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_seal_audit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.seal.audit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.seal.audit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_seal_receipt(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.seal.receipt")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.seal.receipt", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_seal_pending(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.seal.pending")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.seal.pending", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_seal_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.seal.run")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.seal.run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_seal_complete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.seal.complete")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.seal.complete", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_settings_learning(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.settings.learning")?;
         let output = py

@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 763 facade rows, 2651 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 719.
+// UniFFI census: 769 facade rows, 2666 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 725.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -20778,6 +20778,192 @@ pub struct LateCreditReceipt {
 pub struct LearningProjectionView {
     #[serde(rename = "receipt", default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<LateCreditReceipt>,
+}
+
+/// `oneiron::self_heal::audit::ObjectiveConfession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectiveConfession {
+    #[serde(rename = "objective")]
+    pub objective: String,
+    #[serde(rename = "met")]
+    pub met: bool,
+    #[serde(rename = "flaw", default, skip_serializing_if = "Option::is_none")]
+    pub flaw: Option<String>,
+    #[serde(
+        rename = "uncertainty",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub uncertainty: Option<String>,
+}
+
+/// `oneiron::self_heal::audit::AttemptConfession`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AttemptConfession {
+    #[serde(rename = "attempt")]
+    pub attempt: AttemptId,
+    #[serde(rename = "subject")]
+    pub subject: String,
+    #[serde(rename = "type_ref")]
+    pub type_ref: CellTypeRef,
+    #[serde(rename = "objectives")]
+    pub objectives: Vec<ObjectiveConfession>,
+}
+
+/// `oneiron::self_heal::audit::AuditDraw`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuditDraw {
+    #[serde(rename = "rate")]
+    pub rate: f64,
+    #[serde(rename = "sample")]
+    pub sample: f64,
+    #[serde(rename = "at")]
+    pub at: u64,
+}
+
+/// `oneiron::self_heal::audit::SealCheckKind`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SealCheckKind {
+    #[serde(rename = "confession_recheck")]
+    ConfessionRecheck,
+    #[serde(rename = "random_audit")]
+    RandomAudit,
+}
+
+/// `oneiron::self_heal::audit::SealCheckRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealCheckRequest {
+    #[serde(rename = "reference")]
+    pub reference: String,
+    #[serde(rename = "attempt")]
+    pub attempt: AttemptId,
+    #[serde(rename = "kind")]
+    pub kind: SealCheckKind,
+    #[serde(rename = "result_ref")]
+    pub result_ref: String,
+    #[serde(rename = "objectives")]
+    pub objectives: Vec<ObjectiveConfession>,
+    #[serde(rename = "rate")]
+    pub rate: f64,
+    #[serde(rename = "created_at")]
+    pub created_at: u64,
+}
+
+/// `oneiron::self_heal::audit::ObjectiveFinding`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ObjectiveFinding {
+    #[serde(rename = "objective")]
+    pub objective: String,
+    #[serde(rename = "flaw_present")]
+    pub flaw_present: bool,
+    #[serde(rename = "evidence_ref")]
+    pub evidence_ref: String,
+}
+
+/// `oneiron::self_heal::audit::SealCheckOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealCheckOutcome {
+    #[serde(rename = "judge_revision")]
+    pub judge_revision: String,
+    #[serde(rename = "checked_at")]
+    pub checked_at: u64,
+    #[serde(rename = "findings")]
+    pub findings: Vec<ObjectiveFinding>,
+}
+
+/// `oneiron::self_heal::audit::SealCheckReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealCheckReceipt {
+    #[serde(rename = "request")]
+    pub request: SealCheckRequest,
+    #[serde(rename = "outcome", default, skip_serializing_if = "Option::is_none")]
+    pub outcome: Option<SealCheckOutcome>,
+}
+
+/// `oneiron::self_heal::audit::SealedAttemptReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealedAttemptReceipt {
+    #[serde(rename = "confession")]
+    pub confession: AttemptConfession,
+    #[serde(rename = "executor")]
+    pub executor: String,
+    #[serde(rename = "result_ref")]
+    pub result_ref: String,
+    #[serde(rename = "sealed_at")]
+    pub sealed_at: u64,
+    #[serde(rename = "passing")]
+    pub passing: bool,
+    #[serde(rename = "draw", default, skip_serializing_if = "Option::is_none")]
+    pub draw: Option<AuditDraw>,
+    #[serde(rename = "checks")]
+    pub checks: Vec<SealCheckReceipt>,
+}
+
+/// `oneiron::learning::honesty::SealAssessment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SealAssessment {
+    #[serde(rename = "weighted_flaws")]
+    pub weighted_flaws: f64,
+    #[serde(rename = "weighted_hidden_flaws")]
+    pub weighted_hidden_flaws: f64,
+    #[serde(rename = "confirmed_confessions")]
+    pub confirmed_confessions: u64,
+    #[serde(rename = "false_confessions")]
+    pub false_confessions: u64,
+}
+
+/// `oneiron::self_heal::audit::doors::SealReceiptView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SealReceiptView {
+    #[serde(rename = "receipt")]
+    pub receipt: SealedAttemptReceipt,
+    #[serde(rename = "assessment")]
+    pub assessment: SealAssessment,
+    #[serde(rename = "honesty_reward")]
+    pub honesty_reward: f64,
+}
+
+/// `oneiron::self_heal::audit::doors::SealAttemptRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealAttemptRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: AttemptId,
+}
+
+/// `oneiron::self_heal::audit::doors::SealPendingRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealPendingRequest {
+    #[serde(rename = "attempt", default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<AttemptId>,
+}
+
+/// `oneiron::self_heal::audit::doors::SealRunReceipt`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SealRunReceipt {
+    #[serde(rename = "job")]
+    pub job: AttemptId,
+}
+
+/// `oneiron::self_heal::audit::doors::SealCompleteRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SealCompleteRequest {
+    #[serde(rename = "attempt")]
+    pub attempt: AttemptId,
+    #[serde(rename = "kind")]
+    pub kind: SealCheckKind,
+    #[serde(rename = "outcome")]
+    pub outcome: SealCheckOutcome,
 }
 
 /// `oneiron::learning_setting_doors::LearningSettingsRequest`.
