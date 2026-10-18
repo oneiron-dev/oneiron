@@ -152,7 +152,11 @@ export class WsClient {
   private fail(error: Error): void { this.failure = error; for (const waiter of this.waiters.splice(0)) waiter.reject(error) }
   static async connect(origin: string, credential: string, timeoutMs: number = LIMITS.requestMs): Promise<WsClient> {
     const url = new URL("/ws",origin); url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(url.href,{headers:Object.fromEntries(boundHeaders(credential))});
+    // lib.dom hides Bun's client constructor overload for authentication headers.
+    const BunWebSocket = WebSocket as typeof WebSocket & {
+      new (url: string | URL, options?: Bun.WebSocketOptions): WebSocket;
+    };
+    const socket = new BunWebSocket(url.href,{headers:Object.fromEntries(boundHeaders(credential))});
     const client = new WsClient(socket);
     try {
       await withDeadline(new Promise<void>((resolve,reject) => {

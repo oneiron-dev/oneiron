@@ -209,15 +209,19 @@ suite.test(test, "SURFACES-04", "Ledger dossier and thread inspection should wor
       entity_ref: conversation.id, opts: { edge_kind: data.expected.claimEdge, limit: data.neighborLimit },
     });
     expect(bounded.value).toHaveLength(data.neighborLimit);
-    expect([oldId, currentId]).toContain(bounded.value[0]?.record?.id);
+    const boundedId = bounded.value[0]?.record?.id;
+    if (boundedId === undefined) throw new Error("Neighbor has no record reference");
+    expect([oldId, currentId]).toContain(boundedId);
 
     // Existing DagPageResponse; a two-record fixture fits one explicit page.
     const dag = await engine.client.request<{
       head: string | null; root: string | null; main_line: string[]; page: { next: string | null };
     }>("GET", `/v1/core/conversations/${conversation.id}/records?limit=${data.pageLimit}`);
     expect(dag.body.main_line).toEqual(turns);
-    expect(dag.body.head).toBe(turns[1]);
-    expect(dag.body.root).toBe(turns[0]);
+    const [rootTurn, headTurn] = turns;
+    if (rootTurn === undefined || headTurn === undefined) throw new Error("Expected two conversation turns");
+    expect(dag.body.head).toBe(headTurn);
+    expect(dag.body.root).toBe(rootTurn);
     expect(dag.body.page.next).toBeNull(); // No silently unconsumed page.
     for (const [index, message] of messages.entries()) {
       expect(message.kind).toBe(data.expected.messageKind);
