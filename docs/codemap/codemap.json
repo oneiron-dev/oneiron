@@ -2941,9 +2941,9 @@
      "purpose": "A physical machine's identity: this install's own machine, the owner's enrolment door, and the proof a…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
-      "fn": 9,
+      "fn": 11,
       "struct": 3
      }
     },
@@ -41968,12 +41968,22 @@
      "path": "src/runtime_hooks/verb/mod.rs",
      "purpose": "Verb hooks (ARCH-0080 §3, §5), slice 2: hooks that run inside a call, before and after one logical verb",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 13,
       "re-export": 4,
       "struct": 3,
       "type": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/runtime_hooks/verb/plain_resume.rs",
+     "purpose": "A plain call's resume target (ARCH-0080 §3 Ask): a call no credential came in on, which settlement runs…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -42003,7 +42013,7 @@
      "path": "src/runtime_hooks/verb/resume.rs",
      "purpose": "Settlement resumes a stopped call once (ARCH-0080 §3 Ask)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -51526,6 +51536,9 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BookingAvailabilityRequest",
+      "BookingBookRequest",
+      "BookingCancelRequest",
       "BookingConstraintHoldContext",
       "BookingConstraintTurnInput",
       "BookingConstraintTurnRequest",
@@ -51533,12 +51546,13 @@
       "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
+      "BookingRescheduleRequest",
       "CalendarFreebusyRequest"
      ],
      "path": "src/task_verb/sdk_calendar.rs",
-     "purpose": "Typed booking-page discovery and calendar occupancy inputs",
+     "purpose": "Typed booking-page discovery, public lifecycle calls and calendar occupancy inputs",
      "surface": {
-      "enum": 1,
+      "enum": 5,
       "struct": 7
      }
     },
@@ -51864,7 +51878,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 818
+      "fn": 822
      }
     },
     {
@@ -58898,7 +58912,7 @@
      "purpose": "Run tree projection and control adapter over generic AttemptQueue rows"
     },
     "runtime_hooks": {
-     "files": 27,
+     "files": 28,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59306,7 +59320,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3619,
+   "source_files": 3620,
    "test_files": 902
   },
   "oneiron-android": {
@@ -59322,13 +59336,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "Minimal JNI/Kotlin ownership adapter",
      "surface": {
-      "fn": 5,
+      "fn": 10,
       "mod": 1
      }
     }
@@ -59479,7 +59493,7 @@
       "const": 5,
       "crate-vis": 5,
       "enum": 3,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -65521,7 +65535,7 @@
      "path": "src/lib/parse.rs",
      "purpose": "ID/enum/limit/query/format parsing and validation helpers",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 18
      }
     },
     {
@@ -67839,7 +67853,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 787
+      "fn": 791
      }
     },
     {
@@ -68888,7 +68902,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 788
+      "fn": 792
      }
     },
     {
@@ -71859,9 +71873,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/booking_doors.rs",
-     "purpose": "Typed booking-page discovery and the published constraint front",
+     "purpose": "Typed booking-page discovery, published lifecycle and constraint front",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 6
      }
     },
     {
@@ -75387,7 +75401,7 @@
      "path": "src/commands/owner.rs",
      "purpose": "The owner's own commands on a stopped vault: doctor, backup, restore, window and clock recovery, export, the…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 19,
       "re-export": 2
      }
@@ -80931,13 +80945,27 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingAvailabilityInput",
+      "BookingAvailabilityRequest",
+      "BookingBookInput",
+      "BookingBookRequest",
+      "BookingBookResult",
+      "BookingCancelInput",
+      "BookingCancelRequest",
+      "BookingConfirmInput",
       "BookingConstraintHoldContext",
+      "BookingConstraintInput",
       "BookingConstraintTurnInput",
       "BookingConstraintTurnRequest",
       "BookingConstraintTurnResponse",
       "BookingConstraintTurnWindow",
+      "BookingHoldInput",
+      "BookingIntakeAnswer",
+      "BookingOperationResponse",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
+      "BookingRescheduleInput",
+      "BookingRescheduleRequest",
       "BornFromArtifact",
       "BornFromRequest",
       "BornFromSource",
@@ -81324,6 +81352,7 @@
       "ConsolidationRejection",
       "ConstraintContinuation",
       "ConstraintObject",
+      "ConstraintTimeRangeWire",
       "ConstraintWeekday",
       "ConsultDisposition",
       "ConsultInspection",
@@ -82480,6 +82509,7 @@
       "QuoteReplyGroup",
       "QuoteReplyStrip",
       "QuoteStripStatus",
+      "RankedSlot",
       "ReadFilterInput",
       "Reasoning",
       "ReasoningCause",
@@ -82837,6 +82867,7 @@
       "SegmentedControl",
       "SelectControl",
       "SelectInput",
+      "SelectedSlot",
       "SelectionBenchmark",
       "SelectionRanking",
       "SelectionReceipt",
@@ -83429,8 +83460,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 664,
-      "struct": 2038
+      "enum": 672,
+      "struct": 2047
      }
     },
     {

@@ -1087,7 +1087,11 @@ fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
 /// proof it acts under. A row whose door has no such check passes.
 pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<()> {
     match verb {
-        "vault.booking.constraint_turn" => {
+        "vault.booking.constraint_turn"
+        | "vault.booking.availability"
+        | "vault.booking.book"
+        | "vault.booking.reschedule"
+        | "vault.booking.cancel" => {
             crate::api::host_action::require_host_owner_act(server, auth)
                 .map(drop)
                 .map_err(|error| super::FacadeApiError::from(error).into_memory_error())

@@ -641,6 +641,10 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingAvailability,
+    VaultBookingBook,
+    VaultBookingReschedule,
+    VaultBookingCancel,
     VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
@@ -1466,6 +1470,10 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingAvailability,
+        Self::VaultBookingBook,
+        Self::VaultBookingReschedule,
+        Self::VaultBookingCancel,
         Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
@@ -2312,6 +2320,10 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingAvailability => "vault.booking.availability",
+            Self::VaultBookingBook => "vault.booking.book",
+            Self::VaultBookingReschedule => "vault.booking.reschedule",
+            Self::VaultBookingCancel => "vault.booking.cancel",
             Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
@@ -3120,6 +3132,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -3972,6 +3988,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -4917,6 +4937,10 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingAvailability
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
@@ -5463,6 +5487,9 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingBook
+                | Self::VaultBookingReschedule
+                | Self::VaultBookingCancel
                 | Self::CalendarInvite
                 | Self::CalendarConnectorConfigure
                 | Self::CalendarConnectorPull
@@ -6247,6 +6274,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingAvailability => &["spec"],
+            Self::VaultBookingBook => &["spec"],
+            Self::VaultBookingReschedule => &["spec"],
+            Self::VaultBookingCancel => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
@@ -7073,6 +7104,10 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingAvailability => &["spec"],
+            Self::VaultBookingBook => &["spec"],
+            Self::VaultBookingReschedule => &["spec"],
+            Self::VaultBookingCancel => &["spec"],
             Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
@@ -9089,6 +9124,18 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingAvailability => {
+                "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources."
+            }
+            Self::VaultBookingBook => {
+                "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens."
+            }
+            Self::VaultBookingReschedule => {
+                "Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision."
+            }
+            Self::VaultBookingCancel => {
+                "Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision."
             }
             Self::VaultBookingConstraintTurn => {
                 "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."

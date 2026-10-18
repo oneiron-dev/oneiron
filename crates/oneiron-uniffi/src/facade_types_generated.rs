@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 799 facade rows, 2727 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 755.
+// UniFFI census: 803 facade rows, 2744 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 759.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), TrainingOffer.offer_skill (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -34757,6 +34757,321 @@ pub enum WireCommitOutcome {
     },
 }
 
+/// `oneiron::booking::agent_api::TimeRangeWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TimeRangeWire {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::booking::constraint::ConstraintWeekday`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum ConstraintWeekday {
+    #[serde(rename = "monday")]
+    Monday,
+    #[serde(rename = "tuesday")]
+    Tuesday,
+    #[serde(rename = "wednesday")]
+    Wednesday,
+    #[serde(rename = "thursday")]
+    Thursday,
+    #[serde(rename = "friday")]
+    Friday,
+    #[serde(rename = "saturday")]
+    Saturday,
+    #[serde(rename = "sunday")]
+    Sunday,
+}
+
+/// `oneiron::booking::constraint::LocalMinuteWindow`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct LocalMinuteWindow {
+    #[serde(rename = "start_minute")]
+    pub start_minute: u16,
+    #[serde(rename = "end_minute")]
+    pub end_minute: u16,
+}
+
+/// `oneiron::booking::constraint::TimeRangeWire`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConstraintTimeRangeWire {
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::booking::constraint::ConstraintObject`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct ConstraintObject {
+    #[serde(rename = "schema_version")]
+    pub schema_version: u16,
+    #[serde(rename = "weekdays", default, skip_serializing_if = "Option::is_none")]
+    pub weekdays: Option<Vec<ConstraintWeekday>>,
+    #[serde(
+        rename = "local_time_windows",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub local_time_windows: Option<Vec<LocalMinuteWindow>>,
+    #[serde(rename = "utc_window", default)]
+    pub utc_window: Option<ConstraintTimeRangeWire>,
+    #[serde(rename = "allow_flex_pool")]
+    pub allow_flex_pool: bool,
+}
+
+/// `oneiron::booking::agent_api::BookingConstraintInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "kind", content = "value")]
+pub enum BookingConstraintInput {
+    #[serde(rename = "object")]
+    Object(ConstraintObject),
+    #[serde(rename = "free_text")]
+    FreeText(String),
+}
+
+/// `oneiron::booking::agent_api::BookingAvailabilityInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingAvailabilityInput {
+    #[serde(rename = "event_type")]
+    pub event_type: String,
+    #[serde(rename = "window")]
+    pub window: TimeRangeWire,
+    #[serde(rename = "visitor_tz")]
+    pub visitor_tz: String,
+    #[serde(
+        rename = "constraint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub constraint: Option<BookingConstraintInput>,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingAvailabilityRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingAvailabilityRequest {
+    #[serde(rename = "availability")]
+    Availability {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingAvailabilityInput,
+    },
+}
+
+/// `oneiron::booking::constraint::RankedSlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct RankedSlot {
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+    #[serde(rename = "rank")]
+    pub rank: f64,
+}
+
+/// `oneiron::booking::agent_api::SelectedSlot`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedSlot {
+    #[serde(rename = "start_utc")]
+    pub start_utc: u64,
+    #[serde(rename = "end_utc")]
+    pub end_utc: u64,
+}
+
+/// `oneiron::booking::agent_api::BookingBookResult`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "stage", content = "result")]
+pub enum BookingBookResult {
+    #[serde(rename = "held")]
+    Held {
+        #[serde(rename = "hold_token")]
+        hold_token: String,
+        #[serde(rename = "selected_slot")]
+        selected_slot: SelectedSlot,
+        #[serde(rename = "expires_at")]
+        expires_at: u64,
+    },
+    #[serde(rename = "confirmed")]
+    Confirmed {
+        #[serde(rename = "reschedule_token")]
+        reschedule_token: String,
+        #[serde(rename = "cancel_token")]
+        cancel_token: String,
+    },
+    #[serde(rename = "slot_taken")]
+    SlotTaken {
+        #[serde(rename = "alternatives")]
+        alternatives: Vec<RankedSlot>,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingOperationResponse`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op", content = "result")]
+pub enum BookingOperationResponse {
+    #[serde(rename = "availability")]
+    Availability {
+        #[serde(rename = "slots")]
+        slots: Vec<RankedSlot>,
+        #[serde(rename = "flex_used")]
+        flex_used: bool,
+    },
+    #[serde(rename = "book")]
+    Book(BookingBookResult),
+    #[serde(rename = "reschedule")]
+    Reschedule {
+        #[serde(rename = "reschedule_token")]
+        reschedule_token: String,
+    },
+    #[serde(rename = "cancel")]
+    Cancel {
+        #[serde(rename = "cancel_token")]
+        cancel_token: String,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingHoldInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingHoldInput {
+    #[serde(rename = "event_type")]
+    pub event_type: String,
+    #[serde(rename = "selected_slot")]
+    pub selected_slot: SelectedSlot,
+    #[serde(rename = "visitor_tz")]
+    pub visitor_tz: String,
+    #[serde(
+        rename = "constraint",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub constraint: Option<ConstraintObject>,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(
+        rename = "checkout_lease_token",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub checkout_lease_token: Option<String>,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::booking::agent_api::BookingIntakeAnswer`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingIntakeAnswer {
+    #[serde(rename = "field_key")]
+    pub field_key: String,
+    #[serde(rename = "value")]
+    pub value: String,
+}
+
+/// `oneiron::booking::agent_api::BookingConfirmInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingConfirmInput {
+    #[serde(rename = "hold_token")]
+    pub hold_token: String,
+    #[serde(rename = "booker_email")]
+    pub booker_email: String,
+    #[serde(rename = "intake")]
+    pub intake: Vec<BookingIntakeAnswer>,
+    #[serde(rename = "session_ref")]
+    pub session_ref: String,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::booking::agent_api::BookingBookInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "stage", content = "input")]
+pub enum BookingBookInput {
+    #[serde(rename = "hold")]
+    Hold(BookingHoldInput),
+    #[serde(rename = "confirm")]
+    Confirm(BookingConfirmInput),
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingBookRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingBookRequest {
+    #[serde(rename = "book")]
+    Book {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingBookInput,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingRescheduleInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingRescheduleInput {
+    #[serde(rename = "reschedule_token")]
+    pub reschedule_token: String,
+    #[serde(rename = "selected_slot")]
+    pub selected_slot: SelectedSlot,
+    #[serde(rename = "visitor_tz")]
+    pub visitor_tz: String,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingRescheduleRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingRescheduleRequest {
+    #[serde(rename = "reschedule")]
+    Reschedule {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingRescheduleInput,
+    },
+}
+
+/// `oneiron::booking::agent_api::BookingCancelInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BookingCancelInput {
+    #[serde(rename = "cancel_token")]
+    pub cancel_token: String,
+    #[serde(rename = "idempotency_key")]
+    pub idempotency_key: String,
+}
+
+/// `oneiron::task_verb::sdk_calendar::BookingCancelRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "op")]
+#[serde(deny_unknown_fields)]
+pub enum BookingCancelRequest {
+    #[serde(rename = "cancel")]
+    Cancel {
+        #[serde(rename = "page_token")]
+        page_token: String,
+        #[serde(rename = "input")]
+        input: BookingCancelInput,
+    },
+}
+
 /// `oneiron::task_verb::sdk_calendar::BookingConstraintTurnWindow`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -34808,64 +35123,6 @@ pub struct GeneratedUiCard {
     pub actions: Vec<GeneratedUiActionDeclaration>,
     #[serde(rename = "$state")]
     pub state: std::collections::HashMap<String, SelfUiStateValue>,
-}
-
-/// `oneiron::booking::constraint::ConstraintWeekday`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
-pub enum ConstraintWeekday {
-    #[serde(rename = "monday")]
-    Monday,
-    #[serde(rename = "tuesday")]
-    Tuesday,
-    #[serde(rename = "wednesday")]
-    Wednesday,
-    #[serde(rename = "thursday")]
-    Thursday,
-    #[serde(rename = "friday")]
-    Friday,
-    #[serde(rename = "saturday")]
-    Saturday,
-    #[serde(rename = "sunday")]
-    Sunday,
-}
-
-/// `oneiron::booking::constraint::LocalMinuteWindow`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-pub struct LocalMinuteWindow {
-    #[serde(rename = "start_minute")]
-    pub start_minute: u16,
-    #[serde(rename = "end_minute")]
-    pub end_minute: u16,
-}
-
-/// `oneiron::booking::constraint::TimeRangeWire`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct TimeRangeWire {
-    #[serde(rename = "start")]
-    pub start: u64,
-    #[serde(rename = "end")]
-    pub end: u64,
-}
-
-/// `oneiron::booking::constraint::ConstraintObject`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct ConstraintObject {
-    #[serde(rename = "schema_version")]
-    pub schema_version: u16,
-    #[serde(rename = "weekdays", default, skip_serializing_if = "Option::is_none")]
-    pub weekdays: Option<Vec<ConstraintWeekday>>,
-    #[serde(
-        rename = "local_time_windows",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub local_time_windows: Option<Vec<LocalMinuteWindow>>,
-    #[serde(rename = "utc_window", default)]
-    pub utc_window: Option<TimeRangeWire>,
-    #[serde(rename = "allow_flex_pool")]
-    pub allow_flex_pool: bool,
 }
 
 /// `oneiron::task_verb::sdk_calendar::BookingConstraintHoldContext`.

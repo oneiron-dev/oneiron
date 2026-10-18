@@ -10330,6 +10330,62 @@
       }
     },
     {
+      "name": "vault.booking.availability",
+      "description": "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources.",
+      "input": "crate::task_verb::sdk::BookingAvailabilityRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.book",
+      "description": "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens.",
+      "input": "crate::task_verb::sdk::BookingBookRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.book\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.reschedule",
+      "description": "Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision.",
+      "input": "crate::task_verb::sdk::BookingRescheduleRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.reschedule\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.cancel",
+      "description": "Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision.",
+      "input": "crate::task_verb::sdk::BookingCancelRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.cancel\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.booking.constraint_turn",
       "description": "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking.",
       "input": "crate::task_verb::sdk::BookingConstraintTurnRequest",

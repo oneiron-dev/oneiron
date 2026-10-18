@@ -5558,6 +5558,34 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_booking_availability(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.availability")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.booking.availability", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_booking_book(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.book")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.booking.book", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_booking_reschedule(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.reschedule")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.booking.reschedule", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_booking_cancel(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.cancel")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.booking.cancel", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_booking_constraint_turn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.booking.constraint_turn")?;
         let output = py
