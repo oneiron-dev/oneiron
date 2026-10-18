@@ -367,32 +367,33 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/claim_materialization/tests/lifecycle_actor_regressions/timestamp_guards.rs` | test | s | — | — | Closing timestamps cannot precede the authored claim's occurred start |
 | `src/batch/deindex.rs` | src | m | 7 crate-vis | — | — |
 | `src/batch/edge_apply.rs` | src | s | 8 crate-vis | — | — |
-| `src/batch/export/archive_read.rs` | src | m | 4 crate-vis | — | Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the… |
+| `src/batch/export/archive_index.rs` | src | m | 56 crate-vis | — | FIX 3678 (rule 5): the whole-vault import's disk-backed row index |
+| `src/batch/export/archive_read.rs` | src | m | 5 crate-vis | — | Reads the whole-vault archive (OF-222) member by member from a seekable source (FIX 2766, rule 5): only the… |
 | `src/batch/export/archive_side_tables.rs` | src | L | 3 struct · 5 enum · 11 crate-vis | ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree, ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason | OF-222 (FIX 2768, FIX 3681): the side tables an archive carries beside the records they index, in the… |
 | `src/batch/export/archive_spool.rs` | src | s | 1 fn · 19 crate-vis | — | FIX 2766 (rule 5): the whole-vault archive is built through spool files and read member by member, so no… |
 | `src/batch/export/archive_types.rs` | src | s | 4 struct · 2 enum · 3 const · 8 crate-vis | ArchiveFile, ArchiveRecordFile, ArchiveRecordKind, ExportDiaryHold, ExportDiaryHoldReason, ExportDiaryRead | The whole-vault archive (OF-222): one ZIP holding `manifest.json`, one JSONL file per record kind under… |
 | `src/batch/export/bundle_tests.rs` | test | L | — | — | Source-folder exports and ordinary admission, with no replay/activation bypass |
 | `src/batch/export/bundle_types.rs` | src | s | 6 struct · 6 enum | AgentBundleOmission, BundleOmissionReason, ExportAgentBundle, ExportBundleOmission, ExportFileTree, ExportImportOmission, ExportImportRefusal, ExportSkillBundle +4 | Portable source files and typed bundle facets |
-| `src/batch/export/bundle_validation.rs` | src | m | 8 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
+| `src/batch/export/bundle_validation.rs` | src | m | 13 crate-vis | — | Validate source identities, facet/body agreement and explicit archive-only omissions |
 | `src/batch/export/credential_filter.rs` | src | m | 9 fn · 2 crate-vis | — | Credential filtering at memory serve and export serialization boundaries |
 | `src/batch/export/document_import.rs` | src | L | 6 fn · 3 crate-vis | — | Validating archive import through ordinary admission doors, never sync replay |
 | `src/batch/export/document_snapshot.rs` | src | m | 4 fn · 6 crate-vis | — | Snapshot enumeration for whole-vault export |
 | `src/batch/export/document_tests.rs` | test | m | — | — | Observable whole-vault export/import contracts |
 | `src/batch/export/document_types.rs` | src | m | 18 struct · 1 enum · 7 fn · 1 const · 1 crate-vis | ExportAdapterDescriptor, ExportDerivationEnvelope, ExportEdge, ExportEntity, ExportEpochFloor, ExportLedger, ExportPack, ExportPackSource +11 | The typed whole-vault document: what the archive's JSONL rows assemble into on import, and what the snapshot… |
-| `src/batch/export/document_validation.rs` | src | s | 1 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
-| `src/batch/export/embedding_setup.rs` | src | m | 5 struct · 4 fn · 9 crate-vis | EmbeddingSetupImport, EmbeddingSetupWithheld, PortableEmbeddingSpace, PortableEvidenceFloors, PortableSlotBindings | The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor… |
+| `src/batch/export/document_validation.rs` | src | m | 1 crate-vis | — | Import-time validation of the serializer's full document, not its claims |
+| `src/batch/export/embedding_setup.rs` | src | m | 5 struct · 4 fn · 11 crate-vis | EmbeddingSetupImport, EmbeddingSetupWithheld, PortableEmbeddingSpace, PortableEvidenceFloors, PortableSlotBindings | The vault's embedding setup in the logical whole-vault exports (OF-370): each declared space's descriptor… |
 | `src/batch/export/export_authority.rs` | src | m | 2 struct · 2 enum · 3 fn · 3 const · 6 crate-vis | ExportAuthorityManifest, VaultImportClassification, VaultImportMismatch, VaultImportReceipt | Export authority digests, import classification, and label validation |
 | `src/batch/export/export_diary.rs` | src | s | 1 const · 5 crate-vis | — | OF-490: a vault export is a read of agent diaries, made through the diary door's [`DiaryReadGate`] with the… |
 | `src/batch/export/export_egress.rs` | src | s | 13 fn · 1 crate-vis | — | Whole-vault manifest egress doors and the Vault export surface |
 | `src/batch/export/export_enumerate.rs` | src | s | 1 struct · 1 fn | WholeVaultExportRow | Snapshot enumeration for whole-vault exports, independent of type whitelists |
 | `src/batch/export/export_manifest.rs` | src | m | 6 struct · 35 fn · 2 const · 2 crate-vis | ExportDataShapeManifest, ExportDbManifestEntry, ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest, ExportSerializerManifest | Whole-vault export manifest artifact types and stanza impls |
-| `src/batch/export/expression_import.rs` | src | s | 8 crate-vis | — | Dependency scheduling for the owning expression-preference archive adapter |
+| `src/batch/export/expression_import.rs` | src | s | 5 crate-vis | — | Dependency scheduling for the owning expression-preference archive adapter |
 | `src/batch/export/expression_import_tests.rs` | test | m | — | — | Native writer fixtures for the Imported-only expression archive adapter |
 | `src/batch/export/foreign_stage/export_foreign_receipt.rs` | src | m | 3 struct · 3 enum · 3 fn · 4 const · 11 crate-vis | ForeignVaultImportSource, StagedVaultImport, VaultImportConfirmation, VaultImportFailure, VaultImportStageReceipt, VaultImportStageStatus | Sync-gated import receipt codec, key consts, and status types |
 | `src/batch/export/foreign_stage/export_foreign_stage.rs` | src | m | 2 fn · 7 crate-vis | — | Sync-gated foreign-import staging operations and test hooks |
 | `src/batch/export/foreign_stage/mod.rs` | src | s | 2 re-export | — | Sync-gated foreign-import staging submodule |
 | `src/batch/export/mod.rs` | src | s | 13 re-export · 8 crate-vis | — | — |
-| `src/batch/export/provenance_import.rs` | src | s | 11 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
+| `src/batch/export/provenance_import.rs` | src | m | 10 crate-vis | — | Ordered archive restore through MODEL and edge-provenance owning doors |
 | `src/batch/export/receipt_source_tests.rs` | test | m | — | — | Readable task trace sources are data, never local receipt authority |
 | `src/batch/export/receipt_sources.rs` | src | s | 3 enum · 2 fn · 6 crate-vis | ExportReceiptSource, ReceiptSourceOmission, ReceiptSourceOrigin | Actual cited pack receipts in an archive |
 | `src/batch/export/tests.rs` | test | L | — | — | — |
@@ -954,7 +955,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/storage/mod.rs` | src | s | 4 re-export · 13 crate-vis | — | Canonical code-run persistence rows and the executor's storage routing |
 | `src/code_run/storage/reader_folds.rs` | src | m | 18 crate-vis | — | A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where… |
 | `src/code_run/storage/reader_jobs.rs` | src | L | 2 struct · 1 enum · 11 fn · 28 crate-vis | ReaderJobs, SummaryMember, SummaryRead | One run's reader children (ARCH-0079 #reader-forks), where the run's rows are: base, or its off-record… |
-| `src/code_run/storage/records.rs` | src | L | 2 struct · 11 fn · 33 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
+| `src/code_run/storage/records.rs` | src | L | 2 struct · 11 fn · 34 crate-vis | CodeRunModelHealCount, CodeRunSecretLiftProposal | The code-run vault_meta row families: replay records, raw output, taint refs and heal counts |
 | `src/code_run/storage/replay_capsule.rs` | src | s | 1 fn · 10 crate-vis | — | The step replay capsule and contribution fork rows (FIX 3028): each capsule's metadata keyed by its attempt… |
 | `src/code_run/storage/routing.rs` | src | L | 33 crate-vis | — | Where one run's reads and writes land: the canonical vault or a bound off-record session |
 | `src/code_run/storage/speech_identity.rs` | src | s | 12 crate-vis | — | Deterministic conversation, turn and message ids derived from a run's identity |
@@ -3216,7 +3217,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/json_format.rs` | src | s | 2 crate-vis | — | JSON row and section shaping |
 | `src/serialize/l2_prefix.rs` | src | s | 1 crate-vis | — | Stable L2 prefix framing shared by every context-pack format |
 | `src/serialize/markdown_plaintext_format.rs` | src | s | 3 crate-vis | — | Markdown table and compact plaintext writers, plus the shared value-to-text rendering they use |
-| `src/serialize/mod.rs` | src | s | 5 re-export · 8 crate-vis | — | Context-pack serialization |
+| `src/serialize/mod.rs` | src | s | 5 re-export · 9 crate-vis | — | Context-pack serialization |
 | `src/serialize/okf_bundle.rs` | src | m | 2 crate-vis | — | "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1 bundle for importing into other tools |
 | `src/serialize/pack_archive.rs` | src | s | 1 struct · 3 crate-vis | ExportPackInstance | Typed runtime-pack archive bodies: identity is data, payloads always pass nulling |
 | `src/serialize/pack_entry.rs` | src | m | 1 struct · 4 fn · 4 const · 7 crate-vis | SerializeConfig | Entry points and per-format dispatch for context-pack serialization |
@@ -3229,7 +3230,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/serialize/types.rs` | src | s | 4 crate-vis | — | Cross-cutting types shared by every `serialize` submodule |
 | `src/serialize/value_json.rs` | src | s | 2 fn · 1 crate-vis | — | The opaque MessagePack value a record carries, to and from the JSON public APIs read and write |
 | `src/serialize/vault_archive.rs` | src | s | 1 crate-vis | — | Writes the whole-vault archive (OF-222) from the document's spools (FIX 2766): the manifest first, then each… |
-| `src/serialize/vault_bundles.rs` | src | s | 3 crate-vis | — | Build portable facets after every native body has passed credential nulling |
+| `src/serialize/vault_bundles.rs` | src | s | 4 crate-vis | — | Build portable facets after every native body has passed credential nulling |
 | `src/serialize/vault_document.rs` | src | m | 12 crate-vis | — | Whole-vault export (OF-222), written row by row (FIX 2766, rule 5): each snapshot row becomes its typed… |
 | `src/serialize/yaml_format.rs` | src | s | 2 crate-vis | — | YAML section writer and YAML scalar/key quoting rules |
 | `src/session_lifecycle.rs` | src | L | 7 struct · 3 enum · 13 fn · 5 crate-vis | EndedSession, OpenSession, SessionActivityPeriod, SessionClosePredicate, SessionEndReason, SessionEndWake, SessionHintTimestamp, SessionKey +2 | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… |
@@ -3459,6 +3460,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/slim/outbound_wait.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | OutboundWaitHost | A scoped live model wait over the durable step journal |
 | `src/slim/tests.rs` | test | m | — | — | — |
 | `src/speculative.rs` | src | m | 3 struct · 2 enum · 5 fn · 2 const · 1 crate-vis | SpeculativeFinal, SpeculativeFireDecision, SpeculativePartial, SpeculativeSession, SpeculativeSessionConfig | EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7) |
+| `src/store/archive_scratch.rs` | src | s | 3 crate-vis | — | FIX 3678 (rule 5): the scratch environment a whole-vault import keeps its row index in |
 | `src/store/body_store.rs` | src | m | 26 crate-vis | — | File-backed result bodies beside `data.mdb` (OF-597, OF-190 B++) |
 | `src/store/channel_identity_receipts.rs` | src | s | 2 struct · 4 fn · 2 crate-vis | ChannelIdentityLifecycleReceiptId, ChannelIdentityLifecycleReceiptRecord | Append-only channel-identity lifecycle receipt ledger |
 | `src/store/commitment_due.rs` | src | m | 15 crate-vis | — | The commitment due index (CMT-2, ONE-1539) |
@@ -3484,7 +3486,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
-| `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 13 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 13 re-export · 14 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 18 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
@@ -3516,7 +3518,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/retrieval_telemetry/state_tests.rs` | test | m | — | — | — |
 | `src/store/retrieval_telemetry/turn_index.rs` | src | s | 3 fn · 4 crate-vis | — | Ordered by-turn projection of independent retrieval runs |
 | `src/store/retrieval_telemetry/types.rs` | src | m | 13 struct · 2 enum · 5 fn · 1 type · 1 re-export · 11 crate-vis | RetrievalAction, RetrievalBlendTuningConfig, RetrievalBlendWeightDataWindow, RetrievalBlendWeightTableEntry, RetrievalEndOutcome, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRewardEvidence +7 | Retrieval-telemetry record, trace, signal, and blend-weight types |
-| `src/store/root_directory.rs` | src | m | 1 struct · 5 fn · 10 crate-vis | SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
+| `src/store/root_directory.rs` | src | m | 1 struct · 5 fn · 11 crate-vis | SharedPath | Descriptor-bound directory identity shared by store opens and writer leases |
 | `src/store/send_receipt_audit.rs` | src | s | 1 crate-vis | — | Append-only send receipt audit storage |
 | `src/store/short_id_alias.rs` | src | m | 1 enum · 14 crate-vis | ShortIdAliasTarget | Legacy short-id alias rows: resolve/insert/retarget, the short-id counter key, and the short-id prefix… |
 | `src/store/structural_kind_registry/mod.rs` | src | s | 2 crate-vis | — | Vault-scoped dynamic entity-type/kind registry: registration, load and rebuild, and zone validation |
