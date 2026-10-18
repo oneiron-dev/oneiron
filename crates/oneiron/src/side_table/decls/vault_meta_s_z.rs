@@ -443,6 +443,9 @@ side_tables! {
     SKILL_OPTIMIZE_JUDGE_ASK: VaultMeta b"skill_optimize:judge_ask:v1:" LegacyJson;
     /// One human pick over a delivered ask, the label anchor (JSON). Key: bytes32 (ask id).
     SKILL_OPTIMIZE_JUDGE_LABEL: VaultMeta b"skill_optimize:judge_label:v1:" LegacyJson;
+    /// The judge rubric the label anchor was last reconciled with: its text digest and the
+    /// `judge` revision read (MessagePack named map). Key: ().
+    SKILL_OPTIMIZE_JUDGE_RUBRIC: VaultMeta b"skill_optimize:judge_rubric:v1" Named;
     /// One Coach training offer snapshot for a seat (OF-577), written once. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER: VaultMeta b"skill_optimize:offer:v1:" Named;
     /// The vault owner's one answer to a training offer, with any switch or train intent. Key:
@@ -570,6 +573,12 @@ side_tables! {
     TASK_REPORT_JOURNAL: VaultMeta b"tasks.report.journal.v1/" Named;
     /// Task symbol-overlap declaration. Key: id16.
     TASK_SYMBOL_LEASE: VaultMeta b"tasks.symbol_lease.v1/" LegacyJson;
+    /// One pending training offer asked of one owner (OF-577): the question TURN and MESSAGE ids
+    /// and time reserved before the witness, the owner's conversation, and the ask group once
+    /// admitted. Key: id16 (offer) + id16 (owner) + offer digest (64 hex).
+    TASK_TRAINING_OFFER_ASK: VaultMeta b"tasks.training_offer_ask.v1/" Named;
+    /// The training offer ask one ask group carries, by its reservation key. Key: id16 (ask group).
+    TASK_TRAINING_OFFER_ASK_GROUP: VaultMeta b"tasks.training_offer_ask_group.v1/" Named;
     /// Registered external ask wait. Key: id16 + bytes32.
     TASK_ASK_WAIT: VaultMeta b"tasks.wait/" Named;
     /// Fan-out launch held for, or launched past, the approval mode: its frozen payload, plan,

@@ -95,6 +95,10 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's slip issuer, which signs the leader's subproject spawn
     /// (OF-389). Host configuration; no guest call reaches it.
     pub(super) slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
+    /// The skill bodies the host put in the run's task (FIX 3028), which the
+    /// first step's replay capsule tags. Host configuration; no guest call
+    /// reaches it.
+    pub(super) replay_exposures: Vec<crate::code_run::TaskExposure>,
     /// The model provider the host's ladder says answered the run's last
     /// turn, whose program is the one running (OF-560). Host-internal: only
     /// [`Self::observe_model_provider`] sets it, from the served receipt,
@@ -223,6 +227,7 @@ impl<'a> HostSelfDispatcher<'a> {
             reader_child: None,
             planner: None,
             slip_issuer: None,
+            replay_exposures: Vec::new(),
             model_provider: RefCell::new(None),
             fold_log: fold_verbs::FoldLog::Site,
         })
@@ -242,6 +247,34 @@ impl<'a> HostSelfDispatcher<'a> {
     ) -> Self {
         self.agent_verbs = Some(door);
         self
+    }
+
+    /// The skill bodies the host put in the run's task, each where it went
+    /// (FIX 3028): the run's first step is captured with them tagged, for a
+    /// later contribution check.
+    #[must_use]
+    pub fn with_replay_exposures(mut self, exposures: Vec<crate::code_run::TaskExposure>) -> Self {
+        self.replay_exposures = exposures;
+        self
+    }
+
+    /// The leased attempt this run serves, its lease generation and the
+    /// exposures its task holds, for the run's step replay capsule; `None`
+    /// for a run no attempt lease binds.
+    pub(crate) fn replay_capture(
+        &self,
+    ) -> Option<(
+        crate::attempt_queue::AttemptId,
+        u32,
+        &[crate::code_run::TaskExposure],
+    )> {
+        self.agent_lease.as_ref().map(|lease| {
+            (
+                lease.attempt,
+                lease.generation,
+                self.replay_exposures.as_slice(),
+            )
+        })
     }
 
     /// Asks the bound door to admit one call the run serves itself. A run

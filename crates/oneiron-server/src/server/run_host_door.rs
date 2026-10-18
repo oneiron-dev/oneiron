@@ -82,7 +82,8 @@ pub(super) struct RunHostDoor {
     actor: WriteActor,
     /// The server's runtime: each row runs on one of its blocking threads.
     runtime: tokio::runtime::Handle,
-    /// The run's browser and desktop, removed when the door drops.
+    /// The run's browser and desktop seats: each guest outlives the door,
+    /// for the run's next door, and ends with the run or once idle.
     guests: RunGuests,
     /// The run's own board STREAM connection, dropped with the door.
     board: StreamConnectionId,
@@ -407,9 +408,14 @@ fn host_row(
                 .and_then(|text| server.embed_query(&text).ok());
             encode(memory.report_with_embedding(request, vector.as_deref())?)
         }
-        AgentVerb::VaultRecall => {
-            encode(server.recall(memory, principal, class, decode(input)?)?)
-        }
+        // Its query embeds bill the payer the run's line binds (FIX 805).
+        AgentVerb::VaultRecall => encode(server.recall(
+            memory,
+            principal,
+            class,
+            decode(input)?,
+            line.and_then(RunAdmission::payer),
+        )?),
         AgentVerb::AiVerdict => {
             let request: AiVerdictRequest = decode(input)?;
             let held = HeldImage::in_task(request.image.as_deref());
