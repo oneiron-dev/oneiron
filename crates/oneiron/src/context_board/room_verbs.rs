@@ -9,6 +9,8 @@ use crate::memory::{ClaimListFilter, Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
 
+mod live_audience;
+
 impl Memory<'_> {
     /// The room's roster (ARCH-0067 §8): the channel Conversation's members,
     /// each with the worlds that member reads by default. The engine reads
@@ -649,10 +651,13 @@ pub(crate) fn room_reader_in(
 /// The ceiling `room` puts on `caller`'s reads as `txn` reads the room
 /// (ARCH-0067 §8): `room_scope` over the roster in this snapshot, as its
 /// world ceiling and its clearance, that roster as the audience, and every
-/// other member's read key. One snapshot builds all of it, the same one that
-/// serves the row it is checked against. `None` when `caller` does not read
-/// the room here ([`room_reader_in`]); an agent on a Ready join reads it
-/// without joining the roster.
+/// other member's read key. The room's live speakers (FIX 1388/1389) join
+/// the audience by their entry refs and meet an unknown's clearance; they
+/// add no world, peer read or standing, and an incomplete live call holds
+/// the build. One snapshot builds all of it, the same one that serves the
+/// row it is checked against. `None` when `caller` does not read the room
+/// here ([`room_reader_in`]); an agent on a Ready join reads it without
+/// joining the roster.
 pub(crate) fn room_ceiling_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -665,6 +670,7 @@ pub(crate) fn room_ceiling_in(
     if !room_reader_in(vault, txn, room, &members, caller)? {
         return Ok(None);
     }
+    let live = vault.room_live_speaker_entries_in(txn, room)?;
     let worlds = reading_defaults_in(vault, txn, &members)?;
     let clearances = clearances_in(vault, txn, &members)?;
     let roster: Vec<_> = members
@@ -682,7 +688,10 @@ pub(crate) fn room_ceiling_in(
     let terms = RoomTerms {
         worlds: room_worlds(&roster)?,
         facets: room_facets_axis_in(vault, txn, room)?,
-        clearance: room_clearance(&roster),
+        clearance: crate::claim::meet_clearance(
+            room_clearance(&roster).as_ref(),
+            vault.live_speaker_clearance_in(txn, &live)?.as_ref(),
+        ),
         p7: true,
     };
     Ok(Some(RoomTurnCeiling {
@@ -690,7 +699,7 @@ pub(crate) fn room_ceiling_in(
         caller,
         terms: crate::claim::TurnTerms::new(terms),
         peers: peer_read_keys_in(vault, txn, caller, &members)?,
-        roster: members,
+        roster: live_audience::with_entries(members, &live),
         branch: None,
     }))
 }

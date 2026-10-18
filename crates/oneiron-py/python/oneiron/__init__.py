@@ -169,14 +169,23 @@ class Oneiron:
         return cls(_translate(lambda: _NativeClient.connect(url, key)))
 
     @classmethod
-    def pair(cls, link: str) -> tuple["Oneiron", str]:
+    def pair(cls, link: str) -> dict[str, Any]:
         """Redeems a one-use pairing link and connects with its credential.
 
-        Returns the connected handle and the credential. Store the credential
-        as ``ONEIRON_KEY``; the link cannot be redeemed twice.
+        Returns ``{"memory", "credential", "pin"}``: the connected handle, the
+        credential, and the checkpoint pin the link named (``None`` when the
+        vault has no attested checkpoint). Store the credential as
+        ``ONEIRON_KEY``; the link cannot be redeemed twice. The pin is already
+        checked against the link and is stored nowhere: a machine that will
+        run a local replica keeps it beside the server origin and the
+        credential, and supplies it when that replica starts.
         """
-        url, credential = _translate(lambda: _NativeClient.pair(link))
-        return cls.connect(url, credential), credential
+        paired = json.loads(_translate(lambda: _NativeClient.pair(link)))
+        return {
+            "memory": cls.connect(paired["url"], paired["credential"]),
+            "credential": paired["credential"],
+            "pin": paired["pin"],
+        }
 
     def as_actor(self, actor_key: str) -> "Oneiron":
         """Returns a NEW handle bound to another actor; this one is unchanged.
@@ -1718,6 +1727,12 @@ class Oneiron:
         def lifecycle(self, request: dict[str, Any]) -> dict[str, Any]:
             """Where one NOTE stands (active, sealed, archived or tombstoned) and its seal."""
             return json.loads(_translate(lambda: self._client.vault_notes_lifecycle(json.dumps(request, allow_nan=False))))
+        def set_overrides(self, request: dict[str, Any]) -> dict[str, Any]:
+            """Sets the defaults one NOTE overrides over its kind's; empty overrides clear them."""
+            return json.loads(_translate(lambda: self._client.vault_notes_set_overrides(json.dumps(request, allow_nan=False))))
+        def defaults(self, request: dict[str, Any]) -> dict[str, Any]:
+            """One NOTE's overrides and the defaults its gates read after them."""
+            return json.loads(_translate(lambda: self._client.vault_notes_defaults(json.dumps(request, allow_nan=False))))
     class _TasksVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

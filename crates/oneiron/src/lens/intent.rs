@@ -74,6 +74,31 @@ impl Vault {
             .transpose()
     }
 
+    /// [`Self::get_lens_intent`] in the caller's `txn`, decoded as strictly.
+    /// The caller admits `lens_id` first.
+    pub(crate) fn lens_intent_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        lens_id: &EntityId,
+    ) -> Result<Option<LensIntentRecord>> {
+        INTENTS
+            .get(&self.store, txn, lens_id)
+            .map_err(|error| {
+                if error.kind() == crate::error::ErrorKind::SideTableRow {
+                    Error::CorruptedIndex("lens intent record")
+                } else {
+                    error
+                }
+            })?
+            .map(|intent| {
+                intent
+                    .validate()
+                    .map_err(|_| Error::CorruptedIndex("lens intent record"))?;
+                Ok(intent)
+            })
+            .transpose()
+    }
+
     /// On a shell/contract version mismatch, re-run the vault's intent through
     /// the existing fingerprint gate. `None` means the current body needs no work;
     /// all failures carry the unchanged last-good revision for mounting.

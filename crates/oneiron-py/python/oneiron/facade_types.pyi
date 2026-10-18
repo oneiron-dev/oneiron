@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 316 facade rows, 1266 declarations.
-Inputs: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 273 of 316 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 72; unread shapes: 0.
+Census: 318 facade rows, 1280 declarations.
+Inputs: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 275 of 318 fully typed, 43 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 73; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -514,7 +514,7 @@ class ShapePlanSummary(TypedDict):
     ceremonies: int
     no_door: int
 ShapeReachVerdict = Literal["can", "asks"]
-ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "verdict": ShapeReachVerdict})
+ShapeReachFact = TypedDict("ShapeReachFact", {"actor": str, "actor_name": NotRequired[str | None], "verb": str, "channel": str, "sender": str, "identity": str, "class": NotRequired[str | None], "audience": NotRequired[list[str]], "audience_names": NotRequired[list[str]], "verdict": ShapeReachVerdict})
 class ShapeReach(TypedDict):
     facts: list[ShapeReachFact]
 class ShapePlanReach(TypedDict):
@@ -2508,6 +2508,10 @@ class GuestRevokeDisclosure(TypedDict):
     copied_bytes_recallable: NotRecallable
     recipient_copy_state: GuestCopyState
     deletion_request_status: GuestDeletionRequestStatus
+class GuestRevokeCourtesyTargetView(TypedDict):
+    pact: str
+    peer_vault_id: str
+    epoch_cutoff: int
 class GuestRevokeResponse(TypedDict):
     grant_ref: EntityId
     guest_ref: EntityId
@@ -2516,6 +2520,7 @@ class GuestRevokeResponse(TypedDict):
     revoked_slip_refs: NotRequired[list[str]]
     pact_standing: GuestPactStanding
     disclosure: GuestRevokeDisclosure
+    courtesy_targets: NotRequired[list[GuestRevokeCourtesyTargetView]]
 class GuestSlipMintRequest(TypedDict):
     grant_ref: EntityId
     holder_key: str
@@ -6608,6 +6613,7 @@ class DeckExportView(TypedDict):
     authoritative: bool
     noop: bool
     changed_parts: list[str]
+    effects: list[str]
     record: NotRequired[OfficeBodyExportRecord | None]
     proposed: NotRequired[PendingProposalView | None]
 class DeckGateRequest(TypedDict):
@@ -6774,6 +6780,27 @@ NoteLifecycleStatus = Literal["active", "sealed", "archived", "tombstoned"]
 class NoteLifecycleView(TypedDict):
     status: NoteLifecycleStatus
     seal: NotRequired[NoteSeal | None]
+ExtractionDefault = Literal["allowed", "after_seal", "private_strategy_only", "disabled"]
+ContextDefault = Literal["owner_only", "relationship_scoped", "vault_readable", "explicit_only"]
+RetentionDefault = Literal["durable", "session_sealed", "archive_after_days"]
+class NoteOverrides(TypedDict):
+    extraction: NotRequired[ExtractionDefault | None]
+    context: NotRequired[ContextDefault | None]
+    retention: NotRequired[RetentionDefault | None]
+    archive_after_days: NotRequired[int | None]
+class SetNoteOverridesRequest(TypedDict):
+    note_ref: str
+    overrides: NotRequired[NoteOverrides]
+class NoteKindDescriptor(TypedDict):
+    pack: str
+    kind: str
+    extraction: ExtractionDefault
+    context: ContextDefault
+    retention: RetentionDefault
+    archive_after_days: NotRequired[int | None]
+class NoteDefaultsView(TypedDict):
+    overrides: NoteOverrides
+    defaults: NoteKindDescriptor
 class GeneratedUiStatePatchAdd(TypedDict):
     op: Literal["add"]
     path: str
@@ -6792,3 +6819,38 @@ class GeneratedUiActionEvent(TypedDict):
     actionId: str
     patch: NotRequired[list[GeneratedUiStatePatch]]
     occurredAt: int
+class MessageResultSource(TypedDict):
+    run_id: EntityId
+    occurrence: EntityId
+    path: str
+ResultFacet = Literal["slice", "search", "query", "chunks"]
+class MessageResultAttachment(TypedDict):
+    source: MessageResultSource
+    handle: str
+    bytes: int
+    kind: str
+    lines: int
+    complete: bool
+    preview: str
+    preview_truncated: bool
+    more: list[ResultFacet]
+class TranscriptMessage(TypedDict):
+    id: str
+    short_id: NotRequired[str | None]
+    role: str
+    message_type: NotRequired[str | None]
+    occurred: int
+    text: str
+    metadata: NotRequired[Any | None]
+    result: NotRequired[MessageResultAttachment | None]
+    incomplete: bool
+    generating: bool
+class TranscriptTurn(TypedDict):
+    id: str
+    occurred_start: int
+    occurred_end: int
+    messages: list[TranscriptMessage]
+class TranscriptPage(TypedDict):
+    conversation: str
+    turns: list[TranscriptTurn]
+    next: NotRequired[str | None]

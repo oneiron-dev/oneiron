@@ -18,6 +18,7 @@ mod convert;
 mod dtos;
 mod input_error;
 mod numeric;
+mod pairing;
 #[cfg(test)]
 mod tests;
 mod verbs_claims;

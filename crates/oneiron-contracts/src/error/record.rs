@@ -11,6 +11,26 @@ use crate::room_join::RoomJoinHold;
 
 use super::ErrorKind;
 
+/// The voice call that holds a room's assembly: live in `room`, with its
+/// roster missing or a speaker it must place not entered yet. `call` is the
+/// host's live-call token, not a roster or session ref.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RoomLiveSpeakersHold {
+    pub room: EntityId,
+    pub call: EntityId,
+}
+
+impl std::fmt::Display for RoomLiveSpeakersHold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "room {} waits on live voice call {}: its roster or a speaker's entry is not recorded yet",
+            self.room.to_hex(),
+            self.call.to_hex()
+        )
+    }
+}
+
 /// Record-domain error.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -82,6 +102,13 @@ pub enum RecordError {
     /// refusal's typed parts, as JSON.
     #[error("the write's room join is refused: {refusal}")]
     RoomJoinRefused { refusal: String },
+    /// A voice call live in the room has no stored roster, or a speaker it
+    /// must place has no entry fact yet (FIX 1388/1389 C2). The assembly
+    /// re-read both and still found the call incomplete, so it reads
+    /// nothing rather than read as if no one were speaking. Nothing was
+    /// written. Boxed: the hold names the room and the call.
+    #[error("{0}")]
+    RoomLiveSpeakersIncomplete(Box<RoomLiveSpeakersHold>),
 
     #[error("DAG parent is outside the conversation")]
     DagParentOutsideConversation,
@@ -299,7 +326,9 @@ impl RecordError {
             Self::ProjectHistoryOverBudget { .. } => ErrorKind::ProjectHistoryOverBudget,
             Self::ProjectAuthorityUnresolved { .. } => ErrorKind::ProjectAuthorityUnresolved,
             Self::InvalidConversationBody(_) => ErrorKind::InvalidConversationBody,
-            Self::ConversationState(_) | Self::RoomJoinHeld(_) => ErrorKind::ConversationState,
+            Self::ConversationState(_)
+            | Self::RoomJoinHeld(_)
+            | Self::RoomLiveSpeakersIncomplete(_) => ErrorKind::ConversationState,
             Self::ConversationDenied
             | Self::LeaderChatRule { .. }
             | Self::RoomSpeakerIneligible { .. }

@@ -46,6 +46,7 @@ mod dto;
 mod embedded_engine;
 mod error;
 mod facade_types_generated;
+mod pairing;
 
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
@@ -66,6 +67,11 @@ pub use embedded_engine::{
 };
 pub use error::OneironError;
 pub use facade_types_generated::*;
+pub use pairing::{
+    CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy,
+    CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite,
+    CheckpointPinTier,
+};
 
 use std::sync::Arc;
 
@@ -246,11 +252,15 @@ impl Oneiron {
 }
 
 /// Redeems a one-use pairing link and returns the origin and credential
-/// `connect` takes.
+/// `connect` takes, with the checkpoint pin the link named, if any.
 #[uniffi::export]
 pub fn pair(link: String) -> Result<Paired, OneironError> {
-    let (url, credential) = oneiron_remote::OneironClient::pair(&link)?;
-    Ok(Paired { url, credential })
+    let (url, credential, pin) = oneiron_remote::OneironClient::pair_pinned(&link)?;
+    Ok(Paired {
+        url,
+        credential,
+        pin: pin.as_ref().map(CheckpointPin::from),
+    })
 }
 
 include!("facade_generated.rs");

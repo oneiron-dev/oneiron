@@ -1,5 +1,6 @@
-//! `/v1/owner/guests/revoke`: the owner withdraws one ask guest's access at
-//! this host (OF-232), behind the same owner door as every other owner route.
+//! `/v1/owner/guests/revoke`: the owner withdraws one guest's access (an ask
+//! guest's or a Connect peer's) at this host (OF-232), behind the same owner
+//! door as every other owner route.
 //! The engine deletes the guest's grant, disconnects each live pact it still
 //! governs, signed with the host's slip issuer (`api/pairing.rs`'s), and
 //! keeps the withdrawal, so a repeat answers the first revoke with

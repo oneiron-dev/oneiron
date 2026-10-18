@@ -1,8 +1,9 @@
 //! Transaction-owner handoff for Dreamer VAD approvals and digest invalidation.
 //!
 //! `batch_in` receives a bare heed transaction, not its owner. Keep its pending
-//! work scoped to that exact transaction and vault on the synchronous caller's
-//! thread. The owner drains it before commit and runs it only after commit.
+//! work scoped to that exact transaction and the vault's store on the
+//! synchronous caller's thread, so a helper that holds only the store joins it
+//! too. The owner drains it before commit and runs it only after commit.
 //! Dropping the scope on error or unwind discards all work. Internal raw-transaction
 //! owners retain their existing explicit postcommit hooks.
 
@@ -12,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 
 use super::BatchOp;
+use crate::store::Store;
 use crate::{EntityId, Result, Vault};
 
 type TransactionKey = (usize, usize);
@@ -28,6 +30,9 @@ pub(crate) struct PostcommitWork {
     /// Room joins this transaction filed, by their bare join refs, pushed to
     /// the live windows of their rooms or threads only after it commits.
     pub(crate) room_joins: BTreeSet<String>,
+    /// Windows a WORLD delete staged its pads' `pt:` tombstones in, published
+    /// only after the transaction commits (FIX 3334).
+    pub(crate) pad_windows: BTreeSet<String>,
 }
 
 thread_local! {
@@ -36,9 +41,13 @@ thread_local! {
 }
 
 fn transaction_key(vault: &Vault, txn: &RwTxn<'_>) -> TransactionKey {
+    store_transaction_key(&vault.store, txn)
+}
+
+fn store_transaction_key(store: &Store, txn: &RwTxn<'_>) -> TransactionKey {
     // Identity only: neither address is dereferenced or retained past the scope.
     (
-        std::ptr::from_ref(vault) as usize,
+        std::ptr::from_ref(store) as usize,
         std::ptr::from_ref(txn) as usize,
     )
 }
@@ -125,6 +134,18 @@ pub(crate) fn queue_room_join(vault: &Vault, txn: &RwTxn<'_>, join_ref: &str) {
     PENDING_VAD.with(|pending| {
         if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
             queued.room_joins.insert(join_ref.to_owned());
+        }
+    });
+}
+
+/// Mark a window whose `pt:` pad tombstones this transaction staged, for the
+/// owner's post-commit publication (FIX 3334). A rolled-back scope drops it, so
+/// no window publishes a tombstone that did not land.
+pub(crate) fn queue_pad_tombstone_window(store: &Store, txn: &RwTxn<'_>, window: String) {
+    let key = store_transaction_key(store, txn);
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&key) {
+            queued.pad_windows.insert(window);
         }
     });
 }

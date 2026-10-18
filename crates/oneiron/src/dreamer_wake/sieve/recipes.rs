@@ -264,7 +264,10 @@ fn rung_evidence_in_txn(
     if digest != span.source_digest {
         return Ok(None);
     }
-    let Some(quote) = text.get(span.start as usize..span.end as usize) else {
+    let (Ok(start), Ok(end)) = (usize::try_from(span.start), usize::try_from(span.end)) else {
+        return Ok(None);
+    };
+    let Some(quote) = text.get(start..end) else {
         return Ok(None);
     };
     let actor = crate::WriteActor::new(
@@ -299,9 +302,11 @@ fn rung_evidence_in_txn(
         ids.extend(vault.lookup_identity_key_in_txn(txn, kind, quote)?);
     }
     if let super::SpanOrigin::SavedTag { envelope, index } = span.origin {
-        if let Some(tags) = crate::tagging::tag_set_in_txn(&vault.store, txn, &span.turn)?
+        if let Some(tags) = crate::tagging::readable_view_in_txn(&vault.store, txn, &span.turn)?
             && super::read::envelope_digest(&tags.envelope) == envelope
-            && let Some(mention) = tags.mentions.get(index as usize)
+            && let Some(mention) = usize::try_from(index)
+                .ok()
+                .and_then(|index| tags.mentions.get(index))
         {
             ids.extend(mention.link.entities());
         }

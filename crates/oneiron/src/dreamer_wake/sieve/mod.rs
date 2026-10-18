@@ -164,6 +164,10 @@ enum Read {
     Whole,
     /// The pass's text bound stopped it: it reads on in the next pass.
     Cut,
+    /// A MESSAGE its saved tags were read from is away from this replica (a
+    /// window demoted back to thin, OF-534): it was not read, and keeps its
+    /// reading, its spans, its continuation and the read it is owed.
+    Deferred,
 }
 
 /// Where a reading took its names from.
@@ -190,7 +194,7 @@ pub enum SpanOrigin {
     Rule { rules: u32, class: RuleClass },
     /// The turn's saved tag set: the mention at `index`, under the tag set's
     /// envelope as BLAKE3 `envelope`. The label and links stay in the tag set.
-    SavedTag { envelope: [u8; 32], index: u32 },
+    SavedTag { envelope: [u8; 32], index: u64 },
 }
 
 /// Where a span's confidence falls on the policy row's band.
@@ -222,8 +226,9 @@ pub struct SieveSpan {
     pub turn: EntityId,
     /// The MESSAGE whose text the offsets index, or the TURN for body text.
     pub source: EntityId,
-    pub start: u32,
-    pub end: u32,
+    /// Byte offsets into that text, whole at any length (Rule 5).
+    pub start: u64,
+    pub end: u64,
     pub kind: SpanKind,
     /// A model-confirmed existing entity; unresolved spans remain topics.
     pub entity: Option<EntityId>,
@@ -435,18 +440,34 @@ pub(crate) fn sieve_pass_in_txn(
 }
 
 /// The first `limit` turns of a table keyed by TURN id, and one more if
-/// there is one, so a pass that takes `limit` knows work is left.
+/// there is one, so a pass that takes `limit` knows work is left. A turn
+/// whose tagged MESSAGE is away from this replica is passed over before the
+/// batch fills: it keeps its row, and never holds back the turns behind it
+/// (OF-534).
 fn first_keys<V: 'static, C: side_table::SideCodec<V> + 'static>(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     table: &SideTable<EntityId, V, C>,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
-    table
-        .iter_from(store, txn, &[])?
-        .take(limit.saturating_add(1))
-        .map(|row| row.map(|(turn, _)| turn))
-        .collect()
+    let mut keys = Vec::new();
+    for row in table.iter_from(store, txn, &[])? {
+        if keys.len() > limit {
+            break;
+        }
+        let (turn, _) = row?;
+        if !crate::tagging::tagged_messages_absent_in_txn(store, txn, &turn)? {
+            keys.push(turn);
+        }
+    }
+    Ok(keys)
+}
+
+/// Keeps a turn a read deferred owed its read: the owed list's selection
+/// passes over it while its tagged MESSAGE is away, and reads it as any
+/// owed turn once a promotion brings the row back (OF-534).
+fn owe_deferred_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, turn: &EntityId) -> Result<()> {
+    OWED.put(store, txn, turn, &())
 }
 
 /// Whether the sieve reads this timeline row: a live TURN the Dreamer may
@@ -527,8 +548,12 @@ impl Reader {
             *left -= 1;
             // A listed turn is admitted as the scans admit it: a turn the
             // live sieve does not read (imported, or a role GATE-10 keeps
-            // out) keeps no spans here.
-            let read = if !sieved_turn_in_txn(vault, txn, turn)? {
+            // out) keeps no spans here. A turn whose tagged MESSAGE is away
+            // waits first, before any of its rows or its owed read can go.
+            let away = crate::tagging::tagged_messages_absent_in_txn(&vault.store, txn, turn)?;
+            let read = if away {
+                Read::Deferred
+            } else if !sieved_turn_in_txn(vault, txn, turn)? {
                 pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;
                 Read::Gone
             } else if continues {
@@ -536,7 +561,7 @@ impl Reader {
             } else {
                 self.read_in_txn(vault, txn, turn, pass)?
             };
-            if !continues {
+            if !continues && read != Read::Deferred {
                 OWED.delete(&vault.store, txn, turn)?;
             }
             // A read the text bound cut goes on first in the next pass.
@@ -584,9 +609,11 @@ impl Reader {
                 continue;
             }
             // A turn that reads gone has nothing to hold its place; it costs
-            // the budget nothing, so it can never keep a pass coming back.
+            // the budget nothing, so it can never keep a pass coming back. A
+            // deferred one costs nothing either, and waits owed.
             match self.read_in_txn(vault, txn, id, pass)? {
                 Read::Gone => {}
+                Read::Deferred => owe_deferred_in_txn(&vault.store, txn, id)?,
                 Read::Whole => read += 1,
                 Read::Cut => {
                     pass.more = true;
@@ -635,10 +662,15 @@ impl Reader {
             {
                 continue;
             }
-            read += 1;
-            if self.read_in_txn(vault, txn, &entry.id, pass)? == Read::Cut {
-                pass.more = true;
-                break;
+            match self.read_in_txn(vault, txn, &entry.id, pass)? {
+                // The cursor passes a deferred turn, which waits owed.
+                Read::Deferred => owe_deferred_in_txn(&vault.store, txn, &entry.id)?,
+                Read::Cut => {
+                    read += 1;
+                    pass.more = true;
+                    break;
+                }
+                Read::Gone | Read::Whole => read += 1,
             }
         }
         pass.more |= entries.len() == scan && last == entries.last().copied();
@@ -699,9 +731,12 @@ impl Reader {
             }
             if sieved_turn_in_txn(vault, txn, turn)? {
                 read += 1;
-                // A cut read goes on first in the next pass.
-                if self.read_in_txn(vault, txn, turn, pass)? == Read::Cut {
-                    pass.more = true;
+                match self.read_in_txn(vault, txn, turn, pass)? {
+                    // A cut read goes on first in the next pass.
+                    Read::Cut => pass.more = true,
+                    // A deferred one keeps its wait, and waits owed too.
+                    Read::Deferred => owe_deferred_in_txn(&vault.store, txn, turn)?,
+                    Read::Gone | Read::Whole => {}
                 }
             } else {
                 pass.spans_retired += retire_in_txn(&vault.store, txn, turn)?;

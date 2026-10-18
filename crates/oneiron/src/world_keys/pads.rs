@@ -4,8 +4,9 @@
 //! The signed `WorldKeyWraps` records are immutable, so no wrap in them can be
 //! erased. A wrap therefore never seals the key whole: it seals `key ⊕ pad`. The
 //! pad is 32 random bytes minted with the key, and it rides its own engine row,
-//! `WORLD_KEY_PAD`, one immutable row per key. That row replicates with the
-//! vault's base rows, the host included; a kit restore on a new machine takes
+//! `WORLD_KEY_PAD`, one immutable row per key. That row replicates in its
+//! world's window of the month it was learned (`ITEM11_LIVE_PAD_CARRIER`), so
+//! it goes only where the world's rows go; a kit restore on a new machine takes
 //! the pads from the sealed cloud bundle's pad object (`bundle`). A pad alone is
 //! noise, and so is an opened wrap without it.
 //!
@@ -34,7 +35,10 @@ use zeroize::Zeroizing;
 use super::{SEALED_BUNDLE_KEEP, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, WorldKeyId, os_fill, refused};
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader, apply_ops};
-use crate::deletion::{TombstoneReason, TombstoneValueV2, stage_engine_row_hard_erasure_in_txn};
+use crate::deletion::{
+    TombstoneReason, TombstoneValueV2, stage_engine_row_hard_erasure_at_in_txn,
+    window_label_from_timestamp,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
@@ -231,8 +235,9 @@ pub(crate) fn deleted_world_keys_kept_in_txn(
 }
 
 /// The world whose key a pad row `raw` splits: `None` for a row that is not
-/// a pad, an error for a pad whose body does not decode. Sync reads it to keep
-/// a destroyed world's late pad out of every window.
+/// a pad, an error for a pad whose body does not decode. Sync reads it to place
+/// a live pad in its world's windows and to keep a destroyed world's late pad
+/// out of every window.
 pub(crate) fn pad_body_world(raw: &[u8]) -> Option<Result<EntityId>> {
     let header = EntityMetadataHeader::parse(raw)?;
     if header.entity_type != ENTITY_TYPE_WORLD_KEY_PAD {
@@ -241,8 +246,23 @@ pub(crate) fn pad_body_world(raw: &[u8]) -> Option<Result<EntityId>> {
     Some(
         raw.get(ENTITY_METADATA_HEADER_LEN..)
             .ok_or(Error::CorruptedIndex("world key pad body"))
-            .and_then(decode_pad_body)
-            .map(|(key, _)| key.world),
+            .and_then(pad_world_in_body),
+    )
+}
+
+/// The world a pad row's `body`, with no header, names; an error for a body
+/// that does not decode.
+pub(crate) fn pad_world_in_body(body: &[u8]) -> Result<EntityId> {
+    decode_pad_body(body).map(|(key, _)| key.world)
+}
+
+/// The window a pad of `world` learned at `learned_at` rides: the world's
+/// window of that month (`ITEM11_LIVE_PAD_CARRIER`).
+fn pad_window(world: EntityId, learned_at: u64) -> String {
+    format!(
+        "{}@{}",
+        window_label_from_timestamp(learned_at),
+        world.to_hex()
     )
 }
 
@@ -330,6 +350,11 @@ fn world_pad_rows_in_txn(
         let Some(raw) = store.port_entity_raw(txn, &id)?.map(Zeroizing::new) else {
             continue;
         };
+        // A soft-erased pad keeps its header only: its pad is gone already, and
+        // it names no world.
+        if raw.len() == ENTITY_METADATA_HEADER_LEN {
+            continue;
+        }
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("world key pad header"))?;
         let (key, _) = decode_pad_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
@@ -340,23 +365,23 @@ fn world_pad_rows_in_txn(
     Ok(out)
 }
 
-/// When each pad row of `world` on this replica was learned: an erase stages
-/// each pad's tombstone in that month's window.
-pub(crate) fn world_pad_learned_at_in_txn(
+/// The window each pad row of `world` on this replica rides: an erase stages
+/// each pad's tombstone there.
+pub(crate) fn world_pad_windows_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     world: EntityId,
-) -> Result<Vec<u64>> {
+) -> Result<Vec<String>> {
     Ok(world_pad_rows_in_txn(store, txn, world)?
         .into_iter()
-        .map(|(_, _, learned_at)| learned_at)
+        .map(|(_, _, learned_at)| pad_window(world, learned_at))
         .collect())
 }
 
 /// Refuses destroying `world`'s keys while a legal hold stands on the world or
 /// on a claim its key seals: destroying the key destroys every such claim's
-/// sealed bytes, and every path that destroys bytes reads the hold. Only a
-/// claim body names a world (`sync::types::entity_world`).
+/// sealed bytes, and every path that destroys bytes reads the hold. Of the rows
+/// a key seals, only a claim body names a world (`sync::types::entity_world`).
 fn reject_held_world_in_txn(store: &Store, txn: &heed::RoTxn<'_>, world: EntityId) -> Result<()> {
     let mut sealed = vec![world];
     let claims = store
@@ -498,7 +523,11 @@ pub(crate) fn destroy_world_keys_in_txn(
     };
     for (id, _, learned_at) in &rows {
         crate::batch::deindex_entity(store, wtxn, id)?;
-        stage_engine_row_hard_erasure_in_txn(store, wtxn, id, *learned_at, &tombstone)?;
+        let window = pad_window(target, *learned_at);
+        stage_engine_row_hard_erasure_at_in_txn(store, wtxn, id, window.clone(), &tombstone)?;
+        // The batch that owns this transaction publishes the window once it
+        // commits (FIX 3334); an erase door publishes its own (FIX 343).
+        crate::batch::queue_pad_tombstone_window(store, wtxn, window);
     }
     super::content::purge_world_mirrors_in_txn(store, wtxn, target)?;
     if let Some(existing) = existing {

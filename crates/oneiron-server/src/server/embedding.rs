@@ -11,6 +11,7 @@ use std::time::Duration;
 use oneiron::embed::{Embedder, PendingEmbeddingReconcileReport, PendingEmbeddingReconciler};
 
 use super::core::SyncServer;
+use super::housekeeping::{HousekeepingAdmission, admit_every_pass};
 use crate::embedder::{EmbedQueryRefusal, EmbedderSlot, QueryEmbedder};
 
 /// Ceiling on the error backoff. Long enough that a sleeping laptop or a
@@ -43,9 +44,9 @@ impl SyncServer {
     ) -> oneiron::Result<crate::owner::embedder::EmbedderReport> {
         let doctor = self.vault.doctor()?;
         Ok(crate::owner::embedder::EmbedderReport::served(
-            self.embedder.as_ref().map(EmbedderSlot::config),
+            self.embedder.as_deref().map(EmbedderSlot::config),
             &doctor,
-            self.embedder.as_ref().map(EmbedderSlot::dense_state),
+            self.embedder.as_deref().map(EmbedderSlot::dense_state),
         ))
     }
 
@@ -95,14 +96,26 @@ impl SyncServer {
 
     /// Starts the worker, or returns `None` when no embedder is configured.
     pub(crate) fn spawn_embedding_worker(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
+        self.spawn_embedding_worker_admitted(admit_every_pass())
+    }
+
+    /// Starts the worker on a host with a write freeze: each step that writes
+    /// the vault (the provider's admission, a pass, the indexed refresh) is
+    /// admitted through `admit` and holds that admission on its blocking
+    /// thread until it ends, so a step aborted with the worker still counts
+    /// until its writes do. A refused step waits and asks again.
+    pub(crate) fn spawn_embedding_worker_admitted(
+        self: &Arc<Self>,
+        admit: HousekeepingAdmission,
+    ) -> Option<tokio::task::JoinHandle<()>> {
         let slot = self.embedder.as_ref()?;
         let idle = Duration::from_millis(slot.config().idle_interval_ms.max(1));
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
-            let Some(reconciler) = server.prepare_reconciler().await else {
+            let Some(reconciler) = server.prepare_reconciler(&admit).await else {
                 return;
             };
-            server.drain_forever(reconciler, idle).await;
+            server.drain_forever(reconciler, idle, &admit).await;
         }))
     }
 
@@ -112,11 +125,18 @@ impl SyncServer {
     /// dies of: the vault is already open and already answering lexical and
     /// graph reads, so this retries with backoff and logs once per state change
     /// (OF-022, the two-tier write rule).
-    async fn prepare_reconciler(self: &Arc<Self>) -> Option<Arc<PendingEmbeddingReconciler>> {
+    async fn prepare_reconciler(
+        self: &Arc<Self>,
+        admit: &HousekeepingAdmission,
+    ) -> Option<Arc<PendingEmbeddingReconciler>> {
         let mut backoff = FIRST_BACKOFF;
         let mut complained = false;
         loop {
-            match self.build_reconciler().await {
+            let Some(admission) = admit() else {
+                tokio::time::sleep(FIRST_BACKOFF).await;
+                continue;
+            };
+            match self.build_reconciler(admission).await {
                 Ok(reconciler) => {
                     if complained {
                         tracing::info!("embedder is ready; filling pending vectors");
@@ -152,9 +172,11 @@ impl SyncServer {
 
     async fn build_reconciler(
         self: &Arc<Self>,
+        admission: Box<dyn Send>,
     ) -> oneiron::Result<Arc<PendingEmbeddingReconciler>> {
         let server = Arc::clone(self);
         let built = tokio::task::spawn_blocking(move || {
+            let _admission = admission;
             let slot = server
                 .embedder
                 .as_ref()
@@ -189,15 +211,25 @@ impl SyncServer {
         self: &Arc<Self>,
         reconciler: Arc<PendingEmbeddingReconciler>,
         idle: Duration,
+        admit: &HousekeepingAdmission,
     ) {
         let mut backoff = FIRST_BACKOFF;
         let mut failing = false;
         loop {
+            let Some(admission) = admit() else {
+                tokio::time::sleep(idle).await;
+                continue;
+            };
             let pass = Arc::clone(&reconciler);
             let outcome = if self.text_index_fill_paused() {
+                drop(admission);
                 Ok(Ok(PendingEmbeddingReconcileReport::default()))
             } else {
-                tokio::task::spawn_blocking(move || pass.reconcile_once()).await
+                tokio::task::spawn_blocking(move || {
+                    let _admission = admission;
+                    pass.reconcile_once()
+                })
+                .await
             };
             match outcome {
                 Ok(Ok(report)) => {
@@ -210,13 +242,20 @@ impl SyncServer {
                     // determines whether a staged revision can be published.
                     let server = Arc::clone(self);
                     let hub = crate::livequery::connection::Hub::for_server(self);
-                    let refreshed = tokio::task::spawn_blocking(move || {
-                        server.refresh_indexed_idle(|publication| {
-                            hub.indexed_published(&[publication]);
-                        })
-                    })
-                    .await;
-                    if !matches!(refreshed, Ok(Ok(_))) {
+                    let refreshed = match admit() {
+                        Some(admission) => matches!(
+                            tokio::task::spawn_blocking(move || {
+                                let _admission = admission;
+                                server.refresh_indexed_idle(|publication| {
+                                    hub.indexed_published(&[publication]);
+                                })
+                            })
+                            .await,
+                            Ok(Ok(_))
+                        ),
+                        None => false,
+                    };
+                    if !refreshed {
                         tracing::warn!("indexed revision idle refresh deferred");
                     }
                     if report.leased == 0 {
@@ -230,7 +269,7 @@ impl SyncServer {
                         tracing::warn!(kind = ?error.kind(), "embedding reconciliation failed; backing off");
                         failing = true;
                     }
-                    self.readmit_embedder().await;
+                    self.readmit_embedder(admit).await;
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(MAX_BACKOFF);
                 }
@@ -265,9 +304,13 @@ impl SyncServer {
     /// profile is admitted with the floors that profile takes; one that came
     /// back with another model or transform is refused here too, and answers
     /// no query until it is restored.
-    async fn readmit_embedder(self: &Arc<Self>) {
+    async fn readmit_embedder(self: &Arc<Self>, admit: &HousekeepingAdmission) {
+        let Some(admission) = admit() else {
+            return;
+        };
         let server = Arc::clone(self);
         let readmitted = tokio::task::spawn_blocking(move || {
+            let _admission = admission;
             let slot = server.embedder.as_ref()?;
             Some(
                 slot.ensure_ready(|admission| admission.into_vault(server.vault()))
@@ -283,7 +326,7 @@ impl SyncServer {
     fn log_pass(&self, report: &PendingEmbeddingReconcileReport) {
         let truncations = self
             .embedder
-            .as_ref()
+            .as_deref()
             .and_then(crate::embedder::EmbedderSlot::truncations)
             .unwrap_or(0);
         tracing::info!(

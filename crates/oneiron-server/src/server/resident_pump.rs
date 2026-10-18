@@ -419,6 +419,9 @@ fn run_bound(
                 status.attempt.attempt_count,
                 seat.model().as_str(),
                 config.model.as_str(),
+                // The native code-mode template is the chat seat
+                // (`ai_host/code_mode.rs`, `runtime.seat(CHAT_ROLE)`).
+                crate::ai_host::CHAT_ROLE,
             )
             .map_err(text)?;
         config.model = seat.model().clone();

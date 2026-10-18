@@ -296,6 +296,83 @@ pub(crate) fn export_travel_receipts(
     Ok(receipts)
 }
 
+/// The born-with text `choice` lets travel with `entity`, read in the door's
+/// one `txn` through the sharer's `lane` (FIX 3307): the target and each of
+/// its birth's prompt rows only as that lane admits them, nothing a world in
+/// `kept` holds, and only the fields `choice` names. Opting in lets admitted
+/// text travel; it never admits a prompt row the sharer cannot read. Text
+/// a copy carried from another vault fills a chosen field nothing here holds.
+pub(crate) fn born_with_text_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    lane: &crate::claim::ScopedRead<'_>,
+    entity: &EntityId,
+    made_by: Option<&MadeBy>,
+    choice: &TravelChoice,
+    kept: &BTreeSet<EntityId>,
+) -> Result<BornWith> {
+    let mut text = BornWith::new();
+    let admitted = |row: &EntityId| -> Result<bool> {
+        Ok(lane.entity_raw_live_in(txn, row)?.is_some()
+            && (kept.is_empty()
+                || !crate::settings::device_local_keeps_among(&vault.store, txn, kept, row)?))
+    };
+    if choice.born_with.is_empty() || !admitted(entity)? {
+        return Ok(text);
+    }
+    let chosen = |field: BornWithField| choice.born_with.contains(&field);
+    if chosen(BornWithField::Prompt) {
+        let birth = match made_by {
+            Some(_) => None,
+            None => crate::provenance::birth::row_birth_in_txn(&vault.store, txn, entity)?,
+        };
+        let mut prompts = Vec::new();
+        if let Some(made_by) = made_by.or(birth.as_ref().map(|birth| &birth.made_by)) {
+            for input in &made_by.inputs {
+                if input.role == MadeByInputRole::Prompt && admitted(&input.row)? {
+                    prompts.push(input.row);
+                }
+            }
+        }
+        let prompt = prompts
+            .iter()
+            .filter_map(|row| vault.entity_live_text_in_txn(txn, row).ok())
+            .map(|(prompt, _)| prompt)
+            .filter(|prompt| !prompt.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        if !prompt.is_empty() {
+            text.insert(BornWithField::Prompt, prompt);
+        }
+    }
+    if (chosen(BornWithField::Why) || chosen(BornWithField::Keep))
+        && let Ok((_, metadata)) = vault.entity_live_text_in_txn(txn, entity)
+    {
+        for (field, key) in [(BornWithField::Why, "why"), (BornWithField::Keep, "keep")] {
+            if let Some(value) = metadata
+                .get(key)
+                .and_then(rmpv::Value::as_str)
+                .filter(|value| chosen(field) && !value.trim().is_empty())
+            {
+                text.insert(field, value.to_owned());
+            }
+        }
+    }
+    if chosen(BornWithField::IntentPrompt)
+        && let Some(intent) = vault.lens_intent_in_txn(txn, entity)?
+        && !intent.prompt().trim().is_empty()
+    {
+        text.insert(BornWithField::IntentPrompt, intent.prompt().to_owned());
+    }
+    #[cfg(feature = "sync")]
+    for (field, value) in crate::sync::selector::carried_born_with_in_txn(vault, txn, entity)? {
+        if chosen(field) {
+            text.entry(field).or_insert(value);
+        }
+    }
+    Ok(text)
+}
+
 impl Vault {
     /// The text born with `entity`, read here: its birth's prompt rows (or
     /// `made_by`'s, for one version of a body), its `why` and `keep`, and a
