@@ -32276,6 +32276,31 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/memory/hook_regen_doors/mod.rs",
+     "purpose": "Typed hook regeneration doors (DOOR-077): `vault.hooks.regen.due` lists the vault's own hook bindings whose…",
+     "surface": {
+      "fn": 3,
+      "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HookRegenAdoptRequest",
+      "HookRegenBindingRequest",
+      "HookRegenView"
+     ],
+     "path": "src/memory/hook_regen_doors/types.rs",
+     "purpose": "—",
+     "surface": {
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/memory/inspection.rs",
      "purpose": "`vault.inspection.resolve` (OF-235): the bound actor reopens an inspection link through its own read lane",
      "surface": {
@@ -32433,7 +32458,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 13,
+      "mod": 14,
       "re-export": 46
      }
     },
@@ -41361,7 +41386,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 6,
       "trait": 1
      }
@@ -51353,7 +51378,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 739
+      "fn": 742
      }
     },
     {
@@ -58031,7 +58056,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 181,
+     "files": 183,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -58712,7 +58737,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3582,
+   "source_files": 3584,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67243,7 +67268,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 703
+      "fn": 706
      }
     },
     {
@@ -68292,7 +68317,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 704
+      "fn": 707
      }
     },
     {
@@ -71639,13 +71664,23 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/hook_regen_doors.rs",
+     "purpose": "Credential-bound host projections of the typed hook regeneration doors (DOOR-077): the due list, one…",
+     "surface": {
+      "crate-vis": 3
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 126
+      "crate-vis": 127
      }
     },
     {
@@ -79404,7 +79439,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 388,
+     "files": 389,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -79833,7 +79868,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 729,
+   "source_files": 730,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -80973,8 +81008,17 @@
       "HolderKind",
       "HookActorClass",
       "HookAuthor",
+      "HookContractStamp",
+      "HookGoldenDiff",
       "HookOutcomeKind",
       "HookPhase",
+      "HookRegenAdoptRequest",
+      "HookRegenBindingRequest",
+      "HookRegenFailure",
+      "HookRegenFailurePhase",
+      "HookRegenOutcome",
+      "HookRegenRecord",
+      "HookRegenView",
       "HookRenderClass",
       "HookReplayCase",
       "HookReplayCompare",
@@ -82523,8 +82567,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 631,
-      "struct": 1861
+      "enum": 633,
+      "struct": 1868
      }
     },
     {
