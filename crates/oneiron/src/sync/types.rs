@@ -155,8 +155,9 @@ pub(crate) fn parse_window_key_str(key: &str) -> Option<(i32, u32)> {
     crate::deletion::parse_window_label(key)
 }
 
-/// The ledger-plane partition axis: only CLAIM and WORLD_KEY_PAD bodies name a world.
-/// Other entity families remain in the shared base window.
+/// The ledger-plane partition axis: only CLAIM and WORLD_KEY_PAD bodies and a
+/// world's key wrap entries name a world. Other entity families, a world's
+/// settings entries included, remain in the shared base window.
 pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::EntityId>> {
     use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
     // ITEM11_LIVE_PAD_CARRIER: a live pad rides its world's month windows. A
@@ -166,10 +167,28 @@ pub(crate) fn entity_world(raw: &[u8]) -> crate::error::Result<Option<crate::Ent
     }
     let header =
         EntityMetadataHeader::parse(raw).ok_or(crate::Error::CorruptedIndex("entity metadata"))?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
+        // A world's key wraps ride its month windows, to its readers only (FIX
+        // 3871). An entry that does not decode stays in the base window.
+        return Ok(authority_wrap_world(raw));
+    }
     if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return Ok(None);
     }
     Ok(crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true)?.world)
+}
+
+/// The world whose key wraps the AUTHORITY_LOG row `raw` carries
+/// (`authority::side_world`); `None` for any other row, a world's settings
+/// entry included, and for an entry that does not decode.
+pub(crate) fn authority_wrap_world(raw: &[u8]) -> Option<crate::EntityId> {
+    use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+    if EntityMetadataHeader::parse(raw)?.entity_type != crate::registry::ENTITY_TYPE_AUTHORITY_LOG {
+        return None;
+    }
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..)?;
+    let entry = crate::authority::decode_authority_log_entry_body(body).ok()?;
+    crate::authority::side_world(&entry.op)
 }
 
 /// Validate residence before replay/export. A malformed CLAIM cannot be

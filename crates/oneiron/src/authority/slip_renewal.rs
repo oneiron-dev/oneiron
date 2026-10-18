@@ -11,8 +11,11 @@
 //! credential to retry with. An expired or revoked slip refuses, with no
 //! grace: that device pairs again.
 //!
-//! Two policy hooks carry the ruling: [`renewal_eligible`] says which
+//! Two policy hooks carry the ruling: [`renewal_refusal`] says which
 //! credentials renew, and [`renewal_ttl_secs`] how long a replacement lives.
+//! Each refusal names its reason (mesh PR2-renewal, PR2-reasons); none echoes
+//! a token or key. There is no delegated renewal: an agent's, a support
+//! slip's or an attenuated credential's renewal is a fresh owner mint (K04).
 
 use ed25519_dalek::{Signature, VerifyingKey};
 
@@ -21,6 +24,23 @@ use super::*;
 use crate::error::Result;
 use crate::federation::Scope;
 use crate::{EntityId, Vault};
+
+/// K04, authority: the credential is not a live owner's own unattenuated,
+/// parentless human device credential.
+const RENEWAL_K04: &str = "only a live owner's unattenuated parentless human device credential \
+                           may renew; agent, support and attenuated credentials require a fresh \
+                           owner mint";
+/// Authority and key possession: the holder's own-device Grant does not
+/// stand, or no enrolled machine of the holder's proved this request.
+const RENEWAL_GRANT_AND_DEVICE: &str = "renewal requires this owner's live own-device Grant and \
+                                        the enrolled device's proof for the original credential";
+/// Integrity: the presented credential is not the admitted, live, logged one,
+/// or its holder proof is stale or was not admitted once for its key.
+const RENEWAL_PROOF_NOT_FRESH: &str = "renewal proof is not fresh or admitted for this credential";
+/// The lifetime bound: positive, and never past the original paired duration
+/// or the owner's current ceiling.
+const RENEWAL_LIFETIME: &str = "renewal lifetime must be positive and cannot exceed the original \
+                                paired duration or the current owner ceiling";
 
 /// The machine half of one renewal request: the slip token it presented,
 /// the timestamp and nonce of the holder proof it rode
@@ -66,16 +86,18 @@ struct RenewalFacts<'a> {
     machine: Option<&'a MachineProfile>,
 }
 
-/// Policy hook (FIX 3377, Engine ruling rec a): who may renew. An
-/// unattenuated, parentless, owner-grade human slip with no org or
-/// invitation, held by a live owner, naming their own-device grant that
-/// still stands, on a request a live machine signed whose accepted profile
-/// the holder owns with an `Owned(..)` answer (yours, work/school and rented
-/// alike). An agent's, a host root's, a hosted or execution node's and a
-/// removed machine's request never renews.
-fn renewal_eligible(facts: &RenewalFacts<'_>) -> bool {
+/// Policy hook (FIX 3377, Engine ruling rec a): who may renew, as the reason
+/// a request may not, or `None` when it may. An unattenuated, parentless,
+/// owner-grade human slip with no org or invitation, held by a live owner
+/// (else [`RENEWAL_K04`]), naming their own-device grant that still stands,
+/// on a request a live machine signed whose accepted profile the holder owns
+/// with an `Owned(..)` answer, yours, work/school and rented alike (else
+/// [`RENEWAL_GRANT_AND_DEVICE`]). An agent's, a host root's, a hosted or
+/// execution node's and a removed machine's request never renews: a hosted
+/// or execution node's profile is no human renewal credential.
+fn renewal_refusal(facts: &RenewalFacts<'_>) -> Option<&'static str> {
     let slip = facts.original;
-    facts.unattenuated
+    let human_owner_device = facts.unattenuated
         && slip.parent_id.is_none()
         && slip.scope == Scope::top()
         && slip.records.is_empty()
@@ -86,11 +108,15 @@ fn renewal_eligible(facts: &RenewalFacts<'_>) -> bool {
         // A support slip (OF-606) never renews: more time is a fresh owner mint.
         && slip.delegation.is_none()
         && slip.actor_class.as_deref() == Some(ACTOR_CLASS_HUMAN)
-        && facts.holder_is_live_owner
-        && facts.own_device_grant_stands
+        && facts.holder_is_live_owner;
+    if !human_owner_device {
+        return Some(RENEWAL_K04);
+    }
+    let enrolled = facts.own_device_grant_stands
         && facts.machine.is_some_and(|profile| {
             facts.holder == Some(profile.owner) && matches!(profile.role, MachineRole::Owned(_))
-        })
+        });
+    (!enrolled).then_some(RENEWAL_GRANT_AND_DEVICE)
 }
 
 /// Policy hook (FIX 3377, Engine ruling rec a): the replacement's lifetime.
@@ -158,8 +184,9 @@ impl Vault {
     /// authority clock, its grant and invitation references standing); the
     /// request's holder proof is fresh and was admitted for the slip's key;
     /// the machine proof verifies under a live machine's accepted profile;
-    /// and [`renewal_eligible`] holds. `requested_secs` can only shorten the
-    /// lifetime; zero refuses. The old slip is left to run out.
+    /// and [`renewal_refusal`] finds none. `requested_secs` can only shorten
+    /// the lifetime; zero refuses. The old slip is left to run out. Each
+    /// refusal is a typed `AuthorityRefused` naming its reason.
     pub fn renew_owner_device_slip(
         &self,
         issuer: &HostSlipIssuer,
@@ -167,36 +194,45 @@ impl Vault {
         device: &OwnerDeviceRenewalProof,
         requested_secs: Option<u64>,
     ) -> Result<CapabilitySlip> {
+        // The lifetime bound: a zero request asks for no credential.
         if requested_secs == Some(0) {
-            return Err(invalid_authority());
+            return Err(authority_refused(RENEWAL_LIFETIME));
         }
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         require_host(&fold, issuer)?;
         let now = self.instant_in_txn(&txn)?.secs();
-        // The token the machine signed is the slip the transport admitted,
-        // as the host minted it, and still live in this snapshot.
-        let presented = CapabilitySlip::from_token(&device.token)?;
+        // Integrity: the token the machine signed is the slip the transport
+        // admitted, as the host minted it, and still live in this snapshot
+        // (an expired or revoked slip refuses, with no grace).
+        let not_fresh = || authority_refused(RENEWAL_PROOF_NOT_FRESH);
+        let presented = CapabilitySlip::from_token(&device.token)
+            .map_err(authority_refusal_as(RENEWAL_PROOF_NOT_FRESH))?;
         let mint = fold
             .slips
             .mints
             .get(&presented.claims.slip_id)
-            .ok_or_else(invalid_authority)?;
-        let rechecked = presented.verify_authority(&mint.signer, &fold, now)?;
-        self.require_live_slip_refs_in_txn(&txn, rechecked.claims(), now)?;
+            .ok_or_else(not_fresh)?;
+        let rechecked = presented
+            .verify_authority(&mint.signer, &fold, now)
+            .map_err(authority_refusal_as(RENEWAL_PROOF_NOT_FRESH))?;
+        self.require_live_slip_refs_in_txn(&txn, rechecked.claims(), now)
+            .map_err(authority_refusal_as(RENEWAL_PROOF_NOT_FRESH))?;
         if current.claims().slip_id != presented.claims.slip_id
             || current.claims().vault_id != mint.action.claims.vault_id
         {
-            return Err(invalid_authority());
+            return Err(not_fresh());
         }
         let original = mint.action.claims.clone();
-        // The machine proof rides this exact request: its holder proof is
-        // fresh and was admitted, once, for this slip's key.
+        // Integrity (replay and freshness): the machine proof rides this exact
+        // request; its holder proof is fresh and was admitted, once, for this
+        // slip's key.
         super::slip_replay::request_challenge(
             device.timestamp,
             device.nonce.as_bytes(),
             super::slip_replay::request_now_in_txn(self, &txn)?,
-        )?;
+        )
+        .map_err(authority_refusal_as(RENEWAL_PROOF_NOT_FRESH))?;
         if !super::slip_replay::nonce_admitted_in_txn(
             self,
             &txn,
@@ -204,7 +240,7 @@ impl Vault {
             device.nonce.as_bytes(),
             device.timestamp,
         )? {
-            return Err(invalid_authority());
+            return Err(not_fresh());
         }
         let holder = EntityId::from_hex(&original.holder_ref)
             .ok()
@@ -232,8 +268,10 @@ impl Vault {
             own_device_grant_stands,
             machine: proving_machine(&fold, device),
         };
-        if !renewal_eligible(&facts) {
-            return Err(invalid_authority());
+        // K04 (authority) or the own-device Grant and enrolled machine
+        // (authority, key possession): the policy hook names which.
+        if let Some(reason) = renewal_refusal(&facts) {
+            return Err(authority_refused(reason));
         }
         let ceiling = crate::gate::resolve_credential_lifetimes(&self.store, &txn)?;
         let ttl_secs = renewal_ttl_secs(
@@ -241,14 +279,17 @@ impl Vault {
             ceiling.initial_owner_secs,
             requested_secs,
         );
+        // The lifetime bound: a positive lifetime within the original paired
+        // duration and the owner's current ceiling.
+        let lifetime = || authority_refused(RENEWAL_LIFETIME);
         if ttl_secs == 0 {
-            return Err(invalid_authority());
+            return Err(lifetime());
         }
         let claims = SlipClaims {
             slip_id: random_slip_id(),
             parent_id: None,
             issued_at: now,
-            expires_at: now.checked_add(ttl_secs).ok_or_else(invalid_authority)?,
+            expires_at: now.checked_add(ttl_secs).ok_or_else(lifetime)?,
             ttl_secs,
             single_use: false,
             ..original
