@@ -1,0 +1,519 @@
+{
+  "version": 1,
+  "space": {
+    "modelKey": "fixture-embeddings",
+    "modelId": "fixture/embeddings@1111111111111111111111111111111111111111",
+    "wrongRevision": "fixture/embeddings@2222222222222222222222222222222222222222",
+    "dimensions": 4
+  },
+  "occurredAt": 1792281600,
+  "runtimePolicy": {
+    "leaseMs": 1000,
+    "idleIntervalMs": 25,
+    "batchSize": 1
+  },
+  "firstRun": {
+    "text": "The zephyrledger stores the observatory key in the blue cabinet.",
+    "keyword": "zephyrledger",
+    "vector": [
+      1,
+      0,
+      0,
+      0
+    ]
+  },
+  "durability": {
+    "text": "The lanternledger records a brass key inside the north observatory cabinet.",
+    "keyword": "lanternledger",
+    "query": "where is the stargazing access token",
+    "vector": [
+      1,
+      0,
+      0,
+      0
+    ],
+    "conversation": "018f0000000070008000000000000200",
+    "turn": "018f0000000070008000000000000201",
+    "message": "018f0000000070008000000000000202"
+  },
+  "egress": [
+    {
+      "id": "allowed",
+      "turn": "018f0000000070008000000000000501",
+      "text": "allowedrow cedarledger: the brass key is in the north cabinet.",
+      "keyword": "cedarledger",
+      "vector": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "policy": "allow"
+    },
+    {
+      "id": "denied",
+      "turn": "018f0000000070008000000000000502",
+      "text": "deniedrow birchledger: the glass lens is in the east cabinet.",
+      "keyword": "birchledger",
+      "vector": [
+        0,
+        1,
+        0,
+        0
+      ],
+      "policy": "deny"
+    },
+    {
+      "id": "undecided",
+      "turn": "018f0000000070008000000000000503",
+      "text": "undecidedrow mapledger: the copper chart is in the south cabinet.",
+      "keyword": "mapledger",
+      "vector": [
+        0,
+        0,
+        1,
+        0
+      ],
+      "policy": "undecided"
+    },
+    {
+      "id": "remote-failure",
+      "turn": "018f0000000070008000000000000504",
+      "text": "failurerow ashledger: the stone dial is in the west cabinet.",
+      "keyword": "ashledger",
+      "vector": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "policy": "allow"
+    },
+    {
+      "id": "after-failure",
+      "turn": "018f0000000070008000000000000505",
+      "text": "tailrow oakledger: the silver compass is in the lower cabinet.",
+      "keyword": "oakledger",
+      "vector": [
+        0.6,
+        0.8,
+        0,
+        0
+      ],
+      "policy": "deny"
+    }
+  ],
+  "swap": {
+    "kind": "text",
+    "incumbent": "fixture/embeddings@1111111111111111111111111111111111111111",
+    "bad": "bad/model@2222222222222222222222222222222222222222@bad",
+    "good": "good/model@3333333333333333333333333333333333333333@good",
+    "vectors": {
+      "target": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "distractor": [
+        0,
+        1,
+        0,
+        0
+      ],
+      "incumbentQuery": [
+        1,
+        0,
+        0,
+        0
+      ],
+      "badQuery": [
+        0,
+        1,
+        0,
+        0
+      ],
+      "goodQuery": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    "probes": [
+      {
+        "query": "where is observatory instrument 01",
+        "family": "018f0000000070008000000000030001",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 02",
+        "family": "018f0000000070008000000000030002",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 03",
+        "family": "018f0000000070008000000000030003",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 04",
+        "family": "018f0000000070008000000000030004",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 05",
+        "family": "018f0000000070008000000000030005",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 06",
+        "family": "018f0000000070008000000000030006",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 07",
+        "family": "018f0000000070008000000000030007",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 08",
+        "family": "018f0000000070008000000000030008",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 09",
+        "family": "018f0000000070008000000000030009",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 10",
+        "family": "018f000000007000800000000003000a",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 11",
+        "family": "018f000000007000800000000003000b",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 12",
+        "family": "018f000000007000800000000003000c",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 13",
+        "family": "018f000000007000800000000003000d",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 14",
+        "family": "018f000000007000800000000003000e",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 15",
+        "family": "018f000000007000800000000003000f",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 16",
+        "family": "018f0000000070008000000000030010",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 17",
+        "family": "018f0000000070008000000000030011",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 18",
+        "family": "018f0000000070008000000000030012",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 19",
+        "family": "018f0000000070008000000000030013",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 20",
+        "family": "018f0000000070008000000000030014",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 21",
+        "family": "018f0000000070008000000000030015",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 22",
+        "family": "018f0000000070008000000000030016",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 23",
+        "family": "018f0000000070008000000000030017",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      },
+      {
+        "query": "where is observatory instrument 24",
+        "family": "018f0000000070008000000000030018",
+        "author": "owner-authored-embedding-probes-v1",
+        "targets": [
+          "018f0000000070008000000000000301"
+        ]
+      }
+    ],
+    "rule": {
+      "paired": true,
+      "groupBy": "kind",
+      "pass": "paired interval low strictly above minus retest noise (or owner stricter margin)",
+      "bad": "keep incumbent",
+      "unknown": "block automatic swap",
+      "good": "automatic swap and owner result note",
+      "legacyMigration": false
+    },
+    "targetTurn": "018f0000000070008000000000000301",
+    "distractorTurn": "018f0000000070008000000000000302",
+    "targetText": "The north observatory cabinet holds instruments 01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24.",
+    "distractorText": "The eastern beach kiosk stores picnic blankets and no observatory instruments.",
+    "familyMeaning": "24 independently labeled instrument-question families; family ids label probe groups, not fabricated vault rows"
+  },
+  "media": {
+    "text": {
+      "content": "A red triangular observatory sign.",
+      "vector": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    "image": {
+      "asset": "embeddings-red-triangle",
+      "vector": [
+        1,
+        0,
+        0,
+        0
+      ]
+    },
+    "audio": {
+      "asset": "embeddings-three-pulses",
+      "vector": [
+        0,
+        1,
+        0,
+        0
+      ]
+    },
+    "queries": [
+      {
+        "kind": "text",
+        "text": "red triangular warning sign",
+        "vector": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "target": "image"
+      },
+      {
+        "kind": "audio",
+        "text": "three short pulses",
+        "vector": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "target": "audio"
+      }
+    ],
+    "unrelated": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "floors": {
+      "text": {
+        "floor": 0.7,
+        "strong": 0.9
+      },
+      "image": {
+        "floor": 0.6,
+        "strong": 0.8
+      },
+      "audio": {
+        "floor": 0.8,
+        "strong": 0.95
+      }
+    },
+    "fusion": "normalize per space per query; never compare unrelated raw scores"
+  },
+  "tagger": {
+    "checkpointSha16": "1111222233334444",
+    "stackSha16": "5555666677778888",
+    "labelCount": 2,
+    "modelCard": {
+      "checkpoint_sha16": "1111222233334444",
+      "stack_sha16": "5555666677778888",
+      "contract_version": 2,
+      "label_count": 2,
+      "returns": {
+        "spans": true,
+        "links": true,
+        "mood": true
+      }
+    },
+    "text": "Mira smiled. She wrote to mira@example.invalid.",
+    "output": {
+      "spans": [
+        {
+          "message": 0,
+          "start": 0,
+          "end": 4,
+          "label": "PERSON",
+          "confidence": 0.99
+        },
+        {
+          "message": 0,
+          "start": 13,
+          "end": 16,
+          "label": "PERSON",
+          "confidence": 0.95
+        },
+        {
+          "message": 0,
+          "start": 26,
+          "end": 46,
+          "label": "EMAIL",
+          "confidence": 0.99
+        }
+      ],
+      "links": [
+        {
+          "span": 1,
+          "antecedent": 0,
+          "confidence": 0.98
+        }
+      ],
+      "vad": {
+        "valence": 0.5,
+        "arousal": 0.2,
+        "dominance": 0.6
+      },
+      "stack_sha16": "5555666677778888"
+    },
+    "expected": {
+      "mentions": [
+        "Mira",
+        "She",
+        "mira@example.invalid"
+      ],
+      "claimsAuthored": 0,
+      "dreamerCalls": 0,
+      "rawTurnSurvivesDelay": true
+    }
+  },
+  "identity": {
+    "people": [
+      {
+        "label": "mira-north",
+        "name": "Mira Chen",
+        "identityEvidence": {
+          "email": "mira.north@example.invalid",
+          "organisation": "North Observatory"
+        }
+      },
+      {
+        "label": "mira-south",
+        "name": "Mira Chen",
+        "identityEvidence": {
+          "email": "mira.south@example.invalid",
+          "organisation": "South Observatory"
+        }
+      }
+    ],
+    "ambiguousMention": "Mira Chen left a note about the instrument.",
+    "ownerEvidence": "The note came from Mira Chen at North Observatory, mira.north@example.invalid.",
+    "expected": {
+      "ambiguousMerges": 0,
+      "distinctPeople": 2,
+      "resolvedPerson": "mira-north",
+      "retainMentionAndOwnerEvidence": true
+    }
+  }
+}
