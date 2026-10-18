@@ -311,6 +311,15 @@ pub(super) fn apply_world_privacy(
         state.refused_world_edits.insert(hash);
         return Ok(());
     }
+    // An agent's act stands only as a tighten or an equal change against the
+    // settings at its `seen` (FIX 4480): a widen by an agent is irreversible
+    // in effect, and only a holder's own yes writes one. Valid, without
+    // effect, so it never stalls what descends from it. Its Grant row is no
+    // authority-log row, so the fold trusts the carrier for it (contract §4).
+    if matches!(edit.act.by, ActBy::Agent { .. }) && !agent_edit_narrows(state, edit) {
+        state.refused_world_edits.insert(hash);
+        return Ok(());
+    }
     let frontier = state.worlds.entry(edit.world).or_default();
     let seen = std::mem::take(&mut frontier.live);
     let replaced = seen.keys().copied().collect();
@@ -329,4 +338,21 @@ pub(super) fn apply_world_privacy(
         }),
     );
     Ok(())
+}
+
+/// Whether an agent's edit narrows or keeps every live edit at its parents,
+/// decided on the revision it names: its `seen` must be the world's revision
+/// there, the settings an agent's surface showed it, else nothing tells what
+/// it narrowed.
+fn agent_edit_narrows(state: &FoldState, edit: &WorldPrivacyEdit) -> bool {
+    if edit.act.seen != super::world_privacy::policy_revision(state, edit.world).0 {
+        return false;
+    }
+    let heads = state
+        .worlds
+        .get(&edit.world)
+        .into_iter()
+        .flat_map(|frontier| frontier.live.values())
+        .map(|live| &live.settings);
+    privacy_direction(heads, &edit.settings) != PrivacyDirection::Widen
 }
