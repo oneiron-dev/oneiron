@@ -601,6 +601,9 @@ class Oneiron:
         def affect(self) -> "Oneiron._VaultAffectVerbs":
             return Oneiron._VaultAffectVerbs(self._client)
         @property
+        def tagging(self) -> "Oneiron._VaultTaggingVerbs":
+            return Oneiron._VaultTaggingVerbs(self._client)
+        @property
         def export(self) -> "Oneiron._VaultExportVerbs":
             return Oneiron._VaultExportVerbs(self._client)
         @property
@@ -1044,6 +1047,21 @@ class Oneiron:
         def consolidate(self, spec):
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
             return json.loads(_translate(lambda: self._client.vault_affect_claims_consolidate(json.dumps(spec))))
+    class _VaultTaggingVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def status(self, spec):
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_status(json.dumps(spec))))
+        def tags(self, spec):
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_tags(json.dumps(spec))))
+        def history(self, spec):
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_history(json.dumps(spec))))
+        def mentions(self, spec):
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
+            return json.loads(_translate(lambda: self._client.vault_tagging_mentions(json.dumps(spec))))
     class _VaultExportVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

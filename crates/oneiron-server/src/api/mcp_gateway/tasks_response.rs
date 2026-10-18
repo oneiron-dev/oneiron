@@ -904,6 +904,10 @@ fn mcp_agent_verb_input(
         "vault.retrieval.weights.get" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.weights.configure" => a.spec.clone().ok_or_else(invalid),
         "vault.affect.annotations.put" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.status" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.tags" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.history" => a.spec.clone().ok_or_else(invalid),
+        "vault.tagging.mentions" => a.spec.clone().ok_or_else(invalid),
         "vault.affect.claims.consolidate" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.recall" => a.spec.clone().ok_or_else(invalid),
         "vault.retrieval.runs" => a.spec.clone().ok_or_else(invalid),
@@ -1817,6 +1821,18 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.affect.annotations.put" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.status" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.tags" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.history" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "vault.tagging.mentions" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.affect.claims.consolidate" => {
@@ -4458,6 +4474,38 @@ async fn execute_agent_verb_row(
             let input: oneiron::memory::affect::AffectAnnotationPut =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let output = oneiron::task_verb::sdk::vault_affect_annotations_put(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.status" => {
+            let input: oneiron::tagging::TaggingTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_status(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.tags" => {
+            let input: oneiron::tagging::TaggingTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_tags(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.history" => {
+            let input: oneiron::tagging::TaggingTurnRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_history(&memory, input)
+                .map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "vault.tagging.mentions" => {
+            let input: oneiron::tagging::TaggingMentionsRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let output = oneiron::task_verb::sdk::vault_tagging_mentions(&memory, input)
                 .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
