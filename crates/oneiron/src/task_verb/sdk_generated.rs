@@ -2653,6 +2653,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.off_record.notes.create",
     "vault.off_record.claims.upsert",
     "self.off_record.execute",
+    "vault.research.create_child",
+    "vault.evals.cohorts.setup",
     "vault.gate.policy.get",
     "vault.gate.policy.put",
     "vault.gate.policy.propose",
@@ -2673,6 +2675,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.code.origin.authority.set",
     "vault.code.origin.publications",
     "vault.code.checkout.bind",
+    "vault.code.snapshots.ingest",
+    "vault.code.snapshots.get",
+    "vault.code.snapshots.read",
+    "vault.code.symbols.definitions",
     "vault.agents.create",
     "vault.agents.get",
     "vault.agents.update",
@@ -2853,6 +2859,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::OffRecordExecuted,
         >(),
+        "vault.research.create_child" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::ResearchChildReceipt,
+        >(),
+        "vault.evals.cohorts.setup" => crate::code_run::vault_read::request_schema::<
+            crate::skill_optimize::EvalAuthoringReport,
+        >(),
         "vault.gate.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::PolicyManifestsView,
         >(),
@@ -2912,6 +2924,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.code.checkout.bind" => crate::code_run::vault_read::request_schema::<
             crate::memory::origin_doors::CheckoutDoorBinding,
+        >(),
+        "vault.code.snapshots.ingest" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotView,
+        >(),
+        "vault.code.snapshots.get" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::codebase_doors::CodeSnapshotView>,
+        >(),
+        "vault.code.snapshots.read" => crate::code_run::vault_read::request_schema::<
+            Option<crate::memory::codebase_doors::CodeSnapshotPinnedFile>,
+        >(),
+        "vault.code.symbols.definitions" => crate::code_run::vault_read::request_schema::<
+            crate::memory::codebase_doors::CodeSnapshotDefinitionsView,
         >(),
         "vault.agents.create" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDefinitionView,
