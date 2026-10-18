@@ -115,7 +115,8 @@ pub fn pact_foreign_world(
 /// The worlds here that a courtesy deletion ask under pact `pact_id` names by
 /// `requested`, the requester's own world ids (FIX 3497): each one's foreign
 /// WORLD, and base reality as well when the ask names the requester's base,
-/// since a guest's non-CLAIM rows are not remapped and sit in base here.
+/// since a guest's non-CLAIM rows other than its WORLD rows are not remapped
+/// and sit in base here.
 /// `None` (every world the pact delivered) when `requested` is empty. A world
 /// that maps to nothing here matches nothing; it never widens the ask.
 #[cfg_attr(not(feature = "sync"), allow(dead_code))]
