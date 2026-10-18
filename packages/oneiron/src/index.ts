@@ -668,6 +668,30 @@ export class Oneiron {
       /** An Admin with the add_member power takes back a pending invitation. */
       withdraw_invitation: (input: Facade.SharedInvitationWithdrawRequest): Facade.SharedActExecutionReceipt => this.#call(() => this.#client.vaultMembersWithdrawInvitation(input) as Facade.SharedActExecutionReceipt),
     },
+    trusted_contacts: {
+      /** The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again. */
+      name: (input: Facade.TrustedContactNameRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsName(input) as Facade.TrustedContact),
+      /** A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential. */
+      list: (input: Facade.TrustedContactsRequest): Facade.TrustedContact[] => this.#call(() => this.#client.vaultTrustedContactsList(input) as Facade.TrustedContact[]),
+      /** The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this. */
+      consent: (input: Facade.TrustedContactConsentRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsConsent(input) as Facade.TrustedContact),
+      /** Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close. */
+      revoke: (input: Facade.TrustedContactRevokeRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsRevoke(input) as Facade.TrustedContact),
+      dial: {
+        /** The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands. */
+        set: (input: Facade.TrustedContactDialRequest): Facade.TrustedContact => this.#call(() => this.#client.vaultTrustedContactsDialSet(input) as Facade.TrustedContact),
+      },
+      tier: {
+        /** The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern. */
+        set: (input: Facade.TrustedContactTierRequest): Facade.TrustedContactTierSet => this.#call(() => this.#client.vaultTrustedContactsTierSet(input) as Facade.TrustedContactTierSet),
+      },
+      concern: {
+        /** The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled. */
+        asks: (input: Facade.TrustedContactAsksRequest): Facade.TrustedContactAsk[] => this.#call(() => this.#client.vaultTrustedContactsConcernAsks(input) as Facade.TrustedContactAsk[]),
+        /** The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing. */
+        authorize: (input: Facade.TrustedContactAuthorizeRequest): Facade.TrustedContactAuthorization => this.#call(() => this.#client.vaultTrustedContactsConcernAuthorize(input) as Facade.TrustedContactAuthorization),
+      },
+    },
     guests: {
       revoke: (input: Facade.GuestRevokeRequest): Facade.GuestRevokeResponse => this.#call(() => this.#client.vaultGuestsRevoke(input) as Facade.GuestRevokeResponse),
       /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */

@@ -137,6 +137,14 @@ pub enum AgentVerb {
     VaultSharedPolicyPropose,
     VaultSharedPolicyAnswer,
     VaultSharedPolicyChange,
+    VaultTrustedContactsName,
+    VaultTrustedContactsList,
+    VaultTrustedContactsConsent,
+    VaultTrustedContactsRevoke,
+    VaultTrustedContactsDialSet,
+    VaultTrustedContactsTierSet,
+    VaultTrustedContactsConcernAsks,
+    VaultTrustedContactsConcernAuthorize,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultResidenceMode,
@@ -641,6 +649,14 @@ impl AgentVerb {
         Self::VaultSharedPolicyPropose,
         Self::VaultSharedPolicyAnswer,
         Self::VaultSharedPolicyChange,
+        Self::VaultTrustedContactsName,
+        Self::VaultTrustedContactsList,
+        Self::VaultTrustedContactsConsent,
+        Self::VaultTrustedContactsRevoke,
+        Self::VaultTrustedContactsDialSet,
+        Self::VaultTrustedContactsTierSet,
+        Self::VaultTrustedContactsConcernAsks,
+        Self::VaultTrustedContactsConcernAuthorize,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultResidenceMode,
@@ -1148,6 +1164,16 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
             Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
             Self::VaultSharedPolicyChange => "vault.shared.policy.change",
+            Self::VaultTrustedContactsName => "vault.trusted_contacts.name",
+            Self::VaultTrustedContactsList => "vault.trusted_contacts.list",
+            Self::VaultTrustedContactsConsent => "vault.trusted_contacts.consent",
+            Self::VaultTrustedContactsRevoke => "vault.trusted_contacts.revoke",
+            Self::VaultTrustedContactsDialSet => "vault.trusted_contacts.dial.set",
+            Self::VaultTrustedContactsTierSet => "vault.trusted_contacts.tier.set",
+            Self::VaultTrustedContactsConcernAsks => "vault.trusted_contacts.concern.asks",
+            Self::VaultTrustedContactsConcernAuthorize => {
+                "vault.trusted_contacts.concern.authorize"
+            }
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultResidenceMode => "vault.residence.mode",
@@ -1659,6 +1685,14 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2170,6 +2204,14 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2530,6 +2572,8 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultAuthorityHandoffAlarms
                 | Self::VaultLegalHoldsList
                 | Self::VaultLegalHoldsLog
@@ -2722,6 +2766,14 @@ impl AgentVerb {
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
                 | Self::VaultSharedPolicyChange
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsList
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAsks
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3155,6 +3207,12 @@ impl AgentVerb {
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyPropose
                 | Self::VaultSharedPolicyAnswer
+                | Self::VaultTrustedContactsName
+                | Self::VaultTrustedContactsConsent
+                | Self::VaultTrustedContactsRevoke
+                | Self::VaultTrustedContactsDialSet
+                | Self::VaultTrustedContactsTierSet
+                | Self::VaultTrustedContactsConcernAuthorize
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3542,6 +3600,14 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultTrustedContactsName => &["spec"],
+            Self::VaultTrustedContactsList => &["spec"],
+            Self::VaultTrustedContactsConsent => &["spec"],
+            Self::VaultTrustedContactsRevoke => &["spec"],
+            Self::VaultTrustedContactsDialSet => &["spec"],
+            Self::VaultTrustedContactsTierSet => &["spec"],
+            Self::VaultTrustedContactsConcernAsks => &["spec"],
+            Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4047,6 +4113,14 @@ impl AgentVerb {
             Self::VaultSharedPolicyPropose => &["spec"],
             Self::VaultSharedPolicyAnswer => &["spec"],
             Self::VaultSharedPolicyChange => &["spec"],
+            Self::VaultTrustedContactsName => &["spec"],
+            Self::VaultTrustedContactsList => &["spec"],
+            Self::VaultTrustedContactsConsent => &["spec"],
+            Self::VaultTrustedContactsRevoke => &["spec"],
+            Self::VaultTrustedContactsDialSet => &["spec"],
+            Self::VaultTrustedContactsTierSet => &["spec"],
+            Self::VaultTrustedContactsConcernAsks => &["spec"],
+            Self::VaultTrustedContactsConcernAuthorize => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4802,6 +4876,30 @@ impl AgentVerb {
             }
             Self::VaultSharedPolicyChange => {
                 "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
+            }
+            Self::VaultTrustedContactsName => {
+                "The vault owner names another live person of the vault as their trusted contact, reached on one outbound channel verb, with an ask-first dial; naming again replaces it and needs the contact's consent again."
+            }
+            Self::VaultTrustedContactsList => {
+                "A live person lists every trusted-contact relation they are a side of: those they named and those naming them, under their own credential."
+            }
+            Self::VaultTrustedContactsConsent => {
+                "The named contact, a live person under their own credential, accepts the naming version they were shown and attests they are an adult; the relation is live only after this."
+            }
+            Self::VaultTrustedContactsRevoke => {
+                "Either side of a trusted-contact relation ends it under their own credential; no notice staged from it is sent after this returns, and its open asks close."
+            }
+            Self::VaultTrustedContactsDialSet => {
+                "The vault owner changes whether they are asked before their trusted contact is reached (ask_first or just_call); the contact's consent stands."
+            }
+            Self::VaultTrustedContactsTierSet => {
+                "The vault owner names the trusted-contact tier (concern or imminent) of one RouteToHelp policy row; a row never named is a concern."
+            }
+            Self::VaultTrustedContactsConcernAsks => {
+                "The vault owner reads their open asks to reach a trusted contact, each raised by a RouteToHelp the policy gate settled."
+            }
+            Self::VaultTrustedContactsConcernAuthorize => {
+                "The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {

@@ -3053,6 +3053,205 @@ async fn vault_shared_policy_change(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_trusted_contacts_name(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.name")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.name", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.name", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_name(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.list", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.list", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_list(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_consent(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.consent")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.consent", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.consent", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_consent(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.revoke", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.revoke", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_revoke(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_dial_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.dial.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.dial.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.dial.set", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_dial_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_tier_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.tier.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.tier.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.trusted_contacts.tier.set", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_tier_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_concern_asks(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.concern.asks")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.asks", &value)?;
+    let hooks =
+        facade_hooks_pre(server, call, "vault.trusted_contacts.concern.asks", value).await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_concern_asks(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_concern_authorize(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.concern.authorize")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.authorize", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.trusted_contacts.concern.authorize",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_concern_authorize(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -10805,6 +11004,24 @@ pub(crate) async fn call_verb(
         "vault.shared.policy.propose" => vault_shared_policy_propose(server, call, input).await,
         "vault.shared.policy.answer" => vault_shared_policy_answer(server, call, input).await,
         "vault.shared.policy.change" => vault_shared_policy_change(server, call, input).await,
+        "vault.trusted_contacts.name" => vault_trusted_contacts_name(server, call, input).await,
+        "vault.trusted_contacts.list" => vault_trusted_contacts_list(server, call, input).await,
+        "vault.trusted_contacts.consent" => {
+            vault_trusted_contacts_consent(server, call, input).await
+        }
+        "vault.trusted_contacts.revoke" => vault_trusted_contacts_revoke(server, call, input).await,
+        "vault.trusted_contacts.dial.set" => {
+            vault_trusted_contacts_dial_set(server, call, input).await
+        }
+        "vault.trusted_contacts.tier.set" => {
+            vault_trusted_contacts_tier_set(server, call, input).await
+        }
+        "vault.trusted_contacts.concern.asks" => {
+            vault_trusted_contacts_concern_asks(server, call, input).await
+        }
+        "vault.trusted_contacts.concern.authorize" => {
+            vault_trusted_contacts_concern_authorize(server, call, input).await
+        }
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
         "vault.residence.mode" => vault_residence_mode(server, call, input).await,
