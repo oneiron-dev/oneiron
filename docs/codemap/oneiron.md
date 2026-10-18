@@ -42,11 +42,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/affect/annotation.rs` | src | s | 12 crate-vis | — | Turn and message VAD annotation persistence: meta keys, claim codec, and metadata deletion helpers |
 | `src/affect/claim_vad.rs` | src | s | 3 struct · 1 const · 4 crate-vis | ClaimVadConsolidation, ClaimVadReappraisal, ClaimVadTurnEvidence | Claim-level VAD evidence aggregation: turn-evidence refs, mean VAD, and consolidation result types |
 | `src/affect/consolidation.rs` | src | L | 6 fn · 6 crate-vis | — | Vault claim-VAD transaction surface: annotation, consolidation, approvals, and state scans |
-| `src/affect/coping.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const · 1 crate-vis | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | — |
+| `src/affect/coping.rs` | src | m | 3 struct · 1 enum · 18 fn · 1 const · 3 crate-vis | CopingOutcomeRecord, CopingOutcomeUpdate, CopingOutcomeValue, CopingStrategy | — |
 | `src/affect/mod.rs` | src | s | 3 mod · 3 re-export · 4 crate-vis | — | — |
 | `src/affect/state_index.rs` | src | m | 3 struct · 4 fn · 3 const · 2 crate-vis | ModeGateInputs, StateIndex, StateIndexEvidence | Provenance-carrying composite state for mode selection, never a diagnostic label |
 | `src/affect/state_index/tests.rs` | test | s | — | — | — |
-| `src/affect/state_inputs.rs` | src | s | 1 struct · 2 crate-vis | StateWindow | The composite state index's inputs, measured from the subject's own records (OF-335) |
+| `src/affect/state_inputs.rs` | src | s | 1 struct · 3 crate-vis | StateWindow | The composite state index's inputs, measured from the subject's own records (OF-335) |
 | `src/affect/trigger.rs` | src | m | 2 struct · 15 fn · 1 const · 6 crate-vis | AffectTriggerValue, VadDelta | Affect trigger claim codec: encoders, strict and lenient decoders, and shared scalar validators |
 | `src/agent_def/birth_custody.rs` | src | s | 9 crate-vis | — | Physical custody of captured agent source, without authorship or delete grants |
 | `src/agent_def/birth_dependencies.rs` | src | s | 5 crate-vis | — | Retirement of copied agent source when a captured input is erased |
@@ -1571,7 +1571,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/codec.rs` | src | m | 2 fn · 30 crate-vis | — | MessagePack row codecs, LMDB key builders, and validators for the private Dreamer runner rows |
 | `src/dreamer_runner/connector_event.rs` | src | s | 2 struct · 1 trait · 4 fn · 2 const · 1 crate-vis | ConnectorEventExecutor, ConnectorEventResponder, ConnectorEventWake | Connector wake delivery retains its typed event; it is not a partition job |
 | `src/dreamer_runner/constants.rs` | src | s | 24 const · 31 crate-vis | — | Pinned wire vocabulary for the private Dreamer runner rows |
-| `src/dreamer_runner/maintenance/action_mode.rs` | src | s | 2 struct · 2 fn · 2 const · 2 crate-vis | ActionModePolicy, ActionModeRule | Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's… |
+| `src/dreamer_runner/maintenance/action_mode.rs` | src | s | 3 struct · 2 fn · 2 const · 3 crate-vis | ActionModePolicy, ActionModeProjection, ActionModeRule | Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's… |
 | `src/dreamer_runner/maintenance/agent_health.rs` | src | XL | 7 struct · 6 enum · 12 fn · 12 const · 2 re-export · 4 crate-vis | AgentHealthCard, AgentHealthCardView, AgentHealthConfidence, AgentHealthCounter, AgentHealthMove, AgentHealthOutcome, AgentHealthPromptInject, AgentHealthRunTree +5 | The Coach's agent-health review (OF-568, agent-mind §3): a closed-form T1 recipe on the gated maintenance… |
 | `src/dreamer_runner/maintenance/agent_health/apply.rs` | src | m | 3 struct · 1 enum · 2 fn | AgentHealthApplicationState, AgentHealthCoachApplication, ConcernApplyOutcome, ConcernApplyRequest | The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849) |
 | `src/dreamer_runner/maintenance/agent_health/ask.rs` | src | m | 6 struct · 3 enum · 1 trait · 3 fn · 1 const | AgentHealthCoachAnswer, AgentHealthCoachAsk, AgentHealthCoachDraft, AgentHealthCoachRoute, AgentHealthPadRead, CoachHealthBrief, CoachHealthHost, ConcernMove +2 | Ask the Coach (agent-mind §3.5): a card's reader takes its `ask_coach` move, and a `coach.agent_health_ask`… |
@@ -2462,7 +2462,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/checkout_doors/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Credential-bound CHECKOUT lease and result doors (ARCH-0068 RC1/RC2) |
 | `src/memory/checkout_doors/operations.rs` | src | m | 8 fn | — | — |
 | `src/memory/checkout_doors/types.rs` | src | s | 11 struct · 5 enum | CheckoutAction, CheckoutClaimInput, CheckoutClass, CheckoutGetInput, CheckoutLeaseView, CheckoutPublishInput, CheckoutPublished, CheckoutReclaimInput +8 | Typed checkout custody calls |
-| `src/memory/claim_admission.rs` | src | s | 3 struct · 2 enum · 2 fn · 1 crate-vis | AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest | Explicit claim positions on the public door; the ordinary candidate writer still owns the write |
+| `src/memory/claim_admission.rs` | src | m | 3 struct · 2 enum · 2 fn · 2 crate-vis | AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest | Explicit claim positions on the public door; the ordinary candidate writer still owns the write |
 | `src/memory/claim_conflict.rs` | src | m | 3 struct · 1 enum · 4 fn · 1 crate-vis | ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt | Content-bound conflict questions and owner/delegated-admin rulings |
 | `src/memory/claim_stale.rs` | src | m | 5 struct · 1 enum · 3 fn | ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest, ClaimFilteredReadRequest, ReadFilterInput | Stale-claim producer and caller read-filter controls (RETRIEVAL-04) |
 | `src/memory/claims/commit.rs` | src | m | 6 crate-vis | — | — |
@@ -2489,6 +2489,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/consolidation.rs` | src | m | 9 struct · 2 fn | ConsolidationEvidenceHop, ConsolidationEvidenceLocator, ConsolidationEvidenceRequest, ConsolidationEvidenceSource, ConsolidationMessageEvidence, ConsolidationPromoteRequest, ConsolidationPromotion, ConsolidationRejection +1 | Typed promotion and evidence observation over the existing Dreamer writer |
 | `src/memory/conversation_list.rs` | src | m | 3 struct · 1 fn | ConversationListFilter, ConversationListPage, ConversationListRow | The conversation list, read as the bound actor (ARCH-0006a, DEC-0005) |
 | `src/memory/conversation_list/tests.rs` | test | L | — | — | The conversation list is what its reader may read of the vault (ARCH-0006a, DEC-0005): only the… |
+| `src/memory/coping_doors.rs` | src | m | 7 struct · 3 fn · 4 crate-vis | CopingAggregate, CopingAggregateRequest, CopingOutcomeReceipt, CopingOutcomeRecordRequest, CopingOutcomeUpdateRequest, CopingOutcomeView, CopingVadDelta | Typed coping observations and per-person aggregates over the engine's coping ledger |
 | `src/memory/credential_key.rs` | src | s | 2 fn · 5 crate-vis | — | The read key a verified credential reads under |
 | `src/memory/diagnostics.rs` | src | m | 8 struct · 3 fn | BlockedReportView, CoachInspectRequest, CoachInspectionView, CoachProposalView, CoachWorkingSetView, DiagnosticEventView, DiagnosticsGetRequest, DiagnosticsListRequest | Typed diagnostic reads and scoped Coach repair inspection (OPERATIONS-01) |
 | `src/memory/diary_read.rs` | src | L | 11 struct · 5 enum · 15 fn · 1 const · 3 crate-vis | DiaryAgentRead, DiaryEntry, DiaryEntryAdmission, DiaryReadGate, DiaryReadHold, DiaryReadOutcome, DiaryReadReceipt, DiaryReadRecord +8 | The reason-logged door to an agent's diary (OF-490, owner AGM-1+8) |
@@ -2518,7 +2519,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | s | 14 mod · 47 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 16 mod · 47 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -2609,6 +2610,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/tests_regressions/recall_security.rs` | src | s | — | — | Recall must not be a broader read side channel than point reads or BM25 |
 | `src/memory/transcript.rs` | src | m | 3 struct · 1 fn · 1 const · 2 crate-vis | TranscriptMessage, TranscriptPage, TranscriptTurn | One conversation's transcript, read as the bound actor: its turns in order, each with the messages it holds… |
 | `src/memory/transcript/tests.rs` | test | m | — | — | A conversation's transcript is what its reader may read of it, in order: never an erased message, never one… |
+| `src/memory/wellness_doors.rs` | src | s | 3 struct · 4 fn | WellnessPersonRequest, WellnessPolicyConfigureRequest, WellnessProjection | Per-person wellness projections reuse the measured state index and configured action modes |
 | `src/memory/witness/base.rs` | src | m | 2 fn · 15 crate-vis | — | Base witness landing: container resolve, K7 door, batch write, text ops, session bump |
 | `src/memory/witness/codec.rs` | src | s | 14 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
 | `src/memory/witness/mod.rs` | src | s | 2 re-export · 8 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
@@ -4056,7 +4058,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 811 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 818 fn · 4 const | — | — |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |
 | `src/task_verb/sdk_host.rs` | src | L | 27 struct · 6 enum · 25 fn · 4 const · 1 crate-vis | AiAnswer, AiCallRequest, AiOptions, AiOptionsRequest, AiPart, AiVerdict, AiVerdictRequest, AiVerdictReversibility +25 | The inputs and answers of the verb-table rows a host door answers: the owner's `vault.packs.put`… |
 | `src/task_verb/sdk_hub.rs` | src | m | 20 struct · 2 enum · 18 fn | HubConsentOutcome, HubConsentReceipt, HubHookBindRequest, HubHookBindingRow, HubHookQualificationReceipt, HubHookQualifyRequest, HubHookReplay, HubImportRequest +14 | Typed owner doors over configured hubs, foreign publishers and pinned imports |

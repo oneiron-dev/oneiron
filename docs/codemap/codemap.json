@@ -367,7 +367,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 1,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 18,
       "struct": 3
@@ -419,7 +419,7 @@
      "path": "src/affect/state_inputs.rs",
      "purpose": "The composite state index's inputs, measured from the subject's own records (OF-335)",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "struct": 1
      }
     },
@@ -20134,15 +20134,16 @@
      "kind": "src",
      "notable": [
       "ActionModePolicy",
+      "ActionModeProjection",
       "ActionModeRule"
      ],
      "path": "src/dreamer_runner/maintenance/action_mode.rs",
      "purpose": "Action modes (OF-335): the owner's bands over the composite state index, each naming a mode in the owner's…",
      "surface": {
       "const": 2,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 2,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -31885,7 +31886,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AllRelationships",
@@ -31897,7 +31898,7 @@
      "path": "src/memory/claim_admission.rs",
      "purpose": "Explicit claim positions on the public door; the ordinary candidate writer still owns the write",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 2,
       "struct": 3
@@ -32276,6 +32277,26 @@
      "path": "src/memory/conversation_list/tests.rs",
      "purpose": "The conversation list is what its reader may read of the vault (ARCH-0006a, DEC-0005): only the…",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CopingAggregate",
+      "CopingAggregateRequest",
+      "CopingOutcomeReceipt",
+      "CopingOutcomeRecordRequest",
+      "CopingOutcomeUpdateRequest",
+      "CopingOutcomeView",
+      "CopingVadDelta"
+     ],
+     "path": "src/memory/coping_doors.rs",
+     "purpose": "Typed coping observations and per-person aggregates over the engine's coping ledger",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 3,
+      "struct": 7
+     }
     },
     {
      "bucket": "s",
@@ -32685,7 +32706,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 14,
+      "mod": 16,
       "re-export": 47
      }
     },
@@ -33717,6 +33738,21 @@
      "path": "src/memory/transcript/tests.rs",
      "purpose": "A conversation's transcript is what its reader may read of it, in order: never an erased message, never one…",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WellnessPersonRequest",
+      "WellnessPolicyConfigureRequest",
+      "WellnessProjection"
+     ],
+     "path": "src/memory/wellness_doors.rs",
+     "purpose": "Per-person wellness projections reuse the measured state index and configured action modes",
+     "surface": {
+      "fn": 4,
+      "struct": 3
+     }
     },
     {
      "bucket": "m",
@@ -51828,7 +51864,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 811
+      "fn": 818
      }
     },
     {
@@ -58589,7 +58625,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 187,
+     "files": 189,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -59270,7 +59306,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3617,
+   "source_files": 3619,
    "test_files": 902
   },
   "oneiron-android": {
@@ -67803,7 +67839,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 780
+      "fn": 787
      }
     },
     {
@@ -68852,7 +68888,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 781
+      "fn": 788
      }
     },
     {
@@ -71755,7 +71791,7 @@
      "path": "src/api/facade/affect_doors.rs",
      "purpose": "Retrieval-prior setup and VAD consolidation on the caller's own owner proof",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 10
      }
     },
     {
@@ -80695,6 +80731,8 @@
       "ActExecution",
       "ActionBoundRequest",
       "ActionEnvelopeRequest",
+      "ActionModePolicy",
+      "ActionModeRule",
       "ActorCeiling",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -81309,6 +81347,14 @@
       "CooperativeDeletionDispositionKind",
       "CoordinationPattern",
       "CoordinationPatternView",
+      "CopingAggregate",
+      "CopingAggregateRequest",
+      "CopingOutcomeReceipt",
+      "CopingOutcomeRecordRequest",
+      "CopingOutcomeUpdateRequest",
+      "CopingOutcomeView",
+      "CopingStrategy",
+      "CopingVadDelta",
       "CoreBatchEntityInput",
       "CoreBatchEntityReceipt",
       "CoreBatchWriteInput",
@@ -82030,6 +82076,7 @@
       "MetricRole",
       "MetricSet",
       "MintConnectGrant",
+      "ModeGateInputs",
       "ModelLocality",
       "ModelSlot",
       "ModelStepCheckpoint",
@@ -83032,6 +83079,8 @@
       "StandingBlocksRequest",
       "StandingGrantBound",
       "StateFamilyRef",
+      "StateIndex",
+      "StateWindow",
       "StatusDotAtom",
       "SteerReceipt",
       "SteerRequest",
@@ -83301,6 +83350,9 @@
       "WeaveSectionView",
       "WeaveWrongItemRequest",
       "WeaveWrongLinkRequest",
+      "WellnessPersonRequest",
+      "WellnessPolicyConfigureRequest",
+      "WellnessProjection",
       "WidenProposalAnswer",
       "WidenProposalState",
       "WidenProposalView",
@@ -83377,8 +83429,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 663,
-      "struct": 2023
+      "enum": 664,
+      "struct": 2038
      }
     },
     {
