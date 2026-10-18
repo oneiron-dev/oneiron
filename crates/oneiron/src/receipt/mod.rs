@@ -57,8 +57,9 @@ pub use self::grant::{
     StandingOutboundGrantsLensQuery,
 };
 pub use self::guest_revoke::{
-    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeDisclosure,
-    GuestRevokeOutcome, GuestRevokeResponse, NotRecallable, project_guest_revoke,
+    GuestCopyState, GuestDeletionRequestStatus, GuestPactStanding, GuestRevokeCourtesyTarget,
+    GuestRevokeCourtesyTargetView, GuestRevokeDisclosure, GuestRevokeOutcome, GuestRevokeResponse,
+    NotRecallable, project_guest_revoke,
 };
 pub use self::identity_kind::{proposal_outcome_amended_body, proposal_outcome_delta};
 pub use self::kernel::{
