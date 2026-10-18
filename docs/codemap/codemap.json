@@ -32811,7 +32811,7 @@
       "crate-vis": 37,
       "enum": 3,
       "fn": 4,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -33182,6 +33182,28 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "NoteForkReadRequest",
+      "NoteForkRecordView",
+      "NoteForkRequest",
+      "NoteForkView",
+      "NoteLandingView",
+      "NoteProposalForkRef",
+      "NoteProposalOpenRequest",
+      "NoteProposalRequest",
+      "NoteProposalView",
+      "NoteVersionTree"
+     ],
+     "path": "src/note/proposal_doors.rs",
+     "purpose": "Typed NOTE forks and explicit proposal sets over the existing NOTE engine doors",
+     "surface": {
+      "fn": 6,
+      "struct": 10
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "NoteActor",
       "NoteFork",
       "NoteLandingReceipt",
@@ -33193,7 +33215,7 @@
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 3,
       "fn": 5,
       "struct": 3
@@ -33217,7 +33239,7 @@
      "path": "src/note/reads.rs",
      "purpose": "Caller-scoped NOTE text, stable edit anchors and retained operation attribution",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 4,
       "struct": 9
@@ -49834,7 +49856,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 555
+      "fn": 563
      }
     },
     {
@@ -56119,7 +56141,7 @@
      "purpose": "A budget check of untrusted MessagePack before it is decoded"
     },
     "note": {
-     "files": 45,
+     "files": 46,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -56779,7 +56801,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3461,
+   "source_files": 3462,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65193,7 +65215,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 505
+      "fn": 513
      }
     },
     {
@@ -66242,7 +66264,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 506
+      "fn": 514
      }
     },
     {
@@ -78432,22 +78454,33 @@
       "NoteEditorBinding",
       "NoteEditorCloseRequest",
       "NoteEditorClosed",
+      "NoteForkReadRequest",
+      "NoteForkRecordView",
+      "NoteForkRequest",
+      "NoteForkView",
       "NoteHistoryPurgeExecuteRequest",
       "NoteHistoryPurgeOutcome",
       "NoteHistoryPurgeReceipt",
       "NoteHistoryPurgeRequest",
       "NoteHistoryView",
       "NoteKindDescriptor",
+      "NoteLandingView",
       "NoteLifecycleStatus",
       "NoteLifecycleView",
       "NoteOverrides",
+      "NoteProposalForkRef",
+      "NoteProposalOpenRequest",
+      "NoteProposalRequest",
+      "NoteProposalView",
       "NoteReadRequest",
       "NoteReadSource",
       "NoteReadSpan",
       "NoteReadView",
       "NoteRefRequest",
       "NoteSeal",
+      "NoteVerdict",
       "NoteVersion",
+      "NoteVersionTree",
       "NotificationKind",
       "NotificationMark",
       "NotificationPage",
@@ -78871,8 +78904,10 @@
       "ScopedReadResultLensFrameCard",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalNoteEditorBinding",
+      "ScopedReadResultOptionalNoteForkView",
       "ScopedReadResultOptionalNoteHistoryView",
       "ScopedReadResultOptionalNoteReadView",
+      "ScopedReadResultOptionalNoteVersionTree",
       "ScopedReadResultOptionalProductivityTree",
       "ScopedReadResultOptionalSharedBriefView",
       "ScopedReadResultRecordRefPreview",
@@ -79306,8 +79341,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 475,
-      "struct": 1338
+      "enum": 476,
+      "struct": 1350
      }
     },
     {
