@@ -611,6 +611,10 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.availability`
+- `vault.booking.book`
+- `vault.booking.reschedule`
+- `vault.booking.cancel`
 - `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `calendar.invite`

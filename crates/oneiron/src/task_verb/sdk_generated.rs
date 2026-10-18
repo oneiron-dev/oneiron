@@ -3368,6 +3368,30 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ForgetRequest>(),
             ),
             (
+                "vault.booking.availability",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingAvailabilityRequest,
+                >(),
+            ),
+            (
+                "vault.booking.book",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingBookRequest,
+                >(),
+            ),
+            (
+                "vault.booking.reschedule",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingRescheduleRequest,
+                >(),
+            ),
+            (
+                "vault.booking.cancel",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingCancelRequest,
+                >(),
+            ),
+            (
                 "vault.booking.constraint_turn",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::BookingConstraintTurnRequest,
@@ -4772,6 +4796,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.booking.availability",
+    "vault.booking.book",
+    "vault.booking.reschedule",
+    "vault.booking.cancel",
     "vault.booking.constraint_turn",
     "vault.booking.page_token",
     "calendar.invite",
@@ -5879,6 +5907,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
+        "vault.booking.availability" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.book" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.reschedule" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
+        "vault.booking.cancel" => crate::code_run::vault_read::request_schema::<
+            crate::booking::agent_api::BookingOperationResponse,
+        >(),
         "vault.booking.constraint_turn" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BookingConstraintTurnResponse,
         >(),
@@ -10526,6 +10566,34 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.booking.availability" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.book" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.reschedule" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.booking.cancel" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.booking.constraint_turn" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -13870,6 +13938,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.forget" => {
             let _input: ForgetRequest = decode(value.clone())?;
         }
+        "vault.booking.availability" => {
+            let _input: crate::task_verb::sdk::BookingAvailabilityRequest = decode(value.clone())?;
+        }
+        "vault.booking.book" => {
+            let _input: crate::task_verb::sdk::BookingBookRequest = decode(value.clone())?;
+        }
+        "vault.booking.reschedule" => {
+            let _input: crate::task_verb::sdk::BookingRescheduleRequest = decode(value.clone())?;
+        }
+        "vault.booking.cancel" => {
+            let _input: crate::task_verb::sdk::BookingCancelRequest = decode(value.clone())?;
+        }
         "vault.booking.constraint_turn" => {
             let _input: crate::task_verb::sdk::BookingConstraintTurnRequest =
                 decode(value.clone())?;
@@ -15712,6 +15792,10 @@ pub fn invoke(
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
+        "vault.booking.availability" => encode(vault_booking_availability(memory, decode(value)?)?),
+        "vault.booking.book" => encode(vault_booking_book(memory, decode(value)?)?),
+        "vault.booking.reschedule" => encode(vault_booking_reschedule(memory, decode(value)?)?),
+        "vault.booking.cancel" => encode(vault_booking_cancel(memory, decode(value)?)?),
         "vault.booking.constraint_turn" => {
             encode(vault_booking_constraint_turn(memory, decode(value)?)?)
         }
@@ -21342,6 +21426,30 @@ pub fn vault_forget(
         &["/claim_ref"],
     )?;
     memory_requests::forget_claims(memory, input)
+}
+pub fn vault_booking_availability(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingAvailabilityRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.availability", &input)
+}
+pub fn vault_booking_book(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingBookRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.book", &input)
+}
+pub fn vault_booking_reschedule(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingRescheduleRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.reschedule", &input)
+}
+pub fn vault_booking_cancel(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingCancelRequest,
+) -> MemoryResult<crate::booking::agent_api::BookingOperationResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.cancel", &input)
 }
 pub fn vault_booking_constraint_turn(
     memory: &Memory<'_>,

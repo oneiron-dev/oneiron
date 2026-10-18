@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 823 code-mode rows (800 host rows, 23 run rows), 2782 declarations.
-// Replies: 736 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 827 code-mode rows (804 host rows, 23 run rows), 2799 declarations.
+// Replies: 740 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2263,14 +2263,31 @@ declare namespace Sdk {
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type EventTypeKey = string;
+  type TimeRangeWire = { start: number; end: number };
+  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+  type LocalMinuteWindow = { start_minute: number; end_minute: number };
+  type ConstraintTimeRangeWire = { start: number; end: number };
+  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: ConstraintTimeRangeWire | null; allow_flex_pool: boolean };
+  type BookingConstraintInput = { kind: "object"; value: ConstraintObject } | { kind: "free_text"; value: string };
+  type BookingAvailabilityInput = { event_type: EventTypeKey; window: TimeRangeWire; visitor_tz: string; constraint?: BookingConstraintInput | null; session_ref: string };
+  type BookingAvailabilityRequest = { op: "availability"; page_token: string; input: BookingAvailabilityInput };
+  type RankedSlot = { start_utc: number; end_utc: number; rank: number };
+  type SelectedSlot = { start_utc: number; end_utc: number };
+  type BookingBookResult = { stage: "held"; result: { hold_token: string; selected_slot: SelectedSlot; expires_at: number } } | { stage: "confirmed"; result: { reschedule_token: string; cancel_token: string } } | { stage: "slot_taken"; result: { alternatives: RankedSlot[] } };
+  type BookingOperationResponse = { op: "availability"; result: { slots: RankedSlot[]; flex_used: boolean } } | { op: "book"; result: BookingBookResult } | { op: "reschedule"; result: { reschedule_token: string } } | { op: "cancel"; result: { cancel_token: string } };
+  type BookingHoldInput = { event_type: EventTypeKey; selected_slot: SelectedSlot; visitor_tz: string; constraint?: ConstraintObject | null; session_ref: string; checkout_lease_token?: string | null; idempotency_key: string };
+  type BookingIntakeAnswer = { field_key: string; value: string };
+  type BookingConfirmInput = { hold_token: string; booker_email: string; intake: BookingIntakeAnswer[]; session_ref: string; idempotency_key: string };
+  type BookingBookInput = { stage: "hold"; input: BookingHoldInput } | { stage: "confirm"; input: BookingConfirmInput };
+  type BookingBookRequest = { op: "book"; page_token: string; input: BookingBookInput };
+  type BookingRescheduleInput = { reschedule_token: string; selected_slot: SelectedSlot; visitor_tz: string; idempotency_key: string };
+  type BookingRescheduleRequest = { op: "reschedule"; page_token: string; input: BookingRescheduleInput };
+  type BookingCancelInput = { cancel_token: string; idempotency_key: string };
+  type BookingCancelRequest = { op: "cancel"; page_token: string; input: BookingCancelInput };
   type BookingConstraintTurnWindow = { start: number; end: number };
   type BookingConstraintTurnInput = { event_type: EventTypeKey; window: BookingConstraintTurnWindow; visitor_tz: string; free_text: string; session_ref: string };
   type BookingConstraintTurnRequest = { page_token: string; turn: BookingConstraintTurnInput };
   type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot };
-  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
-  type LocalMinuteWindow = { start_minute: number; end_minute: number };
-  type TimeRangeWire = { start: number; end: number };
-  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: TimeRangeWire | null; allow_flex_pool: boolean };
   type BookingConstraintHoldContext = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type ConstraintContinuation = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };
@@ -3365,10 +3382,18 @@ declare const vault: Sdk.VaultHost & {
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
   booking: {
+    /** Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources. */
+    availability(input: Sdk.BookingAvailabilityRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
+    /** Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens. */
+    book(input: Sdk.BookingBookRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
+    /** Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision. */
+    cancel(input: Sdk.BookingCancelRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
     /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
     constraint_turn(input: Sdk.BookingConstraintTurnRequest): Promise<Sdk.BookingConstraintTurnResponse | StoredResult>;
     /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
     page_token(input: Sdk.BookingPageTokenRequest): Promise<Sdk.BookingPageTokenResponse | StoredResult>;
+    /** Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision. */
+    reschedule(input: Sdk.BookingRescheduleRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
   };
   budgets: {
     /** The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume. */
