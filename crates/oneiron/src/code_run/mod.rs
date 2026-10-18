@@ -16,12 +16,14 @@ mod action_inputs;
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
 mod codec;
+mod contribution;
 mod coordination_codec;
 mod dispatcher;
 mod payload;
 mod reader;
 mod reader_fold;
 mod replay;
+mod replay_capsule;
 mod result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
@@ -41,6 +43,11 @@ pub use self::codec::{
     CODE_RUN_OUTPUT_PREVIEW_KEYS, CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS,
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
+pub use self::contribution::{
+    ContributionForkModel, ContributionForkReceipt, ContributionForkScorer,
+    ContributionReplayUnavailable, ForkTreatment, ReplayAnchor, ScoredFork,
+    contribution_fork_receipts, run_contribution_forks,
+};
 pub(crate) use self::dispatcher::{ExecutorCallSite, check_write_gate_against_vault};
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
@@ -55,11 +62,17 @@ pub use self::replay::{
     ResultOccurrence, code_run_replay_abi_layout_checks,
 };
 pub(crate) use self::replay::{CODE_RUN_OUTPUT_PREVIEW_WITHHELD, agent_verb_rows_of};
+pub use self::replay_capsule::{
+    CapsuleHost, CapsuleRungBinding, ExposureKind, ExposureSlot, StepReplayCapsule, TaskExposure,
+    capture_workflow_step, finalize_step_captures, note_answering_rung,
+};
+pub(crate) use self::replay_capsule::{StepCapture, capture_step};
 pub use self::result_read::ResultFacet;
 pub(crate) use self::result_read::{
     Reply as ResultReply, ResultRead, cannot as result_cannot, card as result_card,
     refusal as result_refusal, resolve as resolve_result, unknown_handle,
 };
+pub use self::storage::step_replay_capsules;
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, executor_compaction_session_id,
     executor_speech_message_id_in_run, executor_speech_turn_id_for_run,
