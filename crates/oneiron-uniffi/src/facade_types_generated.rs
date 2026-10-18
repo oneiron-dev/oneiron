@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 391 facade rows, 1453 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 359.
+// UniFFI census: 392 facade rows, 1456 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 360.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -989,6 +989,23 @@ pub struct AgentHealthRunTree {
     pub marked: String,
 }
 
+/// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthPromptInject`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct AgentHealthPromptInject {
+    #[serde(rename = "approval")]
+    pub approval: String,
+    #[serde(rename = "successor")]
+    pub successor: String,
+    #[serde(rename = "ask")]
+    pub ask: String,
+    #[serde(rename = "by")]
+    pub by: String,
+    #[serde(rename = "at")]
+    pub at: u64,
+    #[serde(rename = "edited")]
+    pub edited: bool,
+}
+
 /// `oneiron::dreamer_runner::maintenance::agent_health::AgentHealthCardView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct AgentHealthCardView {
@@ -998,6 +1015,12 @@ pub struct AgentHealthCardView {
     pub body: AgentHealthCard,
     #[serde(rename = "run_tree", default, skip_serializing_if = "Option::is_none")]
     pub run_tree: Option<AgentHealthRunTree>,
+    #[serde(
+        rename = "prompt_inject",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub prompt_inject: Option<AgentHealthPromptInject>,
 }
 
 /// `oneiron::dreamer_runner::maintenance::agent_health::ConcernOutcome`.
@@ -18818,6 +18841,45 @@ pub struct ScopedReadResultCalendarFreebusyDto {
     pub value: Vec<CalendarFreebusyIntervalDto>,
     #[serde(rename = "narrowing")]
     pub narrowing: ScopedReadReceipt,
+}
+
+/// `oneiron::calendar::transcript::door::TranscriptFileDropInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptFileDropInput {
+    #[serde(rename = "source_blob_ref")]
+    pub source_blob_ref: String,
+    #[serde(rename = "decoded_text")]
+    pub decoded_text: String,
+    #[serde(rename = "arrived_at_ms")]
+    pub arrived_at_ms: u64,
+}
+
+/// `oneiron::calendar::transcript::TranscriptIngestOutcome`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+#[serde(tag = "outcome")]
+pub enum TranscriptIngestOutcome {
+    #[serde(rename = "session")]
+    Session {
+        #[serde(rename = "session_ref")]
+        session_ref: String,
+        #[serde(rename = "turn_refs")]
+        turn_refs: Vec<String>,
+        #[serde(rename = "wake_turn_refs")]
+        wake_turn_refs: Vec<String>,
+        #[serde(rename = "extraction_enqueued")]
+        extraction_enqueued: bool,
+    },
+    #[serde(rename = "retry_open_session")]
+    RetryOpenSession {
+        #[serde(rename = "open_session_ref")]
+        open_session_ref: String,
+    },
+    #[serde(rename = "note_fallback")]
+    NoteFallback {
+        #[serde(rename = "note_ref")]
+        note_ref: String,
+    },
 }
 
 /// `oneiron::lens::record_ref::ResolveRecordRefRequest`.

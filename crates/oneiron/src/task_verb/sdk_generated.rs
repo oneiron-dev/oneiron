@@ -1750,6 +1750,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.calendar.transcript.ingest",
+                crate::code_run::vault_read::request_schema::<
+                    crate::calendar::transcript::TranscriptFileDropInput,
+                >(),
+            ),
+            (
                 "vault.claims.list",
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimListFilter>(),
             ),
@@ -4462,6 +4468,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.calendar.transcript.ingest" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.list" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6179,6 +6192,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.calendar.freebusy" => {
             let _input: crate::task_verb::sdk::CalendarFreebusyRequest = decode(value.clone())?;
         }
+        "vault.calendar.transcript.ingest" => {
+            let _input: crate::calendar::transcript::TranscriptFileDropInput =
+                decode(value.clone())?;
+        }
         "vault.claims.list" => {
             let input: crate::memory::ClaimListFilter = decode(value.clone())?;
             crate::memory::caps::check_limit_nonzero(input.limit)?;
@@ -6948,6 +6965,9 @@ pub fn invoke(
         "vault.calendar.read" => encode(vault_calendar_read(memory, decode(value)?)?),
         "vault.calendar.search" => encode(vault_calendar_search(memory, decode(value)?)?),
         "vault.calendar.freebusy" => encode(vault_calendar_freebusy(memory, decode(value)?)?),
+        "vault.calendar.transcript.ingest" => {
+            encode(vault_calendar_transcript_ingest(memory, decode(value)?)?)
+        }
         "vault.claims.list" => encode(vault_claims_list(memory, decode(value)?)?),
         "vault.claims.history" => encode(vault_claims_history(memory, decode(value)?)?),
         "vault.delete" => encode(vault_delete(memory, decode(value)?)?),
@@ -9993,6 +10013,18 @@ pub fn vault_calendar_freebusy(
     input: crate::task_verb::sdk::CalendarFreebusyRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::CalendarFreebusyDto>> {
     memory.calendar_freebusy(&input.calendars, input.range.to_time_range())
+}
+pub fn vault_calendar_transcript_ingest(
+    memory: &Memory<'_>,
+    input: crate::calendar::transcript::TranscriptFileDropInput,
+) -> MemoryResult<crate::calendar::transcript::TranscriptIngestOutcome> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.calendar.transcript.ingest",
+        &input,
+        &["/source_blob_ref"],
+    )?;
+    memory.calendar_transcript_ingest(&input)
 }
 pub fn vault_claims_list(
     memory: &Memory<'_>,

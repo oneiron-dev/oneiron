@@ -51,8 +51,8 @@ use crate::server::SyncServer;
 pub(crate) use super::booking_doors::*;
 
 // The shared-vault doors live beside these; the generated callers name them here.
-pub(crate) use super::shared_act_doors::*;
 pub(crate) use super::agent_definition_doors::*;
+pub(crate) use super::shared_act_doors::*;
 // The shared-vault invitation doors (OF-531) too.
 pub(crate) use super::shared_member_doors::*;
 // The owner's legal-hold doors (OF-470) too.
@@ -93,9 +93,9 @@ pub(crate) use super::widen_proposal_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
+pub(crate) use super::channel_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
-pub(crate) use super::channel_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -1058,6 +1058,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.craft_candidates"
         | "vault.craft_candidates.answer"
         | "vault.settings.wake_policy.set"
+        | "vault.budgets.lease.open"
+        | "vault.budgets.lease"
+        | "vault.budgets.lease.top_up"
+        | "vault.budgets.hold"
+        | "vault.budgets.hold.resume"
+        | "vault.budgets.local"
+        | "vault.budgets.settlements"
         | "vault.research.evaluate_split" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"

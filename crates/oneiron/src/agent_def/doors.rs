@@ -310,7 +310,10 @@ impl Vault {
 
     /// The owner's edit of exactly the revision they read. The version check
     /// and the existing immutable-field and ceiling gates share the writer.
-    #[expect(clippy::too_many_arguments, reason = "owner, target, revision, body and event time are one edit")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner, target, revision, body and event time are one edit"
+    )]
     pub fn update_agent_definition_at_version_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -321,11 +324,19 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         self.update_agent_definition_as_checked(
-            owner, id, Some(expected_version), def, occurred, learned_at,
+            owner,
+            id,
+            Some(expected_version),
+            def,
+            occurred,
+            learned_at,
         )
     }
 
-    #[expect(clippy::too_many_arguments, reason = "the revision fence is optional only for existing native callers")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the revision fence is optional only for existing native callers"
+    )]
     fn update_agent_definition_as_checked(
         &self,
         owner: &AuthenticatedOwner,
@@ -361,7 +372,9 @@ impl Vault {
         self.with_write_txn(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             if self.store.port_entity_record(txn, id)?.is_some() {
-                return Err(Error::ConcurrentWrite("agent definition id is already occupied"));
+                return Err(Error::ConcurrentWrite(
+                    "agent definition id is already occupied",
+                ));
             }
             self.put_agent_definition_in_txn(txn, id, def, occurred, learned_at)
         })

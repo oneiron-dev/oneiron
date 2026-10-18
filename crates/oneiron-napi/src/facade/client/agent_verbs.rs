@@ -2795,6 +2795,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_calendar_transcript_ingest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.calendar.transcript.ingest", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.list", input)

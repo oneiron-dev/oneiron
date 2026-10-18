@@ -41,6 +41,7 @@ mod continuation;
 pub use self::continuation::{ConcernPromptInjectOutcome, ConcernPromptInjectRequest};
 pub(crate) use self::continuation::{
     PromptInjectApproval, apply_prompt_inject_in_txn, continuation_checkpoint,
+    prompt_inject_application,
 };
 mod dispatch;
 mod fanout_statement;
@@ -62,6 +63,7 @@ mod project_conversation;
 mod project_proposal;
 mod resident;
 mod room_join;
+mod run_objectives;
 mod spend_calibration;
 mod spend_lease;
 mod spend_record;
