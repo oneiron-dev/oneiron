@@ -28,19 +28,32 @@ const COMM_WIDEN: SideTable<AttemptId, CommWidenRecord, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_COMM_WIDEN);
 
 /// Who answers a child's widen ask: its real dispatch parent's agent, or,
-/// for a dispatch with no agent parent, the vault owner (CALLS W1).
+/// for a dispatch with no agent parent, the vault owner (CALLS W1); no one
+/// once that actor was erased (FIX 3520).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CommWidenRecipient {
     Agent(EntityId),
     Owner(EntityId),
+    Erased,
 }
 
 impl CommWidenRecipient {
-    pub(crate) const fn actor(self) -> EntityId {
+    /// The actor, while it is not erased.
+    pub(crate) const fn actor(self) -> Option<EntityId> {
         match self {
-            Self::Agent(actor) | Self::Owner(actor) => actor,
+            Self::Agent(actor) | Self::Owner(actor) => Some(actor),
+            Self::Erased => None,
         }
+    }
+
+    /// Names no one in place of `actor`; whether it named it.
+    fn forget(&mut self, actor: EntityId) -> bool {
+        let named = self.actor() == Some(actor);
+        if named {
+            *self = Self::Erased;
+        }
+        named
     }
 }
 
@@ -152,6 +165,28 @@ impl CommWidenRecord {
         true
     }
 
+    /// Takes `actor` out of the record (FIX 3520): a pending request it was
+    /// to answer goes, so the next refused send asks its current parent
+    /// afresh; a settled request and the approval keep their answer with no
+    /// one named. Whether any did.
+    fn forget(&mut self, actor: EntityId) -> bool {
+        let before = self.requests.len();
+        self.requests.retain(|request| {
+            request.state != CommWidenState::Pending || request.recipient.actor() != Some(actor)
+        });
+        let mut named = self.requests.len() != before;
+        for request in &mut self.requests {
+            named |= request.recipient.forget(actor);
+            if let Some(decided) = &mut request.decided {
+                named |= decided.by.forget(actor);
+            }
+        }
+        if let Some(approval) = &mut self.approved {
+            named |= approval.decision.by.forget(actor);
+        }
+        named
+    }
+
     /// Closes the pending round `ask` that ended unanswered (its deadline or a
     /// stale cut): the request stays pending with no question, so the next
     /// refused send asks a fresh round. Silence never approves. Returns
@@ -187,6 +222,25 @@ pub(crate) fn put_comm_widen_in(
     record: &CommWidenRecord,
 ) -> Result<()> {
     COMM_WIDEN.put(&vault.store, txn, &child, record)
+}
+
+/// Forgets `actor` in every child's comm widening, in its erase's
+/// transaction (FIX 3520).
+pub(crate) fn erase_comm_widen_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let mut erased = Vec::new();
+    for (child, mut record) in COMM_WIDEN.scan(&vault.store, txn)? {
+        if record.forget(*actor) {
+            erased.push((child, record));
+        }
+    }
+    for (child, record) in &erased {
+        COMM_WIDEN.put(&vault.store, txn, child, record)?;
+    }
+    Ok(())
 }
 
 /// Who answers `child`'s widen ask: the agent of its real dispatch parent;
