@@ -3832,7 +3832,7 @@
      "path": "src/authority/world_privacy.rs",
      "purpose": "Folds `WorldPrivacy` edits into each world's effective settings",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 19,
       "enum": 4,
       "fn": 7,
       "struct": 2
@@ -47096,7 +47096,32 @@
      "surface": {
       "crate-vis": 3,
       "fn": 3,
+      "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadAdmissionReport"
+     ],
+     "path": "src/sync/client/residence/bundle/access.rs",
+     "purpose": "This machine's side of a late joiner's access to kept pad objects (FIX 4271), over the home's one…",
+     "surface": {
+      "crate-vis": 4,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/bundle/sweep.rs",
+     "purpose": "Erase's sweep of every pad object the home keeps (FIX 922): each world whose keys were destroyed here leaves…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -48010,7 +48035,7 @@
       "const": 2,
       "crate-vis": 11,
       "fn": 14,
-      "re-export": 13,
+      "re-export": 14,
       "struct": 2
      }
     },
@@ -48058,6 +48083,24 @@
       "crate-vis": 10,
       "enum": 1,
       "fn": 12,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadAccessRequest",
+      "PadAccessState",
+      "PendingPadAccess",
+      "PendingPadAccessList"
+     ],
+     "path": "src/sync/residence/bundle_access.rs",
+     "purpose": "A late joiner's access to the kept pad objects (FIX 4271): the home's custody of the grants, and the outbox…",
+     "surface": {
+      "crate-vis": 4,
+      "enum": 1,
+      "fn": 4,
       "struct": 3
      }
     },
@@ -54959,7 +55002,23 @@
       "const": 3,
       "crate-vis": 10,
       "fn": 34,
+      "re-export": 1,
       "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PadAdmissionTarget",
+      "SealedPadAdmissionGrant"
+     ],
+     "path": "src/world_keys/bundle/admission.rs",
+     "purpose": "A late joiner's access to kept pad objects (FIX 4271)",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 5,
+      "struct": 2
      }
     },
     {
@@ -54967,7 +55026,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/world_keys/bundle/authority.rs",
-     "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed settings and key wrap entries…",
+     "purpose": "A private world's authority inside the sealed bundle (FIX 4211): its signed key wrap entries, sealed to the…",
      "surface": {
       "crate-vis": 9
      }
@@ -55050,7 +55109,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 16,
+      "re-export": 17,
       "struct": 2
      }
     },
@@ -57450,7 +57509,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 179,
+     "files": 182,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57632,7 +57691,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 22,
+     "files": 23,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -57648,7 +57707,7 @@
    },
    "over_bar": 195,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3512,
+   "source_files": 3516,
    "test_files": 902
   },
   "oneiron-android": {
@@ -75083,6 +75142,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/livequery/residence/bundle_access.rs",
+     "purpose": "`residence.bundle.access` (FIX 4271): a late joiner's access to the kept sealed pad objects, one tagged call",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/livequery/residence/machine_history.rs",
      "purpose": "`residence.machine-history` (FIX 3820): a target's machine-claim history, a page at a time, for a machine…",
      "surface": {
@@ -78329,7 +78398,7 @@
      "purpose": "Opt-in scheduled Linear mirror over an authenticated host-owned bridge"
     },
     "livequery": {
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -78506,7 +78575,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 706,
+   "source_files": 707,
    "test_files": 182
   },
   "oneiron-spawn": {
