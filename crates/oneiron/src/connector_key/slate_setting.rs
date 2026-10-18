@@ -105,3 +105,11 @@ impl Vault {
         connector_tool_setting_in_txn(&self.store, &txn, &record, tool)
     }
 }
+
+// STUB(fe-slate): replaced by the typed elicitation row at merge.
+impl Vault {
+    pub fn connector_elicitation_setting(&self, id: &EntityId) -> Result<SlateDisposition> {
+        let _ = id;
+        Ok(SlateDisposition::Auto)
+    }
+}
