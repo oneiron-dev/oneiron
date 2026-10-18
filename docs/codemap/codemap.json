@@ -2287,6 +2287,7 @@
      "path": "src/authority/federation_activation.rs",
      "purpose": "Grant activation under the folded pact states",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -2448,7 +2449,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -2712,7 +2713,7 @@
      "path": "src/authority/mod.rs",
      "purpose": "AUTHORITY_LOG record substrate",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "re-export": 39
      }
     },
@@ -16422,7 +16423,7 @@
      "path": "src/conversation_dag/quote.rs",
      "purpose": "Quote spans: a transient scalar selection over one MESSAGE becomes an engine-issued anchor in the reply's…",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "enum": 1,
       "struct": 1
      }
@@ -17953,6 +17954,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/confession.rs",
+     "purpose": "The confession ask and its parse (OF-544, ARCH-0079): after a DONE line, one fenced block naming each…",
+     "surface": {
+      "fn": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -18087,8 +18098,8 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 20,
-      "mod": 3,
+      "crate-vis": 21,
+      "mod": 4,
       "re-export": 18
      }
     },
@@ -18468,7 +18479,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "TaskRealizeModel"
@@ -18477,6 +18488,7 @@
      "purpose": "A Dreamer-lane TASK's realization: the one row `tasks.create` queues for a TASK routed to the Dreamer",
      "surface": {
       "const": 1,
+      "crate-vis": 2,
       "fn": 1,
       "struct": 1
      }
@@ -19185,9 +19197,9 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 26,
+      "const": 27,
       "crate-vis": 8,
-      "fn": 12,
+      "fn": 13,
       "trait": 1
      }
     },
@@ -22912,6 +22924,17 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/federation/foreign_world.rs",
+     "purpose": "Where a guest's content lands here (FIX 3497)",
+     "surface": {
+      "crate-vis": 5,
+      "fn": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -23005,9 +23028,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "mod": 2,
-      "re-export": 16
+      "re-export": 17
      }
     },
     {
@@ -37354,7 +37377,7 @@
      "path": "src/receipt/reference_refusal.rs",
      "purpose": "Reference-refusal receipts (OF-063): a record ref a write named does not resolve for its writer",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -42860,10 +42883,10 @@
      "path": "src/skill_optimize/eval_set.rs",
      "purpose": "OF-578 (ARCH-0053 \"Eval authoring\", RESEARCH-0937; EVAL-SKILL = A, EVAL-COLDSTART = C, NOT-WORSE = A): the…",
      "surface": {
-      "crate-vis": 11,
+      "crate-vis": 12,
       "enum": 4,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 4,
       "struct": 4
      }
     },
@@ -42871,6 +42894,58 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "CandidateLabel",
+      "CohortSummary",
+      "EvalAuthoringInventory",
+      "EvalCandidate",
+      "EvalSourceGroup",
+      "PurposeCounts",
+      "SeatInventory",
+      "UncutFamily"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring.rs",
+     "purpose": "The eval-authoring pass (OF-578, ARCH-0053 \"Eval authoring\"): the Coach's nightly upkeep of each seat's test…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2,
+      "re-export": 1,
+      "struct": 8
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CaseDecision",
+      "CutDecision",
+      "EvalAuthoringPlan",
+      "EvalAuthoringReport",
+      "EvalAuthoringSkip",
+      "EvalCohortDecision",
+      "FamilyDecision"
+     ],
+     "path": "src/skill_optimize/eval_set/authoring/apply.rs",
+     "purpose": "The plan the eval-authoring skill answers with, checked whole against its inventory and applied in order…",
+     "surface": {
+      "fn": 1,
+      "struct": 7
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_optimize/eval_set/authoring/lineage.rs",
+     "purpose": "The lineage fixed code resolves for a candidate, from the existing readers' explicit links only: the…",
+     "surface": {
+      "crate-vis": 7
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CohortRetirement",
       "EvalCohort",
       "EvalExposure",
       "EvalExposureCounts",
@@ -42880,10 +42955,30 @@
      "path": "src/skill_optimize/eval_set/cohort.rs",
      "purpose": "Date-cut sealed cohorts and the exposure ledger (ARCH-0053: \"The ledger counts what each sealed cohort has…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 8,
       "enum": 1,
-      "fn": 5,
-      "struct": 4
+      "fn": 6,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AuditCase",
+      "AuditCoverage",
+      "AuditMethodPin",
+      "CoverageGap",
+      "EvalCutAudit",
+      "EvalCutAuditDraft",
+      "NearCopyFlag"
+     ],
+     "path": "src/skill_optimize/eval_set/cut_audit.rs",
+     "purpose": "The near-copy audit every cohort cut commits with (ARCH-0053: \"At each cut, a near-copy audit runs across…",
+     "surface": {
+      "crate-vis": 7,
+      "fn": 1,
+      "struct": 7
      }
     },
     {
@@ -43226,7 +43321,7 @@
       "const": 1,
       "crate-vis": 2,
       "enum": 4,
-      "fn": 9,
+      "fn": 10,
       "struct": 10
      }
     },
@@ -44899,7 +44994,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 14,
       "fn": 16,
       "struct": 1
      }
@@ -44923,7 +45018,7 @@
      "path": "src/sync/client/federated.rs",
      "purpose": "Federated admission and staged vault-import confirmation",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 5
      }
@@ -44997,7 +45092,7 @@
       "crate-vis": 5,
       "enum": 2,
       "fn": 7,
-      "re-export": 2,
+      "re-export": 3,
       "struct": 3
      }
     },
@@ -45021,7 +45116,7 @@
      "path": "src/sync/client/residence/bundle.rs",
      "purpose": "The vault's sealed cloud bundle through the home (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 3,
       "fn": 2,
       "struct": 1
      }
@@ -45037,6 +45132,17 @@
      "surface": {
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/client/residence/kit_fetch.rs",
+     "purpose": "A restore's read of the sealed cloud bundle from the home with the kit alone (FIX 922): no session, slip or…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
      }
     },
     {
@@ -45875,7 +45981,7 @@
       "const": 2,
       "crate-vis": 9,
       "fn": 14,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 2
      }
     },
@@ -45912,6 +46018,7 @@
      "kind": "src",
      "notable": [
       "SealedBundleEntry",
+      "SealedBundleKitRoot",
       "SealedBundleObject",
       "SealedBundleStage"
      ],
@@ -45919,9 +46026,10 @@
      "purpose": "The home's custody of the vault's sealed cloud bundle (DEC-0005 \"Sealed copies\", FIX 922)",
      "surface": {
       "const": 2,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 12,
-      "struct": 2
+      "struct": 3
      }
     },
     {
@@ -45960,6 +46068,20 @@
      "purpose": "Discover locally held world/month partitions without loading their Docs",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "KitBundleFetch"
+     ],
+     "path": "src/sync/residence/kit_fetch.rs",
+     "purpose": "The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must…",
+     "surface": {
+      "const": 3,
+      "fn": 3,
+      "struct": 1
      }
     },
     {
@@ -46023,7 +46145,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/room_turns.rs",
@@ -46039,7 +46161,7 @@
      "path": "src/sync/row_birth.rs",
      "purpose": "Rule A row births on sync",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -46062,7 +46184,7 @@
      "path": "src/sync/selector/admission.rs",
      "purpose": "Federated import admission: window admit, claim revalidation, entity copy, authority-log door, and tombstone…",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 26,
       "enum": 1,
       "fn": 2
      }
@@ -53630,7 +53752,7 @@
      "purpose": "Cosine distance kernels, defined in `oneiron-retrieval`"
     },
     "dreamer_consolidation": {
-     "files": 65,
+     "files": 66,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -53770,7 +53892,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 34,
+     "files": 35,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54414,7 +54536,7 @@
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates"
     },
     "skill_optimize": {
-     "files": 35,
+     "files": 39,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -54477,7 +54599,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 168,
+     "files": 170,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54675,7 +54797,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3325,
+   "source_files": 3333,
    "test_files": 902
   },
   "oneiron-android": {
@@ -57608,7 +57730,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 50,
+      "const": 51,
       "crate-vis": 1
      }
     },
@@ -59921,6 +60043,7 @@
       "XlsxChange",
       "XlsxLock",
       "XlsxName",
+      "XlsxProjection",
       "XlsxSheet",
       "XlsxSheetPlan",
       "XlsxSheetVisibility",
@@ -59936,7 +60059,7 @@
       "enum": 5,
       "fn": 16,
       "re-export": 2,
-      "struct": 9
+      "struct": 10
      }
     },
     {
@@ -65505,6 +65628,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ai_host/eval_authoring.rs",
+     "purpose": "The Coach's eval authoring (ARCH-0053 \"Eval authoring\", OF-578): each night it keeps each seat's test set…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ai_host/failure_signals.rs",
      "purpose": "The host's failure-signal sender (OF-380)",
      "surface": {
@@ -67680,7 +67813,7 @@
      "path": "src/api/owner_routes.rs",
      "purpose": "`/v1/owner`: the vault owner's own actions over HTTP",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -68141,6 +68274,16 @@
      "purpose": "Reactive local-first read contract (ONE-1437 — the on-device half of OF-241)",
      "surface": {
       "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/recovery_bundle.rs",
+     "purpose": "The kit door to the vault's sealed cloud bundle (FIX 922): an install that holds the recovery kit and no…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -74037,14 +74180,14 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 315,
+     "files": 316,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -74452,7 +74595,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 630,
+   "source_files": 632,
    "test_files": 182
   },
   "oneiron-spawn": {

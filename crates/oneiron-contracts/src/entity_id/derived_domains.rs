@@ -204,9 +204,16 @@ pub const TASK_SUBPROJECT: &[u8] = b"oneiron/task-subproject/v1/";
 /// row's index (u32be).
 pub const AGENT_PACK_TRAVEL: &[u8] = b"oneiron/agent-pack-travel/v1/";
 
+/// The foreign WORLD a federation peer's world lands in on the recipient
+/// (`federation::foreign_world_for`, FIX 3497). Parts: the source vault id (32
+/// bytes), the sender's world id (its reserved base scope id for base reality),
+/// and a counter (u64 little-endian) from 0; the first id in the foreign range
+/// is the one.
+pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 50] = [
+pub(crate) const ALL: [&[u8]; 51] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -257,4 +264,5 @@ pub(crate) const ALL: [&[u8]; 50] = [
     GLOBAL_SETTING_SUBJECT,
     TASK_SUBPROJECT,
     AGENT_PACK_TRAVEL,
+    FOREIGN_WORLD,
 ];
