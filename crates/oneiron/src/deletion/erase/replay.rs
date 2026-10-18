@@ -210,6 +210,9 @@ impl Vault {
             if let Some(request) = decoded.request_id.as_ref() {
                 clear_own_topology_delete_in_txn(&self.store, wtxn, id, request, false)?;
             }
+            // An actor with no other state here may still be named in the
+            // rows that record it, so the purge's actor sweep runs (FIX 3654).
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
             return Ok((
                 ReplayedTombstoneOutcome::HardPurged {
                     erased: false,

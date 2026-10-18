@@ -33,7 +33,7 @@ use heed::types::Bytes;
 pub use host_holds::HostOrderHolds;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 pub use tiers::{StorageTier, storage_tier};
@@ -570,6 +570,7 @@ impl Vault {
             reason,
             restored_at,
             Custody::Keep,
+            &BTreeSet::new(),
         )?;
         finish(&vault)?;
         forked.keep();
@@ -605,6 +606,7 @@ impl Vault {
             RestoreReason::Restore,
             restored_at,
             Custody::Fork(Some(&live)),
+            &BTreeSet::new(),
         )?;
         forked.keep();
         made.keep(&mut vault);
@@ -749,6 +751,9 @@ impl Vault {
     ) -> Result<(Self, RestoreReport)> {
         // An archived vault's live state is not its custody's.
         current.store.refuse_archived()?;
+        // Every id `current` has hard-erased, those after the checkpoint
+        // too: the restored rows must not name those actors (FIX 3655).
+        let erased = crate::deletion::hard_erased_ids_in(current)?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         // The carried rows hold `current`'s custody binding and retirements.
         authority_plane::carry_current_authority(&mut image.databases, current)?;
@@ -767,6 +772,7 @@ impl Vault {
             RestoreReason::Restore,
             restored_at,
             custody,
+            &erased,
         )?;
         #[cfg(test)]
         panic_if_armed();
@@ -792,6 +798,7 @@ impl Vault {
         reason: RestoreReason,
         restored_at: u64,
         custody: Custody<'_>,
+        erased: &BTreeSet<EntityId>,
     ) -> Result<(MadeDestination, ForkedCustody, Self, RestoreReport)> {
         // A job row of another kind in the owner-retained key range would
         // hide from that kind's scans: refused before any destination exists.
@@ -905,6 +912,9 @@ impl Vault {
             // Rows came back without a put: each definition pins its id as a
             // put of it would have (H215).
             crate::agent_def::pin_stored_rows_in_txn(&vault.store, txn)?;
+            // An erased actor's name, carried back by the image's rows, goes
+            // again, now the type index is back.
+            crate::deletion::rerun_actor_scrubs_in_txn(&vault, txn, erased)?;
             #[cfg(test)]
             fail_at(RestoreStep::ImageWrite)?;
             Ok(())
