@@ -778,7 +778,10 @@ impl Vault {
                 ShapeChange::Create | ShapeChange::Update,
                 ShapeTarget::Manifest { manifest_ref },
                 Some(ShapeRow::Manifest { body, .. }),
-            ) => self.install_shape_manifest(owner, manifest_ref, body, now),
+            ) => {
+                let narrowing = item.class == ShapeItemClass::Receipted;
+                self.install_shape_manifest(owner, manifest_ref, body, narrowing, now)
+            }
             (ShapeChange::Retire, ShapeTarget::Manifest { .. }, _) => {
                 // A manifest is never deleted. Retiring one quarantines its
                 // exact bytes, so it stops counting and stays stored.
