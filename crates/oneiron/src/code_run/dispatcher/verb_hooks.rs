@@ -496,6 +496,7 @@ fn hook_args(call: &SelfCall) -> Result<Value> {
             "reasonRef": refuse.reason_ref,
             "at": refuse.at,
         }),
+        SelfCall::ConsultResult(request) => to_json(request)?,
         SelfCall::SkillsCall(skill) => json!({"skill": skill.skill.to_hex(), "args": skill.args}),
         SelfCall::MemorySearch(search) => json!({"query": search.query, "limit": search.limit}),
         SelfCall::MemoryWriteFixture(write) => claim_args(
@@ -976,9 +977,12 @@ fn rewrite(call: &SelfCall, args: &Value) -> Rewritten<SelfCall> {
         // result nothing resolved.
         // An answer is frozen once and checked as given (ONE-2510).
         // A world-settings request is judged as the agent gave it (FIX 4480).
+        // A consult's answer or abstention lands as the peer gave it
+        // (DOOR-063).
         SelfCall::AgentVerb(_)
         | SelfCall::ConnectorAnswer(_)
         | SelfCall::WorldPrivacySet(_)
+        | SelfCall::ConsultResult(_)
         | SelfCall::ReaderSpawn(_)
         | SelfCall::ReaderReport(_)
         | SelfCall::Summarize(_)

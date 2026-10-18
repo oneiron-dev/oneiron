@@ -1016,11 +1016,13 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             mcp_admit_run_verb(&self.actor, *verb).map_err(refused)?;
         }
         mcp_execute_code_gate(&self.server, &self.actor).map_err(refused)?;
-        // A search reads on the credential's lane, and a facet stamp places
-        // only a row that lane reads.
+        // A search reads on the credential's lane, a facet stamp places only
+        // a row that lane reads, and a consult lands only refs it reads.
         if !matches!(
             call,
-            RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge)
+            RunCall::Bridge(
+                SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge | SelfEffect::ConsultResult
+            )
         ) {
             return Ok(None);
         }

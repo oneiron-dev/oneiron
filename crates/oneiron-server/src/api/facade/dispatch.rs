@@ -21451,6 +21451,7 @@ pub(crate) async fn call_verb(
         | "vault.search"
         | "vault.claims.put"
         | "vault.edges.put"
+        | "tasks.consult.result"
         | "self.leader.advice"
         | "self.leader.pattern"
         | "self.team.start"

@@ -19,11 +19,18 @@
 //!
 //! A consult reads exactly as its terminal register stores it: refs only,
 //! never a result body. Landing an answer or abstention stays the addressed
-//! peer's; the owner inspects it.
+//! peer's; the owner inspects it. The peer's run lands it through the run
+//! row `tasks.consult.result` (DOOR-063), as the run's own actor.
+
+use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::ask_types::TaskAskOptionId;
 use super::consult_payload::ConsultPayloadRef;
+use super::consult_result::{
+    ConsultMeasuredSpend, ConsultResultInput, ConsultResultKind, TaskResultReceipt,
+};
 use super::create_validation::consult_body_in_txn;
 use super::presence_scan::{attempt_hex, superseded_attempt_ids};
 use super::terminal_state::{ConsultResultSummary, TaskTerminalDisposition, TaskTerminalRecord};
@@ -32,9 +39,11 @@ use crate::attempt_queue::{
     AttemptCancelState, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
     ForceAttemptCancel, ForceCancelAuthority, ForceCancelOutcome, validate_signal_cancel,
 };
+use crate::code_run::JS_SAFE_INTEGER;
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::cancel_task_in_txn;
 use crate::error::Error;
+use crate::llm::run_admission::LeaseUnit;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
 use crate::run_tree::{RunAsk, RunBranchSignal, RunTreeStatus};
@@ -170,6 +179,155 @@ pub enum ConsultSummaryView {
     Abstained {
         reason_ref: ConsultPayloadRef,
     },
+}
+
+/// `tasks.consult.result`: the addressed peer's run lands its answer to, or
+/// its abstention from, one consult TASK. The actor is the run's own, from
+/// its live lease; nothing here names one.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsultLandRequest {
+    pub task_ref: EntityId,
+    pub kind: ConsultLandKind,
+    /// When the peer finished, unix seconds: its word, refused when later
+    /// than the engine's clock.
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
+    pub completed_at: u64,
+    /// What the consult cost the peer, measured; absent when unknown. Only a
+    /// first landing folds it into the peer's consult calibration.
+    #[serde(default)]
+    pub measured_spend: Option<ConsultLandSpend>,
+}
+
+/// An answer, citing its evidence, or an abstention, giving its reason.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ConsultLandKind {
+    Answer {
+        /// The result the peer stored.
+        result_ref: EntityId,
+        /// The option the answer picks, when the consult offered options.
+        #[serde(default)]
+        option: Option<TaskAskOptionId>,
+        /// At least one, each distinct.
+        evidence_refs: Vec<ConsultPayloadRef>,
+    },
+    Abstain {
+        /// The result the peer stored.
+        result_ref: EntityId,
+        reason_ref: ConsultPayloadRef,
+    },
+}
+
+/// What one consult cost its peer, measured, in one unit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConsultLandSpend {
+    /// A budget line's unit: `tokens`, or one a pack row names.
+    pub unit: LeaseUnit,
+    #[schemars(range(max = "JS_SAFE_INTEGER"))]
+    pub units: u64,
+}
+
+/// What the landing came to: the consult's terminal register as stored, and
+/// whether this call replayed an identical earlier landing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConsultLandReply {
+    pub task_ref: EntityId,
+    pub terminal: ConsultTerminalView,
+    pub idempotent_replay: bool,
+}
+
+impl ConsultLandRequest {
+    /// The engine's landing input, the TASK it lands on, and every ref the
+    /// run's read lane must read first: the TASK, the result and each
+    /// evidence or reason ref, each once. Times and units are JavaScript safe
+    /// integers, as on every run row, and a unit is one a budget line could
+    /// name.
+    ///
+    /// # Errors
+    ///
+    /// `InvalidClaimBody` for a time or a unit count past the safe range, or
+    /// a unit no budget line names.
+    pub(crate) fn into_engine(
+        self,
+    ) -> crate::Result<(EntityId, ConsultResultInput, Vec<EntityId>)> {
+        let Self {
+            task_ref,
+            kind,
+            completed_at,
+            measured_spend,
+        } = self;
+        if completed_at > JS_SAFE_INTEGER {
+            return Err(Error::InvalidClaimBody("invalid unix time"));
+        }
+        let measured_spend = measured_spend
+            .map(|spend| {
+                if spend.units > JS_SAFE_INTEGER {
+                    return Err(Error::InvalidClaimBody("invalid consult spend units"));
+                }
+                let unit = LeaseUnit::new(spend.unit.as_str())
+                    .map_err(|_| Error::InvalidClaimBody("invalid consult spend unit"))?;
+                Ok(ConsultMeasuredSpend {
+                    unit,
+                    units: spend.units,
+                })
+            })
+            .transpose()?;
+        let (kind, result_ref, carried) = match kind {
+            ConsultLandKind::Answer {
+                result_ref,
+                option,
+                evidence_refs,
+            } => {
+                let carried: Vec<_> = evidence_refs
+                    .iter()
+                    .copied()
+                    .map(ConsultPayloadRef::entity_ref)
+                    .collect();
+                let kind = ConsultResultKind::Answer {
+                    result_ref,
+                    option,
+                    evidence_refs,
+                };
+                (kind, result_ref, carried)
+            }
+            ConsultLandKind::Abstain {
+                result_ref,
+                reason_ref,
+            } => {
+                let kind = ConsultResultKind::Abstain {
+                    result_ref,
+                    reason_ref,
+                };
+                (kind, result_ref, vec![reason_ref.entity_ref()])
+            }
+        };
+        // Deduped for the reads only: the evidence the engine checks is the
+        // peer's as given.
+        let mut seen = HashSet::new();
+        let reads: Vec<EntityId> = [task_ref, result_ref]
+            .into_iter()
+            .chain(carried)
+            .filter(|id| seen.insert(*id))
+            .collect();
+        let input = ConsultResultInput {
+            kind,
+            completed_at,
+            measured_spend,
+        };
+        Ok((task_ref, input, reads))
+    }
+}
+
+impl From<TaskResultReceipt> for ConsultLandReply {
+    fn from(receipt: TaskResultReceipt) -> Self {
+        Self {
+            task_ref: receipt.task_ref,
+            terminal: terminal_view(&receipt.terminal),
+            idempotent_replay: receipt.idempotent_replay,
+        }
+    }
 }
 
 /// Stops, as the vault owner and unrefusably, every live branch of

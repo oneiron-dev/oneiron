@@ -48,6 +48,13 @@ pub(super) fn self_call_request_value(call: &SelfCall) -> Result<Value> {
             ("reason_ref", Value::from(call.reason_ref.as_str())),
             ("at", Value::from(call.at)),
         ]),
+        SelfCall::ConsultResult(request) => request_map(vec![(
+            "call",
+            Value::from(
+                serde_json::to_string(request)
+                    .map_err(|_| invalid_code_run_replay("consult landing does not encode"))?,
+            ),
+        )]),
         SelfCall::SkillsCall(call) => request_map(vec![
             ("skill", entity_id_value(call.skill)),
             ("args", Value::from(call.args.to_string())),
@@ -679,6 +686,7 @@ pub(super) fn self_effect_from_str(value: &str) -> Result<SelfEffect> {
         "tasks.ask" => Ok(SelfEffect::TasksAsk),
         "tasks.wait" => Ok(SelfEffect::TasksWait),
         "tasks.refuse" => Ok(SelfEffect::TasksRefuse),
+        "tasks.consult.result" => Ok(SelfEffect::ConsultResult),
         "self.skills.call" => Ok(SelfEffect::SkillsCall),
         "self.memory.search" => Ok(SelfEffect::MemorySearch),
         "self.memory.write_fixture" => Ok(SelfEffect::MemoryWriteFixture),

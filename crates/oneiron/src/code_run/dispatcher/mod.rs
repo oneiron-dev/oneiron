@@ -532,6 +532,8 @@ impl<'a> HostSelfDispatcher<'a> {
                 self.dispatch_tasks_wait(call, run_id, turn)
             }
             SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call),
+            // The landing reads its refs under the key its door admitted it with.
+            SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),

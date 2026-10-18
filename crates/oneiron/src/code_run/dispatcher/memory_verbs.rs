@@ -74,6 +74,8 @@ impl HostSelfDispatcher<'_> {
             | SelfEffect::TasksAsk
             | SelfEffect::TasksWait
             | SelfEffect::TasksRefuse
+            // A consult's landing settles a canonical TASK.
+            | SelfEffect::ConsultResult
             // A callable skill loads against the canonical vault and the
             // running attempt's lease, and records its invocation there.
             | SelfEffect::SkillsCall

@@ -851,15 +851,18 @@ impl AgentVerbDoor for FacadeRowDoor {
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door
-    /// adds nothing to them. A search reads on the credential's lane, and an
-    /// edge's target is placed only when that lane reads it (DEC-0005).
+    /// adds nothing to them. A search reads on the credential's lane, an
+    /// edge's target is placed only when that lane reads it, and a consult
+    /// lands only refs that lane reads (DEC-0005).
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         Ok(matches!(
             call,
-            RunCall::Bridge(SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge)
+            RunCall::Bridge(
+                SelfEffect::MemorySearch | SelfEffect::MemoryPutEdge | SelfEffect::ConsultResult
+            )
         )
         .then(|| self.read_key.clone()))
     }
