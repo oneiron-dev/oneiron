@@ -1,7 +1,9 @@
 //! Typed custom AGENT_DEF authoring. Authorship is the caller's, never input.
 use serde::{Deserialize, Serialize};
 
-use crate::agent_def::{AgentCeiling, AgentDefinition, AgentModel, AgentScope, McpRef, RefusalDial};
+use crate::agent_def::{
+    AgentCeiling, AgentDefinition, AgentModel, AgentScope, McpRef, RefusalDial,
+};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::llm::{ModelId, ModelTierRef};

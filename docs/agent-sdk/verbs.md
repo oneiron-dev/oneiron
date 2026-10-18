@@ -13,6 +13,9 @@ both bindings and their export-census tests in one change.
 - `self.memory.diary`
 - `self.memory.diary.reads`
 - `self.memory.diary.review`
+- `self.standing.get`
+- `self.standing.list`
+- `self.standing.edit`
 - `self.identity.answer`
 - `self.identity.settle`
 - `self.inbox.list`
@@ -33,6 +36,8 @@ both bindings and their export-census tests in one change.
 - `describe`
 - `tasks.create`
 - `tasks.wave`
+- `vault.fanout.spawn`
+- `vault.fanout.slots`
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
@@ -54,6 +59,10 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
 - `vault.affect.annotations.put`
+- `vault.tagging.status`
+- `vault.tagging.tags`
+- `vault.tagging.history`
+- `vault.tagging.mentions`
 - `vault.affect.claims.consolidate`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`
@@ -261,6 +270,7 @@ both bindings and their export-census tests in one change.
 - `vault.policy.outbound.decide`
 - `vault.policy.relay.decide`
 - `vault.consent.approve_once`
+- `vault.consent.deny`
 - `vault.consent.create_standing_grant`
 - `vault.consent.registry`
 - `vault.consent.revoke`
@@ -359,6 +369,12 @@ both bindings and their export-census tests in one change.
 - `vault.agents.create`
 - `vault.agents.get`
 - `vault.agents.update`
+- `vault.agents.dreaming.get`
+- `vault.agents.dreaming.set`
+- `vault.standing_blocks.configure`
+- `vault.standing_blocks.reconfigure`
+- `vault.standing_blocks.get`
+- `vault.standing_blocks.list`
 - `vault.workflows.save`
 - `vault.workflows.get`
 - `vault.workflows.update`
@@ -441,6 +457,10 @@ both bindings and their export-census tests in one change.
 - `ai.steps.receipt`
 - `ai.reply`
 - `vault.receipts.context`
+- `ai.voice.asr.open`
+- `ai.voice.asr.hypothesis`
+- `ai.voice.asr.finalize`
+- `ai.voice.asr.close`
 - `ai.voice.start`
 - `ai.voice.audio`
 - `ai.voice.events`
@@ -487,6 +507,7 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
@@ -505,6 +526,7 @@ both bindings and their export-census tests in one change.
 - `vault.refs.resolve`
 - `vault.refs.links`
 - `vault.search.hybrid`
+- `vault.search.temporal`
 - `vault.search.bm25`
 - `vault.neighbors`
 - `vault.structural.put`
@@ -584,6 +606,7 @@ both bindings and their export-census tests in one change.
 - `vault.summaries.proposals.switch`
 - `vault.summaries.proposals.reject`
 - `vault.notes.create`
+- `vault.notes.author_take`
 - `vault.notes.from_entity`
 - `vault.notes.read`
 - `vault.notes.history`

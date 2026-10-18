@@ -11,7 +11,9 @@ use rand_core::{OsRng, RngCore};
 pub struct ArtifactLinkCapability(pub(super) [u8; 32]);
 
 /// Authority attached to one live pointer, never to an unpinned snapshot.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub enum ArtifactServeTier {
     #[default]
     Private,

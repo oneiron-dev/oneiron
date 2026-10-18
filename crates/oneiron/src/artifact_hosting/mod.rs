@@ -160,7 +160,9 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
 pub enum ArtifactPointerChannel {

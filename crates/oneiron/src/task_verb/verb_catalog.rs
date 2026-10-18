@@ -11,6 +11,9 @@ pub enum AgentVerb {
     SelfMemoryDiary,
     SelfMemoryDiaryReads,
     SelfMemoryDiaryReview,
+    SelfStandingGet,
+    SelfStandingList,
+    SelfStandingEdit,
     SelfIdentityAnswer,
     SelfIdentitySettle,
     SelfInboxList,
@@ -31,6 +34,8 @@ pub enum AgentVerb {
     Describe,
     TasksCreate,
     TasksWave,
+    VaultFanoutSpawn,
+    VaultFanoutSlots,
     VaultFanoutLaunch,
     SelfBudget,
     SelfBudgetLand,
@@ -52,6 +57,10 @@ pub enum AgentVerb {
     VaultRetrievalWeightsGet,
     VaultRetrievalWeightsConfigure,
     VaultAffectAnnotationsPut,
+    VaultTaggingStatus,
+    VaultTaggingTags,
+    VaultTaggingHistory,
+    VaultTaggingMentions,
     VaultAffectClaimsConsolidate,
     VaultRetrievalRecall,
     VaultRetrievalRuns,
@@ -259,6 +268,7 @@ pub enum AgentVerb {
     VaultPolicyOutboundDecide,
     VaultPolicyRelayDecide,
     VaultConsentApproveOnce,
+    VaultConsentDeny,
     VaultConsentCreateStandingGrant,
     VaultConsentRegistry,
     VaultConsentRevoke,
@@ -357,6 +367,12 @@ pub enum AgentVerb {
     VaultAgentsCreate,
     VaultAgentsGet,
     VaultAgentsUpdate,
+    VaultAgentsDreamingGet,
+    VaultAgentsDreamingSet,
+    VaultStandingBlocksConfigure,
+    VaultStandingBlocksReconfigure,
+    VaultStandingBlocksGet,
+    VaultStandingBlocksList,
     VaultWorkflowsSave,
     VaultWorkflowsGet,
     VaultWorkflowsUpdate,
@@ -485,26 +501,11 @@ pub enum AgentVerb {
     ConnectorCall,
     ConnectorSchema,
     ConnectorCallStatus,
-    SelfBrowserOpen,
-    SelfBrowserObserve,
-    SelfBrowserFind,
-    SelfBrowserClick,
-    SelfBrowserClickAt,
-    SelfBrowserType,
-    SelfBrowserSelect,
-    SelfBrowserWaitFor,
-    SelfBrowserExpect,
-    SelfBrowserScreenshot,
-    SelfBrowserView,
-    SelfBrowserCrop,
-    SelfBrowserZoom,
-    SelfBrowserBatch,
     SelfBrowserLibraryFind,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRetire,
     SelfBrowserLibraryRetired,
     SelfBrowserLibraryRun,
-    SelfBrowserHandover,
     SelfDesktopOpen,
     SelfDesktopObserve,
     SelfDesktopFind,
@@ -529,6 +530,7 @@ pub enum AgentVerb {
     VaultRemember,
     VaultClaimsRetract,
     VaultForget,
+    VaultBookingConstraintTurn,
     VaultBookingPageToken,
     CalendarInvite,
     CalendarConnectorConfigure,
@@ -555,6 +557,7 @@ pub enum AgentVerb {
     VaultRefsResolve,
     VaultRefsLinks,
     VaultSearchHybrid,
+    VaultSearchTemporal,
     VaultSearchBm25,
     VaultNeighbors,
     VaultStructuralPut,
@@ -634,6 +637,7 @@ pub enum AgentVerb {
     VaultSummariesProposalsSwitch,
     VaultSummariesProposalsReject,
     VaultNotesCreate,
+    VaultNotesAuthorTake,
     VaultNotesFromEntity,
     VaultNotesRead,
     VaultNotesHistory,
@@ -661,6 +665,21 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    SelfBrowserOpen,
+    SelfBrowserObserve,
+    SelfBrowserFind,
+    SelfBrowserClick,
+    SelfBrowserClickAt,
+    SelfBrowserType,
+    SelfBrowserSelect,
+    SelfBrowserWaitFor,
+    SelfBrowserExpect,
+    SelfBrowserScreenshot,
+    SelfBrowserView,
+    SelfBrowserCrop,
+    SelfBrowserZoom,
+    SelfBrowserBatch,
+    SelfBrowserHandover,
     VaultClaimsSupersede,
     SelfFold,
     SelfCompact,
@@ -683,6 +702,9 @@ impl AgentVerb {
         Self::SelfMemoryDiary,
         Self::SelfMemoryDiaryReads,
         Self::SelfMemoryDiaryReview,
+        Self::SelfStandingGet,
+        Self::SelfStandingList,
+        Self::SelfStandingEdit,
         Self::SelfIdentityAnswer,
         Self::SelfIdentitySettle,
         Self::SelfInboxList,
@@ -703,6 +725,8 @@ impl AgentVerb {
         Self::Describe,
         Self::TasksCreate,
         Self::TasksWave,
+        Self::VaultFanoutSpawn,
+        Self::VaultFanoutSlots,
         Self::VaultFanoutLaunch,
         Self::SelfBudget,
         Self::SelfBudgetLand,
@@ -724,6 +748,10 @@ impl AgentVerb {
         Self::VaultRetrievalWeightsGet,
         Self::VaultRetrievalWeightsConfigure,
         Self::VaultAffectAnnotationsPut,
+        Self::VaultTaggingStatus,
+        Self::VaultTaggingTags,
+        Self::VaultTaggingHistory,
+        Self::VaultTaggingMentions,
         Self::VaultAffectClaimsConsolidate,
         Self::VaultRetrievalRecall,
         Self::VaultRetrievalRuns,
@@ -931,6 +959,7 @@ impl AgentVerb {
         Self::VaultPolicyOutboundDecide,
         Self::VaultPolicyRelayDecide,
         Self::VaultConsentApproveOnce,
+        Self::VaultConsentDeny,
         Self::VaultConsentCreateStandingGrant,
         Self::VaultConsentRegistry,
         Self::VaultConsentRevoke,
@@ -1029,6 +1058,12 @@ impl AgentVerb {
         Self::VaultAgentsCreate,
         Self::VaultAgentsGet,
         Self::VaultAgentsUpdate,
+        Self::VaultAgentsDreamingGet,
+        Self::VaultAgentsDreamingSet,
+        Self::VaultStandingBlocksConfigure,
+        Self::VaultStandingBlocksReconfigure,
+        Self::VaultStandingBlocksGet,
+        Self::VaultStandingBlocksList,
         Self::VaultWorkflowsSave,
         Self::VaultWorkflowsGet,
         Self::VaultWorkflowsUpdate,
@@ -1157,26 +1192,11 @@ impl AgentVerb {
         Self::ConnectorCall,
         Self::ConnectorSchema,
         Self::ConnectorCallStatus,
-        Self::SelfBrowserOpen,
-        Self::SelfBrowserObserve,
-        Self::SelfBrowserFind,
-        Self::SelfBrowserClick,
-        Self::SelfBrowserClickAt,
-        Self::SelfBrowserType,
-        Self::SelfBrowserSelect,
-        Self::SelfBrowserWaitFor,
-        Self::SelfBrowserExpect,
-        Self::SelfBrowserScreenshot,
-        Self::SelfBrowserView,
-        Self::SelfBrowserCrop,
-        Self::SelfBrowserZoom,
-        Self::SelfBrowserBatch,
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRetire,
         Self::SelfBrowserLibraryRetired,
         Self::SelfBrowserLibraryRun,
-        Self::SelfBrowserHandover,
         Self::SelfDesktopOpen,
         Self::SelfDesktopObserve,
         Self::SelfDesktopFind,
@@ -1201,6 +1221,7 @@ impl AgentVerb {
         Self::VaultRemember,
         Self::VaultClaimsRetract,
         Self::VaultForget,
+        Self::VaultBookingConstraintTurn,
         Self::VaultBookingPageToken,
         Self::CalendarInvite,
         Self::CalendarConnectorConfigure,
@@ -1227,6 +1248,7 @@ impl AgentVerb {
         Self::VaultRefsResolve,
         Self::VaultRefsLinks,
         Self::VaultSearchHybrid,
+        Self::VaultSearchTemporal,
         Self::VaultSearchBm25,
         Self::VaultNeighbors,
         Self::VaultStructuralPut,
@@ -1306,6 +1328,7 @@ impl AgentVerb {
         Self::VaultSummariesProposalsSwitch,
         Self::VaultSummariesProposalsReject,
         Self::VaultNotesCreate,
+        Self::VaultNotesAuthorTake,
         Self::VaultNotesFromEntity,
         Self::VaultNotesRead,
         Self::VaultNotesHistory,
@@ -1333,6 +1356,21 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::SelfBrowserOpen,
+        Self::SelfBrowserObserve,
+        Self::SelfBrowserFind,
+        Self::SelfBrowserClick,
+        Self::SelfBrowserClickAt,
+        Self::SelfBrowserType,
+        Self::SelfBrowserSelect,
+        Self::SelfBrowserWaitFor,
+        Self::SelfBrowserExpect,
+        Self::SelfBrowserScreenshot,
+        Self::SelfBrowserView,
+        Self::SelfBrowserCrop,
+        Self::SelfBrowserZoom,
+        Self::SelfBrowserBatch,
+        Self::SelfBrowserHandover,
         Self::VaultClaimsSupersede,
         Self::SelfFold,
         Self::SelfCompact,
@@ -1358,6 +1396,9 @@ impl AgentVerb {
             Self::SelfMemoryDiary => "self.memory.diary",
             Self::SelfMemoryDiaryReads => "self.memory.diary.reads",
             Self::SelfMemoryDiaryReview => "self.memory.diary.review",
+            Self::SelfStandingGet => "self.standing.get",
+            Self::SelfStandingList => "self.standing.list",
+            Self::SelfStandingEdit => "self.standing.edit",
             Self::SelfIdentityAnswer => "self.identity.answer",
             Self::SelfIdentitySettle => "self.identity.settle",
             Self::SelfInboxList => "self.inbox.list",
@@ -1378,6 +1419,8 @@ impl AgentVerb {
             Self::Describe => "describe",
             Self::TasksCreate => "tasks.create",
             Self::TasksWave => "tasks.wave",
+            Self::VaultFanoutSpawn => "vault.fanout.spawn",
+            Self::VaultFanoutSlots => "vault.fanout.slots",
             Self::VaultFanoutLaunch => "vault.fanout.launch",
             Self::SelfBudget => "self.budget",
             Self::SelfBudgetLand => "self.budget.land",
@@ -1399,6 +1442,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => "vault.retrieval.weights.get",
             Self::VaultRetrievalWeightsConfigure => "vault.retrieval.weights.configure",
             Self::VaultAffectAnnotationsPut => "vault.affect.annotations.put",
+            Self::VaultTaggingStatus => "vault.tagging.status",
+            Self::VaultTaggingTags => "vault.tagging.tags",
+            Self::VaultTaggingHistory => "vault.tagging.history",
+            Self::VaultTaggingMentions => "vault.tagging.mentions",
             Self::VaultAffectClaimsConsolidate => "vault.affect.claims.consolidate",
             Self::VaultRetrievalRecall => "vault.retrieval.recall",
             Self::VaultRetrievalRuns => "vault.retrieval.runs",
@@ -1612,6 +1659,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => "vault.policy.outbound.decide",
             Self::VaultPolicyRelayDecide => "vault.policy.relay.decide",
             Self::VaultConsentApproveOnce => "vault.consent.approve_once",
+            Self::VaultConsentDeny => "vault.consent.deny",
             Self::VaultConsentCreateStandingGrant => "vault.consent.create_standing_grant",
             Self::VaultConsentRegistry => "vault.consent.registry",
             Self::VaultConsentRevoke => "vault.consent.revoke",
@@ -1716,6 +1764,12 @@ impl AgentVerb {
             Self::VaultAgentsCreate => "vault.agents.create",
             Self::VaultAgentsGet => "vault.agents.get",
             Self::VaultAgentsUpdate => "vault.agents.update",
+            Self::VaultAgentsDreamingGet => "vault.agents.dreaming.get",
+            Self::VaultAgentsDreamingSet => "vault.agents.dreaming.set",
+            Self::VaultStandingBlocksConfigure => "vault.standing_blocks.configure",
+            Self::VaultStandingBlocksReconfigure => "vault.standing_blocks.reconfigure",
+            Self::VaultStandingBlocksGet => "vault.standing_blocks.get",
+            Self::VaultStandingBlocksList => "vault.standing_blocks.list",
             Self::VaultWorkflowsSave => "vault.workflows.save",
             Self::VaultWorkflowsGet => "vault.workflows.get",
             Self::VaultWorkflowsUpdate => "vault.workflows.update",
@@ -1844,26 +1898,11 @@ impl AgentVerb {
             Self::ConnectorCall => "connector.call",
             Self::ConnectorSchema => "connector.schema",
             Self::ConnectorCallStatus => "connector.call_status",
-            Self::SelfBrowserOpen => "self.browser.open",
-            Self::SelfBrowserObserve => "self.browser.observe",
-            Self::SelfBrowserFind => "self.browser.find",
-            Self::SelfBrowserClick => "self.browser.click",
-            Self::SelfBrowserClickAt => "self.browser.click_at",
-            Self::SelfBrowserType => "self.browser.type",
-            Self::SelfBrowserSelect => "self.browser.select",
-            Self::SelfBrowserWaitFor => "self.browser.wait_for",
-            Self::SelfBrowserExpect => "self.browser.expect",
-            Self::SelfBrowserScreenshot => "self.browser.screenshot",
-            Self::SelfBrowserView => "self.browser.view",
-            Self::SelfBrowserCrop => "self.browser.crop",
-            Self::SelfBrowserZoom => "self.browser.zoom",
-            Self::SelfBrowserBatch => "self.browser.batch",
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
             Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
-            Self::SelfBrowserHandover => "self.browser.handover",
             Self::SelfDesktopOpen => "self.desktop.open",
             Self::SelfDesktopObserve => "self.desktop.observe",
             Self::SelfDesktopFind => "self.desktop.find",
@@ -1888,6 +1927,7 @@ impl AgentVerb {
             Self::VaultRemember => "vault.remember",
             Self::VaultClaimsRetract => "vault.claims.retract",
             Self::VaultForget => "vault.forget",
+            Self::VaultBookingConstraintTurn => "vault.booking.constraint_turn",
             Self::VaultBookingPageToken => "vault.booking.page_token",
             Self::CalendarInvite => "calendar.invite",
             Self::CalendarConnectorConfigure => "calendar.connector.configure",
@@ -1914,6 +1954,7 @@ impl AgentVerb {
             Self::VaultRefsResolve => "vault.refs.resolve",
             Self::VaultRefsLinks => "vault.refs.links",
             Self::VaultSearchHybrid => "vault.search.hybrid",
+            Self::VaultSearchTemporal => "vault.search.temporal",
             Self::VaultSearchBm25 => "vault.search.bm25",
             Self::VaultNeighbors => "vault.neighbors",
             Self::VaultStructuralPut => "vault.structural.put",
@@ -1997,6 +2038,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => "vault.summaries.proposals.switch",
             Self::VaultSummariesProposalsReject => "vault.summaries.proposals.reject",
             Self::VaultNotesCreate => "vault.notes.create",
+            Self::VaultNotesAuthorTake => "vault.notes.author_take",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
             Self::VaultNotesRead => "vault.notes.read",
             Self::VaultNotesHistory => "vault.notes.history",
@@ -2024,6 +2066,21 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::SelfBrowserOpen => "self.browser.open",
+            Self::SelfBrowserObserve => "self.browser.observe",
+            Self::SelfBrowserFind => "self.browser.find",
+            Self::SelfBrowserClick => "self.browser.click",
+            Self::SelfBrowserClickAt => "self.browser.click_at",
+            Self::SelfBrowserType => "self.browser.type",
+            Self::SelfBrowserSelect => "self.browser.select",
+            Self::SelfBrowserWaitFor => "self.browser.wait_for",
+            Self::SelfBrowserExpect => "self.browser.expect",
+            Self::SelfBrowserScreenshot => "self.browser.screenshot",
+            Self::SelfBrowserView => "self.browser.view",
+            Self::SelfBrowserCrop => "self.browser.crop",
+            Self::SelfBrowserZoom => "self.browser.zoom",
+            Self::SelfBrowserBatch => "self.browser.batch",
+            Self::SelfBrowserHandover => "self.browser.handover",
             Self::VaultClaimsSupersede => "vault.claims.supersede",
             Self::SelfFold => "self.fold",
             Self::SelfCompact => "self.compact",
@@ -2045,6 +2102,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingGet
+                | Self::SelfStandingList
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxList
@@ -2065,6 +2125,8 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -2086,6 +2148,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -2293,6 +2359,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
@@ -2391,6 +2458,12 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingGet
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
+                | Self::VaultStandingBlocksGet
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
@@ -2523,6 +2596,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
                 | Self::CalendarConnectorConfigure
@@ -2549,6 +2623,7 @@ impl AgentVerb {
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
                 | Self::VaultSearchHybrid
+                | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -2628,6 +2703,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -2655,6 +2731,21 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::SelfBrowserOpen
+                | Self::SelfBrowserObserve
+                | Self::SelfBrowserFind
+                | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
+                | Self::SelfBrowserType
+                | Self::SelfBrowserSelect
+                | Self::SelfBrowserWaitFor
+                | Self::SelfBrowserExpect
+                | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
+                | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -2669,26 +2760,11 @@ impl AgentVerb {
     pub const fn is_browser(self) -> bool {
         matches!(
             self,
-            Self::SelfBrowserOpen
-                | Self::SelfBrowserObserve
-                | Self::SelfBrowserFind
-                | Self::SelfBrowserClick
-                | Self::SelfBrowserClickAt
-                | Self::SelfBrowserType
-                | Self::SelfBrowserSelect
-                | Self::SelfBrowserWaitFor
-                | Self::SelfBrowserExpect
-                | Self::SelfBrowserScreenshot
-                | Self::SelfBrowserView
-                | Self::SelfBrowserCrop
-                | Self::SelfBrowserZoom
-                | Self::SelfBrowserBatch
-                | Self::SelfBrowserLibraryFind
+            Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
-                | Self::SelfBrowserHandover
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
                 | Self::SelfDesktopFind
@@ -2709,6 +2785,21 @@ impl AgentVerb {
                 | Self::SelfDesktopWindows
                 | Self::SelfDesktopWindow
                 | Self::SelfDesktopHandover
+                | Self::SelfBrowserOpen
+                | Self::SelfBrowserObserve
+                | Self::SelfBrowserFind
+                | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
+                | Self::SelfBrowserType
+                | Self::SelfBrowserSelect
+                | Self::SelfBrowserWaitFor
+                | Self::SelfBrowserExpect
+                | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
+                | Self::SelfBrowserHandover
         )
     }
     pub const fn is_mcp(self) -> bool {
@@ -2724,6 +2815,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingGet
+                | Self::SelfStandingList
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxList
@@ -2744,6 +2838,8 @@ impl AgentVerb {
                 | Self::Describe
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -2765,6 +2861,10 @@ impl AgentVerb {
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
                 | Self::VaultAffectAnnotationsPut
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -2972,6 +3072,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
@@ -3070,6 +3171,12 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingGet
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
+                | Self::VaultStandingBlocksGet
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
@@ -3202,6 +3309,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
                 | Self::CalendarConnectorConfigure
@@ -3228,6 +3336,7 @@ impl AgentVerb {
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
                 | Self::VaultSearchHybrid
+                | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultStructuralPut
@@ -3307,6 +3416,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesRead
                 | Self::VaultNotesHistory
@@ -3334,6 +3444,21 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::SelfBrowserOpen
+                | Self::SelfBrowserObserve
+                | Self::SelfBrowserFind
+                | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
+                | Self::SelfBrowserType
+                | Self::SelfBrowserSelect
+                | Self::SelfBrowserWaitFor
+                | Self::SelfBrowserExpect
+                | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
+                | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -3365,7 +3490,8 @@ impl AgentVerb {
     pub const fn continuable(self) -> bool {
         matches!(
             self,
-            Self::SelfInboxList
+            Self::SelfStandingList
+                | Self::SelfInboxList
                 | Self::Describe
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
@@ -3391,6 +3517,7 @@ impl AgentVerb {
                 | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
                 | Self::VaultArtifactsThreadsList
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkspaceRoster
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
@@ -3447,6 +3574,7 @@ impl AgentVerb {
                 | Self::VaultRefsResolve
                 | Self::VaultRefsLinks
                 | Self::VaultSearchHybrid
+                | Self::VaultSearchTemporal
                 | Self::VaultSearchBm25
                 | Self::VaultNeighbors
                 | Self::VaultProductivityTree
@@ -3471,6 +3599,9 @@ impl AgentVerb {
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReads
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingGet
+                | Self::SelfStandingList
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxConcern
@@ -3486,6 +3617,8 @@ impl AgentVerb {
                 | Self::SelfMemoryDiaryQuery
                 | Self::Steer
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
+                | Self::VaultFanoutSlots
                 | Self::VaultFanoutLaunch
                 | Self::SelfBudget
                 | Self::SelfBudgetLand
@@ -3502,6 +3635,10 @@ impl AgentVerb {
                 | Self::VaultWitness
                 | Self::VaultRetrievalWeightsGet
                 | Self::VaultRetrievalWeightsConfigure
+                | Self::VaultTaggingStatus
+                | Self::VaultTaggingTags
+                | Self::VaultTaggingHistory
+                | Self::VaultTaggingMentions
                 | Self::VaultAffectClaimsConsolidate
                 | Self::VaultRetrievalRecall
                 | Self::VaultRetrievalRuns
@@ -3706,6 +3843,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRegistry
                 | Self::VaultConsentRevoke
@@ -3804,6 +3942,12 @@ impl AgentVerb {
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsGet
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingGet
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
+                | Self::VaultStandingBlocksGet
+                | Self::VaultStandingBlocksList
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsGet
                 | Self::VaultWorkflowsUpdate
@@ -3932,26 +4076,11 @@ impl AgentVerb {
                 | Self::ConnectorCall
                 | Self::ConnectorSchema
                 | Self::ConnectorCallStatus
-                | Self::SelfBrowserOpen
-                | Self::SelfBrowserObserve
-                | Self::SelfBrowserFind
-                | Self::SelfBrowserClick
-                | Self::SelfBrowserClickAt
-                | Self::SelfBrowserType
-                | Self::SelfBrowserSelect
-                | Self::SelfBrowserWaitFor
-                | Self::SelfBrowserExpect
-                | Self::SelfBrowserScreenshot
-                | Self::SelfBrowserView
-                | Self::SelfBrowserCrop
-                | Self::SelfBrowserZoom
-                | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
-                | Self::SelfBrowserHandover
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
                 | Self::SelfDesktopFind
@@ -3975,6 +4104,7 @@ impl AgentVerb {
                 | Self::VaultRemember
                 | Self::VaultClaimsRetract
                 | Self::VaultForget
+                | Self::VaultBookingConstraintTurn
                 | Self::VaultBookingPageToken
                 | Self::CalendarInvite
                 | Self::CalendarConnectorConfigure
@@ -4063,6 +4193,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4083,6 +4214,21 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::SelfBrowserOpen
+                | Self::SelfBrowserObserve
+                | Self::SelfBrowserFind
+                | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
+                | Self::SelfBrowserType
+                | Self::SelfBrowserSelect
+                | Self::SelfBrowserWaitFor
+                | Self::SelfBrowserExpect
+                | Self::SelfBrowserScreenshot
+                | Self::SelfBrowserView
+                | Self::SelfBrowserCrop
+                | Self::SelfBrowserZoom
+                | Self::SelfBrowserBatch
+                | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -4104,6 +4250,7 @@ impl AgentVerb {
                 | Self::SelfFocusScratchpadSeal
                 | Self::SelfMemoryDiary
                 | Self::SelfMemoryDiaryReview
+                | Self::SelfStandingEdit
                 | Self::SelfIdentityAnswer
                 | Self::SelfIdentitySettle
                 | Self::SelfInboxMark
@@ -4116,6 +4263,7 @@ impl AgentVerb {
                 | Self::Steer
                 | Self::TasksCreate
                 | Self::TasksWave
+                | Self::VaultFanoutSpawn
                 | Self::SelfBudgetLand
                 | Self::VaultBudgetsLeaseOpen
                 | Self::VaultBudgetsLeaseTopUp
@@ -4267,6 +4415,7 @@ impl AgentVerb {
                 | Self::VaultPolicyOutboundDecide
                 | Self::VaultPolicyRelayDecide
                 | Self::VaultConsentApproveOnce
+                | Self::VaultConsentDeny
                 | Self::VaultConsentCreateStandingGrant
                 | Self::VaultConsentRevoke
                 | Self::VaultGatePolicyPut
@@ -4323,6 +4472,9 @@ impl AgentVerb {
                 | Self::VaultCodeMergeQueueRecover
                 | Self::VaultAgentsCreate
                 | Self::VaultAgentsUpdate
+                | Self::VaultAgentsDreamingSet
+                | Self::VaultStandingBlocksConfigure
+                | Self::VaultStandingBlocksReconfigure
                 | Self::VaultWorkflowsSave
                 | Self::VaultWorkflowsUpdate
                 | Self::VaultWorkflowsDispatch
@@ -4396,16 +4548,9 @@ impl AgentVerb {
                 | Self::VaultDecisionsAsksAnswer
                 | Self::VaultDecisionsAsksClimb
                 | Self::ConnectorCall
-                | Self::SelfBrowserOpen
-                | Self::SelfBrowserClick
-                | Self::SelfBrowserClickAt
-                | Self::SelfBrowserType
-                | Self::SelfBrowserSelect
-                | Self::SelfBrowserBatch
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
-                | Self::SelfBrowserHandover
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
                 | Self::SelfDesktopClickAt
@@ -4481,6 +4626,7 @@ impl AgentVerb {
                 | Self::VaultSummariesProposalsSwitch
                 | Self::VaultSummariesProposalsReject
                 | Self::VaultNotesCreate
+                | Self::VaultNotesAuthorTake
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesFork
                 | Self::VaultNotesProposalsOpen
@@ -4494,6 +4640,13 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::SelfBrowserOpen
+                | Self::SelfBrowserClick
+                | Self::SelfBrowserClickAt
+                | Self::SelfBrowserType
+                | Self::SelfBrowserSelect
+                | Self::SelfBrowserBatch
+                | Self::SelfBrowserHandover
                 | Self::VaultClaimsSupersede
                 | Self::SelfFold
                 | Self::SelfCompact
@@ -4507,7 +4660,8 @@ impl AgentVerb {
     pub const fn proposes(self) -> bool {
         matches!(
             self,
-            Self::Cancel
+            Self::SelfStandingEdit
+                | Self::Cancel
                 | Self::TasksCreate
                 | Self::VaultClaimsUpsert
                 | Self::VaultAffectAnnotationsPut
@@ -4537,6 +4691,9 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfStandingGet => &["spec"],
+            Self::SelfStandingList => &["spec"],
+            Self::SelfStandingEdit => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxList => &["spec"],
@@ -4574,6 +4731,8 @@ impl AgentVerb {
                 "parent_ref",
             ],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutSpawn => &["spec"],
+            Self::VaultFanoutSlots => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
@@ -4595,6 +4754,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultTaggingStatus => &["spec"],
+            Self::VaultTaggingTags => &["spec"],
+            Self::VaultTaggingHistory => &["spec"],
+            Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
@@ -4802,6 +4965,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -4900,6 +5064,12 @@ impl AgentVerb {
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
             Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultAgentsDreamingGet => &["spec"],
+            Self::VaultAgentsDreamingSet => &["spec"],
+            Self::VaultStandingBlocksConfigure => &["spec"],
+            Self::VaultStandingBlocksReconfigure => &["spec"],
+            Self::VaultStandingBlocksGet => &["spec"],
+            Self::VaultStandingBlocksList => &["spec"],
             Self::VaultWorkflowsSave => &["spec"],
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
@@ -5028,26 +5198,11 @@ impl AgentVerb {
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
             Self::ConnectorCallStatus => &["spec"],
-            Self::SelfBrowserOpen => &["spec"],
-            Self::SelfBrowserObserve => &["spec"],
-            Self::SelfBrowserFind => &["spec"],
-            Self::SelfBrowserClick => &["spec"],
-            Self::SelfBrowserClickAt => &["spec"],
-            Self::SelfBrowserType => &["spec"],
-            Self::SelfBrowserSelect => &["spec"],
-            Self::SelfBrowserWaitFor => &["spec"],
-            Self::SelfBrowserExpect => &["spec"],
-            Self::SelfBrowserScreenshot => &["spec"],
-            Self::SelfBrowserView => &["spec"],
-            Self::SelfBrowserCrop => &["spec"],
-            Self::SelfBrowserZoom => &["spec"],
-            Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
-            Self::SelfBrowserHandover => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
             Self::SelfDesktopFind => &["spec"],
@@ -5072,6 +5227,7 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
@@ -5098,6 +5254,7 @@ impl AgentVerb {
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
+            Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -5177,6 +5334,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -5204,6 +5362,21 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::SelfBrowserOpen => &["spec"],
+            Self::SelfBrowserObserve => &["spec"],
+            Self::SelfBrowserFind => &["spec"],
+            Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
+            Self::SelfBrowserType => &["spec"],
+            Self::SelfBrowserSelect => &["spec"],
+            Self::SelfBrowserWaitFor => &["spec"],
+            Self::SelfBrowserExpect => &["spec"],
+            Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserHandover => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -5227,6 +5400,9 @@ impl AgentVerb {
             Self::SelfMemoryDiary => &["spec"],
             Self::SelfMemoryDiaryReads => &["spec"],
             Self::SelfMemoryDiaryReview => &["spec"],
+            Self::SelfStandingGet => &["spec"],
+            Self::SelfStandingList => &["spec"],
+            Self::SelfStandingEdit => &["spec"],
             Self::SelfIdentityAnswer => &["spec"],
             Self::SelfIdentitySettle => &["spec"],
             Self::SelfInboxList => &["spec"],
@@ -5247,6 +5423,8 @@ impl AgentVerb {
             Self::Describe => &[],
             Self::TasksCreate => &["spec"],
             Self::TasksWave => &["spec"],
+            Self::VaultFanoutSpawn => &["spec"],
+            Self::VaultFanoutSlots => &["spec"],
             Self::VaultFanoutLaunch => &["spec"],
             Self::SelfBudget => &["spec"],
             Self::SelfBudgetLand => &["spec"],
@@ -5268,6 +5446,10 @@ impl AgentVerb {
             Self::VaultRetrievalWeightsGet => &["spec"],
             Self::VaultRetrievalWeightsConfigure => &["spec"],
             Self::VaultAffectAnnotationsPut => &["spec"],
+            Self::VaultTaggingStatus => &["spec"],
+            Self::VaultTaggingTags => &["spec"],
+            Self::VaultTaggingHistory => &["spec"],
+            Self::VaultTaggingMentions => &["spec"],
             Self::VaultAffectClaimsConsolidate => &["spec"],
             Self::VaultRetrievalRecall => &["spec"],
             Self::VaultRetrievalRuns => &["spec"],
@@ -5475,6 +5657,7 @@ impl AgentVerb {
             Self::VaultPolicyOutboundDecide => &["spec"],
             Self::VaultPolicyRelayDecide => &["spec"],
             Self::VaultConsentApproveOnce => &["spec"],
+            Self::VaultConsentDeny => &["spec"],
             Self::VaultConsentCreateStandingGrant => &["spec"],
             Self::VaultConsentRegistry => &["spec"],
             Self::VaultConsentRevoke => &["spec"],
@@ -5573,6 +5756,12 @@ impl AgentVerb {
             Self::VaultAgentsCreate => &["spec"],
             Self::VaultAgentsGet => &["spec"],
             Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultAgentsDreamingGet => &["spec"],
+            Self::VaultAgentsDreamingSet => &["spec"],
+            Self::VaultStandingBlocksConfigure => &["spec"],
+            Self::VaultStandingBlocksReconfigure => &["spec"],
+            Self::VaultStandingBlocksGet => &["spec"],
+            Self::VaultStandingBlocksList => &["spec"],
             Self::VaultWorkflowsSave => &["spec"],
             Self::VaultWorkflowsGet => &["spec"],
             Self::VaultWorkflowsUpdate => &["spec"],
@@ -5701,26 +5890,11 @@ impl AgentVerb {
             Self::ConnectorCall => &["spec"],
             Self::ConnectorSchema => &["spec"],
             Self::ConnectorCallStatus => &["spec"],
-            Self::SelfBrowserOpen => &["spec"],
-            Self::SelfBrowserObserve => &["spec"],
-            Self::SelfBrowserFind => &["spec"],
-            Self::SelfBrowserClick => &["spec"],
-            Self::SelfBrowserClickAt => &["spec"],
-            Self::SelfBrowserType => &["spec"],
-            Self::SelfBrowserSelect => &["spec"],
-            Self::SelfBrowserWaitFor => &["spec"],
-            Self::SelfBrowserExpect => &["spec"],
-            Self::SelfBrowserScreenshot => &["spec"],
-            Self::SelfBrowserView => &["spec"],
-            Self::SelfBrowserCrop => &["spec"],
-            Self::SelfBrowserZoom => &["spec"],
-            Self::SelfBrowserBatch => &["spec"],
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
             Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
-            Self::SelfBrowserHandover => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
             Self::SelfDesktopFind => &["spec"],
@@ -5745,6 +5919,7 @@ impl AgentVerb {
             Self::VaultRemember => &["spec"],
             Self::VaultClaimsRetract => &["spec"],
             Self::VaultForget => &["spec"],
+            Self::VaultBookingConstraintTurn => &["spec"],
             Self::VaultBookingPageToken => &["spec"],
             Self::CalendarInvite => &["spec"],
             Self::CalendarConnectorConfigure => &["spec"],
@@ -5771,6 +5946,7 @@ impl AgentVerb {
             Self::VaultRefsResolve => &["spec"],
             Self::VaultRefsLinks => &["spec"],
             Self::VaultSearchHybrid => &["spec"],
+            Self::VaultSearchTemporal => &["spec"],
             Self::VaultSearchBm25 => &["spec"],
             Self::VaultNeighbors => &["spec"],
             Self::VaultStructuralPut => &["spec"],
@@ -5850,6 +6026,7 @@ impl AgentVerb {
             Self::VaultSummariesProposalsSwitch => &["spec"],
             Self::VaultSummariesProposalsReject => &["spec"],
             Self::VaultNotesCreate => &["spec"],
+            Self::VaultNotesAuthorTake => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
             Self::VaultNotesRead => &["spec"],
             Self::VaultNotesHistory => &["spec"],
@@ -5877,6 +6054,21 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::SelfBrowserOpen => &["spec"],
+            Self::SelfBrowserObserve => &["spec"],
+            Self::SelfBrowserFind => &["spec"],
+            Self::SelfBrowserClick => &["spec"],
+            Self::SelfBrowserClickAt => &["spec"],
+            Self::SelfBrowserType => &["spec"],
+            Self::SelfBrowserSelect => &["spec"],
+            Self::SelfBrowserWaitFor => &["spec"],
+            Self::SelfBrowserExpect => &["spec"],
+            Self::SelfBrowserScreenshot => &["spec"],
+            Self::SelfBrowserView => &["spec"],
+            Self::SelfBrowserCrop => &["spec"],
+            Self::SelfBrowserZoom => &["spec"],
+            Self::SelfBrowserBatch => &["spec"],
+            Self::SelfBrowserHandover => &["spec"],
             Self::VaultClaimsSupersede => &["spec"],
             Self::SelfFold => &["spec"],
             Self::SelfCompact => &["spec"],
@@ -5918,6 +6110,15 @@ impl AgentVerb {
             }
             Self::SelfMemoryDiaryReview => {
                 "This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."
+            }
+            Self::SelfStandingGet => {
+                "This agent's configured standing block in one world: its handle, name and token floor."
+            }
+            Self::SelfStandingList => {
+                "Every standing block configured for this agent, one per world, in world order."
+            }
+            Self::SelfStandingEdit => {
+                "This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."
             }
             Self::SelfIdentityAnswer => {
                 "A vault owner's tap on an identity choice card: who a person named in their conversations is."
@@ -5968,6 +6169,12 @@ impl AgentVerb {
             }
             Self::TasksWave => {
                 "Cuts an epic TASK into a wave of TASKs through a planner agent, as one planning attempt: under the asking run's own lease, or the owner's root wave."
+            }
+            Self::VaultFanoutSpawn => {
+                "Admits input-order child slots under this credential's attached live run, through the frozen fan-out approval gate and one shared parent spend tree."
+            }
+            Self::VaultFanoutSlots => {
+                "Reads a batch launch in input slot order, with child errors, results, reservations, settled spend and released holds from its shared parent lease tree."
             }
             Self::VaultFanoutLaunch => {
                 "One held or launched fan-out by its launch ref, with the statement frozen before it launched; readable by the vault owner, its creator, or a live lead/board holder of its project, anything else reads as none."
@@ -6031,6 +6238,18 @@ impl AgentVerb {
             }
             Self::VaultAffectAnnotationsPut => {
                 "Writes one sourced TURN VAD annotation through ordinary scoped claim admission and the caller credential; the receipt states its approval."
+            }
+            Self::VaultTaggingStatus => {
+                "Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."
+            }
+            Self::VaultTaggingTags => {
+                "Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."
+            }
+            Self::VaultTaggingHistory => {
+                "Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."
+            }
+            Self::VaultTaggingMentions => {
+                "Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."
             }
             Self::VaultAffectClaimsConsolidate => {
                 "The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."
@@ -6631,6 +6850,9 @@ impl AgentVerb {
             Self::VaultConsentApproveOnce => {
                 "The owner approves exactly one engine-emitted effect digest; no standing grant is created."
             }
+            Self::VaultConsentDeny => {
+                "The owner denies exactly one engine-emitted effect digest and records the refusal without granting authority."
+            }
             Self::VaultConsentCreateStandingGrant => {
                 "The owner creates a bounded standing action or disclosure grant, with no stored expiry; a wider bound is a new decision."
             }
@@ -6920,6 +7142,24 @@ impl AgentVerb {
             }
             Self::VaultAgentsUpdate => {
                 "The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."
+            }
+            Self::VaultAgentsDreamingGet => {
+                "The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot."
+            }
+            Self::VaultAgentsDreamingSet => {
+                "The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."
+            }
+            Self::VaultStandingBlocksConfigure => {
+                "The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."
+            }
+            Self::VaultStandingBlocksReconfigure => {
+                "The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened."
+            }
+            Self::VaultStandingBlocksGet => {
+                "The owner reads one agent's configured standing block in one world: its handle, name and token floor."
+            }
+            Self::VaultStandingBlocksList => {
+                "The owner lists every standing block configured for one agent, one per world, in world order."
             }
             Self::VaultWorkflowsSave => {
                 "The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."
@@ -7261,42 +7501,6 @@ impl AgentVerb {
             Self::ConnectorCallStatus => {
                 "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."
             }
-            Self::SelfBrowserOpen => {
-                "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."
-            }
-            Self::SelfBrowserObserve => {
-                "Observes the current page of the run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."
-            }
-            Self::SelfBrowserFind => {
-                "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
-            }
-            Self::SelfBrowserClick => {
-                "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
-            }
-            Self::SelfBrowserClickAt => {
-                "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."
-            }
-            Self::SelfBrowserType => {
-                "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
-            }
-            Self::SelfBrowserSelect => {
-                "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."
-            }
-            Self::SelfBrowserWaitFor => {
-                "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
-            }
-            Self::SelfBrowserExpect => {
-                "Checks that a page row is present or absent, and holds a given value."
-            }
-            Self::SelfBrowserScreenshot => {
-                "Takes a screenshot the session holds, by image ref and never captioned."
-            }
-            Self::SelfBrowserView => "Reads back a held image by its ref.",
-            Self::SelfBrowserCrop => "Crops a held image to a rectangle.",
-            Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
-            Self::SelfBrowserBatch => {
-                "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
-            }
             Self::SelfBrowserLibraryFind => {
                 "The replay library's programs for a site, or for the open page's site."
             }
@@ -7311,9 +7515,6 @@ impl AgentVerb {
             }
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
-            }
-            Self::SelfBrowserHandover => {
-                "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
             }
             Self::SelfDesktopOpen => {
                 "Opens an app of the run's own desktop guest by app:name and observes its window; a long window's observation comes in pages, read on with observe and its next cursor."
@@ -7378,6 +7579,9 @@ impl AgentVerb {
             }
             Self::VaultForget => {
                 "Retracts claims by exact claim or by subject and predicate; never a hard delete."
+            }
+            Self::VaultBookingConstraintTurn => {
+                "Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."
             }
             Self::VaultBookingPageToken => {
                 "The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."
@@ -7454,6 +7658,9 @@ impl AgentVerb {
             }
             Self::VaultSearchHybrid => {
                 "Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."
+            }
+            Self::VaultSearchTemporal => {
+                "Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."
             }
             Self::VaultSearchBm25 => {
                 "BM25 text search over the engine index; surfaceable claims only."
@@ -7688,6 +7895,9 @@ impl AgentVerb {
             Self::VaultNotesCreate => {
                 "Creates a NOTE of a registered kind, its first authored text as its birth."
             }
+            Self::VaultNotesAuthorTake => {
+                "Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."
+            }
             Self::VaultNotesFromEntity => {
                 "Creates a NOTE of a registered kind from an existing entity."
             }
@@ -7768,6 +7978,45 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::SelfBrowserOpen => {
+                "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfBrowserObserve => {
+                "Observes the current page of the attached run's browser session, in pages read on with observe and an answer's next cursor; the verbs follow a tab an act opens, or a closed tab's opener, and name the move as switched."
+            }
+            Self::SelfBrowserFind => {
+                "Finds the page rows whose role and name match, in pages: an answer with next goes on, and find with that cursor reads the next page."
+            }
+            Self::SelfBrowserClick => {
+                "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfBrowserClickAt => {
+                "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfBrowserType => {
+                "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfBrowserSelect => {
+                "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfBrowserWaitFor => {
+                "Waits until a page row its refs name, or else some row matching a role and name, is there; many rows come in pages, read on with find and its next cursor."
+            }
+            Self::SelfBrowserExpect => {
+                "Checks that a page row is present or absent, and holds a given value."
+            }
+            Self::SelfBrowserScreenshot => {
+                "Takes a screenshot the session holds, by image ref and never captioned."
+            }
+            Self::SelfBrowserView => "Reads back a held image by its ref.",
+            Self::SelfBrowserCrop => "Crops a held image to a rectangle.",
+            Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
+            Self::SelfBrowserBatch => {
+                "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
+            }
+            Self::SelfBrowserHandover => {
+                "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
             }
             Self::VaultClaimsSupersede => {
                 "Supersedes through this credential's attached generated-writing run and its existing gates; spec is {newId,oldId,now}, never an actor or source override."

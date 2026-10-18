@@ -111,8 +111,9 @@ struct Settlement {
     /// Parents a judged row names that no judged row is.
     missing_parents: BTreeSet<AuthorityEntryHash>,
     /// The valid machine profiles heading their own roster chain under an
-    /// owner-held key, with that key: the marks before custody is judged.
-    marks: Vec<(AuthorityEntryHash, AuthorityKey)>,
+    /// owner-held key, with that key, or as an admitted owner answer: the
+    /// marks before custody is judged ([`MarkProof`]).
+    marks: Vec<(AuthorityEntryHash, MarkProof)>,
 }
 
 /// One settled once fold, and what its projection read of each row's state.
@@ -226,8 +227,9 @@ impl Once {
                     .machines
                     .get(&profile.machine)?
                     .get(&MachineAdmitter::Roster)?;
-                (chain.head.entry == *hash && chain.head.signer_class == SignerClass::OwnerHeld)
-                    .then(|| (*hash, chain.head.signer.clone()))
+                MarkProof::of(&chain.head)
+                    .filter(|_| chain.head.entry == *hash)
+                    .map(|proof| (*hash, proof))
             })
             .collect();
         let missing_parents = by_hash
@@ -280,7 +282,8 @@ impl Once {
 /// `merged` (the merge of every surviving state) as it was, given the confirms
 /// already in the log (which it joins): an agent enrollment, a fresh binding,
 /// a slip mint or consume, a critical-write confirm, a fresh federation
-/// confirm, a grant travel choice (it judges only its own grant's choices).
+/// confirm, a grant travel choice (it judges only its own grant's choices),
+/// an owner work request or result (each judges only its own work).
 /// A resumed fold and a fold past an adopted checkpoint take only these.
 pub(super) fn admits_past(
     merged: &FoldState,
@@ -309,7 +312,9 @@ pub(super) fn admits_past(
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipConsume { .. }
         | AuthorityOp::CriticalWriteConfirm(_)
-        | AuthorityOp::GrantTravelSet(_) => true,
+        | AuthorityOp::GrantTravelSet(_)
+        | AuthorityOp::OwnerWorkRequest(_)
+        | AuthorityOp::OwnerWorkResult(_) => true,
         AuthorityOp::FederationConfirm(action) => {
             confirms.0.insert(action.confirm_id) && confirms.1.insert(action.nonce)
         }
@@ -388,8 +393,9 @@ impl ImageFold {
                     .machines
                     .get(&profile.machine)?
                     .get(&MachineAdmitter::Roster)?;
-                (chain.head.entry == *hash && chain.head.signer_class == SignerClass::OwnerHeld)
-                    .then(|| (*hash, chain.head.signer.clone()))
+                MarkProof::of(&chain.head)
+                    .filter(|_| chain.head.entry == *hash)
+                    .map(|proof| (*hash, proof))
             })
             .collect();
         let missing_parents = by_hash
@@ -545,10 +551,11 @@ impl<'a> RowMeta<'a> {
 }
 
 /// Whether a fold past the base reads `op`'s row whole: the approvals and
-/// revocations stale-roster expiry and renewal weigh (`stale_roster`), and
-/// the world-key records whose envelopes a folded key carries
-/// (`world_key_fold::folded_world_keys`). Every other row's summary is all
-/// a later fold reads of it.
+/// revocations stale-roster expiry and renewal weigh (`stale_roster`), the
+/// world-key records whose envelopes a folded key carries
+/// (`world_key_fold::folded_world_keys`), and the owner work requests and
+/// results an executor and a receipt read past the base. Every other row's
+/// summary is all a later fold reads of it.
 pub(super) fn is_projected(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -561,6 +568,8 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::RotateKey { .. }
             | AuthorityOp::ReRoot { .. }
             | AuthorityOp::WorldKeyWraps(_)
+            | AuthorityOp::OwnerWorkRequest(_)
+            | AuthorityOp::OwnerWorkResult(_)
     )
 }
 
@@ -1008,8 +1017,9 @@ impl FoldBase {
 /// fold's base, or an adopted checkpoint image's settled fold (OF-469).
 pub(super) struct Resumed<'a> {
     /// The valid machine profiles heading their own roster chain under an
-    /// owner-held key, with that key: the marks before custody is judged.
-    pub(super) marks: &'a [(AuthorityEntryHash, AuthorityKey)],
+    /// owner-held key, with that key, or as an admitted owner answer: the
+    /// marks before custody is judged ([`MarkProof`]).
+    pub(super) marks: &'a [(AuthorityEntryHash, MarkProof)],
     /// The base's projected fold.
     pub(super) fold: &'a AuthorityFold,
     /// The base's final merge's revocations, by key.
@@ -1034,9 +1044,7 @@ impl RowStates for Resumed<'_> {
         // No chain row is a machine profile.
         self.marks
             .iter()
-            .filter(|(_, signer)| {
-                !(merged.hosted && super::machine_profile::in_host_custody(merged, signer))
-            })
+            .filter(|(_, proof)| proof.accepted(merged))
             .map(|(hash, _)| *hash)
             .collect()
     }

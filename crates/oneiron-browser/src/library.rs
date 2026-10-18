@@ -113,7 +113,7 @@ pub struct LibraryFindInput {
 }
 
 /// One library program as a planner reads it.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LibraryCard {
     pub workflow: String,
     pub site: String,
