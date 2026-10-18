@@ -539,6 +539,37 @@ impl Vault {
         crate::provenance::body::publish_body_in_txn(&self.store, wtxn, &held)
     }
 
+    /// Run `child`'s hold on an output it inherits from `source`, the run it
+    /// was forked from (FIX 3694), published in the caller's transaction: its
+    /// own occurrence of the body at the same path, carrying the source
+    /// occurrence's taint and secret marks, so a body withheld under the
+    /// source stays withheld under the child. The child's replay row names
+    /// the output, so the hold carries no retained-result provenance.
+    pub(crate) fn retain_inherited_result_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        child: EntityId,
+        source: EntityId,
+        output: &CodeRunRawOutput,
+    ) -> Result<()> {
+        let stored = RAW_OUTPUTS
+            .get(&self.store, wtxn, &output.handle)?
+            .ok_or(Error::CorruptedIndex("inherited run result body"))?;
+        let (refs, secret) = self.result_marks_in_txn(wtxn, Some(source), output)?;
+        let key = ResultOccurrence::of(Some(child), output)?.mark_key(&output.handle);
+        if !refs.is_empty() {
+            RAW_OUTPUT_TAINTS.put(&self.store, wtxn, &key, &refs)?;
+        }
+        if let Some(reason) = &secret {
+            RAW_OUTPUT_SECRETS.put(&self.store, wtxn, &key, reason)?;
+        }
+        crate::provenance::body::publish_body_in_txn(
+            &self.store,
+            wtxn,
+            &owned_body(child, output, &stored)?,
+        )
+    }
+
     /// [`Self::retain_message_result_in_txn`] for a MESSAGE a save keeps out
     /// of an off-record room, in the save's transaction (FIX 365). The run
     /// that made the body ran in the room, so `room`, the room's composed

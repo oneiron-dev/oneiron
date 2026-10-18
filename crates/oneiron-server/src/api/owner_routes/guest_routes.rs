@@ -5,7 +5,9 @@
 //! governs, signed with the host's slip issuer (`api/pairing.rs`'s), and
 //! keeps the withdrawal, so a repeat answers the first revoke with
 //! `changed: false`. The answer carries the copied-bytes disclosure: what
-//! the guest already synced is the guest's copy, never recalled.
+//! the guest already synced is the guest's copy, never recalled. With
+//! `peer`, the former peer's host origin, the revoke then queues one
+//! courtesy-delete ask per ended pact (`owner::guest_revoke`, FIX 1634).
 
 use std::sync::Arc;
 
@@ -21,16 +23,17 @@ use serde_json::Value;
 use super::{OwnerReply, blocking, hooked_owner};
 use crate::api::json_payload;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult, hooked_row};
+use crate::owner::{OwnerError, OwnerResult, guest_revoke, hooked_row};
 use crate::server::SyncServer;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
     Router::new().route("/guests/revoke", post(revoke))
 }
 
-/// `POST /v1/owner/guests/revoke` with `{"grant_ref": "<hex>"}`: an unknown
-/// or non-guest grant is not found, and a disconnect the fold refuses fails
-/// the whole revoke.
+/// `POST /v1/owner/guests/revoke` with `{"grant_ref": "<hex>"}` and an
+/// optional `"peer": "https://host"`: an unknown or non-guest grant is not
+/// found, and a disconnect the fold refuses fails the whole revoke. An ask
+/// that does not queue fails only its own target.
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -56,7 +59,14 @@ async fn revoke(
                             .to_owned(),
                     )
                 })??;
-                Ok(project_guest_revoke(outcome))
+                let mut response = project_guest_revoke(outcome);
+                guest_revoke::queue_courtesy_deletes(
+                    &server,
+                    &owner,
+                    request.peer.as_deref(),
+                    &mut response,
+                );
+                Ok(response)
             },
         )
     })

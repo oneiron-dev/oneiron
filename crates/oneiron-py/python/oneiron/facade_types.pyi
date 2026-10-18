@@ -2502,6 +2502,7 @@ class SharedEraseAskCloseRequest(TypedDict):
     act_id: NotRequired[str | None]
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
+    peer: NotRequired[str | None]
 GuestPactStanding = Literal["unpacted", "active", "suspended", "promoted", "disconnected", "dissolved"]
 NotRecallable = bool
 GuestCopyState = Literal["unknown"]
@@ -2514,6 +2515,9 @@ class GuestRevokeCourtesyTargetView(TypedDict):
     pact: str
     peer_vault_id: str
     epoch_cutoff: int
+    deletion_request_status: GuestDeletionRequestStatus
+    request: NotRequired[str | None]
+    error: NotRequired[str | None]
 class GuestRevokeResponse(TypedDict):
     grant_ref: EntityId
     guest_ref: EntityId
