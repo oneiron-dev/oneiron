@@ -50643,6 +50643,11 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BookingConstraintHoldContext",
+      "BookingConstraintTurnInput",
+      "BookingConstraintTurnRequest",
+      "BookingConstraintTurnResponse",
+      "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "CalendarFreebusyRequest"
@@ -50650,7 +50655,8 @@
      "path": "src/task_verb/sdk_calendar.rs",
      "purpose": "Typed booking-page discovery and calendar occupancy inputs",
      "surface": {
-      "struct": 3
+      "enum": 1,
+      "struct": 7
      }
     },
     {
@@ -50939,7 +50945,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 685
+      "fn": 686
      }
     },
     {
@@ -66780,7 +66786,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 635
+      "fn": 636
      }
     },
     {
@@ -67829,7 +67835,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 636
+      "fn": 637
      }
     },
     {
@@ -69864,7 +69870,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 17
      }
     },
     {
@@ -69906,13 +69912,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/api/booking/front.rs",
      "purpose": "ONE-1816 / ARCH-0062 §5: a published page's interactive constraint front",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 2
      }
     },
     {
@@ -70036,7 +70042,7 @@
      "path": "src/api/booking/transport.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -70770,9 +70776,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/booking_doors.rs",
-     "purpose": "Owner discovery of the opaque address of an existing booking page",
+     "purpose": "Typed booking-page discovery and the published constraint front",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -79648,6 +79654,11 @@
       "BodyConflict",
       "BodyFormat",
       "BodyName",
+      "BookingConstraintHoldContext",
+      "BookingConstraintTurnInput",
+      "BookingConstraintTurnRequest",
+      "BookingConstraintTurnResponse",
+      "BookingConstraintTurnWindow",
       "BookingPageTokenRequest",
       "BookingPageTokenResponse",
       "BornFromArtifact",
@@ -79920,6 +79931,9 @@
       "ConsolidationPromoteRequest",
       "ConsolidationPromotion",
       "ConsolidationRejection",
+      "ConstraintContinuation",
+      "ConstraintObject",
+      "ConstraintWeekday",
       "ConsultDisposition",
       "ConsultInspection",
       "ConsultPayloadRef",
@@ -80251,6 +80265,7 @@
       "GeneratedUiActionDeclaration",
       "GeneratedUiActionTier",
       "GeneratedUiArchiveReason",
+      "GeneratedUiCard",
       "GeneratedUiCardLifecycle",
       "GeneratedUiCardPhase",
       "GeneratedUiCatalog",
@@ -80507,6 +80522,7 @@
       "LlmResponse",
       "LlmToolSpec",
       "LlmUsage",
+      "LocalMinuteWindow",
       "LocalRunnerBudgetCounter",
       "LocalRunnerBudgetRequest",
       "LocalRunnerBudgetView",
@@ -81590,6 +81606,7 @@
       "ThreadPassportsView",
       "ThrobberAtom",
       "TierPrecedence",
+      "TimeRangeWire",
       "ToggleControl",
       "TopUpSpendLeaseRequest",
       "TrackedHubRef",
@@ -81752,8 +81769,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 595,
-      "struct": 1696
+      "enum": 597,
+      "struct": 1705
      }
     },
     {
