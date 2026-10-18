@@ -529,6 +529,7 @@ impl QueryAffect {
     }
 }
 
+pub use super::fanout_batch::*;
 pub use super::recall_door::{
     RECALL_MEDIA_UNSERVED, RecallDoor, recall_at_door, recall_at_door_seeded, recall_unembedded,
     recall_with_vector,
@@ -554,7 +555,6 @@ pub use super::sdk_embedding_space::*;
 pub use super::sdk_eval_cohort::*;
 pub use super::sdk_explain::*;
 pub use super::sdk_fanout_launch::*;
-pub use super::fanout_batch::*;
 pub use super::sdk_federation::*;
 pub use super::sdk_guest_revoke::*;
 pub use super::sdk_host::*;
@@ -581,6 +581,7 @@ pub use super::sdk_shared_members::*;
 pub use super::sdk_shared_policy::*;
 pub use super::sdk_skill_execution::*;
 pub use super::sdk_skills::*;
+pub use super::sdk_standing::*;
 pub use super::sdk_support_grant::*;
 pub use super::sdk_trusted_contact::*;
 pub use super::sdk_voice_bank::*;

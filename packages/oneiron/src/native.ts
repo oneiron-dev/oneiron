@@ -37,6 +37,9 @@ selfFocusScratchpadSeal(input: unknown): unknown
 selfMemoryDiary(input: unknown): unknown
 selfMemoryDiaryReads(input: unknown): unknown
 selfMemoryDiaryReview(input: unknown): unknown
+selfStandingGet(input: unknown): unknown
+selfStandingList(input: unknown): unknown
+selfStandingEdit(input: unknown): unknown
 selfIdentityAnswer(input: unknown): unknown
 selfIdentitySettle(input: unknown): unknown
 selfInboxList(input: unknown): unknown
@@ -80,6 +83,10 @@ vaultRecall(query: string, effort: string | undefined, scope: RecallScope | unde
 vaultRetrievalWeightsGet(input: unknown): unknown
 vaultRetrievalWeightsConfigure(input: unknown): unknown
 vaultAffectAnnotationsPut(input: unknown): unknown
+vaultTaggingStatus(input: unknown): unknown
+vaultTaggingTags(input: unknown): unknown
+vaultTaggingHistory(input: unknown): unknown
+vaultTaggingMentions(input: unknown): unknown
 vaultAffectClaimsConsolidate(input: unknown): unknown
 vaultRetrievalRecall(input: unknown): unknown
 vaultRetrievalRuns(input: unknown): unknown
@@ -385,6 +392,12 @@ vaultArtifactsExport(requestJson: string): string
 vaultAgentsCreate(input: unknown): unknown
 vaultAgentsGet(input: unknown): unknown
 vaultAgentsUpdate(input: unknown): unknown
+vaultAgentsDreamingGet(input: unknown): unknown
+vaultAgentsDreamingSet(input: unknown): unknown
+vaultStandingBlocksConfigure(input: unknown): unknown
+vaultStandingBlocksReconfigure(input: unknown): unknown
+vaultStandingBlocksGet(input: unknown): unknown
+vaultStandingBlocksList(input: unknown): unknown
 vaultWorkflowsSave(input: unknown): unknown
 vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown
@@ -536,6 +549,7 @@ vaultGet(input: unknown): unknown
 vaultRefsResolve(input: unknown): unknown
 vaultRefsLinks(input: unknown): unknown
 vaultSearchHybrid(input: unknown): unknown
+vaultSearchTemporal(input: unknown): unknown
 vaultSearchBm25(input: unknown): unknown
 vaultNeighbors(input: unknown): unknown
 vaultStructuralPut(input: unknown): unknown
@@ -615,6 +629,7 @@ vaultSummariesProposalsMerge(input: unknown): unknown
 vaultSummariesProposalsSwitch(input: unknown): unknown
 vaultSummariesProposalsReject(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
+vaultNotesAuthorTake(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
 vaultNotesRead(input: unknown): unknown
 vaultNotesHistory(input: unknown): unknown

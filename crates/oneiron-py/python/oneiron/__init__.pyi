@@ -396,6 +396,8 @@ class Oneiron:
         @property
         def memory(self) -> "Oneiron._SelfMemoryVerbs": ...
         @property
+        def standing(self) -> "Oneiron._SelfStandingVerbs": ...
+        @property
         def identity(self) -> "Oneiron._SelfIdentityVerbs": ...
         @property
         def inbox(self) -> "Oneiron._SelfInboxVerbs": ...
@@ -455,6 +457,13 @@ class Oneiron:
             """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
         def query(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
+    class _SelfStandingVerbs:
+        def get(self, spec: Facade.OwnStandingBlockRequest) -> Facade.StandingBlockView:
+            """This agent's configured standing block in one world: its handle, name and token floor."""
+        def list(self, spec: Facade.EmptyRequest | None = None) -> list[Facade.StandingBlockView]:
+            """Every standing block configured for this agent, one per world, in world order."""
+        def edit(self, spec: Facade.StandingBlockEditRequest) -> Facade.StandingBlockEditReceipt:
+            """This agent proposes one persona field's new text for its standing block, as a Generated claim its gate settles; compiled text is never edited."""
     class _SelfIdentityVerbs:
         def answer(self, spec: Facade.IdentityAnswerRequest) -> Facade.IdentitySettled:
             """A vault owner's tap on an identity choice card: who a person named in their conversations is."""
@@ -536,6 +545,8 @@ class Oneiron:
         def retrieval(self) -> "Oneiron._VaultRetrievalVerbs": ...
         @property
         def affect(self) -> "Oneiron._VaultAffectVerbs": ...
+        @property
+        def tagging(self) -> "Oneiron._VaultTaggingVerbs": ...
         @property
         def export(self) -> "Oneiron._VaultExportVerbs": ...
         @property
@@ -632,6 +643,8 @@ class Oneiron:
         def results(self) -> "Oneiron._VaultResultsVerbs": ...
         @property
         def agents(self) -> "Oneiron._VaultAgentsVerbs": ...
+        @property
+        def standing_blocks(self) -> "Oneiron._VaultStandingBlocksVerbs": ...
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs": ...
         @property
@@ -819,6 +832,15 @@ class Oneiron:
     class _VaultAffectClaimsVerbs:
         def consolidate(self, spec: Facade.AffectClaimConsolidateRequest) -> Facade.AffectClaimConsolidation:
             """The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction."""
+    class _VaultTaggingVerbs:
+        def status(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingStatusView:
+            """Reads one turn tagging marker as pending retrying settled or failed, with the configured checkpoint, serving model, live marker and failure reason."""
+        def tags(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingTagsView:
+            """Reads the tags saved for one turn: mention spans and targets, coreference, mood, PII and other labels, and the derivation that made them."""
+        def history(self, spec: Facade.TaggingTurnRequest) -> Facade.TaggingHistoryView:
+            """Reads one turn recorded tagging traces oldest first: each attempt, checkpoint, model, try number and saved shadowed skipped or failed outcome."""
+        def mentions(self, spec: Facade.TaggingMentionsRequest) -> Facade.TaggingMentionsView:
+            """Reads the saved tagger mentions naming one entity, bounded by limit and each served only while its turn reads for the caller."""
     class _VaultExportVerbs:
         def __call__(self, format: PackFormat | None = None) -> dict[str, Any]: ...
         def scoped(self, spec: Facade.ScopedExportRequest) -> Facade.ScopedExport:
@@ -1626,11 +1648,27 @@ class Oneiron:
         def update(self, spec: Facade.AgentDefinitionUpdateRequest) -> Facade.AgentDefinitionView:
             """The owner edits the expected definition version and optional refusal dial through the existing immutable-field and ceiling gates; refusal decisions read the live dial."""
         @property
+        def dreaming(self) -> "Oneiron._VaultAgentsDreamingVerbs": ...
+        @property
         def spawn(self) -> "Oneiron._VaultAgentsSpawnVerbs": ...
         def export_pack(self, request: Facade.AgentPackExportRequest) -> Facade.AgentPackExport: ...
+    class _VaultAgentsDreamingVerbs:
+        def get(self, spec: Facade.AgentDreamingRequest) -> Facade.AgentDreamingView:
+            """The owner reads one agent's dreaming choice: its stored mode, the mode in force and its own dreaming model slot."""
+        def set(self, spec: Facade.AgentDreamingSetRequest) -> Facade.AgentDreamingView:
+            """The owner sets one agent's dreaming choice on the revision read: its own model, the vault weaver's, or off; sharing a model never shares its diary."""
     class _VaultAgentsSpawnVerbs:
         def get(self, spec: Facade.PlannedSpawnRead) -> Facade.PlannedSpawnObservation:
             """The owner reads one spawned agent's stored observations by its attempt: its type stamp and frozen plan, the team actually launched, its seat route, critic artifacts and receipt-backed learning."""
+    class _VaultStandingBlocksVerbs:
+        def configure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
+            """The owner configures one agent's standing block in one world with its name and token floor; reopening the same pair answers the stored handle."""
+        def reconfigure(self, spec: Facade.StandingBlockConfigureRequest) -> Facade.StandingBlockView:
+            """The owner gives a configured standing block a new name and token floor; an unconfigured pair is refused, never implicitly opened."""
+        def get(self, spec: Facade.StandingBlockRequest) -> Facade.StandingBlockView:
+            """The owner reads one agent's configured standing block in one world: its handle, name and token floor."""
+        def list(self, spec: Facade.StandingBlocksRequest) -> list[Facade.StandingBlockView]:
+            """The owner lists every standing block configured for one agent, one per world, in world order."""
     class _VaultWorkflowsVerbs:
         def save(self, spec: Facade.WorkflowSaveRequest) -> Facade.WorkflowView:
             """The owner saves an ordered composition of live AGENT_DEF steps at a new WORKFLOW id at revision 1; an occupied id is refused and no attempt is dispatched."""
@@ -1883,6 +1921,8 @@ class Oneiron:
     class _VaultSearchVerbs:
         def hybrid(self, input: Facade.HybridSearchRequest) -> Facade.ScopedReadResult[list[Facade.HybridSearchHit]]:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
+        def temporal(self, input: Facade.TemporalSearchRequest) -> Facade.ScopedReadResult[Facade.TemporalSearchResult]:
+            """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
         def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
             """BM25 text search over the engine index; surfaceable claims only."""
     class _VaultStructuralVerbs:
@@ -2001,6 +2041,8 @@ class Oneiron:
     class _VaultNotesVerbs:
         def create(self, input: Facade.CreateNoteRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind, its first authored text as its birth."""
+        def author_take(self, input: Facade.AuthorTakeRequest) -> Facade.EntityRefReceipt:
+            """Appends an opinion/take NOTE about a subject or claim, attributed to the bound caller without changing the target."""
         def from_entity(self, input: Facade.CreateNoteFromEntityRequest) -> Facade.EntityRefReceipt:
             """Creates a NOTE of a registered kind from an existing entity."""
         def read(self, input: Facade.NoteReadRequest) -> Facade.ScopedReadResult[Facade.NoteReadView | None]:

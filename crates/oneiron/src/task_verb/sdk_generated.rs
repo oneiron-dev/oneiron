@@ -56,6 +56,22 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::DiaryReviewAnswer>(),
             ),
             (
+                "self.standing.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OwnStandingBlockRequest,
+                >(),
+            ),
+            (
+                "self.standing.list",
+                crate::code_run::vault_read::request_schema::<EmptyRequest>(),
+            ),
+            (
+                "self.standing.edit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::StandingBlockEditRequest,
+                >(),
+            ),
+            (
                 "self.identity.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest,
@@ -276,6 +292,23 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::affect::AffectAnnotationPut,
                 >(),
+            ),
+            (
+                "vault.tagging.status",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTurnRequest>(),
+            ),
+            (
+                "vault.tagging.tags",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTurnRequest>(),
+            ),
+            (
+                "vault.tagging.history",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTurnRequest>(),
+            ),
+            (
+                "vault.tagging.mentions",
+                crate::code_run::vault_read::request_schema::<crate::tagging::TaggingMentionsRequest>(
+                ),
             ),
             (
                 "vault.affect.claims.consolidate",
@@ -1945,6 +1978,42 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.agents.dreaming.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDreamingRequest,
+                >(),
+            ),
+            (
+                "vault.agents.dreaming.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::AgentDreamingSetRequest,
+                >(),
+            ),
+            (
+                "vault.standing_blocks.configure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::StandingBlockConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.standing_blocks.reconfigure",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::StandingBlockConfigureRequest,
+                >(),
+            ),
+            (
+                "vault.standing_blocks.get",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::StandingBlockRequest,
+                >(),
+            ),
+            (
+                "vault.standing_blocks.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::StandingBlocksRequest,
+                >(),
+            ),
+            (
                 "vault.workflows.save",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkflowSaveRequest,
@@ -2881,6 +2950,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::HybridSearchRequest>(),
             ),
             (
+                "vault.search.temporal",
+                crate::code_run::vault_read::request_schema::<crate::memory::TemporalSearchRequest>(
+                ),
+            ),
+            (
                 "vault.search.bm25",
                 crate::code_run::vault_read::request_schema::<QueryBm25Request>(),
             ),
@@ -3320,6 +3394,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<CreateNoteRequest>(),
             ),
             (
+                "vault.notes.author_take",
+                crate::code_run::vault_read::request_schema::<AuthorTakeRequest>(),
+            ),
+            (
                 "vault.notes.from_entity",
                 crate::code_run::vault_read::request_schema::<CreateNoteFromEntityRequest>(),
             ),
@@ -3560,6 +3638,9 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "self.standing.get",
+    "self.standing.list",
+    "self.standing.edit",
     "vault.fanout.spawn",
     "vault.fanout.slots",
     "vault.budgets.lease.open",
@@ -3570,6 +3651,10 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.retrieval.weights.get",
     "vault.retrieval.weights.configure",
     "vault.affect.annotations.put",
+    "vault.tagging.status",
+    "vault.tagging.tags",
+    "vault.tagging.history",
+    "vault.tagging.mentions",
     "vault.affect.claims.consolidate",
     "vault.retrieval.runs",
     "vault.retrieval.run",
@@ -3720,6 +3805,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.agents.create",
     "vault.agents.get",
     "vault.agents.update",
+    "vault.agents.dreaming.get",
+    "vault.agents.dreaming.set",
+    "vault.standing_blocks.configure",
+    "vault.standing_blocks.reconfigure",
+    "vault.standing_blocks.get",
+    "vault.standing_blocks.list",
     "vault.workflows.save",
     "vault.workflows.get",
     "vault.workflows.update",
@@ -3769,6 +3860,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.calendar.search",
     "vault.calendar.freebusy",
     "vault.search.hybrid",
+    "vault.search.temporal",
     "vault.productivity.create",
     "vault.productivity.tree",
     "vault.consolidation.promote",
@@ -3803,6 +3895,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.summaries.proposals.merge",
     "vault.summaries.proposals.switch",
     "vault.summaries.proposals.reject",
+    "vault.notes.author_take",
     "vault.notes.read",
     "vault.notes.history",
     "vault.notes.fork",
@@ -3828,6 +3921,15 @@ pub const OPENAPI_ROWS: &[&str] = &[
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "self.standing.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::StandingBlockView,
+        >(),
+        "self.standing.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::StandingBlockView>,
+        >(),
+        "self.standing.edit" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::StandingBlockEditReceipt,
+        >(),
         "vault.fanout.spawn" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::FanoutBatchView>()
         }
@@ -3857,6 +3959,18 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.affect.annotations.put" => {
             crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "vault.tagging.status" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingStatusView>()
+        }
+        "vault.tagging.tags" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingTagsView>()
+        }
+        "vault.tagging.history" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingHistoryView>()
+        }
+        "vault.tagging.mentions" => {
+            crate::code_run::vault_read::request_schema::<crate::tagging::TaggingMentionsView>()
         }
         "vault.affect.claims.consolidate" => crate::code_run::vault_read::request_schema::<
             crate::memory::affect::AffectClaimConsolidation,
@@ -4316,6 +4430,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.agents.update" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::AgentDefinitionView,
         >(),
+        "vault.agents.dreaming.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentDreamingView,
+        >(),
+        "vault.agents.dreaming.set" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::AgentDreamingView,
+        >(),
+        "vault.standing_blocks.configure" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::StandingBlockView,
+        >(),
+        "vault.standing_blocks.reconfigure" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::StandingBlockView,
+        >(),
+        "vault.standing_blocks.get" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::StandingBlockView,
+        >(),
+        "vault.standing_blocks.list" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::task_verb::sdk::StandingBlockView>,
+        >(),
         "vault.workflows.save" => {
             crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::WorkflowView>()
         }
@@ -4463,6 +4595,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.search.hybrid" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Vec<crate::memory::HybridSearchHit>>,
         >(),
+        "vault.search.temporal" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>,
+        >(),
         "vault.productivity.create" => {
             crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
         }
@@ -4569,6 +4704,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.summaries.proposals.reject" => crate::code_run::vault_read::request_schema::<
             crate::scope_summary::SummaryProposalView,
         >(),
+        "vault.notes.author_take" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
         "vault.notes.read" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteReadView>>,
         >(),
@@ -4721,6 +4859,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "self.memory.diary.review" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.standing.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.standing.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.standing.edit" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5076,6 +5235,34 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.affect.annotations.put" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.tags" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.history" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.tagging.mentions" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -7151,6 +7338,48 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.dreaming.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.agents.dreaming.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.standing_blocks.configure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.standing_blocks.reconfigure" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.standing_blocks.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.standing_blocks.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workflows.save" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8240,6 +8469,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.search.temporal" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.search.bm25" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8793,6 +9029,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.author_take" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.from_entity" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -9084,6 +9327,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.memory.diary.review" => {
             let _input: crate::memory::DiaryReviewAnswer = decode(value.clone())?;
         }
+        "self.standing.get" => {
+            let _input: crate::task_verb::sdk::OwnStandingBlockRequest = decode(value.clone())?;
+        }
+        "self.standing.list" => {
+            let _input: EmptyRequest = decode(value.clone())?;
+        }
+        "self.standing.edit" => {
+            let _input: crate::task_verb::sdk::StandingBlockEditRequest = decode(value.clone())?;
+        }
         "self.identity.answer" => {
             let _input: crate::dreamer_runner::maintenance::identity::IdentityAnswerRequest =
                 decode(value.clone())?;
@@ -9239,6 +9491,19 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.affect.annotations.put" => {
             let _input: crate::memory::affect::AffectAnnotationPut = decode(value.clone())?;
+        }
+        "vault.tagging.status" => {
+            let _input: crate::tagging::TaggingTurnRequest = decode(value.clone())?;
+        }
+        "vault.tagging.tags" => {
+            let _input: crate::tagging::TaggingTurnRequest = decode(value.clone())?;
+        }
+        "vault.tagging.history" => {
+            let _input: crate::tagging::TaggingTurnRequest = decode(value.clone())?;
+        }
+        "vault.tagging.mentions" => {
+            let input: crate::tagging::TaggingMentionsRequest = decode(value.clone())?;
+            crate::memory::caps::check_limit_nonzero(input.limit)?;
         }
         "vault.affect.claims.consolidate" => {
             let _input: crate::memory::affect::AffectClaimConsolidateRequest =
@@ -10237,6 +10502,26 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::task_verb::sdk::AgentDefinitionUpdateRequest =
                 decode(value.clone())?;
         }
+        "vault.agents.dreaming.get" => {
+            let _input: crate::task_verb::sdk::AgentDreamingRequest = decode(value.clone())?;
+        }
+        "vault.agents.dreaming.set" => {
+            let _input: crate::task_verb::sdk::AgentDreamingSetRequest = decode(value.clone())?;
+        }
+        "vault.standing_blocks.configure" => {
+            let _input: crate::task_verb::sdk::StandingBlockConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.standing_blocks.reconfigure" => {
+            let _input: crate::task_verb::sdk::StandingBlockConfigureRequest =
+                decode(value.clone())?;
+        }
+        "vault.standing_blocks.get" => {
+            let _input: crate::task_verb::sdk::StandingBlockRequest = decode(value.clone())?;
+        }
+        "vault.standing_blocks.list" => {
+            let _input: crate::task_verb::sdk::StandingBlocksRequest = decode(value.clone())?;
+        }
         "vault.workflows.save" => {
             let _input: crate::task_verb::sdk::WorkflowSaveRequest = decode(value.clone())?;
         }
@@ -10830,6 +11115,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let input: crate::memory::HybridSearchRequest = decode(value.clone())?;
             input.validate()?;
         }
+        "vault.search.temporal" => {
+            let input: crate::memory::TemporalSearchRequest = decode(value.clone())?;
+            input.validate()?;
+        }
         "vault.search.bm25" => {
             let input: QueryBm25Request = decode(value.clone())?;
             crate::memory::caps::check_query(&input.query)?;
@@ -11095,6 +11384,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.create" => {
             let _input: CreateNoteRequest = decode(value.clone())?;
         }
+        "vault.notes.author_take" => {
+            let _input: AuthorTakeRequest = decode(value.clone())?;
+        }
         "vault.notes.from_entity" => {
             let _input: CreateNoteFromEntityRequest = decode(value.clone())?;
         }
@@ -11243,6 +11535,9 @@ pub fn invoke(
         "self.memory.diary" => encode(self_memory_diary(memory, decode(value)?)?),
         "self.memory.diary.reads" => encode(self_memory_diary_reads(memory, decode(value)?)?),
         "self.memory.diary.review" => encode(self_memory_diary_review(memory, decode(value)?)?),
+        "self.standing.get" => encode(self_standing_get(memory, decode(value)?)?),
+        "self.standing.list" => encode(self_standing_list(memory, decode(value)?)?),
+        "self.standing.edit" => encode(self_standing_edit(memory, decode(value)?)?),
         "self.identity.answer" => encode(self_identity_answer(memory, decode(value)?)?),
         "self.identity.settle" => encode(self_identity_settle(memory, decode(value)?)?),
         "self.inbox.list" => encode(self_inbox_list(memory, decode(value)?)?),
@@ -11292,6 +11587,10 @@ pub fn invoke(
         "vault.affect.annotations.put" => {
             encode(vault_affect_annotations_put(memory, decode(value)?)?)
         }
+        "vault.tagging.status" => encode(vault_tagging_status(memory, decode(value)?)?),
+        "vault.tagging.tags" => encode(vault_tagging_tags(memory, decode(value)?)?),
+        "vault.tagging.history" => encode(vault_tagging_history(memory, decode(value)?)?),
+        "vault.tagging.mentions" => encode(vault_tagging_mentions(memory, decode(value)?)?),
         "vault.affect.claims.consolidate" => {
             encode(vault_affect_claims_consolidate(memory, decode(value)?)?)
         }
@@ -11862,6 +12161,16 @@ pub fn invoke(
         "vault.agents.create" => encode(vault_agents_create(memory, decode(value)?)?),
         "vault.agents.get" => encode(vault_agents_get(memory, decode(value)?)?),
         "vault.agents.update" => encode(vault_agents_update(memory, decode(value)?)?),
+        "vault.agents.dreaming.get" => encode(vault_agents_dreaming_get(memory, decode(value)?)?),
+        "vault.agents.dreaming.set" => encode(vault_agents_dreaming_set(memory, decode(value)?)?),
+        "vault.standing_blocks.configure" => {
+            encode(vault_standing_blocks_configure(memory, decode(value)?)?)
+        }
+        "vault.standing_blocks.reconfigure" => {
+            encode(vault_standing_blocks_reconfigure(memory, decode(value)?)?)
+        }
+        "vault.standing_blocks.get" => encode(vault_standing_blocks_get(memory, decode(value)?)?),
+        "vault.standing_blocks.list" => encode(vault_standing_blocks_list(memory, decode(value)?)?),
         "vault.workflows.save" => encode(vault_workflows_save(memory, decode(value)?)?),
         "vault.workflows.get" => encode(vault_workflows_get(memory, decode(value)?)?),
         "vault.workflows.update" => encode(vault_workflows_update(memory, decode(value)?)?),
@@ -12065,6 +12374,7 @@ pub fn invoke(
         "vault.refs.resolve" => encode(vault_refs_resolve(memory, decode(value)?)?),
         "vault.refs.links" => encode(vault_refs_links(memory, decode(value)?)?),
         "vault.search.hybrid" => encode(vault_search_hybrid(memory, decode(value)?)?),
+        "vault.search.temporal" => encode(vault_search_temporal(memory, decode(value)?)?),
         "vault.search.bm25" => encode(vault_search_bm25(memory, decode(value)?)?),
         "vault.neighbors" => encode(vault_neighbors(memory, decode(value)?)?),
         "vault.structural.put" => encode(vault_structural_put(memory, decode(value)?)?),
@@ -12241,6 +12551,7 @@ pub fn invoke(
             encode(vault_summaries_proposals_reject(memory, decode(value)?)?)
         }
         "vault.notes.create" => encode(vault_notes_create(memory, decode(value)?)?),
+        "vault.notes.author_take" => encode(vault_notes_author_take(memory, decode(value)?)?),
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
@@ -12545,6 +12856,24 @@ pub fn self_memory_diary_review(
     input: crate::memory::DiaryReviewAnswer,
 ) -> MemoryResult<crate::memory::DiaryReadRequest> {
     memory.answer_diary_read(&input)
+}
+pub fn self_standing_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OwnStandingBlockRequest,
+) -> MemoryResult<crate::task_verb::sdk::StandingBlockView> {
+    crate::task_verb::sdk::read_own_standing_block(memory, input)
+}
+pub fn self_standing_list(
+    memory: &Memory<'_>,
+    _input: EmptyRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::StandingBlockView>> {
+    crate::task_verb::sdk::list_own_standing_blocks(memory)
+}
+pub fn self_standing_edit(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::StandingBlockEditRequest,
+) -> MemoryResult<crate::task_verb::sdk::StandingBlockEditReceipt> {
+    crate::task_verb::sdk::edit_own_standing_block(memory, input)
 }
 pub fn self_identity_answer(
     memory: &Memory<'_>,
@@ -12928,6 +13257,49 @@ pub fn vault_affect_annotations_put(
         &["/turn_ref"],
     )?;
     memory.affect_annotation_put(&input)
+}
+pub fn vault_tagging_status(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingTurnRequest,
+) -> MemoryResult<crate::tagging::TaggingStatusView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tagging.status",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.tagging_status(&input)
+}
+pub fn vault_tagging_tags(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingTurnRequest,
+) -> MemoryResult<crate::tagging::TaggingTagsView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tagging.tags",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.tagging_tags(&input)
+}
+pub fn vault_tagging_history(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingTurnRequest,
+) -> MemoryResult<crate::tagging::TaggingHistoryView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.tagging.history",
+        &input,
+        &["/turn_ref"],
+    )?;
+    memory.tagging_history(&input)
+}
+pub fn vault_tagging_mentions(
+    memory: &Memory<'_>,
+    input: crate::tagging::TaggingMentionsRequest,
+) -> MemoryResult<crate::tagging::TaggingMentionsView> {
+    crate::memory::caps::check_limit_nonzero(input.limit)?;
+    memory.tagging_mentions(&input)
 }
 pub fn vault_affect_claims_consolidate(
     memory: &Memory<'_>,
@@ -15403,6 +15775,66 @@ pub fn vault_agents_update(
         input,
     )
 }
+pub fn vault_agents_dreaming_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDreamingRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDreamingView> {
+    crate::task_verb::sdk::read_agent_dreaming_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.dreaming.get")?,
+        input,
+    )
+}
+pub fn vault_agents_dreaming_set(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AgentDreamingSetRequest,
+) -> MemoryResult<crate::task_verb::sdk::AgentDreamingView> {
+    crate::task_verb::sdk::set_agent_dreaming_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.dreaming.set")?,
+        input,
+    )
+}
+pub fn vault_standing_blocks_configure(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::StandingBlockConfigureRequest,
+) -> MemoryResult<crate::task_verb::sdk::StandingBlockView> {
+    crate::task_verb::sdk::configure_standing_block_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.standing_blocks.configure")?,
+        input,
+    )
+}
+pub fn vault_standing_blocks_reconfigure(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::StandingBlockConfigureRequest,
+) -> MemoryResult<crate::task_verb::sdk::StandingBlockView> {
+    crate::task_verb::sdk::reconfigure_standing_block_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.standing_blocks.reconfigure")?,
+        input,
+    )
+}
+pub fn vault_standing_blocks_get(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::StandingBlockRequest,
+) -> MemoryResult<crate::task_verb::sdk::StandingBlockView> {
+    crate::task_verb::sdk::read_standing_block_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.standing_blocks.get")?,
+        input,
+    )
+}
+pub fn vault_standing_blocks_list(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::StandingBlocksRequest,
+) -> MemoryResult<Vec<crate::task_verb::sdk::StandingBlockView>> {
+    crate::task_verb::sdk::list_standing_blocks_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.standing_blocks.list")?,
+        input,
+    )
+}
 pub fn vault_workflows_save(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkflowSaveRequest,
@@ -16811,6 +17243,13 @@ pub fn vault_search_hybrid(
     input.validate()?;
     memory.query_hybrid(&input)
 }
+pub fn vault_search_temporal(
+    memory: &Memory<'_>,
+    input: crate::memory::TemporalSearchRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<crate::memory::TemporalSearchResult>> {
+    input.validate()?;
+    memory.query_temporal(&input)
+}
 pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
@@ -17535,6 +17974,18 @@ pub fn vault_notes_create(
     let landed = memory.create_note(&input.kind, &input.markdown)?;
     crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
     Ok(landed)
+}
+pub fn vault_notes_author_take(
+    memory: &Memory<'_>,
+    input: AuthorTakeRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.author_take",
+        &input,
+        &["/target/subject", "/target/claim"],
+    )?;
+    memory_requests::author_take(memory, input)
 }
 pub fn vault_notes_from_entity(
     memory: &Memory<'_>,

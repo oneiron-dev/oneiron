@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbStatus, ArtifactServeTier};
+use super::{
+    ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel, ArtifactPublishVerbStatus,
+    ArtifactServeTier,
+};
 use crate::EntityId;
 
 /// One exact immutable export and explicit audience. The host binds the actor;

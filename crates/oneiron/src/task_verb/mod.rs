@@ -272,6 +272,7 @@ mod production_ports_tests;
 
 pub(crate) use symbol_lease::forget_symbols;
 
+mod fanout_batch;
 mod recall_door;
 pub mod sdk;
 mod sdk_agents;
@@ -293,7 +294,6 @@ mod sdk_embedding_space;
 mod sdk_eval_cohort;
 mod sdk_explain;
 mod sdk_fanout_launch;
-mod fanout_batch;
 mod sdk_federation;
 mod sdk_guest_revoke;
 mod sdk_host;
@@ -320,6 +320,7 @@ mod sdk_shared_members;
 mod sdk_shared_policy;
 mod sdk_skill_execution;
 mod sdk_skills;
+mod sdk_standing;
 mod sdk_support_grant;
 mod sdk_trusted_contact;
 mod sdk_voice_bank;

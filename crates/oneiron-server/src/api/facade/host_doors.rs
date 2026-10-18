@@ -68,14 +68,14 @@ pub(crate) use super::trusted_contact_doors::*;
 // The owner's voice-bank doors (DOOR-143) too.
 pub(crate) use super::voice_bank_doors::*;
 // The owner's legal-hold doors (OF-470) too.
+pub(crate) use super::asr_doors::*;
+pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
-pub(crate) use super::asr_doors::*;
 pub(crate) use super::model_step_doors::*;
-pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
@@ -123,9 +123,9 @@ pub(crate) use super::widen_proposal_doors::*;
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
+pub(crate) use super::consent_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
-pub(crate) use super::consent_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -159,6 +159,8 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
+// The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
+pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
 pub(crate) use super::code_doors::*;
 // The owner's per-model code-run heal count door (DOOR-093), likewise.
@@ -1184,6 +1186,12 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.agents.create"
         | "vault.agents.update"
         | "vault.agents.get"
+        | "vault.agents.dreaming.get"
+        | "vault.agents.dreaming.set"
+        | "vault.standing_blocks.configure"
+        | "vault.standing_blocks.reconfigure"
+        | "vault.standing_blocks.get"
+        | "vault.standing_blocks.list"
         | "vault.workflows.save"
         | "vault.workflows.update"
         | "vault.workflows.get"

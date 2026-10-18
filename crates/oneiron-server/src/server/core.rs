@@ -25,6 +25,8 @@ use crate::usage::UsageLedger;
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
 
+mod pattern_workflow;
+
 /// Internal fan-out. Recovery notices never become wire frames.
 #[derive(Debug, Clone)]
 pub(crate) enum BroadcastPayload {
@@ -189,6 +191,10 @@ pub struct SyncServer {
     /// Model seats, background AI status and the Dreamer's session hints.
     /// Inert unless the serve path attaches a configured host.
     pub(crate) ai: crate::ai_host::AiHandle,
+    /// Where a planned team's pattern skill writes its start (DOOR-111),
+    /// bound with the AI host. `None` while no rung serves its generative
+    /// seat, and a team plan then refuses.
+    pattern_launch_runner: Option<Arc<dyn oneiron::team::PatternLaunchRunner>>,
     /// Where rerank calls run when their door cannot drive them on its
     /// caller's runtime.
     pub(crate) rerank_runtime: super::recall_rerank::CallRuntime,
@@ -463,6 +469,7 @@ impl SyncServer {
             )),
             run_receipts,
             ai: crate::ai_host::AiHandle::inert(),
+            pattern_launch_runner: None,
             rerank_runtime: Default::default(),
             extraction_egress: None,
             owner_host: None,
@@ -707,6 +714,8 @@ impl SyncServer {
             .decisions
             .clone()
             .with_house_read(self.decision_read.as_ref(), self.house_read_admission());
+        // A planned team's pattern skill runs on its generative seat.
+        self.pattern_launch_runner = pattern_workflow::bind(Arc::clone(&self.vault), ai.clone());
         self.ai = ai;
         self
     }
