@@ -14,7 +14,8 @@
 
 use super::codec::decode_agent_definition;
 use super::id_pin::is_agent_id_in_txn;
-use super::types::{AgentDefinition, AgentModel};
+use super::models::AgentModel;
+use super::types::AgentDefinition;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::entity_id::EntityId;
 use crate::error::Result;
