@@ -300,6 +300,55 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn vault_commitments_create(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.create")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.create", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_instances(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.instances")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.instances", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_proposals(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.proposals")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.proposals", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_fulfill(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.fulfill")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.fulfill", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_commitments_supersede(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.commitments.supersede")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.commitments.supersede", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn fetch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "fetch")?;
         let output = py

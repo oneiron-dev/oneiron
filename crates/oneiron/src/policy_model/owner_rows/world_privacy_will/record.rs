@@ -80,7 +80,9 @@ pub struct WorldPrivacyRequest {
     /// The holders it went to, as hex.
     pub holders: Vec<String>,
     /// Under "widen needs every owner": every live Owner whose yes it needs,
-    /// as hex. Empty: any one holder's yes applies it.
+    /// as hex, as of its last answer: each answer reads the live Owners
+    /// again (`unanimity::ask_needs_in_txn`). Empty: any one holder's yes
+    /// applies it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub needs: Vec<String>,
     /// The yeses collected so far, as hex.

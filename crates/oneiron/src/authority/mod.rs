@@ -130,7 +130,7 @@ pub use oneiron_authority::authority::{
     ActSurface, AuthorityAttestation, AuthorityConfirmAction, AuthorityConfirmKind,
     AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
     AuthoritySignatureSuite, AuthorityTier, AuthorityVaultId, CRITICAL_WRITE_CONFIRM_DOMAIN,
-    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
+    CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CommReach, CriticalWriteConfirmAction,
     CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
     DeviceAuthority, FEDERATION_PACT_DOMAIN, FEDERATION_SCOPE_COMMIT_DOMAIN,
     FederationGrantActivation, FederationLifecycleAction, FederationLifecycleKind,
@@ -147,10 +147,11 @@ pub use oneiron_authority::authority::{
     SealedCopies, SlipClaims, SlipMintAction, SupportDelegation, WORLD_MODEL_ROUTE_MAX_BYTES,
     WORLD_MODEL_ROUTES_MAX, WorldKeyMode, WorldKeyWrapsRecord, WorldPrivacy, WorldPrivacyEdit,
     authority_entry_hash, authority_log_entity_id, authority_log_entity_id_from_hash,
-    authority_transcript, decode_authority_log_entry_body, encode_authority_log_entry_body,
-    federation_pact_transcript, federation_scope_digest, genesis_vault_id,
-    machine_profile_proof_transcript, privacy_direction, sign_federation_pact_gesture,
-    validate_authority_log_entry_body_bytes, verify_authority_signature,
+    authority_transcript, decode_authority_log_entry_body, effective_slip_comm,
+    encode_authority_log_entry_body, federation_pact_transcript, federation_scope_digest,
+    genesis_vault_id, machine_profile_proof_transcript, privacy_direction,
+    sign_federation_pact_gesture, validate_authority_log_entry_body_bytes,
+    verify_authority_signature,
 };
 // The custody work body's own types (WILL L04 row 04).
 pub use oneiron_authority::authority::{CustodyChange, CustodyRecipientPermit};
