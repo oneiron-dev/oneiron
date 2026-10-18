@@ -90,6 +90,22 @@ vaultWeaveLinkWrong(input: unknown): unknown
 vaultWeaveOwnerLinkWrong(input: unknown): unknown
 vaultWeaveItemWrong(input: unknown): unknown
 vaultWeaveOwnerItemWrong(input: unknown): unknown
+vaultSkillHubsPut(input: unknown): unknown
+vaultSkillHubsGet(input: unknown): unknown
+vaultSkillHubsPublishersAdmit(input: unknown): unknown
+vaultSkillHubsPublishersRevoke(input: unknown): unknown
+vaultSkillHubsRefsGet(input: unknown): unknown
+vaultSkillHubsRefsSet(input: unknown): unknown
+vaultPacksInstall(input: unknown): unknown
+vaultPacksSync(input: unknown): unknown
+vaultPacksGet(input: unknown): unknown
+vaultSkillsImport(input: unknown): unknown
+vaultSkillsSync(input: unknown): unknown
+vaultSkillsReceipts(input: unknown): unknown
+vaultSkillsPermissionsApprove(input: unknown): unknown
+vaultPacksHooksBind(input: unknown): unknown
+vaultPacksHooksList(input: unknown): unknown
+vaultPacksHooksQualify(input: unknown): unknown
 vaultPacksPut(input: unknown): unknown
 vaultPacksRemove(input: unknown): unknown
 vaultConnectorsSubscriptionsPut(input: unknown): unknown
@@ -210,6 +226,12 @@ vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
 vaultCodeRepoDiff(requestJson: string): string
 vaultArtifactsExport(requestJson: string): string
+vaultAgentsCreate(input: unknown): unknown
+vaultAgentsGet(input: unknown): unknown
+vaultAgentsUpdate(input: unknown): unknown
+vaultWorkspaceEstablish(input: unknown): unknown
+vaultWorkspaceMembersOnboard(input: unknown): unknown
+vaultWorkspaceRoster(input: unknown): unknown
 vaultAgentsExportPack(requestJson: string): string
 vaultArtifactsBornFrom(requestJson: string): string
 vaultArtifactsProposals(requestJson: string): string
@@ -349,6 +371,22 @@ vaultArtifactsRead(input: unknown): unknown
 vaultConsolidationEnqueue(input: unknown): unknown
 vaultConsolidationStatus(input: unknown): unknown
 vaultClaimsSeed(input: unknown): unknown
+vaultChannelIdentitiesProvision(input: unknown): unknown
+vaultChannelIdentitiesBind(input: unknown): unknown
+vaultChannelIdentitiesFulfill(input: unknown): unknown
+vaultChannelIdentitiesRotate(input: unknown): unknown
+vaultChannelIdentitiesRelease(input: unknown): unknown
+vaultChannelIdentitiesRouteInbound(input: unknown): unknown
+vaultChannelIdentitiesGet(input: unknown): unknown
+vaultChannelIdentitiesSelectionRules(input: unknown): unknown
+vaultChannelIdentitiesSelectionUpdate(input: unknown): unknown
+vaultChannelIdentitiesSelect(input: unknown): unknown
+vaultChannelIdentitiesPassportsGet(input: unknown): unknown
+vaultChannelIdentitiesPassportsList(input: unknown): unknown
+vaultDeliveryWindowPolicyPut(input: unknown): unknown
+vaultDeliveryWindowPolicyList(input: unknown): unknown
+vaultDeliveryWindowPolicyRetract(input: unknown): unknown
+vaultDeliveryWindowEvaluate(input: unknown): unknown
 connectorOutboundSchedule(input: unknown): unknown
 vaultNotesCreate(input: unknown): unknown
 vaultNotesFromEntity(input: unknown): unknown
@@ -361,6 +399,8 @@ vaultNotesSeal(requestJson: string): string
 vaultNotesLifecycle(requestJson: string): string
 vaultNotesSetOverrides(requestJson: string): string
 vaultNotesDefaults(requestJson: string): string
+selfAgentsSpawn(input: unknown): unknown
+selfLeaderSplit(input: unknown): unknown
 // END GENERATED AGENT VERBS
 
   asActor(actorKey: string): NativeClient

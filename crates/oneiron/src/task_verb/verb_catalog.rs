@@ -64,6 +64,22 @@ pub enum AgentVerb {
     VaultWeaveOwnerLinkWrong,
     VaultWeaveItemWrong,
     VaultWeaveOwnerItemWrong,
+    VaultSkillHubsPut,
+    VaultSkillHubsGet,
+    VaultSkillHubsPublishersAdmit,
+    VaultSkillHubsPublishersRevoke,
+    VaultSkillHubsRefsGet,
+    VaultSkillHubsRefsSet,
+    VaultPacksInstall,
+    VaultPacksSync,
+    VaultPacksGet,
+    VaultSkillsImport,
+    VaultSkillsSync,
+    VaultSkillsReceipts,
+    VaultSkillsPermissionsApprove,
+    VaultPacksHooksBind,
+    VaultPacksHooksList,
+    VaultPacksHooksQualify,
     VaultPacksPut,
     VaultPacksRemove,
     VaultConnectorsSubscriptionsPut,
@@ -184,6 +200,12 @@ pub enum AgentVerb {
     VaultCodeProposalView,
     VaultCodeRepoDiff,
     VaultArtifactsExport,
+    VaultAgentsCreate,
+    VaultAgentsGet,
+    VaultAgentsUpdate,
+    VaultWorkspaceEstablish,
+    VaultWorkspaceMembersOnboard,
+    VaultWorkspaceRoster,
     VaultAgentsExportPack,
     VaultArtifactsBornFrom,
     VaultArtifactsProposals,
@@ -363,6 +385,22 @@ pub enum AgentVerb {
     VaultConsolidationEnqueue,
     VaultConsolidationStatus,
     VaultClaimsSeed,
+    VaultChannelIdentitiesProvision,
+    VaultChannelIdentitiesBind,
+    VaultChannelIdentitiesFulfill,
+    VaultChannelIdentitiesRotate,
+    VaultChannelIdentitiesRelease,
+    VaultChannelIdentitiesRouteInbound,
+    VaultChannelIdentitiesGet,
+    VaultChannelIdentitiesSelectionRules,
+    VaultChannelIdentitiesSelectionUpdate,
+    VaultChannelIdentitiesSelect,
+    VaultChannelIdentitiesPassportsGet,
+    VaultChannelIdentitiesPassportsList,
+    VaultDeliveryWindowPolicyPut,
+    VaultDeliveryWindowPolicyList,
+    VaultDeliveryWindowPolicyRetract,
+    VaultDeliveryWindowEvaluate,
     ConnectorOutboundSchedule,
     VaultNotesCreate,
     VaultNotesFromEntity,
@@ -375,6 +413,8 @@ pub enum AgentVerb {
     VaultNotesLifecycle,
     VaultNotesSetOverrides,
     VaultNotesDefaults,
+    SelfAgentsSpawn,
+    SelfLeaderSplit,
 }
 impl AgentVerb {
     pub const ALL: &[Self] = &[
@@ -441,6 +481,22 @@ impl AgentVerb {
         Self::VaultWeaveOwnerLinkWrong,
         Self::VaultWeaveItemWrong,
         Self::VaultWeaveOwnerItemWrong,
+        Self::VaultSkillHubsPut,
+        Self::VaultSkillHubsGet,
+        Self::VaultSkillHubsPublishersAdmit,
+        Self::VaultSkillHubsPublishersRevoke,
+        Self::VaultSkillHubsRefsGet,
+        Self::VaultSkillHubsRefsSet,
+        Self::VaultPacksInstall,
+        Self::VaultPacksSync,
+        Self::VaultPacksGet,
+        Self::VaultSkillsImport,
+        Self::VaultSkillsSync,
+        Self::VaultSkillsReceipts,
+        Self::VaultSkillsPermissionsApprove,
+        Self::VaultPacksHooksBind,
+        Self::VaultPacksHooksList,
+        Self::VaultPacksHooksQualify,
         Self::VaultPacksPut,
         Self::VaultPacksRemove,
         Self::VaultConnectorsSubscriptionsPut,
@@ -561,6 +617,12 @@ impl AgentVerb {
         Self::VaultCodeProposalView,
         Self::VaultCodeRepoDiff,
         Self::VaultArtifactsExport,
+        Self::VaultAgentsCreate,
+        Self::VaultAgentsGet,
+        Self::VaultAgentsUpdate,
+        Self::VaultWorkspaceEstablish,
+        Self::VaultWorkspaceMembersOnboard,
+        Self::VaultWorkspaceRoster,
         Self::VaultAgentsExportPack,
         Self::VaultArtifactsBornFrom,
         Self::VaultArtifactsProposals,
@@ -740,6 +802,22 @@ impl AgentVerb {
         Self::VaultConsolidationEnqueue,
         Self::VaultConsolidationStatus,
         Self::VaultClaimsSeed,
+        Self::VaultChannelIdentitiesProvision,
+        Self::VaultChannelIdentitiesBind,
+        Self::VaultChannelIdentitiesFulfill,
+        Self::VaultChannelIdentitiesRotate,
+        Self::VaultChannelIdentitiesRelease,
+        Self::VaultChannelIdentitiesRouteInbound,
+        Self::VaultChannelIdentitiesGet,
+        Self::VaultChannelIdentitiesSelectionRules,
+        Self::VaultChannelIdentitiesSelectionUpdate,
+        Self::VaultChannelIdentitiesSelect,
+        Self::VaultChannelIdentitiesPassportsGet,
+        Self::VaultChannelIdentitiesPassportsList,
+        Self::VaultDeliveryWindowPolicyPut,
+        Self::VaultDeliveryWindowPolicyList,
+        Self::VaultDeliveryWindowPolicyRetract,
+        Self::VaultDeliveryWindowEvaluate,
         Self::ConnectorOutboundSchedule,
         Self::VaultNotesCreate,
         Self::VaultNotesFromEntity,
@@ -752,6 +830,8 @@ impl AgentVerb {
         Self::VaultNotesLifecycle,
         Self::VaultNotesSetOverrides,
         Self::VaultNotesDefaults,
+        Self::SelfAgentsSpawn,
+        Self::SelfLeaderSplit,
     ];
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.iter().copied().find(|verb| verb.as_str() == name)
@@ -821,6 +901,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => "vault.weave.owner.link.wrong",
             Self::VaultWeaveItemWrong => "vault.weave.item.wrong",
             Self::VaultWeaveOwnerItemWrong => "vault.weave.owner.item.wrong",
+            Self::VaultSkillHubsPut => "vault.skill_hubs.put",
+            Self::VaultSkillHubsGet => "vault.skill_hubs.get",
+            Self::VaultSkillHubsPublishersAdmit => "vault.skill_hubs.publishers.admit",
+            Self::VaultSkillHubsPublishersRevoke => "vault.skill_hubs.publishers.revoke",
+            Self::VaultSkillHubsRefsGet => "vault.skill_hubs.refs.get",
+            Self::VaultSkillHubsRefsSet => "vault.skill_hubs.refs.set",
+            Self::VaultPacksInstall => "vault.packs.install",
+            Self::VaultPacksSync => "vault.packs.sync",
+            Self::VaultPacksGet => "vault.packs.get",
+            Self::VaultSkillsImport => "vault.skills.import",
+            Self::VaultSkillsSync => "vault.skills.sync",
+            Self::VaultSkillsReceipts => "vault.skills.receipts",
+            Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
+            Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
+            Self::VaultPacksHooksList => "vault.packs.hooks.list",
+            Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
             Self::VaultPacksPut => "vault.packs.put",
             Self::VaultPacksRemove => "vault.packs.remove",
             Self::VaultConnectorsSubscriptionsPut => "vault.connectors.subscriptions.put",
@@ -945,6 +1041,12 @@ impl AgentVerb {
             Self::VaultCodeProposalView => "vault.code.proposal_view",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultArtifactsExport => "vault.artifacts.export",
+            Self::VaultAgentsCreate => "vault.agents.create",
+            Self::VaultAgentsGet => "vault.agents.get",
+            Self::VaultAgentsUpdate => "vault.agents.update",
+            Self::VaultWorkspaceEstablish => "vault.workspace.establish",
+            Self::VaultWorkspaceMembersOnboard => "vault.workspace.members.onboard",
+            Self::VaultWorkspaceRoster => "vault.workspace.roster",
             Self::VaultAgentsExportPack => "vault.agents.export_pack",
             Self::VaultArtifactsBornFrom => "vault.artifacts.born_from",
             Self::VaultArtifactsProposals => "vault.artifacts.proposals",
@@ -1124,6 +1226,26 @@ impl AgentVerb {
             Self::VaultConsolidationEnqueue => "vault.consolidation.enqueue",
             Self::VaultConsolidationStatus => "vault.consolidation.status",
             Self::VaultClaimsSeed => "vault.claims.seed",
+            Self::VaultChannelIdentitiesProvision => "vault.channel_identities.provision",
+            Self::VaultChannelIdentitiesBind => "vault.channel_identities.bind",
+            Self::VaultChannelIdentitiesFulfill => "vault.channel_identities.fulfill",
+            Self::VaultChannelIdentitiesRotate => "vault.channel_identities.rotate",
+            Self::VaultChannelIdentitiesRelease => "vault.channel_identities.release",
+            Self::VaultChannelIdentitiesRouteInbound => "vault.channel_identities.route_inbound",
+            Self::VaultChannelIdentitiesGet => "vault.channel_identities.get",
+            Self::VaultChannelIdentitiesSelectionRules => {
+                "vault.channel_identities.selection.rules"
+            }
+            Self::VaultChannelIdentitiesSelectionUpdate => {
+                "vault.channel_identities.selection.update"
+            }
+            Self::VaultChannelIdentitiesSelect => "vault.channel_identities.select",
+            Self::VaultChannelIdentitiesPassportsGet => "vault.channel_identities.passports.get",
+            Self::VaultChannelIdentitiesPassportsList => "vault.channel_identities.passports.list",
+            Self::VaultDeliveryWindowPolicyPut => "vault.delivery_window.policy.put",
+            Self::VaultDeliveryWindowPolicyList => "vault.delivery_window.policy.list",
+            Self::VaultDeliveryWindowPolicyRetract => "vault.delivery_window.policy.retract",
+            Self::VaultDeliveryWindowEvaluate => "vault.delivery_window.evaluate",
             Self::ConnectorOutboundSchedule => "connector.outbound.schedule",
             Self::VaultNotesCreate => "vault.notes.create",
             Self::VaultNotesFromEntity => "vault.notes.from_entity",
@@ -1136,6 +1258,8 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => "vault.notes.lifecycle",
             Self::VaultNotesSetOverrides => "vault.notes.set_overrides",
             Self::VaultNotesDefaults => "vault.notes.defaults",
+            Self::SelfAgentsSpawn => "self.agents.spawn",
+            Self::SelfLeaderSplit => "self.leader.split",
         }
     }
     pub const fn is_facade(self) -> bool {
@@ -1201,6 +1325,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -1321,6 +1461,12 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsGet
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
+                | Self::VaultWorkspaceRoster
                 | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1460,6 +1606,22 @@ impl AgentVerb {
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesGet
+                | Self::VaultChannelIdentitiesSelectionRules
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultChannelIdentitiesSelect
+                | Self::VaultChannelIdentitiesPassportsGet
+                | Self::VaultChannelIdentitiesPassportsList
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyList
+                | Self::VaultDeliveryWindowPolicyRetract
+                | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -1472,6 +1634,8 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn is_browser(self) -> bool {
@@ -1585,6 +1749,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -1705,6 +1885,12 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsGet
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
+                | Self::VaultWorkspaceRoster
                 | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -1844,6 +2030,22 @@ impl AgentVerb {
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesGet
+                | Self::VaultChannelIdentitiesSelectionRules
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultChannelIdentitiesSelect
+                | Self::VaultChannelIdentitiesPassportsGet
+                | Self::VaultChannelIdentitiesPassportsList
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyList
+                | Self::VaultDeliveryWindowPolicyRetract
+                | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -1856,6 +2058,8 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn is_section(self) -> bool {
@@ -1883,6 +2087,8 @@ impl AgentVerb {
                 | Self::VaultReceipts
                 | Self::VaultKvSearch
                 | Self::VaultKvNamespaces
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
                 | Self::VaultMeshPathReceipts
                 | Self::VaultSharedOutcomes
                 | Self::VaultMembersInvitations
@@ -1895,6 +2101,7 @@ impl AgentVerb {
                 | Self::VaultCourtesyDeleteSent
                 | Self::VaultCourtesyDeleteIncoming
                 | Self::VaultHooksReplay
+                | Self::VaultWorkspaceRoster
                 | Self::VaultArtifactsProposals
                 | Self::VaultArtifactsWaits
                 | Self::Peek
@@ -2001,6 +2208,22 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsGet
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsGet
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultPacksGet
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsReceipts
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksList
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -2121,6 +2344,12 @@ impl AgentVerb {
                 | Self::VaultCodeProposalView
                 | Self::VaultCodeRepoDiff
                 | Self::VaultArtifactsExport
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsGet
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
+                | Self::VaultWorkspaceRoster
                 | Self::VaultAgentsExportPack
                 | Self::VaultArtifactsBornFrom
                 | Self::VaultArtifactsProposals
@@ -2290,6 +2519,22 @@ impl AgentVerb {
                 | Self::VaultArtifactsRead
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationStatus
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesGet
+                | Self::VaultChannelIdentitiesSelectionRules
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultChannelIdentitiesSelect
+                | Self::VaultChannelIdentitiesPassportsGet
+                | Self::VaultChannelIdentitiesPassportsList
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyList
+                | Self::VaultDeliveryWindowPolicyRetract
+                | Self::VaultDeliveryWindowEvaluate
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
@@ -2298,6 +2543,8 @@ impl AgentVerb {
                 | Self::VaultNotesLifecycle
                 | Self::VaultNotesSetOverrides
                 | Self::VaultNotesDefaults
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn born_in_scope(self) -> bool {
@@ -2338,6 +2585,17 @@ impl AgentVerb {
                 | Self::VaultWeaveOwnerLinkWrong
                 | Self::VaultWeaveItemWrong
                 | Self::VaultWeaveOwnerItemWrong
+                | Self::VaultSkillHubsPut
+                | Self::VaultSkillHubsPublishersAdmit
+                | Self::VaultSkillHubsPublishersRevoke
+                | Self::VaultSkillHubsRefsSet
+                | Self::VaultPacksInstall
+                | Self::VaultPacksSync
+                | Self::VaultSkillsImport
+                | Self::VaultSkillsSync
+                | Self::VaultSkillsPermissionsApprove
+                | Self::VaultPacksHooksBind
+                | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
                 | Self::VaultPacksRemove
                 | Self::VaultConnectorsSubscriptionsPut
@@ -2419,6 +2677,10 @@ impl AgentVerb {
                 | Self::SelfUse
                 | Self::VaultSharesCreate
                 | Self::VaultSharesRevoke
+                | Self::VaultAgentsCreate
+                | Self::VaultAgentsUpdate
+                | Self::VaultWorkspaceEstablish
+                | Self::VaultWorkspaceMembersOnboard
                 | Self::VaultArtifactsReleaseWait
                 | Self::VaultArtifactsReviewSlides
                 | Self::VaultArtifactsAsk
@@ -2522,12 +2784,23 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultClaimsSeed
+                | Self::VaultChannelIdentitiesProvision
+                | Self::VaultChannelIdentitiesBind
+                | Self::VaultChannelIdentitiesFulfill
+                | Self::VaultChannelIdentitiesRotate
+                | Self::VaultChannelIdentitiesRelease
+                | Self::VaultChannelIdentitiesRouteInbound
+                | Self::VaultChannelIdentitiesSelectionUpdate
+                | Self::VaultDeliveryWindowPolicyPut
+                | Self::VaultDeliveryWindowPolicyRetract
                 | Self::ConnectorOutboundSchedule
                 | Self::VaultNotesCreate
                 | Self::VaultNotesFromEntity
                 | Self::VaultNotesEdit
                 | Self::VaultNotesSeal
                 | Self::VaultNotesSetOverrides
+                | Self::SelfAgentsSpawn
+                | Self::SelfLeaderSplit
         )
     }
     pub const fn proposes(self) -> bool {
@@ -2624,6 +2897,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultSkillHubsPut => &["spec"],
+            Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsPublishersAdmit => &["spec"],
+            Self::VaultSkillHubsPublishersRevoke => &["spec"],
+            Self::VaultSkillHubsRefsGet => &["spec"],
+            Self::VaultSkillHubsRefsSet => &["spec"],
+            Self::VaultPacksInstall => &["spec"],
+            Self::VaultPacksSync => &["spec"],
+            Self::VaultPacksGet => &["spec"],
+            Self::VaultSkillsImport => &["spec"],
+            Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultPacksHooksBind => &["spec"],
+            Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
@@ -2744,6 +3033,12 @@ impl AgentVerb {
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
+            Self::VaultAgentsCreate => &["spec"],
+            Self::VaultAgentsGet => &["spec"],
+            Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultWorkspaceEstablish => &["spec"],
+            Self::VaultWorkspaceMembersOnboard => &["spec"],
+            Self::VaultWorkspaceRoster => &["spec"],
             Self::VaultAgentsExportPack => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -2923,6 +3218,22 @@ impl AgentVerb {
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
+            Self::VaultChannelIdentitiesProvision => &["spec"],
+            Self::VaultChannelIdentitiesBind => &["spec"],
+            Self::VaultChannelIdentitiesFulfill => &["spec"],
+            Self::VaultChannelIdentitiesRotate => &["spec"],
+            Self::VaultChannelIdentitiesRelease => &["spec"],
+            Self::VaultChannelIdentitiesRouteInbound => &["spec"],
+            Self::VaultChannelIdentitiesGet => &["spec"],
+            Self::VaultChannelIdentitiesSelectionRules => &["spec"],
+            Self::VaultChannelIdentitiesSelectionUpdate => &["spec"],
+            Self::VaultChannelIdentitiesSelect => &["spec"],
+            Self::VaultChannelIdentitiesPassportsGet => &["spec"],
+            Self::VaultChannelIdentitiesPassportsList => &["spec"],
+            Self::VaultDeliveryWindowPolicyPut => &["spec"],
+            Self::VaultDeliveryWindowPolicyList => &["spec"],
+            Self::VaultDeliveryWindowPolicyRetract => &["spec"],
+            Self::VaultDeliveryWindowEvaluate => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -2935,6 +3246,8 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfAgentsSpawn => &["spec"],
+            Self::SelfLeaderSplit => &["spec"],
         }
     }
     pub const fn required_fields(self) -> &'static [&'static str] {
@@ -3002,6 +3315,22 @@ impl AgentVerb {
             Self::VaultWeaveOwnerLinkWrong => &["spec"],
             Self::VaultWeaveItemWrong => &["spec"],
             Self::VaultWeaveOwnerItemWrong => &["spec"],
+            Self::VaultSkillHubsPut => &["spec"],
+            Self::VaultSkillHubsGet => &["spec"],
+            Self::VaultSkillHubsPublishersAdmit => &["spec"],
+            Self::VaultSkillHubsPublishersRevoke => &["spec"],
+            Self::VaultSkillHubsRefsGet => &["spec"],
+            Self::VaultSkillHubsRefsSet => &["spec"],
+            Self::VaultPacksInstall => &["spec"],
+            Self::VaultPacksSync => &["spec"],
+            Self::VaultPacksGet => &["spec"],
+            Self::VaultSkillsImport => &["spec"],
+            Self::VaultSkillsSync => &["spec"],
+            Self::VaultSkillsReceipts => &["spec"],
+            Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultPacksHooksBind => &["spec"],
+            Self::VaultPacksHooksList => &["spec"],
+            Self::VaultPacksHooksQualify => &["spec"],
             Self::VaultPacksPut => &["spec"],
             Self::VaultPacksRemove => &["spec"],
             Self::VaultConnectorsSubscriptionsPut => &["spec"],
@@ -3122,6 +3451,12 @@ impl AgentVerb {
             Self::VaultCodeProposalView => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultArtifactsExport => &["spec"],
+            Self::VaultAgentsCreate => &["spec"],
+            Self::VaultAgentsGet => &["spec"],
+            Self::VaultAgentsUpdate => &["spec"],
+            Self::VaultWorkspaceEstablish => &["spec"],
+            Self::VaultWorkspaceMembersOnboard => &["spec"],
+            Self::VaultWorkspaceRoster => &["spec"],
             Self::VaultAgentsExportPack => &["spec"],
             Self::VaultArtifactsBornFrom => &["spec"],
             Self::VaultArtifactsProposals => &["spec"],
@@ -3301,6 +3636,22 @@ impl AgentVerb {
             Self::VaultConsolidationEnqueue => &["spec"],
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultClaimsSeed => &["spec"],
+            Self::VaultChannelIdentitiesProvision => &["spec"],
+            Self::VaultChannelIdentitiesBind => &["spec"],
+            Self::VaultChannelIdentitiesFulfill => &["spec"],
+            Self::VaultChannelIdentitiesRotate => &["spec"],
+            Self::VaultChannelIdentitiesRelease => &["spec"],
+            Self::VaultChannelIdentitiesRouteInbound => &["spec"],
+            Self::VaultChannelIdentitiesGet => &["spec"],
+            Self::VaultChannelIdentitiesSelectionRules => &["spec"],
+            Self::VaultChannelIdentitiesSelectionUpdate => &["spec"],
+            Self::VaultChannelIdentitiesSelect => &["spec"],
+            Self::VaultChannelIdentitiesPassportsGet => &["spec"],
+            Self::VaultChannelIdentitiesPassportsList => &["spec"],
+            Self::VaultDeliveryWindowPolicyPut => &["spec"],
+            Self::VaultDeliveryWindowPolicyList => &["spec"],
+            Self::VaultDeliveryWindowPolicyRetract => &["spec"],
+            Self::VaultDeliveryWindowEvaluate => &["spec"],
             Self::ConnectorOutboundSchedule => &["spec"],
             Self::VaultNotesCreate => &["spec"],
             Self::VaultNotesFromEntity => &["spec"],
@@ -3313,6 +3664,8 @@ impl AgentVerb {
             Self::VaultNotesLifecycle => &["spec"],
             Self::VaultNotesSetOverrides => &["spec"],
             Self::VaultNotesDefaults => &["spec"],
+            Self::SelfAgentsSpawn => &["spec"],
+            Self::SelfLeaderSplit => &["spec"],
         }
     }
     /// The row's one-line description, as the verb table states it.
@@ -3494,6 +3847,52 @@ impl AgentVerb {
             }
             Self::VaultWeaveOwnerItemWrong => {
                 "The owner labels a claim, project or budget item in the owner lens as wrong, under the owner's own credential; the label teaches the loops and the record stays."
+            }
+            Self::VaultSkillHubsPut => {
+                "The owner registers or revises a hub source; hub trust never grants activation authority."
+            }
+            Self::VaultSkillHubsGet => "Reads one configured hub as the owner.",
+            Self::VaultSkillHubsPublishersAdmit => {
+                "The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else."
+            }
+            Self::VaultSkillHubsPublishersRevoke => {
+                "The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running."
+            }
+            Self::VaultSkillHubsRefsGet => {
+                "Reads one hub ref policy, pin and separate seen and trusted revisions as the owner."
+            }
+            Self::VaultSkillHubsRefsSet => {
+                "The owner changes one hub ref policy and pin without fetching or trusting new bytes."
+            }
+            Self::VaultPacksInstall => {
+                "The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent."
+            }
+            Self::VaultPacksSync => {
+                "The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent."
+            }
+            Self::VaultPacksGet => {
+                "Reads an installed pack and its exact source, pin, publisher and requested powers as the owner."
+            }
+            Self::VaultSkillsImport => {
+                "The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask."
+            }
+            Self::VaultSkillsSync => {
+                "The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities."
+            }
+            Self::VaultSkillsReceipts => {
+                "Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner."
+            }
+            Self::VaultSkillsPermissionsApprove => {
+                "The owner answers one imported skill permission ask at its exact hub source."
+            }
+            Self::VaultPacksHooksBind => {
+                "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
+            }
+            Self::VaultPacksHooksList => {
+                "Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants."
+            }
+            Self::VaultPacksHooksQualify => {
+                "The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks."
             }
             Self::VaultPacksPut => {
                 "The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks."
@@ -3830,6 +4229,24 @@ impl AgentVerb {
             }
             Self::VaultArtifactsExport => {
                 "One artifact version's export file, with the born-with text the caller chose and a share receipt listing it."
+            }
+            Self::VaultAgentsCreate => {
+                "The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched."
+            }
+            Self::VaultAgentsGet => {
+                "The owner reads one saved agent composition and its version and approval state."
+            }
+            Self::VaultAgentsUpdate => {
+                "The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision."
+            }
+            Self::VaultWorkspaceEstablish => {
+                "The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted."
+            }
+            Self::VaultWorkspaceMembersOnboard => {
+                "A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate."
+            }
+            Self::VaultWorkspaceRoster => {
+                "The owner reads the workspace house and companion roster with their actor, subject and facet refs."
             }
             Self::VaultAgentsExportPack => {
                 "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home."
@@ -4304,6 +4721,54 @@ impl AgentVerb {
             Self::VaultClaimsSeed => {
                 "Seeds claims through their individual gates, forced proposed, returning per claim its landed receipt or its typed refusal and refusal receipt."
             }
+            Self::VaultChannelIdentitiesProvision => {
+                "Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate."
+            }
+            Self::VaultChannelIdentitiesBind => {
+                "Bind a requested identity or an existing delegated account with transaction-verified custody."
+            }
+            Self::VaultChannelIdentitiesFulfill => {
+                "Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated."
+            }
+            Self::VaultChannelIdentitiesRotate => {
+                "Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate."
+            }
+            Self::VaultChannelIdentitiesRelease => {
+                "Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule."
+            }
+            Self::VaultChannelIdentitiesRouteInbound => {
+                "Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds."
+            }
+            Self::VaultChannelIdentitiesGet => {
+                "Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send."
+            }
+            Self::VaultChannelIdentitiesSelectionRules => {
+                "Read the compiled relationship selection law and authenticated writer provenance."
+            }
+            Self::VaultChannelIdentitiesSelectionUpdate => {
+                "Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer."
+            }
+            Self::VaultChannelIdentitiesSelect => {
+                "Select a live channel identity under relationship rules, retaining an existing thread passport mask."
+            }
+            Self::VaultChannelIdentitiesPassportsGet => {
+                "Read one receiving identity and Message-ID passport through the caller credential."
+            }
+            Self::VaultChannelIdentitiesPassportsList => {
+                "Read canonical thread passports and the sticky identity, actor and facet mask."
+            }
+            Self::VaultDeliveryWindowPolicyPut => {
+                "The owner writes one typed interrupt-only delivery-window policy through the gated claim writer."
+            }
+            Self::VaultDeliveryWindowPolicyList => {
+                "Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance."
+            }
+            Self::VaultDeliveryWindowPolicyRetract => {
+                "The owner retracts a delivery-window policy through the existing claim lifecycle door."
+            }
+            Self::VaultDeliveryWindowEvaluate => {
+                "Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect."
+            }
             Self::ConnectorOutboundSchedule => {
                 "Schedules one send through a granted outbound connector, gated and held for delivery."
             }
@@ -4339,6 +4804,12 @@ impl AgentVerb {
             }
             Self::VaultNotesDefaults => {
                 "One NOTE's overrides and the extraction, context and retention defaults its gates read after them."
+            }
+            Self::SelfAgentsSpawn => {
+                "Spawns a child under the leased parent attached to this credential; spec states the need, work and narrowing, never the parent identity."
+            }
+            Self::SelfLeaderSplit => {
+                "Splits the attached leader run into a subproject inside its own TASK wrapper; spec may name only the child leader and a narrower scope."
             }
         }
     }

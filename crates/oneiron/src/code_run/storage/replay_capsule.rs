@@ -1,7 +1,7 @@
 //! The step replay capsule and contribution fork rows (FIX 3028): each
 //! capsule's metadata keyed by its attempt, lease generation and step, each
 //! matched pair's fork receipts or the reason it is unavailable, and the
-//! request and response bodies they name, owned by the original run.
+//! request, start and response bodies they name, owned by the original run.
 
 use serde::{Deserialize, Serialize};
 
@@ -93,6 +93,16 @@ pub(crate) fn store_capsule_request(
     store_owned_body(vault, run, path, bytes)
 }
 
+/// Stores a capsule's start body (FIX 3694), owned by its run.
+pub(crate) fn store_capsule_start(
+    vault: &Vault,
+    run: EntityId,
+    path: String,
+    bytes: &[u8],
+) -> Result<OutputRef> {
+    store_owned_body(vault, run, path, bytes)
+}
+
 pub(crate) fn put_capsule(
     vault: &Vault,
     key: &(EntityId, u64, u64),
@@ -127,11 +137,47 @@ pub(crate) fn finalize_capsule(
 /// Storage errors.
 pub fn step_replay_capsules(vault: &Vault, attempt: EntityId) -> Result<Vec<StepReplayCapsule>> {
     let txn = vault.store.env.read_txn()?;
+    step_replay_capsules_in_txn(vault, &txn, attempt)
+}
+
+/// [`step_replay_capsules`] in the caller's transaction.
+pub(crate) fn step_replay_capsules_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    attempt: EntityId,
+) -> Result<Vec<StepReplayCapsule>> {
     Ok(CAPSULES
-        .scan_from(&vault.store, &txn, attempt.as_bytes())?
+        .scan_from(&vault.store, rtxn, attempt.as_bytes())?
         .into_iter()
         .map(|(_, capsule)| capsule)
         .collect())
+}
+
+/// The capsule's start body (FIX 3694), read in the caller's transaction;
+/// `None` when the capsule has no start, or its body is gone, withheld or no
+/// longer its digest.
+pub(crate) fn capsule_start_body(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    capsule: &StepReplayCapsule,
+) -> Result<Option<Vec<u8>>> {
+    let Some(start) = &capsule.start else {
+        return Ok(None);
+    };
+    let output = CodeRunRawOutput {
+        path: start.path.clone(),
+        ..CodeRunRawOutput::of_ref(start.body)
+    };
+    if vault
+        .code_run_result_withheld_in_txn(rtxn, Some(capsule.run), &output)?
+        .is_some()
+    {
+        return Ok(None);
+    }
+    let Some(bytes) = vault.code_run_result_body_in_txn(rtxn, &output)? else {
+        return Ok(None);
+    };
+    Ok((*blake3::hash(&bytes).as_bytes() == start.digest).then_some(bytes))
 }
 
 /// The capsule's request as it was captured; `None` when its body is gone,

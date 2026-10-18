@@ -62,6 +62,22 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.weave.owner.link.wrong", post(facade_route))
         .route("/vault.weave.item.wrong", post(facade_route))
         .route("/vault.weave.owner.item.wrong", post(facade_route))
+        .route("/vault.skill_hubs.put", post(facade_route))
+        .route("/vault.skill_hubs.get", post(facade_route))
+        .route("/vault.skill_hubs.publishers.admit", post(facade_route))
+        .route("/vault.skill_hubs.publishers.revoke", post(facade_route))
+        .route("/vault.skill_hubs.refs.get", post(facade_route))
+        .route("/vault.skill_hubs.refs.set", post(facade_route))
+        .route("/vault.packs.install", post(facade_route))
+        .route("/vault.packs.sync", post(facade_route))
+        .route("/vault.packs.get", post(facade_route))
+        .route("/vault.skills.import", post(facade_route))
+        .route("/vault.skills.sync", post(facade_route))
+        .route("/vault.skills.receipts", post(facade_route))
+        .route("/vault.skills.permissions.approve", post(facade_route))
+        .route("/vault.packs.hooks.bind", post(facade_route))
+        .route("/vault.packs.hooks.list", post(facade_route))
+        .route("/vault.packs.hooks.qualify", post(facade_route))
         .route("/vault.packs.put", post(facade_route))
         .route("/vault.packs.remove", post(facade_route))
         .route("/vault.connectors.subscriptions.put", post(facade_route))
@@ -188,6 +204,12 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.code.proposal_view", post(facade_route))
         .route("/vault.code.repo_diff", post(facade_route))
         .route("/vault.artifacts.export", post(facade_route))
+        .route("/vault.agents.create", post(facade_route))
+        .route("/vault.agents.get", post(facade_route))
+        .route("/vault.agents.update", post(facade_route))
+        .route("/vault.workspace.establish", post(facade_route))
+        .route("/vault.workspace.members.onboard", post(facade_route))
+        .route("/vault.workspace.roster", post(facade_route))
         .route("/vault.agents.export_pack", post(facade_route))
         .route("/vault.artifacts.born_from", post(facade_route))
         .route("/vault.artifacts.proposals", post(facade_route))
@@ -327,6 +349,37 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.consolidation.enqueue", post(facade_route))
         .route("/vault.consolidation.status", post(facade_route))
         .route("/vault.claims.seed", post(facade_route))
+        .route("/vault.channel_identities.provision", post(facade_route))
+        .route("/vault.channel_identities.bind", post(facade_route))
+        .route("/vault.channel_identities.fulfill", post(facade_route))
+        .route("/vault.channel_identities.rotate", post(facade_route))
+        .route("/vault.channel_identities.release", post(facade_route))
+        .route(
+            "/vault.channel_identities.route_inbound",
+            post(facade_route),
+        )
+        .route("/vault.channel_identities.get", post(facade_route))
+        .route(
+            "/vault.channel_identities.selection.rules",
+            post(facade_route),
+        )
+        .route(
+            "/vault.channel_identities.selection.update",
+            post(facade_route),
+        )
+        .route("/vault.channel_identities.select", post(facade_route))
+        .route(
+            "/vault.channel_identities.passports.get",
+            post(facade_route),
+        )
+        .route(
+            "/vault.channel_identities.passports.list",
+            post(facade_route),
+        )
+        .route("/vault.delivery_window.policy.put", post(facade_route))
+        .route("/vault.delivery_window.policy.list", post(facade_route))
+        .route("/vault.delivery_window.policy.retract", post(facade_route))
+        .route("/vault.delivery_window.evaluate", post(facade_route))
         .route("/connector.outbound.schedule", post(facade_route))
         .route("/vault.notes.create", post(facade_route))
         .route("/vault.notes.from_entity", post(facade_route))
@@ -339,4 +392,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.notes.lifecycle", post(facade_route))
         .route("/vault.notes.set_overrides", post(facade_route))
         .route("/vault.notes.defaults", post(facade_route))
+        .route("/self.agents.spawn", post(facade_route))
+        .route("/self.leader.split", post(facade_route))
 }

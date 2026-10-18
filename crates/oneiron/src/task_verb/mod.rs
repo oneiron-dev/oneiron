@@ -261,6 +261,8 @@ pub(crate) use symbol_lease::forget_symbols;
 
 mod recall_door;
 pub mod sdk;
+mod sdk_agents;
+mod sdk_workspace;
 mod sdk_campaign_split;
 mod sdk_catalog_fragment;
 mod sdk_connector;
@@ -273,7 +275,9 @@ mod sdk_explain;
 mod sdk_fanout_launch;
 mod sdk_guest_revoke;
 mod sdk_host;
+mod sdk_hub;
 mod sdk_legal_hold;
+mod sdk_live_run;
 mod sdk_mesh;
 mod sdk_record_erase;
 mod sdk_research;

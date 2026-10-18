@@ -25,9 +25,11 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod agent_definition_doors;
 mod agent_verbs;
 mod call_context;
 mod campaign_split_doors;
+mod channel_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
@@ -38,16 +40,18 @@ pub(super) mod decision_role_asks;
 mod dispatch;
 mod embedding_space_doors;
 mod fanout_doors;
+mod gate_policy_doors;
 mod graph_ask_doors;
 mod guest_doors;
-mod gate_policy_doors;
+mod hub_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
+mod live_run_doors;
+mod note_doors;
 mod policy_doors;
 mod project_card_doors;
 mod reaction_doors;
 mod residence_doors;
-mod note_doors;
 pub(super) mod role_picks;
 mod secret_lift_doors;
 mod secret_use_doors;

@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 395 code-mode rows (374 host rows, 21 run rows), 1456 declarations.
-// Replies: 341 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 433 code-mode rows (412 host rows, 21 run rows), 1567 declarations.
+// Replies: 379 fully typed, 50 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 82; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 80; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -420,8 +420,23 @@ declare namespace Sdk {
   type WeaveLinkCorrectionView = { label_ref: string; source_ref: string; kind: string; target_ref: string; actor_ref: string; recorded_at: number };
   type WeaveWrongItemRequest = { item: string; item_ref: string; project_ref?: string | null };
   type WeaveItemCorrectionView = { label_ref: string; item: string; item_ref: string; project_ref?: string | null; actor_ref: string; recorded_at: number };
-  type PackFileInput = { path: string; text: string };
-  type PackPutRequest = { files: PackFileInput[] };
+  type SkillHubKind = "git" | "http-index" | "local-dir";
+  type SkillHubTrustTier = "untrusted" | "community" | "verified";
+  type HubSyncPolicy = "pinned-ref" | "pinned-commit" | "content-hash-frozen" | "mirror-of-hub";
+  type SkillHubPutRequest = { hub: EntityId; kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
+  type HubConsentOutcome = "approved" | "denied" | "revoked";
+  type HubConsentReceipt = { outcome: HubConsentOutcome; decision: string; grant_ref?: string | null };
+  type SkillHubConfigured = { hub: EntityId; consent: HubConsentReceipt };
+  type SkillHubRequest = { hub: EntityId };
+  type SkillHubRecord = { kind: SkillHubKind; endpoint: string; trust_tier: SkillHubTrustTier; sync_policy: HubSyncPolicy };
+  type SkillPublisherRequest = { hub: EntityId; identity: string };
+  type SkillPublisherAdmission = { hub: EntityId; identity: string; grant_ref: string };
+  type HubRefRequest = { hub: EntityId; ref_string: string };
+  type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
+  type HubRef = { hub_id: EntityId; ref_string: string; pin: HubPin };
+  type TrackedHubRef = { hub_ref: HubRef; sync_policy: HubSyncPolicy; latest_seen?: string | null; latest_trusted?: string | null };
+  type HubRefSetRequest = { hub_ref: HubRef; sync_policy: HubSyncPolicy };
+  type HubImportRequest = { hub_ref: HubRef; publisher: string };
   type PackPutOutcome = "installed" | "candidate" | "blocked";
   type PackKind = "capability" | "connector" | "agent";
   type PackAdapter = { builtin: string } | { script: string };
@@ -439,6 +454,39 @@ declare namespace Sdk {
   type PackSection = { section_id: string; state_family: StateFamilyRef; verbs: SectionVerbRef[]; authority_lane: AuthorityLaneRef; budget_policy: BudgetPolicyRef };
   type PackInstallReceipt = { source_id: string; pack_name: string; content_hash: string; kind: PackKind; adapter?: PackAdapter | null; engine_version?: string | null; status: PackInstallStatus; candidate_reason?: PackCandidateReason | null; hub_id: string; hub_ref: string; pin_type: string; pin_value: string; publisher: string; permissions: PackPermissions; qualification_report_hash?: string | null; connector_qualification?: PackConnectorReceipt | null; runtime?: PackRuntimeRecipe | null; sections: PackSection[]; predicates: string[]; kinds: string[]; skills: string[]; agent?: string | null; installed_at: number };
   type PackPutReceipt = { outcome: PackPutOutcome; reason?: string | null; receipt?: PackInstallReceipt | null };
+  type HubPackRequest = { name: string };
+  type HubSkillImported = { entity: EntityId };
+  type HubSkillRequest = { entity: EntityId };
+  type HubSkillSyncOutcome = "applied" | "proposed" | "refused_by_policy";
+  type HubSkillSyncReceipt = { outcome: HubSkillSyncOutcome; proposal?: EntityId | null; approval?: ClaimApprovalStatus | null };
+  type InstallLifecycle = "candidate" | "active" | "stale" | "quarantined" | "superseded";
+  type InstallHoldReason = "source_only" | "rules_hit" | "code_auto_install_off" | "qualification_required" | "no_fit" | "local_approval" | "unloadable_approval" | "stale" | "quarantined" | "superseded" | "advisories";
+  type InstallDisposition = "installed" | "already_installed" | "pending_permission" | { not_installed: InstallHoldReason };
+  type HubImportReceipt = { entity: string; content_hash: string; hub_id: string; ref_string: string; pin_type: string; pin_value?: string | null; publisher?: string | null; publisher_grant?: string | null; installed_as: InstallLifecycle; disposition: InstallDisposition; fit_analysis?: string | null; requested_permissions?: string[]; at: number };
+  type HubAdmissionReceipt = { receipt_id: string; candidate: string; content_hash: string; binding: string; consent_digest: string; publisher: string; publisher_grant: string; hub_id: string; hub_ref: string; evidence_skill: string; held_out_digest: string; held_out_count: number; before: number; after: number; accepted: boolean; judge_revision: string; displaced_by_revision?: string | null; at: number };
+  type HubSkillReceipts = { sources: HubRef[]; imports: HubImportReceipt[]; admission?: HubAdmissionReceipt | null };
+  type HubSkillPermissionRequest = { entity: EntityId; hub_ref: HubRef };
+  type HubHookBindRequest = { pack: string };
+  type HookActorClass = "human" | "agent" | "system";
+  type HookPhase = "pre" | "post" | "fact";
+  type HookOutcomeKind = "continue" | "rewrite" | "skip" | "ask" | "add_block" | "annotate" | "redact" | "propose" | "enqueue" | "effect" | "nothing";
+  type HookRenderClass = "deterministic_eager" | "generative";
+  type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass };
+  type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string };
+  type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor };
+  type HubHookBindingRow = { id: EntityId; binding: PackHookBinding };
+  type HubHookQualifyRequest = { source: EntityId };
+  type FactSource = "claim_changelog" | "settlement";
+  type FactPositionHex = string;
+  type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled";
+  type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase };
+  type HookReplayCompare = "same" | "differs" | "incomplete";
+  type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string };
+  type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
+  type HubHookReplay = { hook: string; entries: HookReplayRow[] };
+  type HubHookQualificationReceipt = { put: PackPutReceipt; replays: HubHookReplay[] };
+  type PackFileInput = { path: string; text: string };
+  type PackPutRequest = { files: PackFileInput[] };
   type PackRemoveRequest = { pack: string };
   type ChannelSubscriptionRequest = { agent: string; channel: string };
   type ChannelMessageSubscription = { subscription: string; connector_key: string; connector: string; agent: string; existing: boolean };
@@ -516,13 +564,13 @@ declare namespace Sdk {
   type EraseAskStatus = "open" | { erased: { by: string; act?: string | null } } | { declined: { by: string } };
   type SharedEraseAsk = { id: string; vault_id: string; kind: EraseAskKind; asker: string; record: string; asked_at: number; status: EraseAskStatus; closed_at?: number | null };
   type SharedEraseAskCloseRequest = { ask_id: string; erased: boolean; act_id?: string | null };
-  type GuestRevokeRequest = { grant_ref: EntityId };
+  type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
   type GuestCopyState = "unknown";
   type GuestDeletionRequestStatus = "not_requested" | "queued" | "sent";
   type GuestRevokeDisclosure = { copied_bytes_recallable: NotRecallable; recipient_copy_state: GuestCopyState; deletion_request_status: GuestDeletionRequestStatus };
-  type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number };
+  type GuestRevokeCourtesyTargetView = { pact: string; peer_vault_id: string; epoch_cutoff: number; deletion_request_status: GuestDeletionRequestStatus; request?: string | null; error?: string | null };
   type GuestRevokeResponse = { grant_ref: EntityId; guest_ref: EntityId; changed: boolean; revoked_at: number; revoked_slip_refs?: string[]; pact_standing: GuestPactStanding; disclosure: GuestRevokeDisclosure; courtesy_targets?: GuestRevokeCourtesyTargetView[] };
   type GuestSlipMintRequest = { grant_ref: EntityId; holder_key: string; expires_at: number };
   type GuestSlipMinted = { slip_id: string; slip: string; expires_at: number };
@@ -818,14 +866,6 @@ declare namespace Sdk {
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
-  type FactSource = "claim_changelog" | "settlement";
-  type FactPositionHex = string;
-  type FactKind = "claim.landed" | "claim.superseded" | "proposal.settled";
-  type HookPhase = "pre" | "post" | "fact";
-  type HookReplayCase = { on: "fact"; source: FactSource; position: FactPositionHex; kind: FactKind; entity: string } | { on: "verb"; run_key: string; invocation: string; verb: string; phase: HookPhase };
-  type HookReplayCompare = "same" | "differs" | "incomplete";
-  type HookReplayOutcome = { status: "ran"; outcome_json?: string | null; outcome: string; reason?: string | null; recorded?: string | null; recorded_outcome_json?: string | null; compare: HookReplayCompare; from_memo: boolean; reads_live: boolean } | { status: "missing_history"; reason: string };
-  type HookReplayRow = { case: HookReplayCase; result: HookReplayOutcome };
   type ArtifactRefRequest = { artifact_ref: string };
   type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file";
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
@@ -852,6 +892,26 @@ declare namespace Sdk {
   type CodeRepoDiffView = { files: CodeFileDiffView[]; not_text: string[]; rendered: string };
   type ArtifactExportRequest = { artifact_ref: string; version?: number | null; travel?: TravelChoice | null; why?: string | null };
   type ArtifactExportFile = { artifact_ref: string; version: number; kind: ArtifactKind; name: string; media_type: string; content_hash: string; born_with: BornWith; content_base64: string };
+  type AgentSkillInput = { skill_id: string; min_version?: string | null };
+  type AgentMcpInput = { key: string; min_version?: string | null };
+  type AgentScopeInput = { kind: "all" } | { kind: "base" } | { kind: "world"; world: EntityId };
+  type AgentCeilingInput = "auto" | "proposed";
+  type AgentDefinitionSpec = { agent_id: string; desc: string; version: string; instructions?: string | null; skills?: AgentSkillInput[]; connectors?: string[]; code_mode_mcps?: AgentMcpInput[]; model_tier?: string | null; scope?: AgentScopeInput; ceiling?: AgentCeilingInput; forked_from?: EntityId | null; enabled?: boolean; display_name?: string | null };
+  type AgentDefinitionCreateRequest = { agent_def_ref: EntityId; definition: AgentDefinitionSpec };
+  type AgentDefinitionLifecycle = "active" | "superseded" | "retracted";
+  type AgentDefinitionView = { agent_def_ref: EntityId; definition: AgentDefinitionSpec; approval_status: ClaimApprovalStatus; lifecycle_status: AgentDefinitionLifecycle };
+  type AgentDefinitionRequest = { agent_def_ref: EntityId };
+  type AgentDefinitionUpdateRequest = { agent_def_ref: EntityId; expected_version: string; definition: AgentDefinitionSpec };
+  type WorkspaceRosterPreset = { workspace_ref: string; workspace_vault_id: string; org_ref: EntityId; venture_name: string; house_display_name?: string | null; house_actor_ref: EntityId; house_identity_ref?: EntityId | null };
+  type WorkCompanionPolicy = "choose" | "suggest" | "require";
+  type WorkspacePresetRequest = { preset: WorkspaceRosterPreset; work_companion?: WorkCompanionPolicy };
+  type WorkspacePresetReceipt = { workspace_ref: string; work_companion: WorkCompanionPolicy };
+  type WorkspaceCompanionInput = { kind: "work"; person_ref: EntityId; actor_ref: EntityId; work_facet_ref: EntityId; profile_grant_ref: EntityId; actor_definition: AgentDefinitionSpec; display_name: string } | { kind: "bring"; person_ref: EntityId; actor_ref: EntityId; work_facet_ref: EntityId };
+  type WorkspaceMemberOnboardRequest = { onboarding_id: string; workspace: WorkspaceRosterPreset; person_ref: EntityId; actor_ref: EntityId; actor_definition: AgentDefinitionSpec; work_facet_ref: EntityId; federation_grant_ref: EntityId; companion: WorkspaceCompanionInput; occurred_at: number };
+  type MemberOnboardingOutcome = { onboarding_id: string; person_ref: EntityId; actor_ref: EntityId; federation_grant_ref: EntityId; companion_person_ref?: EntityId | null; companion_actor_ref?: EntityId | null; work_companion_suggested: boolean; delegated_identity_ref?: EntityId | null; completed_at: number };
+  type WorkspaceRosterRequest = { workspace_ref: string };
+  type WorkspaceRosterRole = "house_mind" | "principal_companion";
+  type WorkspaceRosterEntry = { workspace_ref: string; role: WorkspaceRosterRole; principal_ref?: EntityId | null; actor_ref: EntityId; subject_ref: EntityId; facet_ref?: EntityId | null; identity_ref?: EntityId | null; display_name: string };
   type AgentPackExportRequest = { agent_ref: string; travel?: TravelChoice | null };
   type OmittedKnowledge = { claim: string; reason: string };
   type AgentPackExportFile = { path: string; content_base64: string };
@@ -1043,7 +1103,6 @@ declare namespace Sdk {
   type CompanionSharingView = { target: CompanionSharingTarget; stored?: CompanionSharingStored | null; effective: Scope };
   type CompanionSharingSetRequest = { companion_ref: string; contact_ref: string; proposal_ref: string; expected_delta: string };
   type WorkspaceRefRequest = { workspace_ref: string };
-  type WorkCompanionPolicy = "choose" | "suggest" | "require";
   type WorkCompanionSetRequest = { workspace_ref: string; policy: WorkCompanionPolicy };
   type SkillSourceFile = { path: string; content: string };
   type SkillSaveRequest = { id?: string | null; files: SkillSourceFile[]; expected_version?: string | null };
@@ -1385,6 +1444,55 @@ declare namespace Sdk {
   type DreamerAttemptRef = { job_ref: string; state: string; existing: boolean };
   type ConsolidationStatusRequest = { job_ref: string };
   type DreamerAttemptView = { job_ref: string; state: string; kind: string; lease_owner?: string | null; attempt_count: number; run_id?: string | null; last_error?: string | null; created_at: number; updated_at: number };
+  type SelfHeldShape = "dedicated_address" | "dedicated_handle" | "shared_presence";
+  type ChannelIdentityBinding = { kind: "actor"; actor_ref: EntityId; facet_ref?: EntityId | null } | { kind: "vault"; vault_id: number };
+  type ChannelIdentityFulfillment = "api" | "manual" | "review";
+  type ChannelIdentityProvisionRequest = { channel: string; address_or_handle: string; shape: SelfHeldShape; binding: ChannelIdentityBinding; fulfillment_mode: ChannelIdentityFulfillment };
+  type ChannelIdentityShape = "dedicated_address" | "dedicated_handle" | "shared_presence" | "delegated_grant";
+  type ChannelIdentityCustody = "self_held" | "delegated";
+  type ChannelIdentityState = "requested" | "pending_fulfillment" | "active" | "rotating" | "released" | "quarantine" | "tombstone";
+  type ChannelIdentityView = { identity_ref: EntityId; channel: string; address_or_handle: string; shape: ChannelIdentityShape; binding: ChannelIdentityBinding; custody: ChannelIdentityCustody; state: ChannelIdentityState; pending_fulfillment?: string | null; state_changed_at: number; quarantine_until?: number | null; outbound_eligible: boolean; occupies_assignment_key: boolean };
+  type ChannelIdentityLifecycleReceipt = { identity_ref: EntityId; receipt_ref: string; gate_receipt_ref?: string | null; outcome: string; reason_codes: string[]; owner_visible_state: string; identity?: ChannelIdentityView | null; outbound_closed: boolean; identity_retiring: boolean };
+  type DelegatedGrantScope = "mail.read" | "mail.metadata" | "mail.send";
+  type DelegatedGrant = { custody_record_ref: string; scopes: DelegatedGrantScope[] };
+  type ChannelIdentityBindRequest = { kind: "existing"; identity_ref: EntityId; fulfillment_mode: ChannelIdentityFulfillment } | { kind: "delegated"; channel: string; address_or_handle: string; binding: ChannelIdentityBinding; grant: DelegatedGrant; fulfillment_mode: ChannelIdentityFulfillment };
+  type ChannelIdentityRequest = { identity_ref: EntityId };
+  type ChannelIdentityReleaseRequest = { identity_ref: EntityId; quarantine_until: number };
+  type RelationshipContext = "work_deal" | "scheduling_logistics" | "campaign_outreach" | "transactional_system" | "personal_friends" | "group_space";
+  type SelectionRuleScope = { kind: "vault_default" } | { kind: "world"; world_ref: EntityId } | { kind: "relationship"; relationship_ref: EntityId } | { kind: "brief"; brief_ref: string } | { kind: "space"; space_ref: string };
+  type ChannelIdentityFace = "delegated_owner_account" | "agent_named_address" | "side_domain_address" | "house_identity" | "companion_identity" | "named_group_participant";
+  type SelectionRuleWriterKind = "system_default" | "owner" | "agent";
+  type ChannelIdentitySelectionRule = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean; updated_at: number; updated_by?: EntityId | null; writer_kind: SelectionRuleWriterKind };
+  type ChannelIdentitySelectionRuleSet = { schema_version: number; revision: number; rows: ChannelIdentitySelectionRule[] };
+  type ChannelSelectionRuleInput = { rule_id: string; relationship: RelationshipContext; scope: SelectionRuleScope; face: ChannelIdentityFace; pinned_identity_ref?: EntityId | null; priority: number; enabled: boolean; agent_amendable: boolean };
+  type ChannelSelectionPatchInput = { kind: "upsert"; rule: ChannelSelectionRuleInput } | { kind: "remove"; rule_id: string };
+  type ChannelSelectionUpdateRequest = { expected_revision: number; patch: ChannelSelectionPatchInput };
+  type ChannelSelectionCandidateInput = { identity_ref: EntityId; face: ChannelIdentityFace };
+  type ChannelSelectionRequest = { relationship: RelationshipContext; applicable_scopes?: SelectionRuleScope[]; candidates: ChannelSelectionCandidateInput[]; thread_ref?: string | null };
+  type ChannelIdentitySelectionDecision = { identity_ref: EntityId; facet_ref?: EntityId | null; face: ChannelIdentityFace; shape: ChannelIdentityShape; rule_id?: string | null; used_thread_pin: boolean };
+  type ThreadMaskView = { identity_ref: EntityId; actor_ref: EntityId; facet_ref?: EntityId | null };
+  type ChannelSelectionView = { revision: number; decision: ChannelIdentitySelectionDecision; mask: ThreadMaskView };
+  type ThreadPassportRequest = { identity_ref: EntityId; message_id: string };
+  type ThreadPassportView = { identity_ref: EntityId; message_id: string; thread_ref: string; mask: ThreadMaskView; observed_at: number };
+  type ThreadPassportLookup = { passport?: ThreadPassportView | null };
+  type ThreadPassportsRequest = { thread_ref: string };
+  type ThreadPassportsView = { canonical_thread_ref: string; passports: ThreadPassportView[]; pinned_mask?: ThreadMaskView | null };
+  type DeliveryWindowTimeWindow = { start_minute: number; end_minute: number };
+  type DeliveryWindowContextCondition = "calendar_busy" | "focus_on" | "driving" | "asleep";
+  type DeliveryWindowRule = { kind: "quiet"; window: DeliveryWindowTimeWindow } | { kind: "context"; when: DeliveryWindowContextCondition } | { kind: "channel"; channel: string; window?: DeliveryWindowTimeWindow | null };
+  type DeliveryWindowPolicyPutRequest = { subject_ref: EntityId; policy_key: string; rule: DeliveryWindowRule; reason?: string | null; valid_from?: number | null; valid_to?: number | null };
+  type DeliveryWindowPolicyRequest = { subject_ref: EntityId };
+  type DeliveryWindowPolicyRow = { claim_ref: EntityId; subject_ref: EntityId; policy_key?: string | null; rule: DeliveryWindowRule; reason: string; approval: string; lifecycle: string; source?: string | null; valid_from?: number | null; valid_to?: number | null; stale: boolean };
+  type DeliveryWindowPolicies = { rows: DeliveryWindowPolicyRow[] };
+  type DeliveryWindowPolicyRetractRequest = { claim_ref: EntityId };
+  type DeliveryWindowVerbClass = "ambient" | "interrupt";
+  type DeliveryWindowApnsInterruptionLevel = "Passive" | "Active" | "TimeSensitive" | "Critical";
+  type DeliveryWindowEvaluateRequest = { subject_refs: EntityId[]; delivery_epoch_secs: number; local_minute_of_day: number; verb_class: DeliveryWindowVerbClass; channel: string; active_contexts?: DeliveryWindowContextCondition[]; interrupt_surface?: string | null; degrade_to?: string | null; apns_interruption_level?: DeliveryWindowApnsInterruptionLevel | null };
+  type DeliveryWindowDecision = "DeliverNow" | { DeliverNowWithApnsCap: { reason: string; from: string; to: string } } | { Hold: { reason: string; retry_at?: number | null } } | { Degrade: { reason: string; from: string; to: string } } | { LetGo: { reason: string } };
+  type DeliveryWindowMatch = { predicate: string; reason: string; retry_at?: number | null };
+  type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute";
+  type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
+  type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
   type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
   type CreateNoteRequest = { kind: string; markdown: string };
@@ -1441,8 +1549,11 @@ declare namespace Sdk {
   type SpawnCare = "light" | "medium" | "high" | "xhigh" | "max";
   type SpawnKnob<T> = { mode: "seed"; value: T; weight_runs: number } | { mode: "pin"; value: T };
   type SpawnPattern = "solo" | "ceo_decides" | "committee" | "vote" | "market" | "rotation";
+  type MemoryProjection = { mode: "default" } | { mode: "exclude" } | { mode: "scoped"; domains: string[]; limit: number };
+  type ChatProjection = { mode: "default" } | { mode: "exclude" } | { mode: "recent"; last_n: number };
+  type ContextSpec = { layers?: string[]; memory?: MemoryProjection; chat?: ChatProjection; briefing?: string | null; _annotation?: string | null };
   type CommReach = "parent" | "subtree" | "project" | "vault";
-  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: unknown | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
+  type AgentSpawnInput = { need: string; prompt: string; intent_key: string; agent?: string | null; care?: SpawnCare | null; notes?: string | null; model?: SpawnKnob<string> | null; width?: SpawnKnob<number> | null; pattern?: SpawnKnob<SpawnPattern> | null; budget?: SpawnKnob<number> | null; context?: ContextSpec | null; context_from?: string[] | null; depth?: number | null; project?: string | null; objectives?: string[] | null; comm?: CommReach | null };
   type AgentSpawnKind = "agent_spawn";
   type LaunchStatement = { agent_count: number; expected: ExpectedSpend; unit: LeaseUnit; cap_units?: number | null; available_units?: number | null; hard: boolean; reserved_units: number; scope?: SpendScopeId | null; parent_scope?: SpendScopeId | null; stated_at: number };
   type AgentSpawnOutput = { state: "queued"; kind: AgentSpawnKind; attempt: string; launch?: LaunchStatement | null } | { state: "proposed_widen"; kind: AgentSpawnKind; proposal: string };
@@ -1450,7 +1561,7 @@ declare namespace Sdk {
   type LeaderPatternInput = { skill: string };
   type LeaderPatternFile = { path: string; text: string };
   type LeaderPatternOutput = { skill: EntityId; skill_id: string; version: string; desc: string; files?: LeaderPatternFile[] | null };
-  type LeaderSplitInput = { leader?: string | null; slice?: unknown | null };
+  type LeaderSplitInput = { leader?: string | null; slice?: ScopeScope | null };
   type LeaderSplitOutput = { project: EntityId; task: EntityId; parent: EntityId; leader: EntityId; depth_remaining: number };
   type SkillCallInput = { skill: string; args: unknown };
   type TeamMemberInput = { agent: string; intentKey: string; briefing?: string | null };
@@ -1722,8 +1833,14 @@ declare const tasks: {
 };
 declare const vault: Sdk.VaultHost & {
   agents: {
+    /** The owner creates or imports an inert custom agent composition at a new AGENT_DEF id, with caller-derived authorship and existing fork/ceiling gates; no attempt is dispatched. */
+    create(input: Sdk.AgentDefinitionCreateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
     /** An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home. */
     export_pack(input: Sdk.AgentPackExportRequest): Promise<Sdk.AgentPackExport | StoredResult>;
+    /** The owner reads one saved agent composition and its version and approval state. */
+    get(input: Sdk.AgentDefinitionRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
+    /** The owner edits the expected definition version through the existing immutable-field and ceiling gates; running attempts retain their captured revision. */
+    update(input: Sdk.AgentDefinitionUpdateRequest): Promise<Sdk.AgentDefinitionView | StoredResult>;
   };
   artifacts: {
     /** Appends one version of bytes to a blob artifact's append-only chain. */
@@ -1832,6 +1949,36 @@ declare const vault: Sdk.VaultHost & {
       update(input: Sdk.UpdateCampaignProgramRequest): Promise<Sdk.CampaignProgramRecord | StoredResult>;
     };
   };
+  channel_identities: {
+    /** Bind a requested identity or an existing delegated account with transaction-verified custody. */
+    bind(input: Sdk.ChannelIdentityBindRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Record owner-confirmed fulfillment of a pending channel identity; delegated custody is revalidated. */
+    fulfill(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Read live channel identity facts, custody, lifecycle and outbound capability without granting permission to send. */
+    get(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityView | StoredResult>;
+    passports: {
+      /** Read one receiving identity and Message-ID passport through the caller credential. */
+      get(input: Sdk.ThreadPassportRequest): Promise<Sdk.ThreadPassportLookup | StoredResult>;
+      /** Read canonical thread passports and the sticky identity, actor and facet mask. */
+      list(input: Sdk.ThreadPassportsRequest): Promise<Sdk.ThreadPassportsView | StoredResult>;
+    };
+    /** Provision an engine-held channel address, handle or shared presence through the existing lifecycle gate. */
+    provision(input: Sdk.ChannelIdentityProvisionRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Release a channel identity through its lifecycle gate, retaining engine-held addresses under the never-recycle rule. */
+    release(input: Sdk.ChannelIdentityReleaseRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Rotate an engine-held channel identity through its lifecycle gate; delegated accounts cannot rotate. */
+    rotate(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Read and receipt the gated inbound routing disposition of a channel identity, including retirement holds. */
+    route_inbound(input: Sdk.ChannelIdentityRequest): Promise<Sdk.ChannelIdentityLifecycleReceipt | StoredResult>;
+    /** Select a live channel identity under relationship rules, retaining an existing thread passport mask. */
+    select(input: Sdk.ChannelSelectionRequest): Promise<Sdk.ChannelSelectionView | StoredResult>;
+    selection: {
+      /** Read the compiled relationship selection law and authenticated writer provenance. */
+      rules(input: Sdk.EmptyRequest): Promise<Sdk.ChannelIdentitySelectionRuleSet | StoredResult>;
+      /** Amend relationship selection rules at an expected revision as the authenticated owner or an authorized agent writer. */
+      update(input: Sdk.ChannelSelectionUpdateRequest): Promise<Sdk.ChannelIdentitySelectionRuleSet | StoredResult>;
+    };
+  };
   claims: {
     /** Admits one imported-evidence claim through its ingest source's trust ceiling; the gate still decides. */
     admit(input: Sdk.AdmitImportedClaimInput): Promise<Sdk.CommitReceipt | StoredResult>;
@@ -1929,6 +2076,18 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Deletes one entity under a named reason; an owner verb that only a verified human may call. */
   delete(input: Sdk.SafeDeleteRequest): Promise<Sdk.DeleteReceipt | StoredResult>;
+  delivery_window: {
+    /** Preview live delivery-window policy with the engine evaluator; the preview does not authorize or release an effect. */
+    evaluate(input: Sdk.DeliveryWindowEvaluateRequest): Promise<Sdk.DeliveryWindowPreview | StoredResult>;
+    policy: {
+      /** Read typed delivery-window policy rows with approval, source, lifecycle and validity provenance. */
+      list(input: Sdk.DeliveryWindowPolicyRequest): Promise<Sdk.DeliveryWindowPolicies | StoredResult>;
+      /** The owner writes one typed interrupt-only delivery-window policy through the gated claim writer. */
+      put(input: Sdk.DeliveryWindowPolicyPutRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+      /** The owner retracts a delivery-window policy through the existing claim lifecycle door. */
+      retract(input: Sdk.DeliveryWindowPolicyRetractRequest): Promise<Sdk.CommitReceipt | StoredResult>;
+    };
+  };
   disclosure: {
     /** An agent files a clearance offer for one contact, waiting on the owner's answer until it lapses. */
     offer(input: Sdk.DisclosureOfferRequest): Promise<Sdk.DisclosureOffered | StoredResult>;
@@ -2142,6 +2301,18 @@ declare const vault: Sdk.VaultHost & {
     set_overrides(input: Sdk.SetNoteOverridesRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
   };
   packs: {
+    /** Reads an installed pack and its exact source, pin, publisher and requested powers as the owner. */
+    get(input: Sdk.HubPackRequest): Promise<Sdk.PackInstallReceipt | null | StoredResult>;
+    hooks: {
+      /** The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign. */
+      bind(input: Sdk.HubHookBindRequest): Promise<Sdk.EntityId[] | StoredResult>;
+      /** Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.HubHookBindingRow[] | StoredResult>;
+      /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
+      qualify(input: Sdk.HubHookQualifyRequest): Promise<Sdk.HubHookQualificationReceipt | StoredResult>;
+    };
+    /** The owner fetches a pinned hub pack as its foreign publisher; code stays Candidate and hooks wait for consent. */
+    install(input: Sdk.HubImportRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner installs a pack folder, or replaces the pack installed under its name; the put is the consent for its hooks. */
     put(input: Sdk.PackPutRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
     /** The owner removes an installed pack: it leaves the Active catalog and its hook bindings stop; a built-in goes back to its Candidate. */
@@ -2156,6 +2327,8 @@ declare const vault: Sdk.VaultHost & {
       /** Checks one pack connection with the engine's fixed read-only provider call for its declared check. */
       verify(input: Sdk.PackSetupVerifyRequest): Promise<Sdk.PackSetupReceipt | StoredResult>;
     };
+    /** The owner syncs a hub pack at its stored ref policy; wider hooks keep their old bindings until re-consent. */
+    sync(input: Sdk.HubPackRequest): Promise<Sdk.PackPutReceipt | StoredResult>;
   };
   people: {
     /** One person the vault knows, by their pr handle. */
@@ -2384,6 +2557,36 @@ declare const vault: Sdk.VaultHost & {
     revoke(input: Sdk.ShareRevokeRequest): Promise<Sdk.ShareRevokeReceipt | StoredResult>;
     view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
   };
+  skill_hubs: {
+    /** Reads one configured hub as the owner. */
+    get(input: Sdk.SkillHubRequest): Promise<Sdk.SkillHubRecord | StoredResult>;
+    publishers: {
+      /** The owner admits a foreign publisher to offer candidates from one configured hub, and nothing else. */
+      admit(input: Sdk.SkillPublisherRequest): Promise<Sdk.SkillPublisherAdmission | StoredResult>;
+      /** The owner revokes the exact offer-only publisher grant; foreign hooks recheck it before running. */
+      revoke(input: Sdk.SkillPublisherRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    /** The owner registers or revises a hub source; hub trust never grants activation authority. */
+    put(input: Sdk.SkillHubPutRequest): Promise<Sdk.SkillHubConfigured | StoredResult>;
+    refs: {
+      /** Reads one hub ref policy, pin and separate seen and trusted revisions as the owner. */
+      get(input: Sdk.HubRefRequest): Promise<Sdk.TrackedHubRef | null | StoredResult>;
+      /** The owner changes one hub ref policy and pin without fetching or trusting new bytes. */
+      set(input: Sdk.HubRefSetRequest): Promise<Sdk.TrackedHubRef | StoredResult>;
+    };
+  };
+  skills: {
+    /** The owner imports a pinned hub skill through scanning and publisher admission, pending its permission ask. */
+    import(input: Sdk.HubImportRequest): Promise<Sdk.HubSkillImported | StoredResult>;
+    permissions: {
+      /** The owner answers one imported skill permission ask at its exact hub source. */
+      approve(input: Sdk.HubSkillPermissionRequest): Promise<Sdk.HubConsentReceipt | StoredResult>;
+    };
+    /** Reads every hub source and import receipt of a skill, and its held-out admission ruling, as the owner. */
+    receipts(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillReceipts | StoredResult>;
+    /** The owner syncs a hub skill under its ref policy; widening proposes without changing trusted capabilities. */
+    sync(input: Sdk.HubSkillRequest): Promise<Sdk.HubSkillSyncReceipt | StoredResult>;
+  };
   structural: {
     /** Puts one structural record with its text-index fields and outgoing edges, in one atomic batch; claims go through commit. */
     put(input: Sdk.StructuralPutInput): Promise<Sdk.EntityRefReceipt | StoredResult>;
@@ -2424,6 +2627,14 @@ declare const vault: Sdk.VaultHost & {
   /** Witnesses one conversational turn: its conversation, turn and gated messages, edges and text index, in one atomic batch. */
   witness(input: Sdk.WitnessTurn): Promise<Sdk.WitnessReceipt | StoredResult>;
   workspace: {
+    /** The caller establishes a workspace preset and companion policy through its existing owner or workspace-settings power; no member or companion is minted. */
+    establish(input: Sdk.WorkspacePresetRequest): Promise<Sdk.WorkspacePresetReceipt | StoredResult>;
+    members: {
+      /** A holder of the workspace AddMember power runs resumable member and companion onboarding. Bringing an existing companion requires the member's own caller proof; mailbox enrollment is separate. */
+      onboard(input: Sdk.WorkspaceMemberOnboardRequest): Promise<Sdk.MemberOnboardingOutcome | StoredResult>;
+    };
+    /** The owner reads the workspace house and companion roster with their actor, subject and facet refs. */
+    roster(input: Sdk.WorkspaceRosterRequest): Promise<Sdk.WorkspaceRosterEntry[] | StoredResult>;
     work_companion: {
       /** A workspace's work_companion policy, readable by every member it governs. */
       get(input: Sdk.WorkspaceRefRequest): Promise<Sdk.WorkCompanionPolicy | StoredResult>;

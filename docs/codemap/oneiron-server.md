@@ -156,9 +156,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/esign/seal_worker.rs` | src | m | 3 crate-vis | — | The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing… |
 | `src/api/facade.rs` | src | L | 32 crate-vis | — | ONE-1441 WIRE-P1: the bounded HTTP projection of the engine memory surface |
 | `src/api/facade/action_routes.rs` | src | m | 12 crate-vis | — | OF-181: the app's one action layer over HTTP, for both its callers |
+| `src/api/facade/agent_definition_doors.rs` | src | s | 6 crate-vis | — | Custom definitions and workspace onboarding, with the caller's own proof |
 | `src/api/facade/agent_verbs.rs` | src | m | 1 crate-vis | — | — |
 | `src/api/facade/call_context.rs` | src | m | 22 crate-vis | — | One facade call as every server transport hands it to the generated dispatch (OF-489): the credential it is… |
 | `src/api/facade/campaign_split_doors.rs` | src | s | 1 crate-vis | — | The host door of a campaign split's evaluation, `vault.research.evaluate_split` (FIX 655): the owner scores… |
+| `src/api/facade/channel_doors.rs` | src | s | 9 crate-vis | — | Credential-bound host projections of the typed channel setup verbs |
 | `src/api/facade/connector_call_doors.rs` | src | s | 3 crate-vis | — | The host door of `connector.call` (ONE-2510): one tool of one catalogued connector, sent by this server's… |
 | `src/api/facade/core_write_doors.rs` | src | s | 6 crate-vis | — | The host doors of `vault.conversations.turns.create`, `vault.conversations.records.append` and `vault.batch`… |
 | `src/api/facade/courtesy_delete_doors.rs` | src | s | 4 crate-vis | — | The host doors of the owner's courtesy delete rows (OF-273): `vault.courtesy_delete.send`, `.sent`… |
@@ -172,8 +174,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/facade/gate_policy_doors.rs` | src | s | 4 crate-vis | — | Owner policy and checker host doors |
 | `src/api/facade/graph_ask_doors.rs` | src | m | 8 crate-vis | — | OF-506's doors (ARCH-0076): a one-off graph ask through the host's decision ladder, and the… |
 | `src/api/facade/guest_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's guest revoke row (OF-232): `vault.guests.revoke` |
-| `src/api/facade/host_doors.rs` | src | XL | 69 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
+| `src/api/facade/host_doors.rs` | src | XL | 73 crate-vis | — | The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`… |
 | `src/api/facade/legal_hold_doors.rs` | src | s | 8 crate-vis | — | The host doors of the owner's legal-hold rows (OF-470): `vault.legal_holds.place`, `.widen`, `.list`, `.log`… |
+| `src/api/facade/live_run_doors.rs` | src | s | 2 crate-vis | — | Public coordination doors over the caller's own live-run attachment |
 | `src/api/facade/note_doors.rs` | src | s | 2 crate-vis | — | Host-held NOTE editor bindings beside the ordinary scoped NOTE reads |
 | `src/api/facade/policy_doors.rs` | src | s | 3 crate-vis | — | The host doors of the app's policy actions (OF-181): `vault.settings.wake_policy.set`… |
 | `src/api/facade/project_card_doors.rs` | src | s | 1 crate-vis | — | The host door of the owner's project-card tap (OF-501): `vault.projects.confirm` |
@@ -703,12 +706,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/owner/federation_connect.rs` | src | s | 11 crate-vis | — | Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts… |
 | `src/owner/feedback.rs` | src | s | 10 crate-vis | — | Feedback to the engine's makers (OF-420), sent by the owner: preview the exact bundle, then send that… |
 | `src/owner/graph_fs.rs` | src | s | 4 crate-vis | — | The whole vault as a read-only file tree (OF-355, ARCH-0051), read as its owner |
+| `src/owner/guest_revoke.rs` | src | s | 1 crate-vis | — | The courtesy deletes a guest revoke queues (OF-232, FIX 1634) |
 | `src/owner/healer.rs` | src | s | 8 crate-vis | — | The owner reads the self-healing loop (ARCH-0066): the three signed oversight receipts the vault emits, and… |
 | `src/owner/history.rs` | src | s | 7 crate-vis | — | Erase history (ARCH-0038, ARCH-0032 #pins): the owner drops a text's edit history below its oldest pin, by… |
 | `src/owner/house.rs` | src | s | 2 crate-vis | — | The house mind leads the root project (ARCH-0067: the vault is the root project, its house mind leads it and… |
 | `src/owner/imports.rs` | src | s | 9 crate-vis | — | Bulk import consent: preview the exact batch, then approve or decline it whole (OF-202) |
 | `src/owner/location.rs` | src | s | 5 crate-vis | — | Where the owner's data lives: the vault path and size, the backups beside it, and the last time anything… |
-| `src/owner/mod.rs` | src | s | 29 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
+| `src/owner/mod.rs` | src | s | 30 crate-vis | — | The owner's own actions on his vault, shared by the CLI and `/v1/owner` |
 | `src/owner/note_imports.rs` | src | s | 11 crate-vis | — | A folder of markdown notes as one import batch: preview its digest, then approve or decline it whole… |
 | `src/owner/note_tombstones.rs` | src | s | 7 crate-vis | — | NOTE tombstone review (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed for archived NOTEs… |
 | `src/owner/off_record.rs` | src | m | 19 crate-vis | — | Off-record sessions (ARCH-0052, OF-326): enter a room whose writes land in an in-memory overlay, witness… |
