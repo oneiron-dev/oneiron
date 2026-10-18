@@ -8,6 +8,7 @@ use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use super::{ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource};
+use super::{DeckProposeRejection, DeckTransaction};
 use crate::claim::ClaimReadStatus;
 use crate::edge::EdgeActorClass;
 use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
@@ -16,7 +17,7 @@ use crate::edit_roundtrip::slides_review::{
     SlideReviewRequest, SlideReviewUnit,
 };
 use crate::edit_roundtrip::{
-    ArtifactAsk, DeckEditContext, EditOutcome, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
+    ArtifactAsk, DeckEditContext, DeckEditOutcome, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
     SheetRowsAsk, UnitAbstention, UnitDecider, UnitRefusal,
 };
 use crate::edit_settle::{
@@ -104,22 +105,24 @@ pub struct BornFromView {
 #[serde(deny_unknown_fields)]
 pub struct DeckProposeRequest {
     pub artifact_ref: String,
-    /// The transaction: a JSON object, or its exact canonical text.
-    pub transaction: serde_json::Value,
+    /// The transaction in its closed grammar: base, marks, seed and steps,
+    /// each step's target the slide part, native shape id and content
+    /// fingerprint `vault.artifacts.inspect_deck` reads.
+    pub transaction: DeckTransaction,
     pub run_ref: String,
     /// The deck edit context (made_by actor, the thread it answers, renders).
     #[serde(default)]
-    pub context: serde_json::Value,
+    pub context: DeckEditContext,
     /// The envelope Keep gives the version, with the task or ask it answers.
     #[serde(default)]
-    pub made_by: Option<serde_json::Value>,
+    pub made_by: Option<MadeBy>,
 }
 
 /// A held proposal, or the refusal naming the step and its check.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DeckProposeOutcome {
     pub proposed: Option<PendingProposalView>,
-    pub rejected: Option<serde_json::Value>,
+    pub rejected: Option<DeckProposeRejection>,
 }
 
 /// One native organ result offered to an artifact as its next version.
@@ -904,32 +907,25 @@ impl Memory<'_> {
         input: &DeckProposeRequest,
     ) -> MemoryResult<DeckProposeOutcome> {
         let artifact = entity(&input.artifact_ref)?;
-        let transaction = match &input.transaction {
-            serde_json::Value::String(text) => text.clone(),
-            other => other.to_string(),
-        };
-        let context: DeckEditContext =
-            json_field(Some(input.context.clone()), "context")?.unwrap_or_default();
-        let made_by: Option<MadeBy> = json_field(input.made_by.clone(), "made_by")?;
         match self.vault().propose_blob_artifact_deck_edit(
             &artifact,
-            &transaction,
+            &input.transaction.canonical(),
             &input.run_ref,
-            context,
+            input.context.clone(),
         )? {
-            EditOutcome::Proposed(proposal) => Ok(DeckProposeOutcome {
+            DeckEditOutcome::Proposed(proposal) => Ok(DeckProposeOutcome {
                 proposed: Some(self.vault().retain_edit_proposal(
                     &artifact,
                     &proposal,
-                    made_by.as_ref(),
+                    input.made_by.as_ref(),
                     self.artifact_actor(),
                     self.vault().now_recorded_at(),
                 )?),
                 rejected: None,
             }),
-            EditOutcome::Rejected { inspection, report } => Ok(DeckProposeOutcome {
+            DeckEditOutcome::Rejected(rejection) => Ok(DeckProposeOutcome {
                 proposed: None,
-                rejected: Some(serde_json::json!({ "inspection": inspection, "report": report })),
+                rejected: Some(DeckProposeRejection::from(*rejection)),
             }),
         }
     }

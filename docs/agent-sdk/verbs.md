@@ -344,6 +344,7 @@ both bindings and their export-census tests in one change.
 - `vault.artifacts.review_slides`
 - `vault.artifacts.ask`
 - `vault.critic.review`
+- `vault.artifacts.inspect_deck`
 - `vault.artifacts.propose_deck`
 - `vault.artifacts.propose_output`
 - `vault.artifacts.keep`

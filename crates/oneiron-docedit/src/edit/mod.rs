@@ -21,6 +21,7 @@ mod structure;
 mod tests;
 mod text;
 pub mod transaction;
+pub mod wire;
 mod xfrm;
 pub(crate) mod xml;
 

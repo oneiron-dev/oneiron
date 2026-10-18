@@ -97,7 +97,7 @@ impl NativeOutput {
 }
 
 /// What kind of proposal is waiting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PendingProposalKind {
     Edit,
@@ -105,7 +105,7 @@ pub enum PendingProposalKind {
 }
 
 /// One proposal waiting beside its artifact, as a review surface lists it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PendingProposalView {
     pub artifact_id: EntityId,
     pub proposal_ref: String,

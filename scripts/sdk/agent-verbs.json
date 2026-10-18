@@ -5351,6 +5351,25 @@
       "section": false
     },
     {
+      "name": "vault.artifacts.inspect_deck",
+      "description": "Inspects one PPTX version for native edit targets and comment identities without minting ids.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::blob_artifact::DeckInspectRequest",
+      "output": "crate::blob_artifact::DeckInspectionView",
+      "call": "memory.artifacts_inspect_deck(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.artifacts.propose_deck",
       "description": "Runs one native deck transaction over an artifact's head and holds the proposal for Keep.",
       "refs": [
@@ -5379,7 +5398,8 @@
           "ts": "/** Runs one native deck transaction over the head and holds the proposal for Keep. */",
           "py": "Runs one native deck transaction over the head and holds the proposal for Keep."
         }
-      }
+      },
+      "openapi": true
     },
     {
       "name": "vault.artifacts.propose_output",

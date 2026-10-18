@@ -1691,6 +1691,11 @@ export_facade! {
     let output = client.vault_critic_review(&input)?;
     crate::codec::lift_record("vault.critic.review", &output)
 };
+"vault.artifacts.inspect_deck" => fn vault_artifacts_inspect_deck(&self, input: DeckInspectRequest) -> DeckInspectionView = |client| {
+    let input: oneiron::blob_artifact::DeckInspectRequest = crate::codec::lower_record("vault.artifacts.inspect_deck", input)?;
+    let output = client.vault_artifacts_inspect_deck(&input)?;
+    crate::codec::lift_record("vault.artifacts.inspect_deck", &output)
+};
 "vault.artifacts.propose_deck" => fn vault_artifacts_propose_deck(&self, input: DeckProposeRequest) -> DeckProposeOutcome = |client| {
     let input: oneiron::blob_artifact::DeckProposeRequest = crate::codec::lower_record("vault.artifacts.propose_deck", input)?;
     let output = client.vault_artifacts_propose_deck(&input)?;
