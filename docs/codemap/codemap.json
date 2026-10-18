@@ -43558,7 +43558,7 @@
      "path": "src/skill_reliability/projector.rs",
      "purpose": "Project attributed skill outcomes into the shared learning.reliability cells",
      "surface": {
-      "const": 4,
+      "const": 5,
       "crate-vis": 3,
       "fn": 3
      }
