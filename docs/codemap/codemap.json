@@ -22878,6 +22878,20 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "ConnectGrantMinted"
+     ],
+     "path": "src/federation/connect_grant.rs",
+     "purpose": "The guest grant a vault-to-vault Connect pact governs (FIX 3016, ARCH-0043 #guest-grants…",
+     "surface": {
+      "crate-vis": 10,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -22958,9 +22972,9 @@
      "purpose": "Federation grant record, role/preset policy, and grant body MessagePack codec",
      "surface": {
       "const": 4,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 3,
-      "fn": 18,
+      "fn": 19,
       "struct": 2
      }
     },
@@ -22971,7 +22985,7 @@
      "path": "src/federation/grant_policy.rs",
      "purpose": "Vault-resident default capability rows for member-grant minting",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 9,
       "fn": 1
      }
     },
@@ -23038,9 +23052,9 @@
      "path": "src/federation/mod.rs",
      "purpose": "Federation grant record substrate",
      "surface": {
-      "crate-vis": 23,
+      "crate-vis": 24,
       "mod": 2,
-      "re-export": 17
+      "re-export": 18
      }
     },
     {
@@ -53915,7 +53929,7 @@
      "purpose": "ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam"
     },
     "federation": {
-     "files": 35,
+     "files": 36,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54820,7 +54834,7 @@
    },
    "over_bar": 190,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3335,
+   "source_files": 3336,
    "test_files": 902
   },
   "oneiron-android": {
@@ -57753,7 +57767,7 @@
      "path": "src/entity_id/derived_domains.rs",
      "purpose": "Every domain string `EntityId::derive` is called with",
      "surface": {
-      "const": 51,
+      "const": 52,
       "crate-vis": 1
      }
     },
@@ -72727,7 +72741,7 @@
      "path": "src/owner/federation_connect.rs",
      "purpose": "Connect (ARCH-0043 #relationship-lifecycle, FIX 323): the owner offers a pact to a peer vault and accepts…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 11
      }
     },
     {
