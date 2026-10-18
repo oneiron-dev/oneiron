@@ -51,6 +51,10 @@ pub struct ClaimView {
     pub world_ref: Option<String>,
     /// Scope as JSON, when present.
     pub scope: Option<serde_json::Value>,
+    /// Explicit stored four-axis claim position.
+    pub claim_scope: ClaimScope,
+    /// Original host-stamped Rule A provenance.
+    pub made_by: Option<crate::provenance::made_by::MadeBy>,
     /// Validity window start.
     pub valid_from: Option<u64>,
     /// Validity window end.
@@ -684,6 +688,8 @@ impl Memory<'_> {
             source: body.source.map(|source| source.as_str().to_owned()),
             world_ref: body.world.map(|world| world.to_hex()),
             scope: body.scope.as_ref().map(served),
+            claim_scope: ClaimScope::of_body(body),
+            made_by: self.get_entity(&id.to_hex())?.value.and_then(|view| view.made_by),
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,

@@ -19,6 +19,8 @@ pub struct EntityView {
     /// Body decoded MessagePack→JSON; `None` when absent or not
     /// JSON-shaped (binary values are redacted per the companion codec).
     pub body: Option<serde_json::Value>,
+    /// Original host-stamped Rule A provenance, with unreadable input refs withheld.
+    pub made_by: Option<crate::provenance::made_by::MadeBy>,
 }
 /// One BM25 text-index field for a structural put.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

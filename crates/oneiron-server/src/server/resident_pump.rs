@@ -855,8 +855,9 @@ fn settle(
     evidence.stable_reason = reason.to_owned();
     // Any other failure has no detector verdict, and the ladder never infers
     // one from prose: the run ends for a person to look at. Its checkpoint is
-    // the run's own replay record, which the run id addresses; its Q&A
-    // thread is the claim's: a resident's home, its TASK, or its tree's root.
+    // the start of the step that failed (FIX 3694), a ref of its own, never
+    // the run's or the attempt's id; its Q&A thread is the claim's: a
+    // resident's home, its TASK, or its tree's root.
     let ended = DreamerRunnerStore::new(vault).fail_agent_dispatch_with_evidence(
         HandleAttemptFailure {
             attempt_id: attempt.id,
@@ -865,7 +866,11 @@ fn settle(
             evidence,
             blocked_reports: vault
                 .blocked_reports_of_run(EntityId::from_bytes(*attempt.id.as_bytes())?)?,
-            pre_fail_checkpoint_ref: EntityId::from_bytes(*attempt.id.as_bytes())?,
+            pre_fail_checkpoint_ref: oneiron::engine_executor::continuation::pre_fail_checkpoint(
+                vault,
+                EntityId::from_bytes(*attempt.id.as_bytes())?,
+            )?
+            .id()?,
             qa_thread_ref: claimed.qa_thread_ref,
             retry_at,
             now,

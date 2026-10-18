@@ -25,10 +25,13 @@
 //! edited to admit these codes; that is the whole point of the local type.
 
 pub(super) mod action_routes;
+mod agent_definition_doors;
 mod agent_verbs;
+mod booking_doors;
 mod budget_doors;
 mod call_context;
 mod campaign_split_doors;
+mod channel_doors;
 mod connector_call_doors;
 mod core_write_doors;
 mod courtesy_delete_doors;
@@ -42,8 +45,10 @@ mod fanout_doors;
 mod gate_policy_doors;
 mod graph_ask_doors;
 mod guest_doors;
+mod hub_doors;
 pub(super) mod host_doors;
 mod legal_hold_doors;
+mod live_run_doors;
 mod note_doors;
 mod policy_doors;
 mod project_card_doors;
@@ -903,6 +908,35 @@ fn facade_invoke_in_turn(
     })
 }
 
+/// These doors act only on the caller's presented proof, never on host-root fallback authority.
+fn facade_scoped_credential(auth: &CoreAuth) -> Result<(), FacadeApiError> {
+    if auth.verified_slip().is_none() {
+        return Err(FacadeApiError::forbidden("a verified caller credential is required", ["Present the paired caller credential."]));
+    }
+    Ok(())
+}
+
+fn facade_scoped_export_credential(auth: &CoreAuth) -> Result<(), FacadeApiError> {
+    facade_scoped_credential(auth)?;
+    if !auth.verified_slip().is_some_and(|proof| proof.allows_verb("export")) {
+        return Err(FacadeApiError::forbidden("the credential does not grant export", ["Use a credential with the export verb class."]));
+    }
+    Ok(())
+}
+
+/// Explicit claim admission carries the credential into the committing engine writer.
+/// A named sitting still binds its current facet; its name cannot authorize another position.
+fn facade_claim_position(
+    server: &SyncServer,
+    call: &FacadeCall<'_>,
+) -> Result<BirthPosition, FacadeApiError> {
+    let facet = call.session()?.map(|session| {
+        server.vault.session_facet(session).map_err(MemoryError::from)?
+            .ok_or_else(|| FacadeApiError::forbidden("the named session has no write facet", ["Name a session with a facet."]))
+    }).transpose()?;
+    Ok(BirthPosition { world: None, facet })
+}
+
 /// Where the records this credential births land (owner ruling FACET-READ;
 /// placement stays derived, ARCH-0028). A credential never narrowed to facets
 /// keeps the derived birth, under the same strict door as before. A narrowed
@@ -972,7 +1006,13 @@ fn facade_invoke_born(
     let _drain = call.drain().map(VerbAskDrainPermit::enter);
     Ok(match call.room_turn()? {
         Some(room) => memory.for_room_turn(room)?.invoke(verb, value)?,
-        None => oneiron::task_verb::sdk::invoke(&memory, verb, value)?,
+        None => {
+            let memory = match direct_authorship(auth, server, verb)? {
+                Some(owner) => memory.with_owner_authorship(&owner),
+                None => memory,
+            };
+            oneiron::task_verb::sdk::invoke(&memory, verb, value)?
+        }
     })
 }
 
