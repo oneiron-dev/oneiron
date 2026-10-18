@@ -8,8 +8,8 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::*;
-use oneiron::voice_cascade::{AsrUpdate, Brain, ControlEvent, StopReason};
 use oneiron::voice_cascade::media::VoiceMediaOutput;
+use oneiron::voice_cascade::{AsrUpdate, Brain, ControlEvent, StopReason};
 use tokio::sync::mpsc;
 
 use super::media_bridge::{HeardWork, MediaBridge, MediaEvent, MediaTts};
@@ -49,7 +49,12 @@ impl PublicLoop {
         let mut journal = self.journal.lock().map_err(|_| unavailable())?;
         journal.finished(&self.host);
         if let Err(error) = &result {
-            journal.push(None, LiveVoiceEventKind::Error { code: error.code.clone() });
+            journal.push(
+                None,
+                LiveVoiceEventKind::Error {
+                    code: error.code.clone(),
+                },
+            );
         }
         if !journal.ended {
             journal.ended = true;
@@ -73,7 +78,10 @@ impl PublicLoop {
             // Flushes and stops are published before another PCM dequeue or
             // input ACK. Old packets retain their own weak epoch fence.
             controls(&mut self.wire, &self.journal)?;
-            self.journal.lock().map_err(|_| unavailable())?.finished(&self.host);
+            self.journal
+                .lock()
+                .map_err(|_| unavailable())?
+                .finished(&self.host);
             tokio::select! {
                 () = shutdown.triggered() => break,
                 woke = super::next_entry_wake(&mut entries) => {
@@ -251,7 +259,16 @@ impl PublicLoop {
 }
 
 fn enrich(utterance: String, heard: HeardWork<'_>) -> Pending<'_> {
-    Box::pin(async move { (utterance, heard.work.run().await.map_err(|_| invalid("voice hypothesis refused"))) })
+    Box::pin(async move {
+        (
+            utterance,
+            heard
+                .work
+                .run()
+                .await
+                .map_err(|_| invalid("voice hypothesis refused")),
+        )
+    })
 }
 
 fn controls(wire: &mut Option<WireMedia>, journal: &Mutex<Journal>) -> MemoryResult<()> {
@@ -265,7 +282,9 @@ fn controls(wire: &mut Option<WireMedia>, journal: &Mutex<Journal>) -> MemoryRes
 
 fn record_control(journal: &mut Journal, control: ControlOut) {
     match control {
-        ControlOut::Flush(generation) => { journal.push(Some(generation), LiveVoiceEventKind::Flush); }
+        ControlOut::Flush(generation) => {
+            journal.push(Some(generation), LiveVoiceEventKind::Flush);
+        }
         ControlOut::Event(ControlEvent::PlayoutStop { generation, reason }) => {
             let reason = match reason {
                 StopReason::UserBargeIn => LiveVoiceStopReason::UserBargeIn,
@@ -276,17 +295,48 @@ fn record_control(journal: &mut Journal, control: ControlOut) {
             };
             journal.stopped(generation, reason);
         }
-        ControlOut::Event(ControlEvent::Safeguard { generation, action, receipt_ref, custom_tier_skipped }) => {
-            journal.push(Some(generation), LiveVoiceEventKind::Safeguard { action, receipt_ref, custom_tier_skipped });
+        ControlOut::Event(ControlEvent::Safeguard {
+            generation,
+            action,
+            receipt_ref,
+            custom_tier_skipped,
+        }) => {
+            journal.push(
+                Some(generation),
+                LiveVoiceEventKind::Safeguard {
+                    action,
+                    receipt_ref,
+                    custom_tier_skipped,
+                },
+            );
         }
-        ControlOut::Event(ControlEvent::Notice { generation, notice }) => { journal.push(Some(generation), LiveVoiceEventKind::Notice { notice }); }
-        ControlOut::Event(ControlEvent::Memories { generation, memories }) => {
-            journal.push(Some(generation), LiveVoiceEventKind::Memories { found: memories.found, heard: memories.heard, receipts: memories.receipts });
+        ControlOut::Event(ControlEvent::Notice { generation, notice }) => {
+            journal.push(Some(generation), LiveVoiceEventKind::Notice { notice });
+        }
+        ControlOut::Event(ControlEvent::Memories {
+            generation,
+            memories,
+        }) => {
+            journal.push(
+                Some(generation),
+                LiveVoiceEventKind::Memories {
+                    found: memories.found,
+                    heard: memories.heard,
+                    receipts: memories.receipts,
+                },
+            );
         }
         ControlOut::Event(ControlEvent::SessionEnded) => {
             if !journal.ended {
-                let tokens: Vec<_> = journal.epochs.values().filter(|epoch| !epoch.finished).map(|epoch| epoch.token).collect();
-                for token in tokens { journal.stopped(token, LiveVoiceStopReason::SessionEnd); }
+                let tokens: Vec<_> = journal
+                    .epochs
+                    .values()
+                    .filter(|epoch| !epoch.finished)
+                    .map(|epoch| epoch.token)
+                    .collect();
+                for token in tokens {
+                    journal.stopped(token, LiveVoiceStopReason::SessionEnd);
+                }
                 journal.ended = true;
                 journal.push(None, LiveVoiceEventKind::SessionEnded);
             }
