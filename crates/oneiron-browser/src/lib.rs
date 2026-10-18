@@ -32,12 +32,14 @@ mod receipt_evidence;
 mod session;
 
 #[cfg(feature = "driver")]
-pub use desktop::{DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord};
+pub use desktop::{
+    AbandonedTakeover, DesktopGuest, DesktopSession, PersonInput, Takeover, TakeoverRecord,
+};
 pub use library::{
     LibraryCard, LibraryFindInput, LibraryFindOutput, LibraryRetireInput, LibraryRetireOutput,
-    LibraryRunInput, LibraryRunOutput, ProposeInput, ProposeOutput, WORKFLOW_MAX_CHECKS,
-    WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES, WorkflowCheck, WorkflowLibrary, WorkflowProgram,
-    WorkflowProof, site_of,
+    LibraryRetiredInput, LibraryRetiredOutput, LibraryRunInput, LibraryRunOutput, ProposeInput,
+    ProposeOutput, RetiredCard, WORKFLOW_MAX_CHECKS, WORKFLOW_MAX_PARAMS, WORKFLOW_SUBGOAL_BYTES,
+    WorkflowCheck, WorkflowLibrary, WorkflowProgram, WorkflowProof, site_of,
 };
 #[cfg(feature = "driver")]
 pub use oneiron_container::{GuestLimits, ImageRef};
@@ -108,11 +110,40 @@ pub struct EffectReceipt {
     pub screenshot_evidence: Option<ReceiptEvidence>,
 }
 
+/// Observes the page: whole, as a diff against the observation `since`
+/// names, or, with `cursor`, the next page of an observation an earlier
+/// answer paged (its `next`). A cursor reads the page as it was then.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ObserveInput {
     #[serde(default)]
     pub since: Option<u64>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+/// One page of an observation (Rule 5): the observation with as many of its
+/// rows, then its removed refs, as fit one answer. A long outline is never
+/// cut: `next` names where the rest goes on, and `observe({cursor: next})`
+/// reads it. Every page of one observation has its `seq`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ObservationPage {
+    #[serde(flatten)]
+    pub observation: Observation,
+    /// The cursor of the next page; absent on the last.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
+}
+
+impl ObservationPage {
+    /// An observation that fits one page.
+    #[must_use]
+    pub fn whole(observation: Observation) -> Self {
+        Self {
+            observation,
+            next: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -405,20 +436,58 @@ pub struct WindowInput {
     pub window: String,
 }
 
-/// Asks a person to take the desktop over (CUA-001): `reason` says what the
-/// agent needs them to do. Until they hand it back, every desktop verb
-/// refuses `desktop_taken_over`.
+/// Asks a person to take the desktop or the browser over (CUA-001): `reason`
+/// says what the agent needs them to do. Until they hand it back, every
+/// desktop verb refuses `desktop_taken_over`, and every browser verb
+/// `browser_taken_over`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HandoverInput {
     pub reason: String,
 }
 
-/// The "Needs you" ask as the run's desktop holds it.
+/// The "Needs you" ask as the run's desktop or browser holds it.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HandoverOutput {
     pub reason: String,
     pub asked_at_ms: u64,
+}
+
+/// One input from the person who holds a run's browser (CUA-001), at the
+/// pixels of the viewport screen they were last shown, or a page to go to.
+/// No press gates it: the person's own input is their press.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BrowserPersonInput {
+    Click {
+        x: u32,
+        y: u32,
+        /// `left` (the default), `right` or `middle`.
+        #[serde(default)]
+        button: Option<String>,
+        /// 1 (the default) to 3, for a double or triple click.
+        #[serde(default)]
+        count: Option<u32>,
+    },
+    /// Text typed where the page's focus is.
+    Type { text: String },
+    /// One named key (`enter`, `tab`, `escape`, `backspace`, `delete`,
+    /// `space`, the arrows, `home`, `end`, `pageup`, `pagedown`, `f1` to
+    /// `f12`) or one character.
+    Key { key: String },
+    /// Modifiers (`ctrl`, `alt`, `shift`, `meta`) then one key.
+    Hotkey { keys: Vec<String> },
+    Scroll {
+        x: u32,
+        y: u32,
+        /// `up`, `down`, `left` or `right`.
+        direction: String,
+        /// Wheel notches, 3 by default.
+        #[serde(default)]
+        amount: Option<u32>,
+    },
+    /// Goes to an http or https page.
+    Navigate { url: String },
 }
 
 /// The effect classes a browser control can fall in. A vault grant names one
@@ -514,7 +583,11 @@ pub enum BatchStep {
         target: String,
         option: String,
     },
+    /// Waits until a row `targets` names is on the page, or, with none
+    /// named, a row `role` and `name` match, as the `wait_for` verb waits.
     WaitFor {
+        #[serde(default)]
+        targets: Vec<String>,
         #[serde(default)]
         role: Option<String>,
         #[serde(default)]
@@ -644,6 +717,10 @@ pub struct BatchOutput {
     /// of the subgoal passes it on as its `until_ms`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub until_ms: Option<u64>,
+    /// `observation` is the first page of a longer one: the cursor
+    /// `observe` reads the next page from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next: Option<String>,
 }
 
 /// Looks one routine step takes before it goes up to the planner.
@@ -766,6 +843,18 @@ pub enum BrowserError {
     Unsupported(String),
     #[error("a person has the desktop ({0}); it answers again once they hand it back")]
     TakenOver(String),
+    #[error("a person has the browser ({0}); it answers again once they hand it back")]
+    BrowserTakenOver(String),
+}
+
+/// One verb's observation as its answer pages it: `act`'s observation, as
+/// `driver` pages it.
+pub fn paged<D: BrowserDriver + ?Sized>(
+    driver: &mut D,
+    act: impl FnOnce(&mut D) -> Result<Observation, BrowserError>,
+) -> Result<ObservationPage, BrowserError> {
+    let observation = act(&mut *driver)?;
+    Ok(driver.paged(observation))
 }
 
 /// Steps one batched subgoal program may hold.
@@ -790,6 +879,24 @@ pub trait BrowserDriver: Send {
     fn zoom(&mut self, input: ZoomInput) -> Result<ImageOutput, BrowserError>;
     /// The PNG bytes of a held image, while the driver holds them.
     fn image_bytes(&self, image: &str) -> Option<Vec<u8>>;
+
+    /// `observation` as its first page. A driver that pages keeps the rest
+    /// for `observe_page` to read on; one that does not answers it whole.
+    fn paged(&mut self, observation: Observation) -> ObservationPage {
+        ObservationPage::whole(observation)
+    }
+
+    /// One page of an observation: the page as `observe` reads it, or, with
+    /// `cursor`, the next page of one an earlier answer paged.
+    fn observe_page(&mut self, input: ObserveInput) -> Result<ObservationPage, BrowserError> {
+        if input.cursor.is_some() {
+            return Err(BrowserError::Input(
+                "this driver pages no observation; observe without a cursor".to_owned(),
+            ));
+        }
+        let observation = self.observe(input)?;
+        Ok(self.paged(observation))
+    }
 
     /// The replay library's programs for a site. A driver with no library
     /// refuses the library verbs.
@@ -828,6 +935,16 @@ pub trait BrowserDriver: Send {
         ))
     }
 
+    /// The programs retires took out of the library for a site.
+    fn library_retired(
+        &mut self,
+        _input: LibraryRetiredInput,
+    ) -> Result<LibraryRetiredOutput, BrowserError> {
+        Err(BrowserError::Library(
+            "this browser host keeps no library".to_owned(),
+        ))
+    }
+
     /// A desktop key press.
     fn press_key(&mut self, _input: KeyInput) -> Result<Observation, BrowserError> {
         Err(BrowserError::Unsupported("key".to_owned()))
@@ -853,7 +970,7 @@ pub trait BrowserDriver: Send {
         Err(BrowserError::Unsupported("window".to_owned()))
     }
 
-    /// Asks a person to take a desktop session over.
+    /// Asks a person to take a desktop or browser session over.
     fn handover(&mut self, _input: HandoverInput) -> Result<HandoverOutput, BrowserError> {
         Err(BrowserError::Unsupported("handover".to_owned()))
     }
@@ -887,6 +1004,7 @@ pub trait BrowserDriver: Send {
             receipts: Vec::new(),
             decisions: Vec::new(),
             until_ms: input.until_ms,
+            next: None,
         };
         let mut routine = Routine {
             decider,
@@ -914,12 +1032,13 @@ pub trait BrowserDriver: Send {
                     self.select(SelectInput { target, option }).map(Some)
                 }
                 BatchStep::WaitFor {
+                    targets,
                     role,
                     name,
                     timeout_ms,
                 } => self
                     .wait_for(WaitForInput {
-                        targets: Vec::new(),
+                        targets,
                         role,
                         name,
                         timeout_ms,
@@ -995,7 +1114,9 @@ pub trait BrowserDriver: Send {
                 Err(error) => {
                     output.status = if matches!(
                         error,
-                        BrowserError::NeedsPress(_) | BrowserError::TakenOver(_)
+                        BrowserError::NeedsPress(_)
+                            | BrowserError::TakenOver(_)
+                            | BrowserError::BrowserTakenOver(_)
                     ) {
                         SubgoalStatus::NeedsYou
                     } else {
@@ -1244,6 +1365,7 @@ impl BrowserError {
             Self::Library(_) => "browser_library_failed",
             Self::Unsupported(_) => "browser_unsupported",
             Self::TakenOver(_) => "desktop_taken_over",
+            Self::BrowserTakenOver(_) => "browser_taken_over",
         }
     }
 }

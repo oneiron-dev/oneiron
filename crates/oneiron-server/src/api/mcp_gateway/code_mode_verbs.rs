@@ -50,7 +50,8 @@ use crate::decision_verdict::{HELD_IMAGE, HELD_PREFIX, HeldImage};
 use crate::mcp::{McpEndpointTool, McpSurfaceMode, registered_surface};
 use crate::server::SyncServer;
 use oneiron::browser_library::{
-    Retired, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow, site_workflows,
+    Retired, RetiredWorkflow, WorkflowRecord, file_workflow, record_workflow_run, retire_workflow,
+    retired_workflows, site_workflows,
 };
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
@@ -66,8 +67,8 @@ use oneiron::task_verb::sdk::{
 };
 use oneiron_browser::{
     BrowserDriver, BrowserError, BrowserGuest, BrowserSession, DesktopGuest, DesktopSession,
-    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RoutineAnswer, RoutineAsk, RoutineDecider,
-    RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
+    EFFECT_CLASSES, GuestLimits, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
+    RoutineDecider, RoutineReply, SendPolicy, WorkflowLibrary, WorkflowProgram, WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -96,17 +97,48 @@ pub(crate) struct RunGuests {
 }
 
 /// One run's browser guest. It starts on the first call that needs it, is
-/// never shared with another run, and goes when the run's door drops.
+/// never shared with another run, and goes when the run's door drops. Its
+/// seat is in the server's registry while the door is bound, so the owner
+/// can take the browser over (CUA-001).
 struct RunBrowser {
     guest: BrowserGuest,
-    session: Mutex<Option<BrowserSession>>,
+    session: Arc<crate::server::BrowserSeat>,
+    seats: Arc<crate::server::BrowserSeats>,
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
 }
 
-/// One run's desktop guest, held as the run's browser is. Its seat is in
-/// the server's registry while the door is bound, so the owner can take the
-/// desktop over (CUA-001).
+impl Drop for RunBrowser {
+    /// The browser goes with its door: a takeover still asked or held lands
+    /// its `abandoned` receipt with what it held so far, and the agent's
+    /// inbox Ask clears.
+    fn drop(&mut self) {
+        let cut = self
+            .session
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_mut()
+            .and_then(BrowserSession::abandon_takeover);
+        if let Some(cut) = cut {
+            let landed = serde_json::to_value(&cut)
+                .map_err(|error| error.to_string())
+                .and_then(|record| {
+                    self.vault
+                        .append_browser_takeover_abandoned_receipt(self.run_id, &record)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = landed {
+                tracing::warn!(%error, run = %self.run_id.to_hex(), "an abandoned browser takeover landed no receipt");
+            }
+        }
+        self.seats.release(&self.vault, self.run_id, &self.session);
+    }
+}
+
+/// One run's desktop guest. Its seat is the run's own in the server's
+/// registry (CUA-001): the owner can take the desktop over, and the run's
+/// next door finds the guest this one leaves. The guest ends when the run
+/// ends, or once its seat sits idle with no door of the run bound.
 struct RunDesktop {
     guest: DesktopGuest,
     session: Arc<crate::server::DesktopSeat>,
@@ -117,7 +149,7 @@ struct RunDesktop {
 
 impl Drop for RunDesktop {
     fn drop(&mut self) {
-        self.seats.release(self.run_id, &self.session);
+        self.seats.unbind(self.run_id, &self.session);
     }
 }
 
@@ -336,6 +368,7 @@ impl RoutineDecider for LadderDecider {
                         AgentVerb::AiVerdict,
                         input,
                         held,
+                        None,
                     );
                     let _ = sender.send(answered.map_err(super::mcp_facade_error));
                 });
@@ -466,6 +499,14 @@ impl WorkflowLibrary for VaultLibrary {
             ))),
         }
     }
+
+    fn retired(&mut self, site: &str) -> Result<Vec<RetiredCard>, BrowserError> {
+        Ok(retired_workflows(&self.server.vault, site)
+            .map_err(library_failed)?
+            .iter()
+            .map(RetiredWorkflow::card)
+            .collect())
+    }
 }
 
 impl RunBrowser {
@@ -474,9 +515,12 @@ impl RunBrowser {
     fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
         let mut guest = server.browser_guest()?.clone();
         guest.policy = browser_send_policy(server);
+        let session = Arc::new(Mutex::new(None));
+        server.browser_seats.register(run_id, &session);
         Some(Self {
             guest,
-            session: Mutex::new(None),
+            session,
+            seats: Arc::clone(&server.browser_seats),
             vault: Arc::clone(&server.vault),
             run_id,
         })
@@ -508,7 +552,22 @@ impl RunBrowser {
         driver.set_decider(Box::new(decider));
         driver.set_library(Box::new(library));
         driver.set_receipt_sink(Box::new(writer));
-        drive_run_guest(&self.vault, self.run_id, driver, verb, input)
+        // While a person is asked or holds the browser, the session refuses
+        // the verb `browser_taken_over`; the first answer after they hand it
+        // back carries the takeover's record as `takeover`.
+        let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        self.seats
+            .asked(&self.vault, self.run_id, driver.takeover());
+        if let Some(object) = output.as_object_mut()
+            && let Some(record) = driver.take_returned()
+        {
+            object.insert(
+                "takeover".into(),
+                serde_json::to_value(record)
+                    .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
+            );
+        }
+        Ok(output)
     }
 }
 
@@ -518,8 +577,7 @@ impl RunDesktop {
     fn new(server: &SyncServer, run_id: oneiron::EntityId) -> Option<Self> {
         let mut guest = server.desktop_guest()?.clone();
         guest.policy = browser_send_policy(server);
-        let session = Arc::new(Mutex::new(None));
-        server.desktop_seats.register(run_id, &session);
+        let session = server.desktop_seats.bind(run_id, &server.vault);
         Some(Self {
             guest,
             session,
@@ -531,7 +589,8 @@ impl RunDesktop {
 
     /// A desktop verb. While a person is asked or holds the desktop, the
     /// session refuses it `desktop_taken_over`; the first answer after they
-    /// hand it back carries the takeover's record as `takeover`.
+    /// hand it back carries the takeover's record as `takeover`. A handover
+    /// raises the owners' inbox Ask.
     fn call(
         &self,
         verb: AgentVerb,
@@ -555,9 +614,11 @@ impl RunDesktop {
             *session = Some(DesktopSession::attach(&self.guest, transport)?);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
+        driver.set_policy(self.guest.policy.clone());
         driver.set_decider(Box::new(decider));
         driver.set_receipt_sink(Box::new(writer));
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
+        self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut()
             && let Some(record) = driver.take_returned()
         {

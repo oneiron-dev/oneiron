@@ -27,17 +27,20 @@
 //! native writer, and a connector glued to the nodes its ends name once they
 //! are bound on its slide. A bound node whose preset or payload the live
 //! model changed is written over its retained element: its preset, its glue,
-//! new media, a table's changed cells, a chart's changed series sequences.
+//! new media, a table's changed cells or grid, a chart's changed series
+//! sequences or its rewritten plots and workbook.
 //! Until [`Gate::is_open`], blob versions remain authoritative and exports
-//! are proposal artifacts.
+//! are proposal artifacts. An export that changes anything recounts the app
+//! properties' words and paragraphs over the text it wrote last.
 
 use super::LiveError;
 use super::held;
 use super::pptx::{
-    ChartKind, ConnectorEnd, DeckNode, LiveDeck, NodeBinding, NodeId, NodeKind, NodePayload,
-    PreflightReport, RelationshipChange, RenderPair, RenderSide, SlideRender, TextBody,
-    WRITTEN_CHART, WRITTEN_TABLE, geometry_of, slide_of, text_body,
+    BORN_CHART, CACHED_CHART, ChartKind, ChartSource, ConnectorEnd, DeckNode, HELD, LiveDeck,
+    NodeBinding, NodeId, NodeKind, NodePayload, PreflightReport, RelationshipChange, RenderPair,
+    RenderSide, SlideRender, TextBody, WRITTEN_FRAME, geometry_of, slide_of, text_body,
 };
+use super::reshape;
 use crate::deck::{DeckView, ShapeView};
 use crate::design_plan::{AssetKind, Cell, Column, ColumnKind, Dataset, Rect};
 use crate::edit::geometry::{glue_of, preset_of};
@@ -49,15 +52,13 @@ use crate::edit::{
     ValueEdit, Xfrm, edit, structure_patch,
 };
 use crate::graphic::{AssetRecord, GraphicLimits};
-use crate::native_patch::{
-    ChartFamily, Frame, NativeEdit, Target as Sequence, chart_data, native_patch,
-};
+use crate::native_patch::{ChartFamily, Frame, NativeEdit, native_patch};
 use crate::retained_opc::Package;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Bump on any projector change; part of every memo key.
-pub const PROJECTOR_VERSION: &str = "live-deck-projector/4";
+pub const PROJECTOR_VERSION: &str = "live-deck-projector/5";
 
 /// A live-born shape (or a free connector) with no own extent: one inch
 /// square.
@@ -123,6 +124,25 @@ pub struct ExportOutcome {
     pub opaque_parts: BTreeMap<String, [u8; 32]>,
     /// The allocation history joined with every id `bytes` holds.
     pub id_marks: IdMarks,
+}
+
+/// The memo key [`project`] gives `deck` over `package`, read without
+/// projecting: a caller holding an earlier projection's key keeps its result.
+pub fn export_key(
+    deck: &LiveDeck,
+    package: &Package,
+    document: &str,
+    profile: &ExportProfile,
+) -> Result<ExportKey, LiveError> {
+    Ok(ExportKey {
+        document: document.to_owned(),
+        state_hash: deck.state_hash(),
+        package_hash: package_hash(package)?,
+        allocation_hash: *blake3::hash(&serde_json::to_vec(&deck.id_marks).unwrap_or_default())
+            .as_bytes(),
+        profile: profile.name.clone(),
+        projector: PROJECTOR_VERSION.to_owned(),
+    })
 }
 
 fn package_hash(package: &Package) -> Result<[u8; 32], LiveError> {
@@ -273,15 +293,7 @@ pub fn project(
     profile: &ExportProfile,
     assets: &dyn Assets,
 ) -> Result<ExportOutcome, LiveError> {
-    let key = ExportKey {
-        document: document.to_owned(),
-        state_hash: deck.state_hash(),
-        package_hash: package_hash(package)?,
-        allocation_hash: *blake3::hash(&serde_json::to_vec(&deck.id_marks).unwrap_or_default())
-            .as_bytes(),
-        profile: profile.name.clone(),
-        projector: PROJECTOR_VERSION.to_owned(),
-    };
+    let key = export_key(deck, package, document, profile)?;
     // Opaque replacements carry only their hash in the live model; the
     // replacement bytes must already be the retained part's bytes.
     for (part, expected) in &deck.opaque_parts {
@@ -651,8 +663,16 @@ pub fn project(
         }
     }
 
-    // The bindings, opaque hashes and allocation history of the output.
+    // The app properties' words and paragraphs, recounted over the text
+    // this export wrote.
     let output = work.view()?;
+    if !work.changed.is_empty()
+        && let Some(props) = crate::edit::recount_slide_text(&mut work.next, &output)?
+    {
+        work.changed.insert(props);
+    }
+
+    // The bindings, opaque hashes and allocation history of the output.
     let mut bindings = BTreeMap::new();
     for (id, (part, native)) in &work.at {
         let binding = if deck.nodes[id].kind == NodeKind::Slide {
@@ -773,7 +793,9 @@ fn born(
         (NodeKind::GraphicFrame, Some(payload)) => return native_frame(work, node, part, payload),
         (NodeKind::Connector, payload) => {
             let (preset, start, end) = match payload {
-                Some(NodePayload::Connector { preset, start, end }) => (*preset, *start, *end),
+                Some(NodePayload::Connector { preset, start, end }) => {
+                    (preset.unwrap_or(ConnectorPreset::Straight), *start, *end)
+                }
                 _ => (ConnectorPreset::Straight, None, None),
             };
             // Glue to a node bound on this slide; any other glue is dropped.
@@ -888,7 +910,7 @@ fn project_payload(
         .index;
     let tree = held::slide_tree(&work.next, part)?;
     let preset = match (&node.payload, node.preset) {
-        (Some(NodePayload::Connector { preset, .. }), _) => Some(preset.name()),
+        (Some(NodePayload::Connector { preset, .. }), _) => preset.map(ConnectorPreset::name),
         (_, Some(preset)) if node.kind == NodeKind::Shape => Some(preset.name()),
         _ => None,
     };
@@ -929,7 +951,9 @@ fn project_payload(
             }
         }
         Some(NodePayload::Picture { image }) => {
-            if held::picture_media(&work.next, part, &tree, at) != Some(image.hash) {
+            if held::picture_media(&work.next, part, &tree, at).map(|media| media.hash)
+                != Some(image.hash)
+            {
                 let (record, bytes) = resolved(image, assets)?;
                 let (_, _, expected) = work.target(id)?;
                 work.value(&ValueEdit::SetPicture {
@@ -948,7 +972,7 @@ fn project_payload(
             }
         }
         Some(NodePayload::Table { header, rows }) => {
-            let have = held::table_cells(&tree, at).ok_or(LiveError::Invalid(WRITTEN_TABLE))?;
+            let have = held::table_cells(&tree, at).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
             let wanted: Vec<Vec<String>> = std::iter::once(header.clone())
                 .chain(rows.iter().map(|row| {
                     row.iter()
@@ -956,14 +980,26 @@ fn project_payload(
                         .collect()
                 }))
                 .collect();
-            if have.len() != wanted.len()
+            // A shape change rewrites the grid (new cells with their text),
+            // then the kept cells' text is written below.
+            let have = if have.len() != wanted.len()
                 || have
                     .iter()
                     .zip(&wanted)
                     .any(|(was, now)| was.len() != now.len())
             {
-                return Err(LiveError::Invalid(WRITTEN_TABLE));
-            }
+                reshape::table(&mut work.next, part, native, &wanted)?;
+                work.changed.insert(part.to_owned());
+                let view = work.view()?;
+                let at = shape_at(&view, part, native)
+                    .ok_or(LiveError::UnknownNode)?
+                    .node
+                    .index;
+                held::table_cells(&held::slide_tree(&work.next, part)?, at)
+                    .ok_or(LiveError::Invalid(WRITTEN_FRAME))?
+            } else {
+                have
+            };
             for (row, (was, now)) in have.iter().zip(&wanted).enumerate() {
                 for (col, (was, now)) in was.iter().zip(now).enumerate() {
                     if was == now {
@@ -984,83 +1020,46 @@ fn project_payload(
                 }
             }
         }
-        Some(NodePayload::Chart {
-            family,
-            categories,
-            series,
-        }) => {
+        Some(payload @ NodePayload::Chart { source, .. }) => {
             let chart = held::chart_part(&work.next, part, &tree, at)
-                .ok_or(LiveError::Invalid(WRITTEN_CHART))?;
-            if held::chart_family(&work.next, &chart) != Some(*family)
-                || chart_data(&work.next, &chart)?.series.len() != series.len()
-            {
-                return Err(LiveError::Invalid(WRITTEN_CHART));
-            }
-            for (index, line) in series.iter().enumerate() {
-                for target in [Sequence::Name, Sequence::Categories, Sequence::Values] {
-                    // Re-read before each write: a range two series share
-                    // moves both caches.
-                    let data = chart_data(&work.next, &chart)?;
-                    let sequence = data.series.get(index).and_then(|data| match target {
-                        Sequence::Name => data.name.as_ref(),
-                        Sequence::Categories => data.categories.as_ref(),
-                        Sequence::Values => data.values.as_ref(),
+                .ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+            let have = held::chart(&work.next, &chart).ok_or(LiveError::Invalid(WRITTEN_FRAME))?;
+            if !reshape::same_data(&have, payload) {
+                if *source == ChartSource::Cached {
+                    return Err(LiveError::Invalid(CACHED_CHART));
+                }
+                // Same-length writes through the checked chart writer where
+                // they suffice; a shape change, a literal sequence or a
+                // refused write rewrites the chart whole.
+                let in_place =
+                    reshape::plan(&work.next, &chart, &have, payload).is_some_and(|writes| {
+                        writes.iter().all(|(series, target, values)| {
+                            native_patch(
+                                &mut work.next,
+                                &NativeEdit::SetSeries {
+                                    chart: &chart,
+                                    series: *series,
+                                    target: *target,
+                                    values: values.as_slice(),
+                                },
+                            )
+                            .map(|report| work.changed.extend(report.changed_parts))
+                            .is_ok()
+                        })
                     });
-                    let cache = sequence.map_or(&[][..], |sequence| sequence.cache.as_slice());
-                    let wanted: Vec<Cell> = match target {
-                        Sequence::Name => {
-                            if cache.first().map(held::label).as_deref() == Some(line.name.as_str())
-                            {
-                                continue;
-                            }
-                            vec![Cell::Text(line.name.clone())]
-                        }
-                        Sequence::Categories => {
-                            if cache.iter().map(held::label).eq(categories.iter().cloned()) {
-                                continue;
-                            }
-                            // A number category stays a number.
-                            categories
-                                .iter()
-                                .enumerate()
-                                .map(|(point, category)| match cache.get(point) {
-                                    Some(Cell::Number(_)) => category.parse().map_or_else(
-                                        |_| Cell::Text(category.clone()),
-                                        Cell::Number,
-                                    ),
-                                    _ => Cell::Text(category.clone()),
-                                })
-                                .collect()
-                        }
-                        Sequence::Values => {
-                            let values: Vec<Cell> = (0..categories.len())
-                                .map(|point| {
-                                    line.values
-                                        .get(point)
-                                        .and_then(|value| value.as_ref()?.as_f64())
-                                        .map_or(Cell::Missing, Cell::Number)
-                                })
-                                .collect();
-                            if cache == values.as_slice() {
-                                continue;
-                            }
-                            values
-                        }
-                    };
-                    let report = native_patch(
-                        &mut work.next,
-                        &NativeEdit::SetSeries {
-                            chart: &chart,
-                            series: index,
-                            target,
-                            values: &wanted,
-                        },
-                    )?;
-                    work.changed.extend(report.changed_parts);
+                if !in_place {
+                    work.changed
+                        .extend(reshape::chart(&mut work.next, &chart, payload)?);
                 }
             }
         }
-        None => {}
+        Some(
+            NodePayload::HeldPicture { .. }
+            | NodePayload::SmartArt { .. }
+            | NodePayload::Ole { .. }
+            | NodePayload::CustomGeometry { .. },
+        )
+        | None => {}
     }
     Ok(())
 }
@@ -1155,7 +1154,16 @@ fn native_frame(
             family,
             categories,
             series,
+            ..
         } => {
+            let family = match family {
+                ChartKind::Bar => ChartFamily::Bar,
+                ChartKind::Line => ChartFamily::Line,
+                ChartKind::Pie => ChartFamily::Pie,
+                ChartKind::Area | ChartKind::Scatter | ChartKind::Doughnut | ChartKind::Radar => {
+                    return Err(LiveError::Invalid(BORN_CHART));
+                }
+            };
             let mut columns = vec![column("", ColumnKind::Text)];
             columns.extend(
                 series
@@ -1195,11 +1203,7 @@ fn native_frame(
                         bounds: Rect { x, y, cx, cy },
                         placeholder: None,
                     },
-                    family: match family {
-                        ChartKind::Bar => ChartFamily::Bar,
-                        ChartKind::Line => ChartFamily::Line,
-                        ChartKind::Pie => ChartFamily::Pie,
-                    },
+                    family,
                     dataset: &data,
                     chart: &chart,
                     workbook: &workbook,
@@ -1207,10 +1211,17 @@ fn native_frame(
                 },
             )?
         }
-        NodePayload::Picture { .. } | NodePayload::Connector { .. } => {
+        NodePayload::Picture { .. }
+        | NodePayload::Connector { .. }
+        | NodePayload::CustomGeometry { .. } => {
             return Err(LiveError::Invalid(
                 "the payload does not belong to the node kind",
             ));
+        }
+        NodePayload::HeldPicture { .. }
+        | NodePayload::SmartArt { .. }
+        | NodePayload::Ole { .. } => {
+            return Err(LiveError::Invalid(HELD));
         }
     };
     work.changed.extend(report.changed_parts);

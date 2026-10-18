@@ -1406,8 +1406,17 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "self.browser.library.retired",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRetiredInput>(
+                ),
+            ),
+            (
                 "self.browser.library.run",
                 crate::code_run::vault_read::request_schema::<oneiron_browser::LibraryRunInput>(),
+            ),
+            (
+                "self.browser.handover",
+                crate::code_run::vault_read::request_schema::<oneiron_browser::HandoverInput>(),
             ),
             (
                 "self.desktop.open",
@@ -1563,6 +1572,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.artifacts.create",
                 crate::code_run::vault_read::request_schema::<
                     crate::blob_artifact::ArtifactCreateRequest,
+                >(),
+            ),
+            (
+                "vault.esign.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::esign::EsignCreateRequest,
                 >(),
             ),
             (
@@ -3798,6 +3813,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.esign.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.conversations.create" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4925,8 +4947,14 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.browser.library.retire" => {
             let _input: oneiron_browser::LibraryRetireInput = decode(value.clone())?;
         }
+        "self.browser.library.retired" => {
+            let _input: oneiron_browser::LibraryRetiredInput = decode(value.clone())?;
+        }
         "self.browser.library.run" => {
             let _input: oneiron_browser::LibraryRunInput = decode(value.clone())?;
+        }
+        "self.browser.handover" => {
+            let _input: oneiron_browser::HandoverInput = decode(value.clone())?;
         }
         "self.desktop.open" => {
             let _input: oneiron_browser::OpenInput = decode(value.clone())?;
@@ -5056,6 +5084,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.artifacts.create" => {
             let _input: crate::blob_artifact::ArtifactCreateRequest = decode(value.clone())?;
+        }
+        "vault.esign.create" => {
+            let _input: crate::blob_artifact::esign::EsignCreateRequest = decode(value.clone())?;
         }
         "vault.conversations.create" => {
             let _input: crate::core_write::ConversationCreateInput = decode(value.clone())?;
@@ -5604,6 +5635,7 @@ pub fn invoke(
         "vault.habits.checkin" => encode(vault_habits_checkin(memory, decode(value)?)?),
         "vault.claims.admit" => encode(vault_claims_admit(memory, decode(value)?)?),
         "vault.artifacts.create" => encode(vault_artifacts_create(memory, decode(value)?)?),
+        "vault.esign.create" => encode(vault_esign_create(memory, decode(value)?)?),
         "vault.conversations.create" => encode(vault_conversations_create(memory, decode(value)?)?),
         "vault.conversations.turns.create" => {
             encode(vault_conversations_turns_create(memory, decode(value)?)?)
@@ -5762,7 +5794,15 @@ pub fn invoke_browser(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
+        "self.browser.library.retired" => serde_json::to_value(self_browser_library_retired(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
         "self.browser.library.run" => serde_json::to_value(self_browser_library_run(
+            driver,
+            serde_json::from_value(value).map_err(invalid)?,
+        )?),
+        "self.browser.handover" => serde_json::to_value(self_browser_handover(
             driver,
             serde_json::from_value(value).map_err(invalid)?,
         )?),
@@ -7849,14 +7889,14 @@ pub fn connector_call_status(
 pub fn self_browser_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::OpenInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.open(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.open(input))
 }
 pub fn self_browser_observe(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ObserveInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.observe(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    driver.observe_page(input)
 }
 pub fn self_browser_find(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -7867,26 +7907,26 @@ pub fn self_browser_find(
 pub fn self_browser_click(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::ClickInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.click(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.click(input))
 }
 pub fn self_browser_click_at(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::PointInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.click_at(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.click_at(input))
 }
 pub fn self_browser_type(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::TypeInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.type_text(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.type_text(input))
 }
 pub fn self_browser_select(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::SelectInput,
-) -> Result<oneiron_browser::Observation, oneiron_browser::BrowserError> {
-    driver.select(input)
+) -> Result<oneiron_browser::ObservationPage, oneiron_browser::BrowserError> {
+    oneiron_browser::paged(driver, |driver| driver.select(input))
 }
 pub fn self_browser_wait_for(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -7948,11 +7988,23 @@ pub fn self_browser_library_retire(
 ) -> Result<oneiron_browser::LibraryRetireOutput, oneiron_browser::BrowserError> {
     driver.library_retire(input)
 }
+pub fn self_browser_library_retired(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::LibraryRetiredInput,
+) -> Result<oneiron_browser::LibraryRetiredOutput, oneiron_browser::BrowserError> {
+    driver.library_retired(input)
+}
 pub fn self_browser_library_run(
     driver: &mut dyn oneiron_browser::BrowserDriver,
     input: oneiron_browser::LibraryRunInput,
 ) -> Result<oneiron_browser::LibraryRunOutput, oneiron_browser::BrowserError> {
     driver.library_run(input)
+}
+pub fn self_browser_handover(
+    driver: &mut dyn oneiron_browser::BrowserDriver,
+    input: oneiron_browser::HandoverInput,
+) -> Result<oneiron_browser::HandoverOutput, oneiron_browser::BrowserError> {
+    driver.handover(input)
 }
 pub fn self_desktop_open(
     driver: &mut dyn oneiron_browser::BrowserDriver,
@@ -8252,6 +8304,18 @@ pub fn vault_artifacts_create(
     input: crate::blob_artifact::ArtifactCreateRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_create(&input)
+}
+pub fn vault_esign_create(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::esign::EsignCreateRequest,
+) -> MemoryResult<crate::blob_artifact::esign::EsignDraftView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.esign.create",
+        &input,
+        &["/document_ref", "/draft/items/*/artifact_ref"],
+    )?;
+    memory.esign_create(&input)
 }
 pub fn vault_conversations_create(
     memory: &Memory<'_>,

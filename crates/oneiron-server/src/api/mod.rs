@@ -93,12 +93,16 @@ mod entity;
 mod error_map;
 mod esign;
 pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
+pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
+#[cfg(unix)]
+pub(crate) use self::esign::seal_worker::spawn_admitted as spawn_esign_seal_worker_admitted;
 mod off_record_rooms;
 mod org_admin;
 mod pairing;
 mod sessions;
+mod slip_renewal;
 // ONE-1441 [WIRE-P1]: the bounded HTTP projection of the engine memory
 // surface, nested at `/v1/core/facade`. Its own file because it is its own
 // contract — one route per public verb, engine DTOs verbatim, and a facade
@@ -108,7 +112,8 @@ mod facade;
 // OF-489: the held socket runs every facade verb through the facade's one
 // generated dispatch, under the credential its connection bound.
 pub(crate) use self::facade::{
-    FacadeApiError, FacadeCall, call_verb as facade_call_verb, connector_call_as, self_use_as,
+    FacadeApiError, FacadeCall, ai_speech_for_run, call_verb as facade_call_verb,
+    connector_call_as, self_use_as,
 };
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
@@ -271,6 +276,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
     let core_routes = Router::new()
         // A consumed approval must never replay a cached 200, even with an idempotency key.
         .route("/consent/widen/accept", post(core_accept_widen))
+        .route("/consent/widen/reject", post(core_reject_widen))
         .route("/org-admin/{org}/powers", get(org_admin::powers))
         .route("/query", post(core_query))
         .route("/context-pack", post(core_context_pack))
@@ -401,6 +407,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         .route("/v1/core/pairing/redeem", post(pairing::redeem))
         .route("/v1/core/pairing/oauth", post(pairing::oauth_exchange))
         .route("/v1/core/slips/revoke", post(pairing::revoke))
+        .route("/v1/core/slips/renew", post(slip_renewal::renew))
         .route(
             "/v1/core/authority/checkpoints/{id}",
             get(authority_checkpoint::bundle),

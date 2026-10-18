@@ -739,7 +739,7 @@ export class Oneiron {
           gate: (request: Facade.DeckGateRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckGate(keyedJson(request))) as Facade.DeckGateView; return result }),
           /** Records the deck oracle's receipt for its export profile. */
           oracle: (request: Facade.DeckOracleRequest): Facade.DeckGateView => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckOracle(keyedJson(request))) as Facade.DeckGateView; return result }),
-          /** The asked slides of a deck's head, drawn by the host's review renderer (provisional). */
+          /** The asked slides of a deck's head or a fork's merge candidate, drawn by the host's review renderer (provisional). */
           preview: (request: Facade.DeckPreviewRequest): Facade.DeckPreview => this.#call(() => {  const result = JSON.parse(this.#client.vaultArtifactsBodyDeckPreview(keyedJson(request))) as Facade.DeckPreview; return result }),
         },
       },
@@ -928,6 +928,10 @@ export class Oneiron {
     habits: {
       /** Appends one immutable check-in under a Habit TASK. */
       checkin: (input: Facade.HabitCheckinInput): Facade.EntityRefReceipt => this.#call(() => this.#client.vaultHabitsCheckin(input) as Facade.EntityRefReceipt),
+    },
+    esign: {
+      /** Drafts a signing document on PDF artifacts the caller already holds, as the caller; sending it is its own gated act. */
+      create: (input: Facade.EsignCreateRequest): Facade.EsignDraftView => this.#call(() => this.#client.vaultEsignCreate(input) as Facade.EsignDraftView),
     },
     /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
     batch: (input: Facade.CoreBatchWriteInput): Facade.CoreBatchWriteReceipt => this.#call(() => this.#client.vaultBatch(input) as Facade.CoreBatchWriteReceipt),

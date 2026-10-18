@@ -1262,8 +1262,13 @@ After that the stream carries:
   12 KiB raw a frame), `cut`, `speaking`, `roster_changed`, and
   `drained{generation}` once a `generation_end`'s audio has all played;
 - **media out:** `pcm{generation, sample_rate, data}` (mono PCM16LE),
-  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice` and
-  `session_ended`.
+  `generation_end`, `flush`, `playout_stop`, `safeguard`, `notice`,
+  `memories{generation, found, heard, withheld, part, parts, receipts}` and
+  `session_ended`. A turn whose retrieval found rows sends `memories` with
+  its first event: how many rows were found, how many the brain heard, how
+  many the audience's read withheld, and the read's narrowing receipts. The
+  receipts split across frames numbered `part` of `parts` and are never
+  dropped. The client shows them to the owner; they are never spoken.
 
 How a call runs:
 - Each heard final is answered by the chat role as `/ai/chat` answers it: the
@@ -1444,8 +1449,8 @@ The desktop rides the `oneiron.browser` pack and its grants.
 
 The owner can take a run's desktop over and hand it back. A program asks
 with `self.desktop.handover({reason})`, or the owner takes it unasked, at
-`/v1/owner/desktops`: `GET` lists the bound run desktops with who has each
-and the agent's ask; `POST take`, `screen` (the whole display as a PNG,
+`/v1/owner/desktops`: `GET` lists the run desktops with who has each and
+the agent's ask; `POST take`, `screen` (the whole display as a PNG,
 unmasked, never kept), `input` (`{"run", "action": {"kind": "click" |
 "type" | "key" | "hotkey" | "scroll", ...}}` at that PNG's pixels) and
 `return` each take `{"run"}`. While the agent waits on its ask and while the
@@ -1453,8 +1458,43 @@ owner holds the desktop, every desktop verb refuses `desktop_taken_over` (a
 batch stops `NEEDS_YOU`) and no receipt screenshot is taken. Handing it back
 writes the takeover's record (who, the ask, when it was taken and returned,
 how many inputs) as the run's `desktop_takeover` sandbox receipt, and the
-agent's next desktop answer carries it as `takeover`. The desktop lives as
-long as the run's door: one `execute_code` entry, or a resident run.
+agent's next desktop answer carries it as `takeover`.
+
+A handover is each owner's inbox Ask (producer `guest.takeover`): its source
+names the run, its result is the take route, and its event ends with the
+agent's reason. Taking the desktop or handing it back clears it. `GET
+/v1/owner/desktops/stream?run=<hex>` streams the display as server-sent
+events while the owner watches or holds it: `state` (the takeover), `frame`
+(`{seq, png_base64}`, at most every 500 ms and only when it changed),
+`error`, `ended` and `refused`. The owner is re-proved at each frame.
+
+The desktop belongs to the run, not to one door. An `execute_code` entry
+that does not finish the run leaves it parked, and the run's next entry
+gets the same guest and seat; a pumped run's desktop waits through a
+durable wait the same way. It ends when the run ends (an entry that
+answers complete, or a pumped attempt that settles other than parked), or
+after it sits idle with no door of its run: 30 minutes while its agent has
+it, 24 hours while the agent's ask waits or the owner holds it. An owner's
+act counts as activity; watching the stream does not. A takeover still
+asked or held when the desktop ends lands its record so far as the run's
+`desktop_takeover` receipt with outcome `abandoned`.
+
+The run's browser takes the same takeover, so the owner can sign in or pay
+inside the page the agent filled. A program asks with
+`self.browser.handover({reason})`, or the owner takes it unasked, at
+`/v1/owner/browsers` (`GET`, then `POST take`, `screen`, `input` and
+`return` with `{"run"}`). `screen` is the viewport as a PNG, unmasked and
+never kept. `input` takes `click`, `type`, `key`, `hotkey`, `scroll` at that
+PNG's pixels, and `navigate {url}` to an http or https page. While asked or
+held, every browser verb refuses `browser_taken_over` (a batch stops
+`NEEDS_YOU`). Handing it back writes the run's `browser_takeover` sandbox
+receipt, the agent's next browser answer carries the record as `takeover`,
+and its next observe is whole.
+
+A browser observation comes in pages: an answer whose outline does not fit
+one page (256 KiB of rows) carries `next`, and `self.browser.observe({cursor:
+next})` reads the next page of the same observation. The pages of the last
+8 observations stay readable.
 
 ## 11. When a provider refuses for a limit
 
