@@ -765,6 +765,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "ConcernPromptInjectOutcome",
+      "ConcernPromptInjectRequest"
+     ],
+     "path": "src/agent_dispatch/continuation.rs",
+     "purpose": "The owner's prompt continuation of a failed agent run (FIX 3694, OF-568): the successor attempt an approved…",
+     "surface": {
+      "crate-vis": 4,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "AgentDispatcher"
      ],
      "path": "src/agent_dispatch/dispatch.rs",
@@ -892,9 +906,9 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "mod": 1,
-      "re-export": 22
+      "re-export": 23
      }
     },
     {
@@ -1830,6 +1844,16 @@
      "purpose": "Atomic operator placement changes with lease fencing and cycle refusal",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/attempt_queue/engine/successor.rs",
+     "purpose": "The successor of a terminally failed attempt (FIX 3694, OF-568): the one new try an owner-approved prompt…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -19246,7 +19270,7 @@
      "purpose": "The owner applies the Coach's `skill_edit` draft on an agent-health card (OF-568, FIX 1849)",
      "surface": {
       "enum": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 3
      }
     },
@@ -40109,7 +40133,7 @@
      "purpose": "The found-key notice (OF-560; owner ruling G04 binary = C2): a write whose mask lifts a key out of a record…",
      "surface": {
       "const": 1,
-      "crate-vis": 10,
+      "crate-vis": 11,
       "enum": 1,
       "fn": 2,
       "re-export": 1,
@@ -40208,10 +40232,25 @@
      "purpose": "A secret's value by its handle (OF-560; ARCH-0069 #reveal-check and #handle-verbs, DEC-0006 #model-connection)",
      "surface": {
       "const": 7,
-      "crate-vis": 16,
+      "crate-vis": 18,
       "enum": 5,
       "fn": 3,
+      "re-export": 1,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RevealAskErase"
+     ],
+     "path": "src/secret_custody/reveal/actor_erase.rs",
+     "purpose": "An erased actor out of the reveal rows (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1
      }
     },
     {
@@ -41485,9 +41524,24 @@
      "path": "src/share.rs",
      "purpose": "Revocable brief read grants",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 15,
       "fn": 6,
+      "re-export": 1,
       "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ShareAdmissionErase"
+     ],
+     "path": "src/share/actor_erase.rs",
+     "purpose": "An erased actor out of the share admissions (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1
      }
     },
     {
@@ -48303,7 +48357,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 1,
       "mod": 2,
       "re-export": 25
@@ -49255,6 +49309,16 @@
      "path": "src/task_verb/symbol_lease_tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/task_verb/task_continuation.rs",
+     "purpose": "The same-TASK continuation of a failed agent run (FIX 3694, OF-568, ruling 3)",
+     "surface": {
+      "crate-vis": 3
+     }
     },
     {
      "bucket": "s",
@@ -51792,7 +51856,7 @@
      "path": "src/workspace_roster/join_consent.rs",
      "purpose": "One consent per party (OF-531): one typed decision that joins the subject's own yes, a payer's spend, a…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 7,
       "fn": 7,
       "re-export": 1,
@@ -51822,14 +51886,17 @@
       "JoinParticipation",
       "JoinReceipt",
       "JoinReceiptRef",
-      "RecordedAnswer"
+      "RecordedAnswer",
+      "RosterActor",
+      "RosterErase"
      ],
      "path": "src/workspace_roster/join_receipt.rs",
      "purpose": "The join receipt (OF-531): one typed record per join intent",
      "surface": {
-      "crate-vis": 12,
-      "enum": 1,
-      "fn": 5,
+      "const": 1,
+      "crate-vis": 16,
+      "enum": 3,
+      "fn": 7,
       "struct": 3
      }
     },
@@ -51840,7 +51907,7 @@
      "path": "src/workspace_roster/mod.rs",
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 23,
       "re-export": 17
      }
     },
@@ -52204,7 +52271,8 @@
      "path": "src/workspace_roster/project/proposal.rs",
      "purpose": "The project card a conversation proposes (OF-501, ARCH-0067)",
      "surface": {
-      "crate-vis": 12,
+      "const": 1,
+      "crate-vis": 14,
       "enum": 1,
       "fn": 7,
       "struct": 3
@@ -52566,7 +52634,8 @@
      "path": "src/workspace_roster/rooms/hosting.rs",
      "purpose": "Room hosting: the speaking duty, kept apart from the engine's upkeep",
      "surface": {
-      "crate-vis": 8,
+      "const": 1,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 3,
       "struct": 5
@@ -52608,7 +52677,7 @@
      "path": "src/workspace_roster/rooms/mod.rs",
      "purpose": "Room participation and addressed turn claims",
      "surface": {
-      "crate-vis": 27,
+      "crate-vis": 30,
       "enum": 2,
       "fn": 6,
       "re-export": 9,
@@ -52627,6 +52696,16 @@
       "crate-vis": 5,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/workspace_roster/rooms/offer_erase.rs",
+     "purpose": "An erased actor out of the offer cards (FIX 3520)",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -54057,7 +54136,7 @@
      "purpose": "AGENT_DEF (`AgentDefinition`) entity — AGENT-1 (ONE-1443, OF-334)"
     },
     "agent_dispatch": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -54099,7 +54178,7 @@
      "purpose": "Local artifact hosting over pinned code snapshots and blob exports"
     },
     "attempt_queue": {
-     "files": 43,
+     "files": 44,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55184,7 +55263,7 @@
      "purpose": "Retained spawned sub-sessions and Dreamer-composed scope summaries"
     },
     "secret_custody": {
-     "files": 20,
+     "files": 21,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55254,7 +55333,7 @@
      "purpose": "Persisted customization settings and client-visible change events"
     },
     "share": {
-     "files": 4,
+     "files": 5,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -55394,7 +55473,7 @@
      "purpose": "ONE TASK TYPE (OF-543, ARCH-0079 #task-type): the one learned type tree"
     },
     "task_verb": {
-     "files": 141,
+     "files": 142,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -55541,7 +55620,7 @@
      "purpose": "A fair line for work that waits its turn: the vault's task-work line, and each bound a host holds over work…"
     },
     "workspace_roster": {
-     "files": 90,
+     "files": 91,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -55564,7 +55643,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3382,
+   "source_files": 3388,
    "test_files": 902
   },
   "oneiron-android": {
@@ -76189,8 +76268,8 @@
       "ConsentPart",
       "ConsentSet",
       "ConsentStateAdmissionConsent",
-      "ConsentStateEntityId",
       "ConsentStateMembershipConsent",
+      "ConsentStateRosterActor",
       "ConsentStateSpendConsent",
       "ConsultPayloadRef",
       "ContextDefault",

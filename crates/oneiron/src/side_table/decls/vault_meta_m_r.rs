@@ -374,13 +374,15 @@ side_tables! {
     PROJECT_ORIGIN_THREAD: VaultMeta b"project.origin_thread.v1/" Raw;
     /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
     /// and its state. Key: blake3 hash32 of the card id.
-    PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named;
+    PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named
+        => crate::workspace_roster::erase_card_actor_in_txn;
     /// The source message of each card shown in one conversation. Key: id16 (conversation) +
     /// blake3 hash32 of the card id.
     PROJECT_PROPOSAL_CONVERSATION: VaultMeta b"project.proposal.conversation.v1/" Raw;
     /// A conversation's latest person turn awaiting the project question. Key: id16
     /// (conversation).
-    PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named;
+    PROJECT_PROPOSAL_PENDING: VaultMeta b"project.proposal.pending.v1/" Named
+        => crate::workspace_roster::erase_pending_actor_in_txn;
     /// The project question's yes, or its ask of a person, on one source message, with its
     /// decision receipt. Key: id16 (source message).
     PROJECT_PROPOSAL_VERDICT: VaultMeta b"project.proposal.verdict.v1/" Named;
@@ -548,17 +550,20 @@ side_tables! {
     /// A room's stored host (OF-528): the latest pin, by someone the room's grant allows, or
     /// handoff, by the host it replaced. Latest write wins; it grants no scope, role or admission.
     /// Key: id16 (room).
-    ROOMS_HOST_PIN: VaultMeta b"rooms.host_pin.v1/" Named;
+    ROOMS_HOST_PIN: VaultMeta b"rooms.host_pin.v1/" Named
+        => crate::workspace_roster::erase_host_pin_actor_in_txn;
     /// One room-join intent's receipt (OF-531): the request, each party's recorded answer, the three
     /// consents as last decided, and the participation a Ready decision committed. Key: string (hex64
     /// join ref).
-    ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson;
+    ROOMS_JOIN: VaultMeta b"rooms.join.v1/" LegacyJson
+        => crate::workspace_roster::erase_join_actor_in_txn;
     /// The latest Ready join receipt for one subject in one room or thread. Key: string (room hex "/"
     /// subject hex "/" branch hex or "-").
     ROOMS_JOIN_READY: VaultMeta b"rooms.join_ready.v1/" LegacyJson;
     /// One offer card (OF-530): who asks, what, the cost, the join it files and its state, with the
     /// host's answer that settled it. Key: string (hex64 offer id).
-    ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson;
+    ROOMS_OFFER: VaultMeta b"rooms.offer.v1/" LegacyJson
+        => crate::workspace_roster::erase_offer_actor_in_txn;
     /// The offer card current for one agent in one room or thread. Key: string (room hex "/" branch
     /// hex or "-" "/" agent hex).
     ROOMS_OFFER_CURRENT: VaultMeta b"rooms.offer_current.v1/" LegacyJson;
