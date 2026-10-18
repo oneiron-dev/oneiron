@@ -47438,7 +47438,7 @@
      "purpose": "The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must…",
      "surface": {
       "const": 3,
-      "fn": 3,
+      "fn": 4,
       "struct": 1
      }
     },
