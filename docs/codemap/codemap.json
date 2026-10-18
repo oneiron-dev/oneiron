@@ -30226,6 +30226,7 @@
      "path": "src/llm/budget/mod.rs",
      "purpose": "Vault-local durable RSI budget ledger",
      "surface": {
+      "mod": 1,
       "re-export": 1
      }
     },
@@ -30240,13 +30241,31 @@
       "RsiExplorationRead",
       "RsiOverdraftReceipt",
       "RsiSettlement",
-      "RsiSpendPurpose"
+      "RsiSpendPurpose",
+      "RsiTopUp"
      ],
      "path": "src/llm/budget/rsi.rs",
      "purpose": "Vault-local durable reserve/settle/refund ledger for research-loop spend",
      "surface": {
-      "enum": 3,
-      "fn": 12,
+      "enum": 4,
+      "fn": 14,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "RsiExposureLineView",
+      "RsiLineRequest",
+      "RsiLineView",
+      "RsiShareView",
+      "RsiWorkLineView"
+     ],
+     "path": "src/llm/budget/rsi_doors.rs",
+     "purpose": "Typed owner doors over the vault RSI line: configure its soft and pinned shares once, read both…",
+     "surface": {
+      "fn": 5,
       "struct": 5
      }
     },
@@ -30971,7 +30990,7 @@
      "surface": {
       "crate-vis": 9,
       "mod": 9,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -52693,7 +52712,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 932
+      "fn": 939
      }
     },
     {
@@ -53143,9 +53162,11 @@
       "ResearchBasisWire",
       "ResearchBenchmarkWire",
       "ResearchBindWire",
+      "ResearchBudgetView",
       "ResearchCandidateWire",
       "ResearchChildReceipt",
       "ResearchChildWire",
+      "ResearchExplorationWire",
       "ResearchForkWire",
       "ResearchHeldOutWire",
       "ResearchInvalidWire",
@@ -53154,6 +53175,7 @@
       "ResearchPruneWire",
       "ResearchRefereeScores",
       "ResearchRefundWire",
+      "ResearchReservationWire",
       "ResearchSearchWire",
       "ResearchSelectWire",
       "ResearchSettleWire",
@@ -53165,8 +53187,8 @@
      "surface": {
       "crate-vis": 2,
       "enum": 1,
-      "fn": 17,
-      "struct": 20
+      "fn": 19,
+      "struct": 23
      }
     },
     {
@@ -59649,7 +59671,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 103,
+     "files": 104,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -60351,7 +60373,7 @@
    },
    "over_bar": 200,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3682,
+   "source_files": 3683,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68942,7 +68964,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 901
+      "fn": 908
      }
     },
     {
@@ -70005,7 +70027,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 902
+      "fn": 909
      }
     },
     {
@@ -73018,7 +73040,7 @@
      "path": "src/api/facade/budget_doors.rs",
      "purpose": "Credential-backed budget controls, beside the owner's held-run routes",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 12
      }
     },
     {
@@ -77595,7 +77617,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/device_sync/renewal.rs",
@@ -84227,11 +84249,13 @@
       "ResearchBindWire",
       "ResearchBinding",
       "ResearchBudgetRead",
+      "ResearchBudgetView",
       "ResearchCandidateWire",
       "ResearchChildReceipt",
       "ResearchChildWire",
       "ResearchConfirmationSeat",
       "ResearchExecution",
+      "ResearchExplorationWire",
       "ResearchForkWire",
       "ResearchGoalPin",
       "ResearchHeldOutWire",
@@ -84243,6 +84267,7 @@
       "ResearchRefundWire",
       "ResearchReservation",
       "ResearchReservationLine",
+      "ResearchReservationWire",
       "ResearchSearchWire",
       "ResearchSelectWire",
       "ResearchSettleWire",
@@ -84384,8 +84409,18 @@
       "RoutineOutcome",
       "Row",
       "RowBirth",
+      "RsiBudgetConfig",
+      "RsiBudgetRead",
+      "RsiBudgetShare",
+      "RsiExplorationRead",
+      "RsiExposureLineView",
+      "RsiLineView",
+      "RsiOverdraftReceipt",
       "RsiSettlement",
+      "RsiShareView",
       "RsiSpendPurpose",
+      "RsiTopUp",
+      "RsiWorkLineView",
       "Run",
       "RunAnsweredBy",
       "RunAsk",
@@ -85175,8 +85210,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 761,
-      "struct": 2319
+      "enum": 762,
+      "struct": 2331
      }
     },
     {
