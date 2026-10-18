@@ -234,6 +234,42 @@ fn speaker_person(
         _ => Err(denied()),
     }
 }
+/// Whether `actor` speaks as the PERSON `person` now: is it, or is anchored
+/// to it. An actor that speaks as no PERSON speaks as no one here.
+pub(crate) fn speaks_as_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    person: EntityId,
+) -> Result<bool> {
+    match speaker_person(vault, txn, actor, vault.store.clock.now_recorded_at()) {
+        Ok(speaks_as) => Ok(speaks_as == Some(person)),
+        Err(Error::Record(RecordError::ConversationDenied)) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+/// The projects `actor` leads now: those whose effective leader it is. A
+/// project whose authority does not serve is led by no one.
+pub(crate) fn projects_led_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+) -> Result<Vec<EntityId>> {
+    let Some(reader) = ProjectReader::new(&vault.store, txn, vault.privacy_posture())? else {
+        return Ok(Vec::new());
+    };
+    let actor = actor.to_hex();
+    let mut led = Vec::new();
+    for (id, _, _) in reader.all()? {
+        if reader
+            .visible_with_effective(id)?
+            .is_some_and(|(_, effective)| effective.leader == actor)
+        {
+            led.push(id);
+        }
+    }
+    Ok(led)
+}
 fn ensure_leaders(vault: &Vault, txn: &heed::RoTxn<'_>, chat: &LeaderChat, at: u64) -> Result<()> {
     for i in 0..2 {
         if chat.projects[i] == chat.projects[1 - i]
@@ -321,51 +357,107 @@ impl Vault {
         actor: WriteActor,
         at: u64,
     ) -> Result<LeaderChat> {
-        self.with_write_txn_grouped(|txn| {
-            let actors = [
-                EntityId::from_hex(&project_in(self, txn, projects[0])?.leader)?,
-                EntityId::from_hex(&project_in(self, txn, projects[1])?.leader)?,
-            ];
-            if actor.entity_ref() != actors[0] && actor.entity_ref() != actors[1] {
-                return Err(denied());
+        self.with_write_txn_grouped(|txn| self.open_leader_chat_in_txn(txn, id, projects, actor, at))
+    }
+
+    /// [`Self::open_leader_chat`] inside the caller's write transaction, with
+    /// the same leader, rule and fresh-room checks.
+    pub(crate) fn open_leader_chat_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        projects: [EntityId; 2],
+        actor: WriteActor,
+        at: u64,
+    ) -> Result<LeaderChat> {
+        let actors = [
+            EntityId::from_hex(&project_in(self, txn, projects[0])?.leader)?,
+            EntityId::from_hex(&project_in(self, txn, projects[1])?.leader)?,
+        ];
+        if actor.entity_ref() != actors[0] && actor.entity_ref() != actors[1] {
+            return Err(denied());
+        }
+        let chat = LeaderChat {
+            projects,
+            actors,
+            persons: [
+                speaker_person(self, txn, actors[0], at)?,
+                speaker_person(self, txn, actors[1], at)?,
+            ],
+        };
+        // Event time is caller-chosen; authority is checked at admission.
+        let now = self.store.clock.now_recorded_at();
+        ensure_leaders(self, txn, &chat, now)?;
+        check_rule(self, txn, &chat, now)?;
+        let mut body = ConversationBody {
+            kind: ConversationKind::Direct,
+            member_ids: chat.persons.into_iter().flatten().collect(),
+            ..Default::default()
+        };
+        let bytes = encode(&chat)?;
+        body.extra.insert(
+            CHAT_FIELD.to_owned(),
+            rmp_serde::from_slice(&bytes).map_err(|_| denied())?,
+        );
+        // The private admission marker is checked by the common put door.
+        // The body binding itself travels with replicated conversations.
+        self.store.vault_meta.put(txn, &key(CHAT, id), &bytes)?;
+        crate::conversation::create_in_txn(
+            self,
+            txn,
+            id,
+            &body,
+            actor,
+            TimeRange { start: at, end: at },
+            at,
+            &[],
+        )?;
+        Ok(chat)
+    }
+
+    /// Leader chat `id` for `projects`, inside the caller's write
+    /// transaction: opened when absent; otherwise the room there must BE that
+    /// chat, a live Direct whose binding names the same projects and their
+    /// current leaders, which still pass the leader and shared-ancestor rule
+    /// checks now. A row at `id` is never permission by itself, and a plain
+    /// room is never rebound or relabelled.
+    pub(crate) fn ensure_leader_chat_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        projects: [EntityId; 2],
+        actor: WriteActor,
+        at: u64,
+    ) -> Result<LeaderChat> {
+        let body = match crate::vault::live_entity_row_in_txn(&self.store, txn, &id)? {
+            crate::vault::LiveEntityRow::Absent => {
+                return self.open_leader_chat_in_txn(txn, id, projects, actor, at);
             }
-            let chat = LeaderChat {
-                projects,
-                actors,
-                persons: [
-                    speaker_person(self, txn, actors[0], at)?,
-                    speaker_person(self, txn, actors[1], at)?,
-                ],
-            };
-            // Event time is caller-chosen; authority is checked at admission.
-            let now = self.store.clock.now_recorded_at();
-            ensure_leaders(self, txn, &chat, now)?;
-            check_rule(self, txn, &chat, now)?;
-            let mut body = ConversationBody {
-                kind: ConversationKind::Direct,
-                member_ids: chat.persons.into_iter().flatten().collect(),
-                ..Default::default()
-            };
-            let bytes = encode(&chat)?;
-            body.extra.insert(
-                CHAT_FIELD.to_owned(),
-                rmp_serde::from_slice(&bytes).map_err(|_| denied())?,
-            );
-            // The private admission marker is checked by the common put door.
-            // The body binding itself travels with replicated conversations.
-            self.store.vault_meta.put(txn, &key(CHAT, id), &bytes)?;
-            crate::conversation::create_in_txn(
-                self,
-                txn,
-                id,
-                &body,
-                actor,
-                TimeRange { start: at, end: at },
-                at,
-                &[],
-            )?;
-            Ok(chat)
-        })
+            crate::vault::LiveEntityRow::Live { entity_type, body }
+                if entity_type == ENTITY_TYPE_CONVERSATION =>
+            {
+                ConversationBody::from_bytes(&body)?
+            }
+            _ => return Err(denied()),
+        };
+        let value = body.extra.get(CHAT_FIELD).ok_or_else(denied)?;
+        let bytes = rmp_serde::to_vec_named(value).map_err(|_| denied())?;
+        let chat: LeaderChat = decode(&bytes).map_err(|_| denied())?;
+        let actors = [
+            EntityId::from_hex(&project_in(self, txn, projects[0])?.leader)?,
+            EntityId::from_hex(&project_in(self, txn, projects[1])?.leader)?,
+        ];
+        if body.kind != ConversationKind::Direct
+            || chat.projects != projects
+            || chat.actors != actors
+            || !actors.contains(&actor.entity_ref())
+        {
+            return Err(denied());
+        }
+        let now = self.store.clock.now_recorded_at();
+        ensure_leaders(self, txn, &chat, now)?;
+        check_rule(self, txn, &chat, now)?;
+        Ok(chat)
     }
 
     /// Project audience of a locally authenticated TURN or MESSAGE. Its

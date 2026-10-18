@@ -42,6 +42,8 @@ mod grants;
 mod hosted_tts_policy;
 mod input;
 pub(crate) mod mail_policy;
+mod message_address;
+pub(crate) use message_address::message_address_refusal;
 mod operational_policy;
 mod owner_answer;
 mod owner_policy_mutation;
