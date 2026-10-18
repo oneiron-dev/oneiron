@@ -474,8 +474,9 @@ pub fn promotion_covers_full_window(
 /// machine of this vault's that proved itself also covers the window's
 /// custody transitions (OF-422), each sealed to the owner's machines, its
 /// room turn rows (OF-522), its room side rows (FIX 1794), its document
-/// quote pins (FIX 853), this vault's embedding setup rows (OF-370) and its
-/// withdrawn cutoffs (OF-013); the selector copies none of them. Any other
+/// quote pins and MESSAGE documents (FIX 853), this vault's embedding setup
+/// rows (OF-370) and its withdrawn cutoffs (OF-013); the selector copies
+/// none of them. Any other
 /// destination does not, so a window that carries one is not promoted to it.
 pub fn promotion_covers_full_window_for(
     vault: &Vault,
@@ -498,6 +499,7 @@ pub fn promotion_covers_full_window_for(
             super::room_turns::ROOM_TURNS_MAP,
             super::room_facts::ROOM_FACTS_MAP,
             super::document_pins::DOCUMENT_PINS_MAP,
+            super::message_docs::MESSAGE_DOCS_MAP,
             super::withdrawn_cutoffs::WITHDRAWN_CUTOFFS_MAP,
         ] {
             super::loro_support::copy_binary_root_map(source, &selected, name)?;
