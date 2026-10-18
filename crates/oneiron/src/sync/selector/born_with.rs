@@ -20,6 +20,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::share_travel::{BornWith, TravelChoice};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::sync::loro_support::{map_for_each_value_bytes, map_get_bytes, map_insert_bytes};
 use crate::sync::window::Withhold;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -140,6 +141,16 @@ pub(crate) fn carried_born_with(vault: &Vault, id: &EntityId) -> Result<BornWith
     Ok(CARRIED
         .get_lenient(&vault.store, &rtxn, id)?
         .unwrap_or_default())
+}
+
+/// Drops the text a copy carried for `id` when its row is erased; a no-op
+/// for any other row.
+pub(crate) fn erase_carried_born_with_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    CARRIED.delete(store, wtxn, id).map(|_| ())
 }
 
 impl Vault {

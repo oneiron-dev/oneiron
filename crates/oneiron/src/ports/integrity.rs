@@ -278,6 +278,43 @@ pub(crate) fn withdraw_from_lost_source_in_txn(
     }
     withdraw_words_in_txn(store, txn, summary, &worlds)
 }
+/// Whether epoch summary `id` still holds words here of a generation at or
+/// below `cutoff`, a withdrawn generation another machine of this vault
+/// carries (OF-013). A newer generation, a keyframe and any other row hold
+/// none.
+#[cfg(feature = "sync")]
+pub(crate) fn holds_withdrawn_generation_in(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    cutoff: u64,
+) -> Result<bool> {
+    let Some(row) = super::EntityStoreRead::port_entity_record(store, txn, id)? else {
+        return Ok(false);
+    };
+    Ok(row.learned_at <= cutoff
+        && !crate::compaction::is_withdrawn_keyframe(&row.body)
+        && epoch_summary_in(store, txn, id)?)
+}
+/// Withdraws epoch summary `id` here as the withdrawal on the machine that
+/// cut it off at `cutoff` did, when [`holds_withdrawn_generation_in`]: every
+/// world its body carried is recorded, read before its words go, then its
+/// words leave the row and every epoch written from it is withdrawn. Whether
+/// it withdrew; a repeat finds the keyframe and changes nothing.
+#[cfg(feature = "sync")]
+pub(crate) fn withdraw_received_epoch_generation_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    cutoff: u64,
+) -> Result<bool> {
+    if !holds_withdrawn_generation_in(store, txn, id, cutoff)? {
+        return Ok(false);
+    }
+    let worlds = carried_or_unknown(store, txn, id);
+    withdraw_words_in_txn(store, txn, id, &worlds)?;
+    Ok(true)
+}
 /// Where the words of `source` sit, read while its row, stamp and edges still
 /// stand, whatever its body holds. A source no one can place is unknown, and
 /// the write goes on.

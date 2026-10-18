@@ -295,26 +295,7 @@ impl Vault {
             let doc = storage::load(&self.store, txn, &h)?;
             let applied = floor(self, txn, entity, &h.incarnation, &doc, requested)?;
             let old_state = doc.text();
-            let bytes = doc.shallow_snapshot(&applied)?;
-            let shallow = EntityDoc::from_snapshot(&bytes)?;
-            if shallow.text() != old_state || shallow.doc.oplog_vv() != doc.doc.oplog_vv() {
-                return Err(Error::InvariantViolation(
-                    "shallow purge changed live state",
-                ));
-            }
-            let cited =
-                super::citation_floor::live_frontiers(&self.store, txn, entity, &h.incarnation)?;
-            let pinned = pins(self, txn, entity)?
-                .into_iter()
-                .map(|pin| pin.anchor.frontier);
-            for frontier in pinned.chain(cited) {
-                let old = doc.fork(&frontier)?.text();
-                if shallow.fork(&frontier)?.text() != old {
-                    return Err(Error::InvariantViolation(
-                        "shallow purge changed a pinned version",
-                    ));
-                }
-            }
+            let shallow = shallow_at(self, txn, entity, &h.incarnation, &doc, &applied)?;
             storage::persist(self, txn, entity, &mut h, &shallow, None)?;
             self.store.port_document_shallow_since_put(
                 txn,
@@ -337,6 +318,10 @@ impl Vault {
                 &HexPair(HexId(*entity), HexId(receipt_id)),
                 &receipt,
             )?;
+            // A purge changes no text, so only this takes the new floor to
+            // the live window that carries a MESSAGE's document (FIX 3552).
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(self, txn, std::iter::once(*entity).collect());
             Ok(receipt)
         })?;
         registry.remove(entity);
@@ -571,7 +556,10 @@ pub(super) fn entity_type(vault: &Vault, entity: &EntityId) -> Result<Option<u8>
     )
 }
 
-fn floor(
+/// The floor a history purge of `doc` down to `requested` reaches: no
+/// further than any pin, live citation floor, settlement receipt, pending
+/// fork base or earlier purge receipt lets it.
+pub(super) fn floor(
     vault: &Vault,
     txn: &RoTxn<'_>,
     entity: &EntityId,
@@ -627,4 +615,37 @@ fn floor(
         return Err(invalid("no common retained purge frontier"));
     }
     Ok(frontier.encode())
+}
+
+/// `doc` with its history dropped below `applied`, a floor [`floor`] allows.
+/// Its live text, its version and its text at every pin and live citation
+/// floor stay as they were, or nothing is dropped.
+pub(super) fn shallow_at(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    entity: &EntityId,
+    incarnation: &str,
+    doc: &EntityDoc,
+    applied: &[u8],
+) -> Result<EntityDoc> {
+    let bytes = doc.shallow_snapshot(applied)?;
+    let shallow = EntityDoc::from_snapshot(&bytes)?;
+    if shallow.text() != doc.text() || shallow.doc.oplog_vv() != doc.doc.oplog_vv() {
+        return Err(Error::InvariantViolation(
+            "shallow purge changed live state",
+        ));
+    }
+    let cited = super::citation_floor::live_frontiers(&vault.store, txn, entity, incarnation)?;
+    let pinned = pins(vault, txn, entity)?
+        .into_iter()
+        .map(|pin| pin.anchor.frontier);
+    for frontier in pinned.chain(cited) {
+        let old = doc.fork(&frontier)?.text();
+        if shallow.fork(&frontier)?.text() != old {
+            return Err(Error::InvariantViolation(
+                "shallow purge changed a pinned version",
+            ));
+        }
+    }
+    Ok(shallow)
 }

@@ -21,7 +21,10 @@
 //!   the live mirror does as a commit touches the message.
 //! - Forward rematerialization, Observer B and the live mirror install a
 //!   carried document here (`Vault::merge_carried_message_document_in_txn`):
-//!   the same document joins by Loro merge, and another one is logged.
+//!   the same document joins by Loro merge, and another one is logged. A
+//!   head whose history floor is newer, an owner purge on another machine,
+//!   drops the history here to that floor where a purge here could reach
+//!   it, and otherwise waits in the window (FIX 3552).
 //! - Every export, and the erase sweep, drop the document of a message this
 //!   vault erased or the window does not carry, with every part no head
 //!   lists.
@@ -272,9 +275,9 @@ fn holds_message_doc_map(doc: &LoroDoc) -> bool {
 }
 
 /// Installs each carried head's document here, one write each, so a refusal
-/// stays with its message. A head this vault already holds is passed over
-/// before its parts are joined; one whose parts or message have not landed
-/// waits for them.
+/// stays with its message. A head this vault already holds, from a history
+/// floor no newer than its own, is passed over before its parts are joined;
+/// one whose parts or message have not landed waits for them.
 fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, Vec<u8>)>) {
     let mut merged = 0_usize;
     for (map_key, bytes) in heads {
@@ -292,7 +295,7 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
             .map_err(Error::from)
             .and_then(|rtxn| vault.carried_message_document_in_txn(&rtxn, &message));
         match held {
-            Ok(Some(held)) if held.holds(&carried.head) => continue,
+            Ok(Some(held)) if held.holds(&carried.head) && !carried.head.purges(&held) => continue,
             Ok(_) => {}
             Err(error) => {
                 tracing::warn!(window, key = %map_key, error = %error, "message document not merged");
@@ -322,6 +325,12 @@ fn merge_heads(vault: &Vault, map: &LoroMap, window: &str, heads: Vec<(String, V
                 key = %map_key,
                 reason,
                 "message document does not merge here; left out"
+            ),
+            Ok(DocumentMerge::Deferred(reason)) => tracing::info!(
+                window,
+                key = %map_key,
+                reason,
+                "message document purge waits; the history held here stands and the head stays in the window"
             ),
             Err(error) => {
                 tracing::warn!(window, key = %map_key, error = %error, "message document not merged");
