@@ -130,7 +130,7 @@ impl EstimateValue {
 }
 
 /// Where a prior came from (ARCH-0003 "The six prior origins").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PriorOrigin {
     /// The pack's default.
@@ -210,7 +210,7 @@ impl Prior {
 
 /// What the evidence behind the number was, kept to explain it. Labels are
 /// never extra wins.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EstimateLabels {
     /// Effective runs per judge revision that scored them.
     #[serde(default)]
@@ -228,7 +228,7 @@ pub struct EstimateLabels {
 
 /// The fade window: old runs halve in weight every `half_life` seconds, so a
 /// silent vendor update under one model id shows up. Receipts never change.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Window {
     pub half_life: u64,
 }

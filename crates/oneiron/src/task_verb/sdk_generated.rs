@@ -1217,6 +1217,18 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.learning.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning::doors::LearningReadRequest,
+                >(),
+            ),
+            (
+                "vault.learning.projection",
+                crate::code_run::vault_read::request_schema::<
+                    crate::learning::doors::LearningProjectionRequest,
+                >(),
+            ),
+            (
                 "vault.settings.learning",
                 crate::code_run::vault_read::request_schema::<
                     crate::learning_setting_doors::LearningSettingsRequest,
@@ -1664,6 +1676,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.agents.spawn.get",
+                crate::code_run::vault_read::request_schema::<crate::team::doors::PlannedSpawnRead>(
+                ),
+            ),
+            (
                 "vault.workspace.establish",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::WorkspacePresetRequest,
@@ -2001,6 +2018,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.receipts.context",
                 crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
+                "ai.voice.start",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceStartRequest,
+                >(),
+            ),
+            (
+                "ai.voice.audio",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceAudioRequest,
+                >(),
+            ),
+            (
+                "ai.voice.events",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceEventsRequest,
+                >(),
+            ),
+            (
+                "ai.voice.ack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceAckRequest,
+                >(),
+            ),
+            (
+                "ai.voice.usage",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceUsageRequest,
+                >(),
+            ),
+            (
+                "ai.voice.tool",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceToolRequest,
+                >(),
+            ),
+            (
+                "ai.voice.end",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceSessionRequest,
+                >(),
+            ),
+            (
+                "ai.voice.close",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::LiveVoiceSessionRequest,
+                >(),
             ),
             (
                 "ai.options",
@@ -3124,6 +3189,8 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.gate.policy.propose",
     "vault.gate.checker.get",
     "vault.gate.checker.set",
+    "vault.learning.read",
+    "vault.learning.projection",
     "vault.claims.review",
     "vault.claims.settle",
     "vault.artifacts.units",
@@ -3158,6 +3225,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.workflows.status",
     "vault.task_types.pin",
     "vault.task_types.get",
+    "vault.agents.spawn.get",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
     "vault.workspace.roster",
@@ -3165,6 +3233,12 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "ai.steps.receipt",
     "ai.reply",
     "vault.receipts.context",
+    "ai.voice.start",
+    "ai.voice.audio",
+    "ai.voice.ack",
+    "ai.voice.usage",
+    "ai.voice.end",
+    "ai.voice.close",
     "vault.voices.packs.put",
     "vault.voices.render_consent",
     "vault.voices.targets.provision",
@@ -3463,6 +3537,12 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.gate.checker.set" => crate::code_run::vault_read::request_schema::<
             crate::policy_manifest_doors::GateCheckerReceipt,
         >(),
+        "vault.learning.read" => crate::code_run::vault_read::request_schema::<
+            crate::learning::doors::LearningCellView,
+        >(),
+        "vault.learning.projection" => crate::code_run::vault_read::request_schema::<
+            crate::learning::doors::LearningProjectionView,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
@@ -3565,6 +3645,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.task_types.get" => crate::code_run::vault_read::request_schema::<
             crate::team::doors::TaskTypeTreeReadReply,
         >(),
+        "vault.agents.spawn.get" => crate::code_run::vault_read::request_schema::<
+            crate::team::doors::PlannedSpawnObservation,
+        >(),
         "vault.workspace.establish" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::WorkspacePresetReceipt,
         >(),
@@ -3585,6 +3668,24 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         }
         "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
             Option<crate::receipt::ContextEmitReceipt>,
+        >(),
+        "ai.voice.start" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceSession>()
+        }
+        "ai.voice.audio" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.voice.ack" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.voice.usage" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::LiveVoiceUsage>()
+        }
+        "ai.voice.end" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
+        >(),
+        "ai.voice.close" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::LiveVoiceProcessed,
         >(),
         "vault.voices.packs.put" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::VoiceBankPackReceipt,
@@ -5401,6 +5502,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.learning.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.learning.projection" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.settings.learning" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -5941,6 +6056,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.agents.spawn.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.workspace.establish" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -6436,6 +6558,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.receipts.context" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.audio" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.events" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.ack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.usage" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.tool" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.end" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "ai.voice.close" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -8292,6 +8470,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.gate.checker.set" => {
             let _input: crate::policy_manifest_doors::GateCheckerSet = decode(value.clone())?;
         }
+        "vault.learning.read" => {
+            let _input: crate::learning::doors::LearningReadRequest = decode(value.clone())?;
+        }
+        "vault.learning.projection" => {
+            let _input: crate::learning::doors::LearningProjectionRequest = decode(value.clone())?;
+        }
         "vault.settings.learning" => {
             let _input: crate::learning_setting_doors::LearningSettingsRequest =
                 decode(value.clone())?;
@@ -8556,6 +8740,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.task_types.get" => {
             let _input: crate::team::doors::TaskTypeTreeRead = decode(value.clone())?;
         }
+        "vault.agents.spawn.get" => {
+            let _input: crate::team::doors::PlannedSpawnRead = decode(value.clone())?;
+        }
         "vault.workspace.establish" => {
             let _input: crate::task_verb::sdk::WorkspacePresetRequest = decode(value.clone())?;
         }
@@ -8757,6 +8944,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.receipts.context" => {
             let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
+        "ai.voice.start" => {
+            let _input: crate::task_verb::sdk::LiveVoiceStartRequest = decode(value.clone())?;
+        }
+        "ai.voice.audio" => {
+            let _input: crate::task_verb::sdk::LiveVoiceAudioRequest = decode(value.clone())?;
+        }
+        "ai.voice.events" => {
+            let _input: crate::task_verb::sdk::LiveVoiceEventsRequest = decode(value.clone())?;
+        }
+        "ai.voice.ack" => {
+            let _input: crate::task_verb::sdk::LiveVoiceAckRequest = decode(value.clone())?;
+        }
+        "ai.voice.usage" => {
+            let _input: crate::task_verb::sdk::LiveVoiceUsageRequest = decode(value.clone())?;
+        }
+        "ai.voice.tool" => {
+            let _input: crate::task_verb::sdk::LiveVoiceToolRequest = decode(value.clone())?;
+        }
+        "ai.voice.end" => {
+            let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
+        }
+        "ai.voice.close" => {
+            let _input: crate::task_verb::sdk::LiveVoiceSessionRequest = decode(value.clone())?;
         }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
@@ -9820,6 +10031,8 @@ pub fn invoke(
         "vault.gate.policy.propose" => encode(vault_gate_policy_propose(memory, decode(value)?)?),
         "vault.gate.checker.get" => encode(vault_gate_checker_get(memory, decode(value)?)?),
         "vault.gate.checker.set" => encode(vault_gate_checker_set(memory, decode(value)?)?),
+        "vault.learning.read" => encode(vault_learning_read(memory, decode(value)?)?),
+        "vault.learning.projection" => encode(vault_learning_projection(memory, decode(value)?)?),
         "vault.settings.learning" => encode(vault_settings_learning(memory, decode(value)?)?),
         "vault.settings.learning.put" => {
             encode(vault_settings_learning_put(memory, decode(value)?)?)
@@ -9955,6 +10168,7 @@ pub fn invoke(
         "vault.workflows.status" => encode(vault_workflows_status(memory, decode(value)?)?),
         "vault.task_types.pin" => encode(vault_task_types_pin(memory, decode(value)?)?),
         "vault.task_types.get" => encode(vault_task_types_get(memory, decode(value)?)?),
+        "vault.agents.spawn.get" => encode(vault_agents_spawn_get(memory, decode(value)?)?),
         "vault.workspace.establish" => encode(vault_workspace_establish(memory, decode(value)?)?),
         "vault.workspace.members.onboard" => {
             encode(vault_workspace_members_onboard(memory, decode(value)?)?)
@@ -10054,6 +10268,14 @@ pub fn invoke(
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
         "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
         "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
+        "ai.voice.start" => encode(ai_voice_start(memory, decode(value)?)?),
+        "ai.voice.audio" => encode(ai_voice_audio(memory, decode(value)?)?),
+        "ai.voice.events" => encode(ai_voice_events(memory, decode(value)?)?),
+        "ai.voice.ack" => encode(ai_voice_ack(memory, decode(value)?)?),
+        "ai.voice.usage" => encode(ai_voice_usage(memory, decode(value)?)?),
+        "ai.voice.tool" => encode(ai_voice_tool(memory, decode(value)?)?),
+        "ai.voice.end" => encode(ai_voice_end(memory, decode(value)?)?),
+        "ai.voice.close" => encode(ai_voice_close(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -12371,6 +12593,28 @@ pub fn vault_gate_checker_set(
     )
     .map_err(crate::memory::MemoryError::from)
 }
+pub fn vault_learning_read(
+    memory: &Memory<'_>,
+    input: crate::learning::doors::LearningReadRequest,
+) -> MemoryResult<crate::learning::doors::LearningCellView> {
+    crate::learning::doors::read_learning_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.learning.read")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_learning_projection(
+    memory: &Memory<'_>,
+    input: crate::learning::doors::LearningProjectionRequest,
+) -> MemoryResult<crate::learning::doors::LearningProjectionView> {
+    crate::learning::doors::learning_projection_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.learning.projection")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
 pub fn vault_settings_learning(
     memory: &Memory<'_>,
     input: crate::learning_setting_doors::LearningSettingsRequest,
@@ -13028,6 +13272,16 @@ pub fn vault_task_types_get(
         input,
     )
 }
+pub fn vault_agents_spawn_get(
+    memory: &Memory<'_>,
+    input: crate::team::doors::PlannedSpawnRead,
+) -> MemoryResult<crate::team::doors::PlannedSpawnObservation> {
+    crate::team::doors::observe_spawn_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.agents.spawn.get")?,
+        input,
+    )
+}
 pub fn vault_workspace_establish(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::WorkspacePresetRequest,
@@ -13569,6 +13823,54 @@ pub fn vault_receipts_context(
     input: crate::receipt::CallReceiptRequest,
 ) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
     memory.context_emit_receipt(&input.receipt_ref)
+}
+pub fn ai_voice_start(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceSession> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.start", &input)
+}
+pub fn ai_voice_audio(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceAudioRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.audio", &input)
+}
+pub fn ai_voice_events(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceEventsRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceEvents> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.events", &input)
+}
+pub fn ai_voice_ack(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceAckRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.ack", &input)
+}
+pub fn ai_voice_usage(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceUsageRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceUsage> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.usage", &input)
+}
+pub fn ai_voice_tool(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceToolRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceToolReply> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.tool", &input)
+}
+pub fn ai_voice_end(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.end", &input)
+}
+pub fn ai_voice_close(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::LiveVoiceSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::LiveVoiceProcessed> {
+    crate::task_verb::sdk::host_only(memory, "ai.voice.close", &input)
 }
 pub fn ai_options(
     memory: &Memory<'_>,

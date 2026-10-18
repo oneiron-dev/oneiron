@@ -12,6 +12,7 @@
 //! before the work. Patterns are compared at equal budget, in Phase 2;
 //! nothing here adds a runtime task kind.
 
+mod door_reads;
 pub mod doors;
 pub mod market;
 pub mod observations;
@@ -24,9 +25,13 @@ pub mod run_binding;
 pub mod stack;
 
 pub use doors::{
-    FIXTURE_TREE_VERSION_MAX, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin,
-    TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TypeStamp,
-    pin_tree_as, read_tree_as,
+    BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation,
+    FIXTURE_TREE_VERSION_MAX, LaunchedMember, LearningCellView, LearningEvidenceView,
+    LearningObservation, ObservationIssue, PlanObservation, PlannedSpawnObservation,
+    PlannedSpawnRead, ProviderPinView, ResolvedTeam, RouteObservation, RouteStampState,
+    SkillRevisionView, SpawnPhase, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin,
+    TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView,
+    TeamBindingView, TeamReceiptView, TypeStamp, observe_spawn_as, pin_tree_as, read_tree_as,
 };
 pub use market::{
     LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind,
