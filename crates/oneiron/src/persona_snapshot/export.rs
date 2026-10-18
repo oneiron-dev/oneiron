@@ -71,9 +71,8 @@ impl crate::Vault {
         owner: Option<&AuthenticatedOwner>,
     ) -> Result<PersonaSnapshotArtifact> {
         let mut txn = self.store.env.write_txn()?;
-        let artifact = self.export_persona_snapshot_in_txn(
-            &mut txn, compile, strikes, consent, owner,
-        )?;
+        let artifact =
+            self.export_persona_snapshot_in_txn(&mut txn, compile, strikes, consent, owner)?;
         txn.commit()?;
         Ok(artifact)
     }

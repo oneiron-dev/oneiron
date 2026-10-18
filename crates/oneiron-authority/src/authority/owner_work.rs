@@ -17,8 +17,13 @@
 //!
 //! The first kind is a world's key work ([`OwnerWorkBody::WorldKey`]): ensure
 //! the world's key after a settings edit, or re-assert the executor's own
-//! keys of it after a pin change ([`WorldKeyMode`]). Each later kind (bundle
-//! publication, custody control, a root request) adds one [`OwnerWorkBody`]
+//! keys of it after a pin change ([`WorldKeyMode`]). A root request
+//! ([`OwnerWorkBody::Root`]) asks one install, its target, to change its own
+//! recovery root ([`RootChange`]); it names ids only, never a seed, piece,
+//! passphrase, code or carry list, which only the target receives. A bundle
+//! publication ([`OwnerWorkBody::PublishBundle`]) asks one install that holds
+//! every world's key to publish the vault's sealed bundle to the home its
+//! act targets. Each later kind (custody control) adds one [`OwnerWorkBody`]
 //! variant with its [`OwnerWorkKind`], the [`OwnerActKind`] its act carries
 //! and the wire map it states under `work`; the request and result envelopes
 //! stay as they are.
@@ -35,6 +40,8 @@ pub const OP_KIND_OWNER_WORK_RESULT: &str = "owner_work_result";
 const REQUEST_KEYS: [&str; 5] = [OP_KEY_KIND, "carrier", OP_KEY_ACT, "executor", "work"];
 const RESULT_KEYS: [&str; 4] = [OP_KEY_KIND, "request", "executor", "outcome"];
 const WORLD_KEY_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "mode"];
+const ROOT_WORK_KEYS: [&str; 4] = [OP_KEY_KIND, "change", "root", "machine"];
+const PUBLISH_BUNDLE_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "home"];
 const OUTCOME_KEYS: [&str; 2] = [OP_KEY_KIND, "reason"];
 
 /// What kind of work a request asks for: the `kind` of its `work` map.
@@ -46,6 +53,10 @@ pub enum OwnerWorkKind {
     /// A world's key work: mint its first key, or wrap its current key to
     /// every reader its settings allow.
     WorldKey,
+    /// A change to one install's own recovery root, done on that install.
+    Root,
+    /// A publication of the vault's sealed bundle to one home.
+    PublishBundle,
 }
 
 impl OwnerWorkKind {
@@ -54,6 +65,8 @@ impl OwnerWorkKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::WorldKey => "world_key",
+            Self::Root => "root",
+            Self::PublishBundle => "publish_bundle",
         }
     }
 
@@ -62,6 +75,8 @@ impl OwnerWorkKind {
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "world_key" => Some(Self::WorldKey),
+            "root" => Some(Self::Root),
+            "publish_bundle" => Some(Self::PublishBundle),
             _ => None,
         }
     }
@@ -70,7 +85,8 @@ impl OwnerWorkKind {
     #[must_use]
     pub fn act(self) -> OwnerActKind {
         match self {
-            Self::WorldKey => OwnerActKind::WorldKeyRequest,
+            Self::WorldKey | Self::PublishBundle => OwnerActKind::WorldKeyRequest,
+            Self::Root => OwnerActKind::RootRequest,
         }
     }
 }
@@ -112,6 +128,86 @@ impl WorldKeyMode {
     }
 }
 
+/// The context a root request's `seen` is hashed under: one kind's revision
+/// never stands for another's ([`act_revision`]).
+pub const ROOT_WORK_REVISION_CONTEXT: &[u8] = b"oneiron/root-work-revision/v1";
+
+/// The context a bundle publication's `seen` is hashed under: the vault-wide
+/// world policy revision the deciding surface showed ([`act_revision`]).
+pub const BUNDLE_PUBLISH_REVISION_CONTEXT: &[u8] = b"oneiron/bundle-publish-revision/v1";
+
+/// The change a root request asks of its target install: the `change` of its
+/// `work` map. Ids only: the seed, kit pieces, passphrase, enrolment code and
+/// carried machines a change needs reach the target alone, in the call that
+/// does it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum RootChange {
+    /// Pin `root` on the target.
+    Pin { root: RecoveryRootId },
+    /// Activate a new root on the target, through its kit's issue and
+    /// confirm.
+    Activate,
+    /// Restore the world keys wrapped to `root` on the target, from that
+    /// root's seed or kit.
+    Restore { root: RecoveryRootId },
+    /// Anchor `machine`'s enrolment with the seed of `root`, held on the
+    /// target.
+    Anchor {
+        root: RecoveryRootId,
+        machine: EntityId,
+    },
+}
+
+impl RootChange {
+    /// The wire tag.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pin { .. } => "pin",
+            Self::Activate => "activate",
+            Self::Restore { .. } => "restore",
+            Self::Anchor { .. } => "anchor",
+        }
+    }
+
+    /// The root the change binds; `None` for an activation, whose root the
+    /// target draws.
+    #[must_use]
+    pub fn root(self) -> Option<RecoveryRootId> {
+        match self {
+            Self::Pin { root } | Self::Restore { root } | Self::Anchor { root, .. } => Some(root),
+            Self::Activate => None,
+        }
+    }
+
+    /// The machine an anchoring marks.
+    fn machine(self) -> Option<EntityId> {
+        match self {
+            Self::Anchor { machine, .. } => Some(machine),
+            Self::Pin { .. } | Self::Activate | Self::Restore { .. } => None,
+        }
+    }
+
+    /// The change a wire tag and its fields name, each field present exactly
+    /// when the change states it; `None` otherwise.
+    fn from_parts(
+        name: &str,
+        root: Option<RecoveryRootId>,
+        machine: Option<EntityId>,
+    ) -> Option<Self> {
+        Some(match (name, root, machine) {
+            ("pin", Some(root), None) => Self::Pin { root },
+            ("activate", None, None) => Self::Activate,
+            ("restore", Some(root), None) => Self::Restore { root },
+            ("anchor", Some(root), Some(machine)) => Self::Anchor { root, machine },
+            _ => return None,
+        })
+    }
+}
+
 /// The work one request asks for. Closed: each kind is one variant, with the
 /// fields its own wire map states.
 #[derive(
@@ -123,6 +219,17 @@ pub enum OwnerWorkBody {
     /// is the world, and its `seen` is the world's `PolicyRevision` right
     /// after the edit: the revision the key work is for.
     WorldKey { mode: WorldKeyMode },
+    /// A change to the target install's own recovery root. The act's target
+    /// is that install, which is also the request's executor, and its `seen`
+    /// is the revision of the roots and of the target's standing the change
+    /// is for ([`ROOT_WORK_REVISION_CONTEXT`]).
+    Root { change: RootChange },
+    /// A publication of the vault's sealed bundle to `home`, the install that
+    /// keeps it. The act's target is `home`, and its `seen` is the vault-wide
+    /// world policy revision when the owner asked
+    /// ([`BUNDLE_PUBLISH_REVISION_CONTEXT`]), for audit only: the executor
+    /// seals to the policy current when it publishes. Ids only.
+    PublishBundle { home: EntityId },
 }
 
 impl OwnerWorkBody {
@@ -130,6 +237,8 @@ impl OwnerWorkBody {
     pub fn kind(&self) -> OwnerWorkKind {
         match self {
             Self::WorldKey { .. } => OwnerWorkKind::WorldKey,
+            Self::Root { .. } => OwnerWorkKind::Root,
+            Self::PublishBundle { .. } => OwnerWorkKind::PublishBundle,
         }
     }
 }
@@ -166,6 +275,16 @@ impl OwnerWorkRequest {
         if self.act.by != ActBy::Owner {
             return Err(invalid_authority());
         }
+        // A root change is done on the install it changes, and only there.
+        if matches!(self.work, OwnerWorkBody::Root { .. }) && self.act.target != self.executor {
+            return Err(invalid_authority());
+        }
+        // A publication's act targets the home it names.
+        if let OwnerWorkBody::PublishBundle { home } = self.work
+            && home != self.act.target
+        {
+            return Err(invalid_authority());
+        }
         Ok(())
     }
 
@@ -198,8 +317,12 @@ pub enum OwnerWorkRefusal {
     OwnerNotLive,
     /// The world is not a live WORLD row on the executor.
     WorldNotLive,
-    /// The executor is no longer an eligible reader of the world.
+    /// The executor is no longer an eligible reader of the world, or, for a
+    /// bundle publication, no longer holds every key the bundle seals.
     ExecutorNotReader,
+    /// The home a bundle publication names is no longer a linked install of
+    /// the vault.
+    HomeNotLinked,
 }
 
 impl OwnerWorkRefusal {
@@ -211,6 +334,7 @@ impl OwnerWorkRefusal {
             Self::OwnerNotLive => "owner_not_live",
             Self::WorldNotLive => "world_not_live",
             Self::ExecutorNotReader => "executor_not_reader",
+            Self::HomeNotLinked => "home_not_linked",
         }
     }
 
@@ -222,6 +346,7 @@ impl OwnerWorkRefusal {
             "owner_not_live" => Self::OwnerNotLive,
             "world_not_live" => Self::WorldNotLive,
             "executor_not_reader" => Self::ExecutorNotReader,
+            "home_not_linked" => Self::HomeNotLinked,
             _ => return None,
         })
     }
@@ -284,7 +409,9 @@ impl OwnerWorkResult {
 }
 
 /// Canonical field order: kind, carrier, act, executor, work; a world key
-/// work map is kind, then mode.
+/// work map is kind, then mode; a root work map is kind, change, root, then
+/// machine, each field the change does not state nil; a publication work map
+/// is kind, then home.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
     let work = match request.work {
         OwnerWorkBody::WorldKey { mode } => Value::Map(vec![
@@ -293,6 +420,32 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
                 Value::from(OwnerWorkKind::WorldKey.as_str()),
             ),
             (Value::from("mode"), Value::from(mode.as_str())),
+        ]),
+        OwnerWorkBody::Root { change } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OwnerWorkKind::Root.as_str()),
+            ),
+            (Value::from("change"), Value::from(change.as_str())),
+            (
+                Value::from("root"),
+                change
+                    .root()
+                    .map_or(Value::Nil, |root| binary_value(root.0)),
+            ),
+            (
+                Value::from("machine"),
+                change
+                    .machine()
+                    .map_or(Value::Nil, |machine| Value::from(machine.to_hex())),
+            ),
+        ]),
+        OwnerWorkBody::PublishBundle { home } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OwnerWorkKind::PublishBundle.as_str()),
+            ),
+            (Value::from("home"), Value::from(home.to_hex())),
         ]),
     };
     Value::Map(vec![
@@ -333,6 +486,29 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
                     .as_str()
                     .and_then(WorldKeyMode::from_name)
                     .ok_or_else(invalid_authority)?,
+            }
+        }
+        OwnerWorkKind::Root => {
+            validate_keys(work, &ROOT_WORK_KEYS)?;
+            let root = match required(work, "root")? {
+                Value::Nil => None,
+                value => Some(RecoveryRootId(decode_hash(value)?)),
+            };
+            let machine = match required(work, "machine")? {
+                Value::Nil => None,
+                value => Some(decode_canonical_id(value)?),
+            };
+            OwnerWorkBody::Root {
+                change: required(work, "change")?
+                    .as_str()
+                    .and_then(|name| RootChange::from_parts(name, root, machine))
+                    .ok_or_else(invalid_authority)?,
+            }
+        }
+        OwnerWorkKind::PublishBundle => {
+            validate_keys(work, &PUBLISH_BUNDLE_WORK_KEYS)?;
+            OwnerWorkBody::PublishBundle {
+                home: decode_canonical_id(required(work, "home")?)?,
             }
         }
     };

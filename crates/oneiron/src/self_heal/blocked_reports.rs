@@ -202,10 +202,7 @@ pub(crate) fn filed_by_run_in(
 /// The waiting issue filed under `receipt`, if the Coach has not settled
 /// it yet. The read-side companion of [`pending_blocked_issues`] for a
 /// caller's scoped inspection of one report.
-pub(crate) fn blocked_issue(
-    vault: &Vault,
-    receipt: &EntityId,
-) -> Result<Option<BlockedIssue>> {
+pub(crate) fn blocked_issue(vault: &Vault, receipt: &EntityId) -> Result<Option<BlockedIssue>> {
     let txn = vault.store.env.read_txn()?;
     PENDING.get(&vault.store, &txn, receipt)
 }

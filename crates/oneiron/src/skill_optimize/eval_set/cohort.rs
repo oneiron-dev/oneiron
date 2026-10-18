@@ -33,7 +33,7 @@ const MAX_REF_BYTES: usize = 256;
 pub(super) const MAX_REASON_BYTES: usize = 512;
 
 /// One date-cut cohort of sealed families for a seat.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EvalCohort {
     pub id: EntityId,
@@ -61,7 +61,7 @@ pub struct EvalCohort {
 /// The eval-authoring skill's decision to retire one cohort: its bounded
 /// reason, the skill revision and attempt that made it, and the exposure it
 /// read.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CohortRetirement {
     pub reason: String,
@@ -164,7 +164,11 @@ pub(super) fn retired_families_in_txn(
         .collect())
 }
 
-pub(in crate::skill_optimize) fn cohort_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<EvalCohort> {
+pub(in crate::skill_optimize) fn cohort_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<EvalCohort> {
     let raw = vault
         .store
         .vault_meta

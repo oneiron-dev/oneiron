@@ -84,9 +84,11 @@ impl ExecutorStorage<'_> {
     /// Lands one fold batch in one write: every accepted fold in `landed`
     /// becomes visible at once, and each failed mark keeps why. In base, a
     /// fold that keeps its words becomes a dependent of each of its sources,
-    /// in the same transaction. A session-bound run lands on the route it
-    /// captured at entry: in its room's overlay, or, for a room on record, in
-    /// base under the room's saver, as its epoch summaries do.
+    /// in the same transaction, and a self-written one declares its Dreamer
+    /// check there too (FIX 4465 B). A session-bound run lands on the route
+    /// it captured at entry: in its room's overlay, or, for a room on record,
+    /// in base under the room's saver, as its epoch summaries do. A room's
+    /// overlay fold declares no check: nothing of the room reaches base.
     pub(crate) fn land_code_run_folds(
         &self,
         run_id: EntityId,
@@ -96,7 +98,9 @@ impl ExecutorStorage<'_> {
         match self {
             Self::Canonical(vault) => vault.with_write_txn_grouped(|wtxn| {
                 let mut ledger = FOLDS.get(&vault.store, wtxn, &run_id)?.unwrap_or_default();
+                let checked = self_written(&ledger, &landed);
                 land_folds_in_base(&vault.store, wtxn, run_id, &mut ledger, landed, failed)?;
+                declare_fold_checks_in_txn(vault, wtxn, &ledger, &checked)?;
                 FOLDS.put(&vault.store, wtxn, &run_id, &ledger)
             }),
             Self::Session(binding) => binding.answered(|| match binding.route.target() {
@@ -120,6 +124,7 @@ impl ExecutorStorage<'_> {
                             // same room wrote.
                             let view = binding.session.read_view()?;
                             let mut ledger = FOLDS.get(&view, wtxn, &run_id)?.unwrap_or_default();
+                            let checked = self_written(&ledger, &landed);
                             land_folds_in_base(
                                 &vault.store,
                                 wtxn,
@@ -128,10 +133,44 @@ impl ExecutorStorage<'_> {
                                 landed,
                                 failed,
                             )?;
+                            declare_fold_checks_in_txn(vault, wtxn, &ledger, &checked)?;
                             FOLDS.put(&vault.store, wtxn, &run_id, &ledger)
                         })
                     }),
             }),
         }
     }
+}
+
+/// The folds of `landed` this write adds that a self writer wrote.
+fn self_written(ledger: &FoldLedger, landed: &[FoldRecord]) -> Vec<u64> {
+    landed
+        .iter()
+        .filter(|record| record.execution.is_some() && ledger.fold(record.fold).is_none())
+        .map(|record| record.fold)
+        .collect()
+}
+
+/// Declares the Dreamer check of each of `folds` that landed with its words,
+/// in the landing's own write under a key the fold fixes (FIX 4465 B).
+fn declare_fold_checks_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    ledger: &FoldLedger,
+    folds: &[u64],
+) -> Result<()> {
+    for fold in folds {
+        let Some(record) = ledger.fold(*fold) else {
+            continue;
+        };
+        if let (Some(execution), Some(_)) = (&record.execution, &record.summary) {
+            crate::dreamer_runner::maintenance::declare_compaction_check_in_txn(
+                vault,
+                wtxn,
+                crate::compaction::CompactionLanding::Fold { fold: *fold },
+                execution,
+            )?;
+        }
+    }
+    Ok(())
 }

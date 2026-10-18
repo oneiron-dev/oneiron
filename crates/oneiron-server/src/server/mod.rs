@@ -25,12 +25,14 @@ mod presence;
 mod read_shape;
 mod reader_runner;
 mod recall;
+mod recall_hyde;
 mod recall_rerank;
 mod resident_pump;
 mod run_host_door;
 mod space_move;
 mod tagging;
 mod wave_door;
+mod web_fetch;
 mod windows;
 
 pub(crate) use self::artifact_previews::ArtifactPreviews;

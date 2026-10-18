@@ -9,13 +9,42 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 822 code-mode rows (799 host rows, 23 run rows), 2787 declarations.
-// Replies: 735 fully typed, 83 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 911 code-mode rows (887 host rows, 24 run rows), 3063 declarations.
+// Replies: 820 fully typed, 87 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 101; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 102; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
+  type CommitmentObligorKind = "owner" | "agent" | "third_party";
+  type CommitmentObligor = { kind: CommitmentObligorKind; entity_ref: string };
+  type CommitmentContent = { text: string; payload_ref?: string | null };
+  type CommitmentQuotaWindow = { kind: "iso_week"; tz: string };
+  type CommitmentSchedule = { kind: "once"; due: number } | { kind: "interval"; period: number; anchor: number } | { kind: "quota"; count: number; window: CommitmentQuotaWindow } | { kind: "rrule"; rrule_string: string; tz: string };
+  type CommitmentStrength = "stated_intention" | "decision" | "commitment";
+  type CommitmentBirthKind = "run_tree_node" | "brief" | "surface_action";
+  type CommitmentBirthProvenance = { kind: CommitmentBirthKind; reference: string };
+  type CommitmentCreateRequest = { id?: string | null; obligor: CommitmentObligor; beneficiary: string; content: CommitmentContent; schedule: CommitmentSchedule; lead_seconds?: number | null; strength: CommitmentStrength; birth_provenance: CommitmentBirthProvenance; occurred_at: number; learned_at?: number | null; evidence_turn_refs: string[] };
+  type CommitmentStatus = "open" | "fulfilled" | "released" | "lapsed" | "superseded";
+  type CommitmentOccurrence = { due_at: number; window_start: number; window_end: number; ordinal: number };
+  type CommitmentFulfillmentSource = { kind: "user_done" } | { kind: "brief_completion"; brief_ref: string } | { kind: "checklist_tick" };
+  type CommitmentLifecycleReceipt = { fulfillment_source?: CommitmentFulfillmentSource | null; commitment_ref: string; status: CommitmentStatus; learned_at: number; evidence_turn_refs: string[] };
+  type CommitmentView = { commitment_ref: string; obligor: CommitmentObligor; beneficiary: string; content: CommitmentContent; schedule: CommitmentSchedule; lead_seconds?: number | null; strength: CommitmentStrength; status: CommitmentStatus; birth_provenance: CommitmentBirthProvenance; series_ref?: string | null; occurrence?: CommitmentOccurrence | null; occurred_at: number; learned_at: number; evidence_turn_refs: string[]; receipt: CommitmentLifecycleReceipt };
+  type CommitmentIndexOutcome = { outcome: "indexed"; project_at: number; next_due: number } | { outcome: "stored_rrule"; route: string };
+  type CommitmentCreateReceipt = { commitment: CommitmentView; index: CommitmentIndexOutcome };
+  type CommitmentRefRequest = { commitment_ref: string };
+  type CommitmentWakePhase = "lead" | "due";
+  type CommitmentWakeProposal = { proposal_ref: string; instance_ref: string; phase: CommitmentWakePhase; fire_at: number; due_at: number; occurred_at: number; idempotency_key: string; trigger_ref: string; verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; dedupe_key?: string | null; approval: string };
+  type CommitmentFulfillRequest = { commitment_ref: string; source: CommitmentFulfillmentSource; evidence_turn_refs: string[] };
+  type CommitmentCloseRequest = { commitment_ref: string; evidence_turn_refs: string[] };
+  type WebFetchRequest = { url: string };
+  type RendererKind = "readability" | "headless" | "firecrawl";
+  type FetchResult = { markdown: string; title: string; canonical_url: string; fetched_at: number; content_hash: string; renderer: RendererKind };
+  type CrawlScope = "same_site" | "cross_site";
+  type WebCrawlRequest = { seed_url: string; page_budget: number; scope?: CrawlScope };
+  type CrawlPageFailure = { url: string; reason: string };
+  type CrawlCompletion = { status: "complete" } | { status: "budget_exhausted"; unvisited_urls: string[] };
+  type CrawlResult = { pages: FetchResult[]; failed: CrawlPageFailure[]; completion: CrawlCompletion };
   type IssueCategory = "skill_defect" | "execution_lapse" | "discovery" | "environment" | "preference_shift" | "unclear";
   type ReportKind = "problem" | "proposal";
   type FeedbackProposal = { problem: string; fix: string };
@@ -396,6 +425,23 @@ declare namespace Sdk {
   type RetrievalWeightsView = { manifest_ref: string; body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsConfigureRequest = { expected_body_hash: string; weights: RetrievalWeights };
   type RetrievalWeightsReceipt = { configuration: RetrievalWeightsView; receipt_ref: string };
+  type GroundingContext = { bindings: Record<string, string> };
+  type HydeOptions = { channel_limit: number; retry_once: boolean };
+  type HydeHostConfig = { expander: string; grounding: GroundingContext; options: HydeOptions };
+  type HydeHostConfigureRequest = { binding?: HydeHostConfig | null };
+  type HydeHostConfiguration = { binding?: HydeHostConfig | null };
+  type HydeHostPendingRequest = { limit?: number | null };
+  type HydeRequest = { query: string; max_subqueries: number };
+  type HydeHostCandidate = { id: string; score: number; claim?: ClaimView | null };
+  type HydeHostInput = { stage: "expansion"; request: HydeRequest } | { stage: "evidence"; query: string; candidates: HydeHostCandidate[] };
+  type HydeHostWork = { request_id: string; expander: string; requested_at_ms: number; deadline_at_ms?: number | null; input: HydeHostInput };
+  type HydeExpansion = { grounded_query: string; hypothetical_answer: string; embedding: number[]; subqueries: string[] };
+  type EvidenceVerdict = "Sufficient" | { Insufficient: { gaps: string[] } };
+  type HydeHostAnswer = { stage: "expansion"; expansion: HydeExpansion } | { stage: "evidence"; verdict: EvidenceVerdict } | { stage: "failed"; reason: string };
+  type HydeHostCompleteRequest = { request_id: string; answer: HydeHostAnswer };
+  type HydeHostStatus = "pending" | "expired" | "completed" | "failed" | "discarded_deadline" | "cancelled";
+  type HydeHostReceipt = { request_id: string; expander: string; requested_at_ms: number; deadline_at_ms?: number | null; completed_at_ms?: number | null; status: HydeHostStatus; received_bytes: number };
+  type HydeHostReceiptRequest = { request_id: string };
   type VadAnnotationSource = "model_inference" | "user_self_report";
   type AffectAnnotationPut = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number; scope: ClaimScope; sensitivity?: number | null };
   type TaggingTurnRequest = { turn_ref: string };
@@ -421,6 +467,22 @@ declare namespace Sdk {
   type AffectClaimConsolidateRequest = { claim_ref: string };
   type AffectTurnEvidence = { turn_ref: string; vad: QueryAffect; source: VadAnnotationSource; annotated_at: number };
   type AffectClaimConsolidation = { claim_ref: string; vad?: QueryAffect | null; evidence_turns: AffectTurnEvidence[]; semantic_edges_updated: number; structural_edges_skipped: number; active_state_ref?: string | null; created_state_ref?: string | null; superseded_state_refs: string[] };
+  type CopingStrategy = "SitSel" | "SitMod" | "AttDep" | "CogChg" | "ResMod" | "ERFlex";
+  type CopingOutcomeRecordRequest = { affected_person_ref: string; baseline_turn_ref: string; later_turn_ref: string; strategy: CopingStrategy; confidence: number; scope: ClaimScope; sensitivity?: number | null };
+  type CopingVadDelta = { valence: number; arousal: number; dominance: number };
+  type CopingOutcomeView = { claim_ref: string; affected_person_ref: string; strategy_ref: string; strategy: CopingStrategy; vad_delta: CopingVadDelta; confidence: number; successful: boolean; observed_n: number; scope: ClaimScope; approval: string; source?: string | null; valid_from?: number | null; valid_to?: number | null; evidence_refs: string[]; made_by?: MadeBy | null };
+  type CopingOutcomeReceipt = { outcome: CopingOutcomeView; superseded_claim_refs: string[]; receipt_ref: string };
+  type CopingOutcomeUpdateRequest = { prior_claim_ref: string; baseline_turn_ref: string; later_turn_ref: string; confidence: number };
+  type CopingAggregateRequest = { affected_person_ref: string; scope?: ClaimScope | null };
+  type CopingAggregate = { affected_person_ref: string; outcomes: CopingOutcomeView[]; observed_n: number };
+  type StateWindow = { window_secs: number; expected_goal_completions: number; expected_engaged_days: number };
+  type ActionModeRule = { mode: string; min_index: number; max_index: number };
+  type ActionModePolicy = { window: StateWindow; rules: ActionModeRule[] };
+  type WellnessPolicyConfigureRequest = { policy?: ActionModePolicy | null };
+  type WellnessPersonRequest = { affected_person_ref: string };
+  type ModeGateInputs = { affect: number; goal_velocity: number; engagement: number };
+  type StateIndex = { value: number; inputs?: ModeGateInputs | null; claim?: string | null; observed_at?: number | null };
+  type WellnessProjection = { affected_person_ref: string; policy?: ActionModePolicy | null; state_index: StateIndex; mode?: ActionModeRule | null; coping: CopingAggregate; source_refs: string[]; receipt_ref?: string | null };
   type ClusterClaimInput = { claim_ref: string; embedding: number[] };
   type ClusterRequest = { claims: ClusterClaimInput[]; cohesion_threshold?: number | null };
   type ClusterPartition = { subject_ref: string; predicate_root: string; world_ref?: string | null; facet_ref?: string | null };
@@ -511,6 +573,10 @@ declare namespace Sdk {
   type CallTransport = "http_facade" | "mcp" | "ws";
   type CallOutcome = "ok" | { refused: { code: string } };
   type CallReceipt = { receipt_ref: string; at: number; transport: CallTransport; verb: string; actor_ref: string; actor_class: string; credential_ref?: string | null; outcome: CallOutcome; request_digest: string; result_digest?: string | null; action_digest?: string | null; served: string[]; served_records?: RecordRef[] };
+  type AdmissionStatusRequest = { intent_key: string };
+  type AdmissionStatus = { status: "queued" } | { status: "held"; reason?: string | null } | { status: "completed"; result_digest: string } | { status: "refused"; code: string; reason: string } | { status: "interrupted"; reason: string };
+  type AdmissionReceipt = { receipt_ref: string; intent_key: string; verb: string; request_digest: string; accepted_at: number; updated_at: number; state: AdmissionStatus };
+  type AdmissionReceiptsRequest = { intent_keys: string[] };
   type ExplainMemoryRequest = { entity: string; session_id?: string | null };
   type ExplainScoreEvidence = { result_id: string; final_rank: number; final_score: number; access_factor?: number | null; components: RetrievalScoreComponent[] };
   type ExplainMemoryReply = { id: string; run_id?: string | null; rank?: number | null; neighbor: boolean; tier?: string | null; hook?: string | null; score?: ExplainScoreEvidence | null };
@@ -753,6 +819,45 @@ declare namespace Sdk {
   type SkillOptimizeAxisView = { axis: string; before: number; after: number };
   type SkillOptimizeVerdictView = { id: EntityId; proposal: EntityId; skill: EntityId; disposition: string; accepted: boolean; before: number; after: number; goal_axes: SkillOptimizeAxisView[]; goal_revision: string; judge_revision?: string | null; cycle: string; held_out_receipts: string[]; held_out_count: number; held_out_digest: string; held_out_truncated: boolean; proposal_digest: string; target_digest: string; proposal_tier?: string | null; at: number };
   type SkillOptimizeResultView = { job_ref?: string | null; state?: string | null; kind?: string | null; last_error?: string | null; skill?: EntityId | null; proposal?: EntityId | null; proposal_lifecycle?: SkillLibraryLifecycle | null; incumbent_lifecycle?: SkillLibraryLifecycle | null; governance?: SkillGovernanceView | null; verdict?: SkillOptimizeVerdictView | null; verdicts: SkillOptimizeVerdictView[] };
+  type GoalInterviewTurns = { question: EntityId; answer: EntityId; draft: EntityId; confirmation: EntityId };
+  type GoalAxis = { name: string; measure: string; bound: string };
+  type GoalPreference = { prefer: string; over: string; reason: string };
+  type GoalExplorationBudget = { max_spend: number; exploration_slice: number; unit: LeaseUnit; human_minutes: number };
+  type GoalRecord = { goal: string; why: string; primary_axes: GoalAxis[]; floor_axes: GoalAxis[]; cost_axes: GoalAxis[]; preferences: GoalPreference[]; exploration_budget: GoalExplorationBudget };
+  type ProjectGoalIntakeCompleteRequest = { project_ref: EntityId; attempt_ref: EntityId; turns: GoalInterviewTurns; record: GoalRecord };
+  type ProjectGoalIntakeReceipt = { project_ref: EntityId; goal_claim: EntityId; record: GoalRecord };
+  type ProjectRefRequest = { project_ref: string };
+  type ProjectGoalView = { project_ref: EntityId; goal_claim?: EntityId | null; record?: GoalRecord | null };
+  type SkillOptimizeProposeRequest = { skill: EntityId; expected_version: string; attempt_ref: EntityId; desc: string; rationale: string };
+  type SkillOptimizeProposalReceipt = { skill: EntityId; proposal: EntityId };
+  type SkillOptimizeMeasureRequest = { proposal: EntityId; pulls_per_axis?: number | null };
+  type AxisScores = { before: number; after: number };
+  type SkillEditPreflight = { passed: boolean; goal_revision: string; offline: [string, AxisScores][]; honesty: AxisScores };
+  type ConfidenceInterval = { lower: number; upper: number };
+  type OnlineAxisOutcome = "candidate_better" | "incumbent_better" | "inconclusive";
+  type OnlineAxisMeasurement = { axis: string; before_pulls: number; after_pulls: number; before: ConfidenceInterval; after: ConfidenceInterval; human_minutes: AxisScores; before_timed: number; after_timed: number; outcome: OnlineAxisOutcome };
+  type GoalAxisReport = { held_out_receipts: string[]; offline: [string, AxisScores][]; online: OnlineAxisMeasurement[]; human_minutes?: AxisScores | null };
+  type SkillOptimizeMeasurement = { preflight: SkillEditPreflight; report?: GoalAxisReport | null };
+  type SkillOptimizeProposalRequest = { proposal: EntityId };
+  type SkillOptimizeGoalRequest = { skill: EntityId };
+  type GoalAxisKind = "primary" | "floor" | "cost";
+  type GoalAxisSpec = { name: string; kind: GoalAxisKind };
+  type SkillOptimizeGoalView = { goal_id: EntityId; goal_revision: string; axes: GoalAxisSpec[]; project?: EntityId | null; goal_claim?: EntityId | null };
+  type SkillOptimizeGoalBindRequest = { skill: EntityId; project?: EntityId | null };
+  type SkillOptimizeGoalRevision = { goal_revision: string };
+  type TradeoffChoice = "approve" | "reject";
+  type TradeoffRule = { gains: string[]; losses: string[]; choice: TradeoffChoice };
+  type DecisionBand = { low: number; high: number };
+  type SkillTradeoffPreferences = { revision: EntityId; responsible: EntityId; rules: TradeoffRule[]; learned: TradeoffRule[]; jev_band?: DecisionBand | null };
+  type SkillOptimizePreferencesSetRequest = { skill: EntityId; rules: TradeoffRule[]; jev_band?: DecisionBand | null };
+  type TradeoffRole = { author: EntityId } | { board: { project: EntityId; people: EntityId[] } } | { vault_owner: EntityId[] };
+  type GoalAxisScore = { kind: GoalAxisKind; before: number; after: number };
+  type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; project?: EntityId | null; roles: TradeoffRole[]; proposal: EntityId; proposal_digest: string; target_digest: string; evidence_digest: string; world_digest: string; axes: Record<string, GoalAxisScore>; gains: string[]; losses: string[] };
+  type ProviderPin = { rung: DecisionRung; model: string; version: string };
+  type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin };
+  type SkillTradeoffAsk = { pending: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number };
+  type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk };
+  type SkillOptimizeTradeoffPickRequest = { proposal: EntityId; question_digest: string; choice: TradeoffChoice };
   type SkillGovernanceSetRequest = { entity: EntityId; tier?: string | null };
   type HubHookBindRequest = { pack: string };
   type HookActorClass = "human" | "agent" | "system";
@@ -762,7 +867,11 @@ declare namespace Sdk {
   type HookSelector = { verbs: string[]; actors: HookActorClass[]; scope?: string | null; phase: HookPhase; priority: number; budget_ms: number; blocking: boolean; outcomes: HookOutcomeKind[]; served?: string[]; render_class?: HookRenderClass };
   type HookAuthor = { kind: "owner" } | { kind: "foreign_actor"; actor_kind: string; identity: string; hub: string; grant: string; actor: string };
   type PackHookBinding = { version: number; code: string; owner: string; source: string; pack: string; hook: string; hook_version: string; body_hash: string; selector: HookSelector; enabled: boolean; author: HookAuthor };
-  type HubHookBindingRow = { id: EntityId; binding: PackHookBinding };
+  type HookGrant = { reader: string; reader_class: HookActorClass; predicates?: string[]; worlds?: string[] };
+  type HubHookBindingRow = { id: EntityId; binding: PackHookBinding; grant: HookGrant };
+  type HookGrantSetRequest = { binding: EntityId; grant: HookGrant };
+  type HookGrantView = { binding: EntityId; grant: HookGrant };
+  type HookGrantRequest = { binding: EntityId };
   type HubHookQualifyRequest = { source: EntityId };
   type FactSource = "claim_changelog" | "settlement";
   type FactPositionHex = string;
@@ -908,7 +1017,7 @@ declare namespace Sdk {
   type SharedActPrecedence = "vault_only" | "holder_may_narrow";
   type SharedActPolicy = { wait_secs: number; objector_roles: FederationGrantRole[]; initiator_roles: FederationGrantRole[]; policy_editor_roles: FederationGrantRole[]; required_verb: string; starter_may_object: boolean; max_act_name_bytes: number; max_payload_bytes: number; precedence: SharedActPrecedence };
   type SharedActPoliciesView = { vault_id: string; shipped: Record<string, SharedActPolicy>; overrides: Record<string, SharedActPolicy>; effective: Record<string, SharedActPolicy>; policy_hash: string };
-  type SharedActPolicyProposeRequest = { vault_id: string; act: string; policy?: SharedActPolicy | null; expected_policy_hash: string };
+  type SharedActPolicyProposeRequest = { vault_id: string; act: string; policy: SharedActPolicy | null; expected_policy_hash: string };
   type SharedActPolicyChangeState = "pending" | "applied" | "vetoed" | "stale";
   type SharedActPolicyChange = { id: string; vault_id: string; act: string; policy?: SharedActPolicy | null; base_policy_hash: string; proposer: string; proposed_at: number; approvals: string[]; vetoed_by?: string | null; state: SharedActPolicyChangeState; settled_at?: number | null; awaiting?: string[] };
   type SharedActPolicyAnswerRequest = { change_id: string; approve: boolean };
@@ -971,6 +1080,13 @@ declare namespace Sdk {
   type TrustedContactDeliverRequest = Record<string, never>;
   type TrustedContactNoticeAuthorization = { origin: "ask"; ask_ref: string } | { origin: "policy"; row_ref: string; tier: TrustedContactTier };
   type TrustedContactDeliveryReceipt = { fire_ref: string; person_ref: string; contact_ref: string; version: number; channel: string; verb: string; authorization: TrustedContactNoticeAuthorization; fact: TrustedContactConcernFact; outcome: string; gate_decision_id?: string | null; gate_outcome: string; gate_reason_codes: string[]; receipt_id: string; occurred_at: number; provider_ref?: string | null; delivery_may_have_occurred: boolean };
+  type GuestDocumentShareRequest = { grant_ref: EntityId; world_ref: EntityId; window_key: string; facets?: EntityId[]; bands?: SelectorRange[] };
+  type GuestDocumentContext = { pact: string; epoch: number; ceiling: Scope; effective_scope: FederationDirectionScope };
+  type AuthorityVaultId = number[];
+  type FederationGrantScope = { Vault: { vault_id: number } } | { Ask: { ask_ref: EntityId } } | { Connect: { peer_vault_id: AuthorityVaultId } };
+  type GuestShareEnvelopeBody = { scope: FederationGrantScope; member_ref: EntityId; selector: number[]; window_key: string; update: number[] };
+  type GuestShareEnvelope = { body: GuestShareEnvelopeBody; signature: number[] };
+  type GuestDocumentEnvelope = { context: GuestDocumentContext; envelope: GuestShareEnvelope; signer: string; signature: number[] };
   type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null };
   type GuestPactStanding = "unpacted" | "active" | "suspended" | "promoted" | "disconnected" | "dissolved";
   type NotRecallable = boolean;
@@ -1041,6 +1157,8 @@ declare namespace Sdk {
   type DeleteReceipt = { existed: boolean; reason: string; receipt_ref?: string | null };
   type EraseSameBytesRow = { record: string; outcome: string; receipt?: DeleteReceipt | null; reason?: string | null; act_id?: string | null; error?: string | null };
   type RecordEraseOutcome = { first: DeleteReceipt; first_act?: string | null; same_bytes: EraseSameBytesRow[] };
+  type RecordEraseSweepRequest = { receipt_ref: string };
+  type RecordEraseSweep = { receipt_ref: string; request_id: string; requested_at: number; sweep_queued_at?: number | null; deadline_at?: number | null; sweep_complete_at?: number | null };
   type ResearchChildWire = { root: EntityId; parent: EntityId; agent: EntityId; intent_key: string; briefing: string };
   type ResearchChildReceipt = { root: EntityId; parent: EntityId; child: EntityId };
   type ResearchArchiveWire = { root: EntityId };
@@ -1127,6 +1245,38 @@ declare namespace Sdk {
   type EvalCohortSetup = { inventory_at: number; inventory_digest: string; families?: FamilyDecision[]; cases?: CaseDecision[]; cuts: CutDecision[] };
   type EvalAuthoringSkip = { item: string; reason: string };
   type EvalAuthoringReport = { families_assigned: number; families_extended: number; cases_recorded: number; cases_reused: number; labels_added: number; cohorts_cut: EntityId[]; cuts_with_coverage_gaps: number; cohorts_retired: EntityId[]; cohorts_kept: number; skipped: EvalAuthoringSkip[] };
+  type EvalAuthorNowRequest = Record<string, never>;
+  type EvalAuthoringRef = { attempt: EntityId };
+  type EvalAuthoringResult = { attempt: EntityId; state: AttemptState; terminal: boolean; last_error?: string | null };
+  type EvalSeatRequest = { seat: EvalSeat };
+  type SourceFamily = { id: EntityId; seat: EvalSeat; purpose: FamilyPurpose; roots: string[]; assigned_at: number };
+  type DerivationKind = "receipt" | "repair" | "paraphrase" | "summary" | "translation" | "synthetic" | "rubric";
+  type EvalCaseLineage = { case: EntityId; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number };
+  type EvalFamilyView = { family: SourceFamily; effective_purpose: FamilyPurpose; feeds_training: boolean; rows: EvalCaseLineage[] };
+  type EvalFamilyAssignRequest = { seat: EvalSeat; roots: string[]; purpose: FamilyPurpose };
+  type EvalCasesRequest = { seat: EvalSeat; purpose: FamilyPurpose };
+  type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number };
+  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[] };
+  type EvalCaseDraft = { seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number };
+  type CohortRetirement = { reason: string; skill: EntityId; revision: string; attempt: EntityId; exposure: EvalExposureCounts };
+  type EvalCohort = { id: EntityId; seat: EvalSeat; from: number; until: number; families: EntityId[]; cases: EntityId[]; membership_digest: string; rubric_revision: string; reference: boolean; cut_at: number; retired_at?: number | null; retirement?: CohortRetirement | null };
+  type EvalCutAuthor = { kind: "skill"; attempt: EntityId; skill: EntityId; revision: string } | { kind: "owner"; person: EntityId };
+  type AuditCase = { case: EntityId; family: EntityId; receipts: string[]; parents: EntityId[]; assigned_purpose: FamilyPurpose; effective_purpose: FamilyPurpose };
+  type AuditMethodPin = { name: string; revision: number; normalizer: string; shingle_size: number; threshold: number };
+  type NearCopyFlag = { member_case: EntityId; other_case: EntityId; score: number; intersection: number; union: number };
+  type CoverageGap = { case: EntityId; source?: string | null };
+  type AuditCoverage = { complete: boolean; gaps: CoverageGap[] };
+  type EvalCutAudit = { cohort: EntityId; seat: EvalSeat; cut_at: number; rubric_revision: string; membership_digest: string; author: EvalCutAuthor; inventory_digest: string; members: AuditCase[]; compared: AuditCase[]; method: AuditMethodPin; comparisons: number; flags: NearCopyFlag[]; coverage: AuditCoverage };
+  type EvalCohortView = { cohort: EvalCohort; exposure: EvalExposureCounts; audit?: EvalCutAudit | null };
+  type EvalExposureKind = "candidate" | "query" | "promotion";
+  type EvalCohortOpenRequest = { cohort: EntityId; kind: EvalExposureKind; consumer: string; candidate_pin?: string | null };
+  type EvalExposure = { id: EntityId; cohort: EntityId; kind: EvalExposureKind; consumer: string; candidate_pin?: string | null; at: number };
+  type EvalRelease = { exposure: EvalExposure; cases: EvalCase[] };
+  type EvalCohortRef = { cohort: EntityId };
+  type EvalExposureLedger = { cohort: EntityId; counts: EvalExposureCounts; servings: EvalExposure[] };
+  type EvalBlockedLabelsRequest = { seat?: EvalSeat | null; decision?: string | null };
+  type EvalLabelAsk = { id: EntityId; seat: EvalSeat; case: EntityId; decision: string; responsible: EntityId; option_a: string; option_b: string; minutes: number; asked_at: number; delivered_at?: number | null; chosen?: string | null; answered_at?: number | null };
+  type EvalLabelPickRequest = { decision: string; case: EntityId; choose_b: boolean };
   type OfferListRequest = { seat?: EvalSeat | null; pending_only?: boolean };
   type OfferModelPin = { model: string; revision: string; content_hash?: string | null };
   type OfferCandidate = { stock: { model: OfferModelPin; licence: string; source: string } } | { train_recipe: { base: OfferModelPin; recipe_ref: string; licence: string } };
@@ -1151,14 +1301,8 @@ declare namespace Sdk {
   type OfferCandidateSetup = { seat: EvalSeat; incumbent: OfferModelPin; candidate: OfferCandidate; destination: ComputeDestination };
   type OfferCandidateRecord = { id: EntityId; setup: OfferCandidateSetup; at: number };
   type OfferPilotPrepare = { candidate: EntityId; cohort: EntityId };
-  type EvalExposureKind = "candidate" | "query" | "promotion";
-  type EvalExposure = { id: EntityId; cohort: EntityId; kind: EvalExposureKind; consumer: string; candidate_pin?: string | null; at: number };
   type OfferPilotMeasurement = { sufficiency: SufficiencyInput; receipt_refs: string[]; currency: string; one_off_cost?: number | null; incumbent_score?: number | null; candidate_score?: number | null };
   type OfferPilot = { id: EntityId; candidate: EntityId; exposure: EvalExposure; membership_digest: string; rubric_revision: string; families: number; floor_slices: Record<string, number>; prepared_at: number; measurement?: OfferPilotMeasurement | null; card?: SufficiencyCard | null; completed_at?: number | null };
-  type DerivationKind = "receipt" | "repair" | "paraphrase" | "summary" | "translation" | "synthetic" | "rubric";
-  type EvalLabel = { kind: EvalLabelKind; value: string; reference: string; weight: number; at: number };
-  type EvalCase = { id: EntityId; family: EntityId; seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number; recorded_at: number; labels: EvalLabel[] };
-  type EvalRelease = { exposure: EvalExposure; cases: EvalCase[] };
   type OfferPilotPrepared = { pilot: OfferPilot; release: EvalRelease };
   type OfferPilotComplete = { pilot: EntityId; measurement: OfferPilotMeasurement };
   type OfferPilotRef = { pilot: EntityId };
@@ -1300,8 +1444,6 @@ declare namespace Sdk {
   type ImageBox = { top: number; bottom: number; left: number; right: number };
   type ImagePoint = { x: number; y: number };
   type DecisionAnswer = { kind: "noul"; value: boolean } | { kind: "choice"; value: string } | { kind: "score"; value: number } | { kind: "box"; value: ImageBox | null } | { kind: "point"; value: ImagePoint | null } | { kind: "abstain" };
-  type ProviderPin = { rung: DecisionRung; model: string; version: string };
-  type DecisionBand = { low: number; high: number };
   type EvidenceVersion = { id: string; body_hash: number[] };
   type PairedReading = { provider: ProviderPin; question: string; question_version: number; probability: number };
   type StopCause = "done" | "deadline" | "provider_failure";
@@ -1498,6 +1640,19 @@ declare namespace Sdk {
   type LensProposalState = "proposed" | "active";
   type LensListRow = { lens_ref: string; pack_name: string; skill_id: string; pack_content_hash: string; compiled_hash: string; kit_version: number; apps_contract_version: number; proposed_by: string; proposed_at: number; state: LensProposalState; mounted: boolean; compiled?: GeneratedLens | null };
   type LensListPage = { rows: LensListRow[]; next_after?: string | null };
+  type LensSelectionRange = { start: number; end: number; version?: number[] | null };
+  type LensSelectRequest = { cardId: string; atomId: string; handle: string; span?: LensSelectionRange | null };
+  type LensReadReach = "claim_set" | "entity_set" | "timeline" | "query_result";
+  type LensSelectedSpan = { start: number; end: number; version: number[]; startCursor: number[]; endCursor: number[] };
+  type LensSelection = { selectionRef: string; cardId: string; atomId: string; reach: LensReadReach; targetKind: LensBackingTargetKind; shortRef: string; span?: LensSelectedSpan | null };
+  type LensSelectionResolveRequest = { cardId: string; selectionRef: string };
+  type LensSelectionResolved = { selection: LensSelection; source: InspectionResolved };
+  type GeneratedUiStatePatch = { op: "add"; path: string; value: SelfUiStateValue } | { op: "replace"; path: string; value: SelfUiStateValue } | { op: "remove"; path: string };
+  type GeneratedUiActionEvent = { cardId: string; elementId: string; actionId: string; patch?: GeneratedUiStatePatch[]; occurredAt: number };
+  type GeneratedUiResultSetSelection = { mode: "explicit"; row_ids: string[] } | { mode: "all_within_filter" };
+  type GeneratedUiResultSetActionEvent = { action: GeneratedUiActionEvent; selection: GeneratedUiResultSetSelection };
+  type LensResultSetActionRequest = { event: GeneratedUiResultSetActionEvent; selected: string[]; idempotencyKey: string };
+  type LensResultSetActionResult = { outcome: unknown; readReceipt: ScopedReadReceipt };
   type LensDossierSource = { entity_ref: string; title: string };
   type LensDefaultRequest = { title: string; ledger?: string[]; dossiers?: LensDossierSource[]; threads?: string[]; as_of?: number | null };
   type DisclosureOfferRequest = { contact: string; scope: Scope; purpose: string; channel: string; beneficiary: string; ask?: string | null; owner_ref: string; expires_at: number };
@@ -1535,6 +1690,16 @@ declare namespace Sdk {
   type SharedBriefCitation = { claim_ref: string; stale: boolean; drifted: boolean; redacted: boolean; confidence?: number | null; lifecycle?: string | null; quote?: string | null };
   type BornWith = Record<string, string>;
   type SharedBriefView = { share_ref: string; html: string; citations: SharedBriefCitation[]; born_with: BornWith };
+  type CompactionWindowMessage = { message_id: EntityId; turn_id: EntityId; content: string; turn: number; tokens: number };
+  type HostCompactRequest = { session_ref: EntityId; window: CompactionWindowMessage[]; keep_list: string[]; token_ceiling: number };
+  type HostCompactResult = { epoch: number; summary: EntityId; text: string; keep_list: string[]; first_turn: number; last_turn: number };
+  type HostWakeKind = "compaction" | "session_end" | "event" | "timer";
+  type HostWakeRequest = { wake_kind: HostWakeKind; queue_head: EntityId[] };
+  type HostWakeResult = { wake_kind: HostWakeKind; queue_head: EntityId[]; attempt: string; already_queued: boolean };
+  type BudgetExhaustionPolicy = { kind: "suspend" } | { kind: "continue_on_local" } | { kind: "overdraft"; cap: number };
+  type HostBudgetHitRequest = { seat: string; policy: BudgetExhaustionPolicy };
+  type HostBudgetAccounting = { line: SpendScope; root: SpendScope; spend: SpendRead };
+  type HostBudgetHitResult = { seat: string; policy: BudgetExhaustionPolicy; accounting: HostBudgetAccounting };
   type HooksReplayRequest = { binding: string; since?: string | null; limit?: number | null };
   type HookRegenBindingRequest = { binding: EntityId };
   type HookContractStamp = { verb_table: string; sandbox: string };
@@ -1633,6 +1798,18 @@ declare namespace Sdk {
   type CodeMutationState = "prepared" | "applied" | "failed";
   type CodeMutationEntry = { repo_ref: string; seq: number; operation_kind: string; operation_subject?: string | null; actor?: EntityId | null; session?: EntityId | null; started_at_ms: number; finished_at_ms?: number | null; pre_action_fork_hash: string; expected_post_action_fork_hash?: string | null; status: CodeMutationState; failure?: string | null };
   type CodeMutationLog = { repo: EntityId; entries: CodeMutationEntry[] };
+  type ForeignCodeRunRequest = { source: string; reads?: string[] };
+  type ForeignCodeTier = "foreign";
+  type ForeignCodeRead = { reference: string; path: string };
+  type ForeignCodeOutput = { path: string; bytes: number[] };
+  type ForeignCodeSource = "generated";
+  type ForeignCodeApproval = "proposed";
+  type CodeFileEdit = { path: string; start: number; end: number; expected: string; replacement: string; new_path?: string | null };
+  type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
+  type ForeignCodeEffect = { kind: "file_write"; path: string; bytes: number[] } | { kind: "file_edit"; path: string; base_content_hash: string; edit: CodeFileEdit } | { kind: "file_delete"; path: string } | { kind: "file_rename"; from: string; to: string } | { kind: "directory_opaque"; path: string } | { kind: "claim_candidate"; claim: ClaimInput };
+  type ForeignCodeProposal = { proposal_ref: string; receipt_ref: string; actor_ref: string; source: ForeignCodeSource; approval: ForeignCodeApproval; effect: ForeignCodeEffect };
+  type ForeignCodeIsolation = { backend: string; runtime: string; image: string; argv_digest: string; network: string; generation: string; fence_proven: boolean };
+  type ForeignCodeRunResult = { run_id: string; actor_ref: string; tier: ForeignCodeTier; linked_imports: string[]; reads: ForeignCodeRead[]; done: boolean; observation: string; outputs: ForeignCodeOutput[]; proposals: ForeignCodeProposal[]; isolation: ForeignCodeIsolation; receipt_ref: string };
   type CodeRunModelHealCountRequest = { model_id: string };
   type CodeRunModelHealCountView = { model_id: string; healed_turns: number };
   type CodeWaitTarget = { run_id: EntityId; wait_id: EntityId; generation: number; step_hash: string; effect_digest: string };
@@ -1908,7 +2085,7 @@ declare namespace Sdk {
   type TaskAskLaunchHold = { launch_ref: EntityId; plan_digest: string; surface_ref: string; denied: boolean };
   type TaskAskReceipt = { handle: TaskAskHandle; task_refs: EntityId[]; hold?: TaskAskHoldReason | null; idempotent_replay: boolean; statement?: FanoutStatement | null; task_records: RecordRef[]; launch?: TaskAskLaunchHold | null };
   type TaskWaitRequest = { handle: TaskAskHandle; step_key: string };
-  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team";
+  type SelfEffect = "AgentsSpawn" | "TasksAsk" | "TasksWait" | "TasksRefuse" | "ConsultResult" | "SkillsCall" | "MemorySearch" | "MemoryWriteFixture" | "MemoryPutClaim" | "MemorySupersedeClaim" | "MemoryPutEdge" | "Ask" | "DestructiveFixture" | "OutboundFixture" | "TaskDelegate" | "Context" | "Speak" | "Think" | "Express" | "ReportBlocked" | "AgentsPut" | "InferenceDefaultsRead" | "InferenceDefaultsReplace" | "WakePolicyWrite" | "AgentVerb" | "ConnectorAnswer" | "WorldPrivacySet" | "Fold" | "ReaderSpawn" | "ReaderReport" | "TasksWaitSet" | "Summarize" | "Leader" | "LeaderSplit" | "Team";
   type SelfDurableWaitReason = "HumanInput" | "DestructiveEffect" | "OutboundEffect" | "PeerResult";
   type SelfDurableWait = { wait_id: EntityId; effect: SelfEffect; reason: SelfDurableWaitReason; prompt?: string | null };
   type TaskAskWait = { Pending: { trap_ref: string } } | { Changed: { voided: EntityId[]; generation: number } } | { Ready: TaskAskResult } | { Park: SelfDurableWait };
@@ -1961,7 +2138,7 @@ declare namespace Sdk {
   type ProjectRevisionHash = number[];
   type ProjectParentWitness = { project: EntityId; head: ProjectRevisionHash; leader: EntityId };
   type ScopeResource = { kind: "bucket"; key: string } | { kind: "document_version"; document: string; version: string } | { kind: "projection"; key: string };
-  type ScopeScope = { world?: string | null; facet?: string | null; relationship?: string | null; project?: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
+  type ScopeScope = { world: string | null; facet: string | null; relationship: string | null; project: string | null; readable: ScopeResource[]; writable: ScopeResource[] };
   type ProjectAuthority = { parents: string[]; parent_heads?: ProjectParentWitness[]; claims_scope_ref: string; slice: ScopeScope; depth_limit: number; depth_remaining: number; leader: string; board: string[]; roster?: string[] | null };
   type ProjectAnchor = { authority: ProjectAuthority; proof?: ProjectWriteProof | null };
   type ProjectProofVersion = "v2" | "v3";
@@ -1986,8 +2163,6 @@ declare namespace Sdk {
   type JoinDecisionView = { state: JoinDecision; consents: ConsentSet; participation?: JoinParticipation | null };
   type JoinOutcome = { join_ref: string; decision: JoinDecisionView; receipt_ref?: string | null };
   type ProjectRosterWriteOutcome = { installed: boolean; invitations: JoinOutcome[] };
-  type ProjectRefRequest = { project_ref: string };
-  type GoalPreference = { prefer: string; over: string; reason: string };
   type ProjectGoalRevisionProposal = { project: EntityId; goal_claim: EntityId; preference: GoalPreference; question_digest: string; picked_by: EntityId; at: number };
   type ProjectGoalInterviewContext = { goal_claim?: EntityId | null; generation: number; card_seed?: ProjectGoalDraft | null; revision_proposals: ProjectGoalRevisionProposal[] };
   type JoinRequest = { room: EntityId; branch?: EntityId | null; subject: JoinSubject; paid: boolean; spend_scope?: SpendScopeId | null; intent_key: string };
@@ -2208,7 +2383,7 @@ declare namespace Sdk {
   type RoleHolder = { actor: string; kind: HolderKind };
   type ResolvedRole = { role: AskRole; holders: RoleHolder[] };
   type AskAnswer = { answer: DecisionAnswer; answered_at: number; by: string; role: AskRole; kind: HolderKind; changed: boolean; reason?: string | null; rule?: HostRuleRef | null };
-  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation?: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null };
+  type DecisionAsk = { seq: number; id: string; asked_at: number; question: DecisionQuestion; principal: string; evidence: string[]; reason: HumanAskReason; prior?: AskPrior | null; queue_pin: ProviderPin; to: AskTo; correlation: string | null; role?: ResolvedRole | null; answer?: AskAnswer | null; withdrawn_at?: number | null };
   type DecisionAskClimbRequest = { seq: number };
   type ConnectorListRequest = { query?: string | null };
   type ConnectorEntry = { name: string; connector: string; summary: string; verbs: string[]; call_class: string; registered_at: number };
@@ -2263,19 +2438,35 @@ declare namespace Sdk {
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
   type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
-  type ClaimInput = { id?: string | null; predicate: string; subject_ref: string; value: unknown; confidence: number; source: string; world_ref?: string | null; relationship_ref?: string | null; scope?: unknown | null; valid_from?: number | null; valid_to?: number | null; occurred_at?: number | null; learned_at?: number | null; salience?: number | null };
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
   type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest;
   type EventTypeKey = string;
+  type TimeRangeWire = { start: number; end: number };
+  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
+  type LocalMinuteWindow = { start_minute: number; end_minute: number };
+  type ConstraintTimeRangeWire = { start: number; end: number };
+  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window: ConstraintTimeRangeWire | null; allow_flex_pool: boolean };
+  type BookingConstraintInput = { kind: "object"; value: ConstraintObject } | { kind: "free_text"; value: string };
+  type BookingAvailabilityInput = { event_type: EventTypeKey; window: TimeRangeWire; visitor_tz: string; constraint?: BookingConstraintInput | null; session_ref: string };
+  type BookingAvailabilityRequest = { op: "availability"; page_token: string; input: BookingAvailabilityInput };
+  type RankedSlot = { start_utc: number; end_utc: number; rank: number };
+  type SelectedSlot = { start_utc: number; end_utc: number };
+  type BookingBookResult = { stage: "held"; result: { hold_token: string; selected_slot: SelectedSlot; expires_at: number } } | { stage: "confirmed"; result: { reschedule_token: string; cancel_token: string } } | { stage: "slot_taken"; result: { alternatives: RankedSlot[] } };
+  type BookingOperationResponse = { op: "availability"; result: { slots: RankedSlot[]; flex_used: boolean } } | { op: "book"; result: BookingBookResult } | { op: "reschedule"; result: { reschedule_token: string } } | { op: "cancel"; result: { cancel_token: string } };
+  type BookingHoldInput = { event_type: EventTypeKey; selected_slot: SelectedSlot; visitor_tz: string; constraint?: ConstraintObject | null; session_ref: string; checkout_lease_token?: string | null; idempotency_key: string };
+  type BookingIntakeAnswer = { field_key: string; value: string };
+  type BookingConfirmInput = { hold_token: string; booker_email: string; intake: BookingIntakeAnswer[]; session_ref: string; idempotency_key: string };
+  type BookingBookInput = { stage: "hold"; input: BookingHoldInput } | { stage: "confirm"; input: BookingConfirmInput };
+  type BookingBookRequest = { op: "book"; page_token: string; input: BookingBookInput };
+  type BookingRescheduleInput = { reschedule_token: string; selected_slot: SelectedSlot; visitor_tz: string; idempotency_key: string };
+  type BookingRescheduleRequest = { op: "reschedule"; page_token: string; input: BookingRescheduleInput };
+  type BookingCancelInput = { cancel_token: string; idempotency_key: string };
+  type BookingCancelRequest = { op: "cancel"; page_token: string; input: BookingCancelInput };
   type BookingConstraintTurnWindow = { start: number; end: number };
   type BookingConstraintTurnInput = { event_type: EventTypeKey; window: BookingConstraintTurnWindow; visitor_tz: string; free_text: string; session_ref: string };
   type BookingConstraintTurnRequest = { page_token: string; turn: BookingConstraintTurnInput };
   type GeneratedUiCard = { protocolVersion: number; catalog: GeneratedUiCatalog; cardId: string; tree: GeneratedLens; actions: GeneratedUiActionDeclaration[]; $state: GeneratedUiStateSnapshot };
-  type ConstraintWeekday = "monday" | "tuesday" | "wednesday" | "thursday" | "friday" | "saturday" | "sunday";
-  type LocalMinuteWindow = { start_minute: number; end_minute: number };
-  type TimeRangeWire = { start: number; end: number };
-  type ConstraintObject = { schema_version: number; weekdays?: ConstraintWeekday[]; local_time_windows?: LocalMinuteWindow[]; utc_window?: TimeRangeWire | null; allow_flex_pool: boolean };
   type BookingConstraintHoldContext = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type ConstraintContinuation = { event_type: EventTypeKey; visitor_tz: string; constraint: ConstraintObject; session_ref: string };
   type BookingConstraintTurnResponse = { outcome: "slots"; card: GeneratedUiCard; flex_used: boolean; hold: BookingConstraintHoldContext } | { outcome: "continue_by_email"; continuation: ConstraintContinuation } | { outcome: "deflect"; card: GeneratedUiCard };
@@ -2284,6 +2475,19 @@ declare namespace Sdk {
   type CalendarInviteSurfaceMethod = "REQUEST" | "CANCEL";
   type CalendarInviteSurfaceInput = { method: CalendarInviteSurfaceMethod; uid: string; sequence: number; ics_blob_ref: string; recipient: string; mention?: MentionProvenance | null };
   type OutboundIntentReceipt = { intent_ref: string; outcome: string; gate_outcome?: string | null; gate_decision_ref?: string | null; gate_reason_codes: string[]; deduped: boolean };
+  type IcsFeedPollConfig = { secret_ref: string; system: string; cadence_min_seconds: number; cadence_max_seconds: number };
+  type CalendarIcsFeedConfigureRequest = { config: IcsFeedPollConfig };
+  type CalendarIcsPollResult = { state: "reenqueued"; next_not_before: number } | { state: "paused_needs_input"; inbox_exception_ref: string };
+  type IcsFeedCursorSnapshot = { etag?: string | null; last_complete_at?: number | null; paused: boolean; last_screen_verdict?: string | null };
+  type CalendarIcsPollCompletion = { poll_ref: string; completed_at: number; result: CalendarIcsPollResult; cursor?: IcsFeedCursorSnapshot | null };
+  type CalendarIcsFeedRegistration = { config: IcsFeedPollConfig; last_poll?: CalendarIcsPollCompletion | null };
+  type CalendarIcsFeedRequest = { system: string };
+  type CalendarIcsFeedStatus = { config: IcsFeedPollConfig; cursor?: IcsFeedCursorSnapshot | null; last_poll?: CalendarIcsPollCompletion | null };
+  type CalendarPassportReadRequest = { event_ref: string; system: string; uid: string };
+  type CalendarPassportDirection = "inbound" | "outbound" | "two_way";
+  type CalendarPassportPresence = "live" | "absent";
+  type CalendarPassportValue = { system: string; uid: string; last_sequence: number; content_hash: number[]; direction: CalendarPassportDirection; last_seen_at: number; presence: CalendarPassportPresence };
+  type CalendarPassportRevision = { claim_ref: string; event_ref: string; recorded_at: number; approval: string; lifecycle: string; stale: boolean; passport: CalendarPassportValue };
   type CalendarConnectorSeatConfig = { seat_ref: string; secret_ref: string; system: string; calendar_ref: string; cadence_jitter_min_seconds: number; cadence_jitter_max_seconds: number };
   type CalendarConnectorConfigureRequest = { config: CalendarConnectorSeatConfig; endpoint: string };
   type CalendarConnectorKillSwitchState = { killed_at: number; verbs_revoked: boolean; polling_stopped: boolean; reason_ref: string };
@@ -2550,6 +2754,27 @@ declare namespace Sdk {
   type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
   type ConsolidationEvidenceRequest = { source_refs: string[] };
+  type SieveEvidenceRequest = { turn: EntityId };
+  type SieveEvidenceCursor = { learned_at: number; turn: EntityId };
+  type SieveEvidenceView = { turn: EntityId; reading?: number[] | null; cursor?: SieveEvidenceCursor | null; owed: boolean; continuing: boolean };
+  type WakeCadenceRequest = Record<string, never>;
+  type AgentWakeRole = "companion" | "leader" | "worker";
+  type CadencePrecedence = "vault_floor" | "agent_override";
+  type AgentWakeTriggers = { cadence: boolean; surprise: boolean; agency: boolean; event: boolean };
+  type AgentWakePolicy = { absent_role: AgentWakeRole; precedence: CadencePrecedence; companion: AgentWakeTriggers; leader: AgentWakeTriggers; worker: AgentWakeTriggers };
+  type WeaveRecipePriority = "before_connector_event" | "after_connector_event";
+  type DreamerWakePolicy = { wake_grain_turns: number; agent_cadence: AgentWakePolicy; new_records: number; longest_wait_secs: number; nightly_secs: number; idle_secs: number; quiet_weave_secs: number; weave_recipe_priority: WeaveRecipePriority; surprise_permille: number };
+  type WakeIdleState = { running_turns: boolean; live_background_work: boolean; compute_available: boolean; last_inbound_at: number };
+  type WakeRecipe = "continuous" | "nightly" | "weave";
+  type WakePolicyDecision = "Silent" | { ArmIdle: { due_at: number } } | { Enqueue: { recipe: WakeRecipe } };
+  type WakeCadenceReceipt = { sequence: number; observed_at: number; previous_due_at?: number | null; boundary_reached: boolean; last_boundary_at?: number | null; idle: WakeIdleState; decision: WakePolicyDecision; wake?: EntityId | null; processed_change_id?: number[] | null };
+  type WakeRecipeInputView = { recipe: WakeRecipe; turn_count: number; record_count: number; nightly_count: number; after_turn?: number[] | null; after_record?: number[] | null; after_nightly?: number[] | null; through: number[]; observed_at: number };
+  type WakeCadenceView = { policy: DreamerWakePolicy; receipt?: WakeCadenceReceipt | null; pending: WakeRecipeInputView[] };
+  type WakeSettlementsRequest = { after?: EntityId | null; limit: number };
+  type WakeRecipeJobView = { attempt: EntityId; parent?: EntityId | null; kind: string; state: AttemptState; created_at: number; updated_at: number; actor?: EntityId | null; facet?: string | null; authority_receipt?: number[] | null; park_cause?: DreamerParkCauseView | null; parked_at?: number | null; result_ref?: string | null; conclusions: EntityId[] };
+  type WakeSettlementView = { wake: EntityId; input?: WakeRecipeInputView | null; settled: boolean; jobs: WakeRecipeJobView[] };
+  type WakeSettlementsPage = { wakes: WakeSettlementView[]; next?: EntityId | null };
+  type WakeSettlementRequest = { wake: EntityId };
   type SievePageRequest = { limit?: number | null };
   type SieveSpanView = { span: string; turn: string; source: string; start: number; end: number; kind: string; entity?: string | null; novel?: boolean | null; confidence: number; score: number; band: string; owed: string[]; queued_at: number; source_digest: string; policy_digest: string };
   type SieveQueuePage = { spans: SieveSpanView[]; skipped_unreadable: number; skipped_detached: number };
@@ -2726,6 +2951,53 @@ declare namespace Sdk {
   type FoldHistoryEpoch = { summary_ref: string; epoch: number; from: number; through: number; text?: string | null };
   type FoldHistoryStep = { step: number; code: string; console: string };
   type FoldHistory = { run: string; completed_steps: number; compacted_through?: number | null; state: FoldList; folds: FoldDescription[]; unfolds: FoldUnfold[]; epochs: FoldHistoryEpoch[]; steps: FoldHistoryStep[]; next?: number | null };
+  type RunReviewChange = { kind: "claim"; claim_ref: string } | { kind: "edge"; provenance_ref: string } | { kind: "note"; note_ref: string; fork_ref: string } | { kind: "topology"; event_ref: string } | { kind: "external_effect"; receipt_ref: string } | { kind: "delete"; entity_ref: string } | { kind: "erase"; entity_ref: string };
+  type RunReviewRequest = { run_id: string; changes: RunReviewChange[] };
+  type RunChangeVerdict = "landed" | "rejected" | "waiting" | "let_go";
+  type RunChangeOutcome = { change: string; verdict: RunChangeVerdict; receipt?: string | null };
+  type RunReviewExplainer = { text: string; read_refs: string[] };
+  type RunReview = { run_id: string; review_id: string; changes: RunChangeOutcome[]; explainer: RunReviewExplainer };
+  type RunSettleDecision = "approve" | "reject";
+  type RunSettleRequest = { review: RunReviewRequest; review_id: string; decision: RunSettleDecision };
+  type RunSettlementKind = "ProposalOutcome";
+  type RunAnsweredBy = { word_ref: string } | { row: string } | { grant: string };
+  type RunSettlementReason = "owner_approved" | "owner_rejected";
+  type RunSettlement = { kind: RunSettlementKind; run_id: string; receipt: string; changes: RunChangeOutcome[]; verdict: RunChangeVerdict; answered_by: RunAnsweredBy; reason: RunSettlementReason; summary: string; revert_handle: string };
+  type RunSettlementRequest = { run_id: string };
+  type RevertRunRequest = { run_id: string; changes?: string[] | null };
+  type RunCompensation = { change: string; receipt: string };
+  type RunNotUndoneReason = "one_way" | "backup_only" | "dependent" | "not_selected" | "not_landed";
+  type RunNotUndone = { change: string; reason: RunNotUndoneReason };
+  type RevertRunOutcome = { run_id: string; compensated: RunCompensation[]; not_undone: RunNotUndone[] };
+  type IdentityEvidence = { refs: EntityId[]; rationale: string };
+  type IdentitySurvivorshipPlan = "read_through";
+  type IdentityMergeRequest = { sources: EntityId[]; survivor: EntityId; evidence: IdentityEvidence; survivorship_plan: IdentitySurvivorshipPlan };
+  type ClaimSource = "user_stated" | "observed" | "inferred" | "imported" | "tool_output" | "generated";
+  type IdentityReassignmentItem = { kind: "claim"; claim: EntityId } | { kind: "edge"; source: EntityId; edge_kind: string; target: EntityId };
+  type IdentityReassignmentTarget = { kind: "head"; head: EntityId } | { kind: "facet"; index: number } | { kind: "residue" };
+  type IdentityReassignment = { item: IdentityReassignmentItem; target: IdentityReassignmentTarget };
+  type IdentityProposalOutcome = "approved_untouched" | "approved_amended" | "rejected";
+  type IdentityAmendment = { op: "merge"; sources: EntityId[]; survivor: EntityId; survivorship_plan: IdentitySurvivorshipPlan } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[] };
+  type IdentityEventAction = { op: "merge"; sources: EntityId[]; survivor: EntityId } | { op: "split"; entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number } | { op: "facet"; entity: EntityId; facets: EntityId[]; reassignment_map: IdentityReassignment[]; applied_assigned: number; applied_residue: number; forked: EntityId[] } | { op: "assert_distinct"; a: EntityId; b: EntityId; claim: EntityId } | { op: "undo"; target: EntityId } | { op: "proposal_resolution"; proposal: EntityId; outcome: IdentityProposalOutcome; op_kind: string; target_class: string; proposer: string; amendment?: IdentityAmendment | null } | { op: "proposal_cancellation"; proposal: EntityId; participant: EntityId };
+  type IdentityTopologyReceipt = { event: EntityId; seq: number; at: number; actor?: EntityId | null; source: ClaimSource; approval: ClaimApprovalStatus; confidence: number; evidence?: IdentityEvidence | null; action: IdentityEventAction; seen: string };
+  type IdentityLifecycle = "active" | "merged" | "split";
+  type IdentityTransition = { entity: EntityId; state: IdentityLifecycle };
+  type IdentityTopologyResult = { outcome: "applied"; receipt: IdentityTopologyReceipt; transitions: IdentityTransition[] } | { outcome: "parked"; receipt: IdentityTopologyReceipt } | { outcome: "noop" };
+  type IdentitySplitRequest = { entity: EntityId; heads: EntityId[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence };
+  type IdentityFacetSpec = { label: string };
+  type IdentityFacetRequest = { entity: EntityId; facets: IdentityFacetSpec[]; reassignment_map: IdentityReassignment[]; evidence: IdentityEvidence };
+  type IdentityAssertDistinctRequest = { a: EntityId; b: EntityId; reason: string };
+  type IdentityProposedOp = { op: "merge"; spec: IdentityMergeRequest } | { op: "split"; spec: IdentitySplitRequest };
+  type IdentityProposeRequest = { operation: IdentityProposedOp };
+  type IdentityUndoRequest = { event: EntityId; seen: string };
+  type IdentityEntityRequest = { entity: EntityId };
+  type IdentityResolution = { entity: EntityId; state: IdentityLifecycle; heads: EntityId[]; merged_into: EntityId[]; split_into: EntityId[]; facets: EntityId[]; assigned_claims: EntityId[]; ambiguous_residue: EntityId[]; remaining_claims: EntityId[] };
+  type IdentityEventRequest = { event: EntityId };
+  type IdentityProposalRuling = { ruling: "approve" } | { ruling: "amend_then_approve"; operation: IdentityAmendment } | { ruling: "reject" };
+  type IdentityProposalResolveRequest = { proposal: EntityId; seen: string; decision: IdentityProposalRuling };
+  type IdentityProposalResolutionResult = { receipt: IdentityTopologyReceipt; applied?: IdentityTopologyReceipt | null };
+  type IdentityPairRequest = { a: EntityId; b: EntityId };
+  type IdentityPairProposals = { a: EntityId; b: EntityId; proposals: EntityId[]; distinct_claims: EntityId[] };
   type LibraryFindInput = { site?: string | null; subgoal?: string | null };
   type LibraryFindOutput = { site: string; workflows: LibraryCard[] };
   type ProposeInput = { subgoal: string; params?: string[]; steps: BatchStep[]; postcondition: ExpectInput[]; args?: Record<string, string> };
@@ -2763,6 +3035,10 @@ declare namespace Sdk {
   type FoldUnfoldInput = { fold: string };
   type FoldUnfolded = { fold: string; from: number; through: number; unfolded_after_step: number };
   type FoldsInput = Record<string, never>;
+  type ConsultLandKind = { kind: "answer"; result_ref: EntityId; option?: TaskAskOptionId | null; evidence_refs: ConsultPayloadRef[] } | { kind: "abstain"; result_ref: EntityId; reason_ref: ConsultPayloadRef };
+  type ConsultLandSpend = { unit: LeaseUnit; units: number };
+  type ConsultLandRequest = { task_ref: EntityId; kind: ConsultLandKind; completed_at: number; measured_spend?: ConsultLandSpend | null };
+  type ConsultLandReply = { task_ref: EntityId; terminal: ConsultTerminalView; idempotent_replay: boolean };
   type TaskRefuseDomain = "bond" | "logistics";
   type TaskRefuseInput = { taskRef?: string | null; domain: TaskRefuseDomain; reasonRef: string; at?: number | null };
   type RefusalOutcome = "proceed" | "object" | "decline";
@@ -2789,7 +3065,7 @@ declare namespace Sdk {
   type TeamStartInput = { pattern: string; intentKey: string; members: TeamMemberInput[]; tournament?: string | null };
   type TeamPattern = "ceo_decides" | "committee" | "vote" | "market" | "rotation";
   type TeamMemberAnswer = { agent: string; attemptRef?: string | null; proposalRef?: string | null };
-  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; models: string[]; patternSkill?: string | null; replay: boolean };
+  type TeamRunAnswer = { verb: "started"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "proposed_widen"; teamRef: string; pattern: TeamPattern; members: TeamMemberAnswer[] } | { verb: "recorded"; teamRef: string; pattern: TeamPattern; width: number; belowFloor: boolean; models: string[]; patternSkill?: string | null; replay: boolean };
   type TeamDecisionInput = { kind: "leader" } | { kind: "chair" } | { kind: "vote"; tally: Record<string, number> } | { kind: "referee"; rule: string; signedAt: number };
   type TeamCoverageInput = { cellsFilled: number; cellsTotal: number };
   type TeamRecordInput = { teamRef: string; members: string[]; axis: TeamAxis; decidedBy: TeamDecisionInput; roles?: Record<string, number> | null; coverage?: TeamCoverageInput | null };
@@ -2878,6 +3154,14 @@ declare const calendar: {
     /** Writes a readable EVENT to the owner-installed CalDAV seat through the durable conditional-write outbox, never a blind overwrite. */
     write(input: Sdk.CalendarConnectorWriteRequest): Promise<Sdk.RemoteWriteReceipt | StoredResult>;
   };
+  ics: {
+    /** Installs one owner-authorized secret-ref ICS feed per system with the existing bounded poll cadence; configuration grants no import consent. */
+    configure(input: Sdk.CalendarIcsFeedConfigureRequest): Promise<Sdk.CalendarIcsFeedRegistration | StoredResult>;
+    /** Fetches the installed ICS feed through secret custody and the existing imported-claim gate, returning a durable completion barrier and cursor; failed or truncated fetches never mean absence. */
+    poll(input: Sdk.CalendarIcsFeedRequest): Promise<Sdk.CalendarIcsPollCompletion | StoredResult>;
+    /** Reads the installed ICS configuration, real cursor and last public poll completion under owner proof, never the secret URL. */
+    status(input: Sdk.CalendarIcsFeedRequest): Promise<Sdk.CalendarIcsFeedStatus | null | StoredResult>;
+  };
   imip: {
     /** Installs the host iMIP mail submission endpoint and custody name under owner proof; this configuration grants no invite consent or sending identity. */
     configure(input: Sdk.CalendarImipTransportConfig): Promise<Sdk.CalendarImipTransportConfig | StoredResult>;
@@ -2908,14 +3192,30 @@ declare const connector: { readonly [name: string]: { readonly [tool: string]: (
   /** One catalogued connector by name, removed ones included. */
   status(input: Sdk.ConnectorNameRequest): Promise<Sdk.ConnectorView | null | StoredResult>;
 };
+/** Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion. */
+declare function crawl(input: Sdk.WebCrawlRequest): Promise<Sdk.CrawlResult | StoredResult>;
 /** Describes one TASK as its card, a board card by key, the vault as its shape card (`vault: true`, ARCH-0070), a task highway handle as its status (`after` polls it), or the whole TASKS section when nothing is named. */
 declare function describe(input: Sdk.DescribeRequest & { fold: NonNullable<Sdk.DescribeRequest["fold"]> }): Promise<Sdk.FoldReply<Sdk.FoldDescription> | StoredResult>;
 declare function describe(input: Sdk.DescribeRequest): Promise<Sdk.TaskDescription | StoredResult>;
+/** Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent. */
+declare function execute_code(input: Sdk.ForeignCodeRunRequest): Promise<Sdk.ForeignCodeRunResult | StoredResult>;
 declare const feedback: {
   /** The owner previews the exact feedback bundle one report issue would send to its publisher: its subject, digest, destination and approval. */
   preview(input: Sdk.FeedbackPreviewRequest): Promise<Sdk.FeedbackSubjectPreview | StoredResult>;
   /** The owner sends exactly the previewed feedback bundle for one report issue to its publisher, once, through the ordinary outbound gate. */
   send(input: Sdk.FeedbackSendSubjectRequest): Promise<Sdk.FeedbackSubjectSent | StoredResult>;
+};
+/** Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links. */
+declare function fetch(input: Sdk.WebFetchRequest): Promise<Sdk.FetchResult | StoredResult>;
+declare const host: {
+  budget: {
+    /** Notifies a spent durable budget seat under Suspend, retaining the original line, root payer, cap and accounting for hook follow-up work. */
+    hit(input: Sdk.HostBudgetHitRequest): Promise<Sdk.HostBudgetHitResult | StoredResult>;
+  };
+  /** Compacts a conversation window on the configured cheap backend, preserving add-only hook pins through the existing gate and keyframe mint. */
+  compact(input: Sdk.HostCompactRequest): Promise<Sdk.HostCompactResult | StoredResult>;
+  /** Schedules the host wake through its typed trigger; pre-hook Skip keeps its reason and Timer includes the engine maintenance lanes. */
+  wake(input: Sdk.HostWakeRequest): Promise<Sdk.HostWakeResult | StoredResult>;
 };
 /** An ask's attributed partial words so far, then explicit unknowns at cutoff; reading it never settles the ask. */
 declare function peek(input: Sdk.TaskAskHandle): Promise<Sdk.TaskAskPersonEvidence[] | StoredResult>;
@@ -2929,6 +3229,12 @@ declare const reveal: ((input: Sdk.RevealRequest) => Promise<Sdk.RevealPending |
   wait(input: Sdk.RevealWaitRequest): Promise<Sdk.RevealWaitAnswer | StoredResult>;
 };
 declare namespace self {
+  const admission: {
+    /** Reconciles an exact authored set of invocation ids against the caller actor durable admission receipts in one snapshot, without duplicate outcomes or replay. */
+    receipts(input: Sdk.AdmissionReceiptsRequest): Promise<Sdk.AdmissionReceipt[] | StoredResult>;
+    /** Reads the durable queued, held or terminal receipt of one typed call under its invocation id, as its own actor; never submits or replays work. */
+    status(input: Sdk.AdmissionStatusRequest): Promise<Sdk.AdmissionReceipt | null | StoredResult>;
+  };
   const agents: {
     spawn(input: Sdk.AgentSpawnInput): Promise<Sdk.AgentSpawnOutput | StoredResult>;
   };
@@ -3154,6 +3460,9 @@ declare const tasks: {
   accept(input: Sdk.TaskAccept): Promise<Sdk.TaskCallReceipt | StoredResult>;
   /** Admits one person's word on an ask; the word is evidence, never approval. */
   answer(input: Sdk.TaskAnswerRequest): Promise<Sdk.TaskAskAnswer | StoredResult>;
+  consult: {
+    result(input: Sdk.ConsultLandRequest): Promise<Sdk.ConsultLandReply | StoredResult>;
+  };
   /** Mints one TASK and its realizing attempt when the actor's ceiling permits, or parks it as a proposal; an intent key with a typed brief posts it through the task highway. */
   create(input: Sdk.TaskCreateRequest): Promise<Sdk.TaskCreateReceipt | StoredResult>;
   /** Owner-scoped calibration pairs for an ask: each prediction against the outcome it was bound to. */
@@ -3175,6 +3484,26 @@ declare const vault: Sdk.VaultHost & {
     claims: {
       /** The owner consolidates a claim from stored TURN VAD evidence, updating only derived affect state and semantic-edge VAD through the existing engine transaction. */
       consolidate(input: Sdk.AffectClaimConsolidateRequest): Promise<Sdk.AffectClaimConsolidation | StoredResult>;
+    };
+    coping: {
+      /** Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs. */
+      aggregate(input: Sdk.CopingAggregateRequest): Promise<Sdk.CopingAggregate | StoredResult>;
+      /** Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded. */
+      record(input: Sdk.CopingOutcomeRecordRequest): Promise<Sdk.CopingOutcomeReceipt | StoredResult>;
+      /** Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs. */
+      update(input: Sdk.CopingOutcomeUpdateRequest): Promise<Sdk.CopingOutcomeReceipt | StoredResult>;
+    };
+    wellness: {
+      /** Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs. */
+      derive(input: Sdk.WellnessPersonRequest): Promise<Sdk.WellnessProjection | StoredResult>;
+      /** Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims. */
+      get(input: Sdk.WellnessPersonRequest): Promise<Sdk.WellnessProjection | StoredResult>;
+      policy: {
+        /** Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine. */
+        configure(input: Sdk.WellnessPolicyConfigureRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
+        /** Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent. */
+        get(input: Sdk.EmptyRequest): Promise<Sdk.ActionModePolicy | null | StoredResult>;
+      };
     };
   };
   agents: {
@@ -3350,10 +3679,18 @@ declare const vault: Sdk.VaultHost & {
   /** Commits up to 256 core entity puts atomically, at the grade of the credential that sent them; an embedded handle commits below owner grade. */
   batch(input: Sdk.CoreBatchWriteInput): Promise<Sdk.CoreBatchWriteReceipt | StoredResult>;
   booking: {
+    /** Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources. */
+    availability(input: Sdk.BookingAvailabilityRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
+    /** Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens. */
+    book(input: Sdk.BookingBookRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
+    /** Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision. */
+    cancel(input: Sdk.BookingCancelRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
     /** Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking. */
     constraint_turn(input: Sdk.BookingConstraintTurnRequest): Promise<Sdk.BookingConstraintTurnResponse | StoredResult>;
     /** The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority. */
     page_token(input: Sdk.BookingPageTokenRequest): Promise<Sdk.BookingPageTokenResponse | StoredResult>;
+    /** Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision. */
+    reschedule(input: Sdk.BookingRescheduleRequest): Promise<Sdk.BookingOperationResponse | StoredResult>;
   };
   budgets: {
     /** The owner reads a held run's notice, saved partial results, exact checkpoints and whether its existing lease permits resume. */
@@ -3388,6 +3725,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Expands an admitted stored master inside an inclusive UTC window under the caller's read scope, preserving UID and original-start identities and masking detached exceptions. */
     occurrences(input: Sdk.CalendarOccurrencesRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarOccurrenceView[]> | StoredResult>;
+    passports: {
+      /** Reads recorded passport revisions oldest first for one EVENT, system and UID, retaining explicit approval and lifecycle under the caller recorded-read gate. */
+      history(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision[]> | StoredResult>;
+      /** Reads the admitted passport head for one EVENT, system and UID through the caller scoped-read gate, including sequence, semantic hash, direction and presence. */
+      read(input: Sdk.CalendarPassportReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarPassportRevision | null> | StoredResult>;
+    };
     /** Reads one calendar EVENT under the caller's scoped read, with its mandatory narrowing receipt. */
     read(input: Sdk.CalendarReadRequest): Promise<Sdk.ScopedReadResult<Sdk.CalendarEventView | null> | StoredResult>;
     /** Searches calendar EVENTs by calendar, inclusive UTC range and name under the caller's scoped read, with its mandatory narrowing receipt. */
@@ -3640,6 +3983,22 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Commits claims through the gate, each element its own write; each answers its landed receipt, or its typed refusal and refusal receipt when nothing of it persisted. */
   commit(input: Sdk.ScopedCommitRequest): Promise<Sdk.CommitOutcome[] | StoredResult>;
+  commitments: {
+    /** Creates an authored commitment series and its due index atomically, without approving a reminder. */
+    create(input: Sdk.CommitmentCreateRequest): Promise<Sdk.CommitmentCreateReceipt | StoredResult>;
+    /** Explicitly confirms an obligation fulfilled with witness evidence through the existing fulfillment dispatcher. */
+    fulfill(input: Sdk.CommitmentFulfillRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    /** Reads a commitment with its schedule, birth provenance, separate occurrence and learning times, and lifecycle receipt. */
+    get(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    /** Lists the materialized occurrences of a commitment series, including closed obligations. */
+    instances(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentView[] | StoredResult>;
+    /** Observes real timer-wake reminder proposals and their run approval keys without authorizing delivery. */
+    proposals(input: Sdk.CommitmentRefRequest): Promise<Sdk.CommitmentWakeProposal[] | StoredResult>;
+    /** Explicitly releases an obligation with witness evidence and clears its due phases in the same transaction. */
+    release(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
+    /** Explicitly supersedes an obligation with witness evidence and clears its due phases in the same transaction. */
+    supersede(input: Sdk.CommitmentCloseRequest): Promise<Sdk.CommitmentView | StoredResult>;
+  };
   companions: {
     access_requests: {
       /** The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant. */
@@ -3842,12 +4201,41 @@ declare const vault: Sdk.VaultHost & {
     void(input: Sdk.EsignVoidRequest): Promise<Sdk.EsignDispatchView | StoredResult>;
   };
   evals: {
-    cohorts: {
+    /** Queue the production Coach eval-authoring pass, coalescing with nightly work; the caller supplies no plan, skill provenance or lease. */
+    author_now(input: Sdk.EvalAuthorNowRequest): Promise<Sdk.EvalAuthoringRef | StoredResult>;
+    authoring: {
+      /** Read the eval-authoring host attempt's actual state and terminal error; a completed pass may author nothing. */
+      result(input: Sdk.EvalAuthoringRef): Promise<Sdk.EvalAuthoringResult | null | StoredResult>;
+    };
+    /** Read development or judge-audit eval cases; sealed confirmation refuses and retired cohorts read as development, never training. */
+    cases: ((input: Sdk.EvalCasesRequest) => Promise<Sdk.EvalCase[] | StoredResult>) & {
+      /** Record a receipt, repair, paraphrase, summary, translation, synthetic or rubric case through the shared family-inheritance guard; no labels are invented. */
+      record(input: Sdk.EvalCaseDraft): Promise<Sdk.EvalCase | StoredResult>;
+    };
+    /** Read date-cut cohorts, the fixed reference, retirement decisions, exposure counts and near-copy audits; similarity flags review only. */
+    cohorts: ((input: Sdk.EvalSeatRequest) => Promise<Sdk.EvalCohortView[] | StoredResult>) & {
+      /** Count a candidate, query or promotion serving before releasing its sealed cohort in the same owner-validated transaction; retired cohorts refuse. */
+      open(input: Sdk.EvalCohortOpenRequest): Promise<Sdk.EvalRelease | StoredResult>;
       /** The owner sets up sealed cohorts from a pinned real inventory through the existing family, case and audited cut doors. Reports refused decisions; never serves sealed content or fabricates labels or skill provenance. */
       setup(input: Sdk.EvalCohortSetup): Promise<Sdk.EvalAuthoringReport | StoredResult>;
     };
+    /** Read a cohort's individual exposure ledger and independent candidate, query and promotion counts; unknown cohorts refuse. */
+    exposure(input: Sdk.EvalCohortRef): Promise<Sdk.EvalExposureLedger | StoredResult>;
+    /** Read a seat's family purposes, source roots, derivative lineage and dates, including retirement and training eligibility, without sealed labels. */
+    families: ((input: Sdk.EvalSeatRequest) => Promise<Sdk.EvalFamilyView[] | StoredResult>) & {
+      /** Assign source roots their fixed eval family and purpose before deriving cases; conflicting families, purposes or seats refuse. */
+      assign(input: Sdk.EvalFamilyAssignRequest): Promise<Sdk.SourceFamily | StoredResult>;
+    };
     /** The owner reads the metadata-only eval-authoring inventory: real receipt families, grounded case candidates, date-cut cohorts and exposure counts. Pin its built_at and digest for cohort setup. */
     inventory(input: Sdk.EvalInventoryWire): Promise<Sdk.EvalAuthoringInventory | StoredResult>;
+    labels: {
+      /** Read only unanswered eval-label asks for this owner, optionally by seat or blocked decision, with scoped cases and quoted human minutes; create no standing label session. */
+      blocked(input: Sdk.EvalBlockedLabelsRequest): Promise<Sdk.EvalLabelAsk[] | StoredResult>;
+      /** Record either option of the responsible owner's existing eval-label ask once; the same pick repeats safely and a conflicting second pick refuses. */
+      pick(input: Sdk.EvalLabelPickRequest): Promise<Sdk.EvalCase | StoredResult>;
+    };
+    /** Compute the existing sufficiency card from explicit family-grouped measurements; unknown never approves, creates a label ask or deploys. */
+    sufficiency(input: Sdk.SufficiencyInput): Promise<Sdk.SufficiencyCard | StoredResult>;
   };
   explain: {
     /** Why a write needed approval: the gate decision behind one gate receipt, its outcome, reason codes and cited policy rows; none when the caller may not read it. */
@@ -3936,9 +4324,15 @@ declare const vault: Sdk.VaultHost & {
     ask(input: Sdk.GraphAskRequest): Promise<Sdk.GraphAskOutcome | StoredResult>;
   };
   guests: {
-    /** The owner mints an ask guest's capability slip, bound to its grant, for the public key the guest generated on their own device. */
+    /** The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket. */
+    export_envelope(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
+    /** The owner mints an Ask or active Connect guest capability slip bound to its live grant and the public key generated by the guest on their own device. */
     mint_slip(input: Sdk.GuestSlipMintRequest): Promise<Sdk.GuestSlipMinted | StoredResult>;
+    /** The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused. */
+    reshare(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
     revoke(input: Sdk.GuestRevokeRequest): Promise<Sdk.GuestRevokeResponse | StoredResult>;
+    /** The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch. */
+    share(input: Sdk.GuestDocumentShareRequest): Promise<Sdk.GuestDocumentEnvelope | StoredResult>;
   };
   habits: {
     /** Appends one immutable check-in under a Habit TASK. */
@@ -3958,6 +4352,32 @@ declare const vault: Sdk.VaultHost & {
   };
   /** Hydrates short refs or hex ids to full entity views, with the read's receipt. */
   hydrate(input: Sdk.HydrateRequest): Promise<Sdk.ScopedReadResult<Sdk.EntityView[]> | StoredResult>;
+  identity: {
+    /** The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals. */
+    assert_distinct(input: Sdk.IdentityAssertDistinctRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+    events: {
+      /** The owner reads one topology decision with its actor, evidence, action and current decision revision. */
+      get(input: Sdk.IdentityEventRequest): Promise<Sdk.IdentityTopologyReceipt | StoredResult>;
+    };
+    /** The owner mints identity facets and forks assigned claims under their masks without restamping original claims. */
+    facet(input: Sdk.IdentityFacetRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+    /** The owner merges source identities into a survivor, retaining claim subjects and append-only evidence. */
+    merge(input: Sdk.IdentityMergeRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+    proposals: {
+      /** The owner reads open merge proposals and effective distinctness claims for an unordered identity pair. */
+      for_pair(input: Sdk.IdentityPairRequest): Promise<Sdk.IdentityPairProposals | StoredResult>;
+      /** The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision. */
+      resolve(input: Sdk.IdentityProposalResolveRequest): Promise<Sdk.IdentityProposalResolutionResult | StoredResult>;
+    };
+    /** The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals. */
+    propose(input: Sdk.IdentityProposeRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+    /** The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments. */
+    resolve(input: Sdk.IdentityEntityRequest): Promise<Sdk.IdentityResolution | StoredResult>;
+    /** The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map. */
+    split(input: Sdk.IdentitySplitRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+    /** The owner undoes one current topology event by appending a counter-event under its observed revision. */
+    undo(input: Sdk.IdentityUndoRequest): Promise<Sdk.IdentityTopologyResult | StoredResult>;
+  };
   images: {
     /** The full pixels behind an image's handle (the whole image, a crop or a zoom), recorded as a pull. */
     view(input: Sdk.ImageViewRequest): Promise<Sdk.PulledImage | StoredResult>;
@@ -4017,6 +4437,14 @@ declare const vault: Sdk.VaultHost & {
     list(input: Sdk.LensListRequest): Promise<Sdk.LensListPage | StoredResult>;
     /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal; it mounts only once the owner selects it. */
     propose(input: Sdk.LensProposeRequest): Promise<Sdk.LensProposalReceipt | StoredResult>;
+    /** Re-proves a host-issued selection on the caller's held card and reads its source with its pinned cursor span. */
+    resolve(input: Sdk.LensSelectionResolveRequest): Promise<Sdk.LensSelectionResolved | StoredResult>;
+    result_set: {
+      /** Re-proves the ticked rows or rendered predicate and their selected handles, then dispatches the declared result-set action through the caller's existing gate. */
+      action(input: Sdk.LensResultSetActionRequest): Promise<Sdk.LensResultSetActionResult | StoredResult>;
+    };
+    /** Selects a rendered atom or Unicode-scalar span under the caller's live key and holds its read handle on that card. */
+    select(input: Sdk.LensSelectRequest): Promise<Sdk.LensSelection | StoredResult>;
   };
   members: {
     /** The invitee accepts their own invitation and joins the shared vault at its role. */
@@ -4159,7 +4587,13 @@ declare const vault: Sdk.VaultHost & {
     hooks: {
       /** The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign. */
       bind(input: Sdk.HubHookBindRequest): Promise<Sdk.EntityId[] | StoredResult>;
-      /** Reads live pack hook bindings as the owner, excluding revoked foreign publisher grants. */
+      grant: {
+        /** Reads a live hook binding's effective read grant as the owner: its manual assignment, or the author's ceiling when none was set. */
+        get(input: Sdk.HookGrantRequest): Promise<Sdk.HookGrantView | StoredResult>;
+        /** The owner sets or changes a live hook binding's read grant; outcomes still run as the hook's author. Returns the assigned grant. */
+        set(input: Sdk.HookGrantSetRequest): Promise<Sdk.HookGrantView | StoredResult>;
+      };
+      /** Reads live pack hook bindings and their effective read grants as the owner, excluding revoked foreign publisher grants. */
       list(input: Sdk.EmptyRequest): Promise<Sdk.HubHookBindingRow[] | StoredResult>;
       /** The owner qualifies a Candidate hub hook pack by real sandbox replay; qualification does not consent to wider hooks. */
       qualify(input: Sdk.HubHookQualifyRequest): Promise<Sdk.HubHookQualificationReceipt | StoredResult>;
@@ -4231,8 +4665,13 @@ declare const vault: Sdk.VaultHost & {
     goal: {
       /** The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry. */
       dismiss(input: Sdk.ProjectGoalDismissRequest): Promise<Sdk.ProjectGoalDismissReceipt | StoredResult>;
+      /** Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it. */
+      get(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalView | StoredResult>;
       /** What a project's goal-intake interview starts from, for a member of its home room. */
-      intake(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalInterviewContext | StoredResult>;
+      intake: ((input: Sdk.ProjectRefRequest) => Promise<Sdk.ProjectGoalInterviewContext | StoredResult>) & {
+        /** Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal. */
+        complete(input: Sdk.ProjectGoalIntakeCompleteRequest): Promise<Sdk.ProjectGoalIntakeReceipt | StoredResult>;
+      };
       /** The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first. */
       revisions(input: Sdk.ProjectRefRequest): Promise<Sdk.ProjectGoalRevisionProposal[] | StoredResult>;
     };
@@ -4264,7 +4703,7 @@ declare const vault: Sdk.VaultHost & {
     /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
     schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };
-  /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
+  /** Recalls ranked memories under the caller scope; explicitly selected retained foreign worlds carry stale_since, age_secs, reason and pact_epoch metadata. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;
   /** Governance receipts newest first: the gate decision ledger, or the receipts of the named kinds. */
   receipts: ((input: Sdk.VaultReceiptsRequest) => Promise<Sdk.MemoryReceipt[] | StoredResult>) & {
@@ -4278,6 +4717,8 @@ declare const vault: Sdk.VaultHost & {
     erase_confirm(input: Sdk.RecordEraseConfirmRequest): Promise<Sdk.RecordEraseOutcome | StoredResult>;
     /** What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back. */
     erase_preview(input: Sdk.RecordEraseRequest): Promise<Sdk.RecordErasePreview | StoredResult>;
+    /** Read a redaction receipt's recorded historical-sweep deadline and linked completion as the owner; never starts a sweep. */
+    erase_sweep(input: Sdk.RecordEraseSweepRequest): Promise<Sdk.RecordEraseSweep | null | StoredResult>;
   };
   refs: {
     /** A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read. */
@@ -4377,6 +4818,18 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner exports finalized run evidence without query or pack text, raw frontier samples, trace keys or free-form outcome metadata. */
     export(input: Sdk.RetrievalDiagnosticRequest): Promise<Sdk.RetrievalDiagnosticExport | StoredResult>;
+    hyde: {
+      /** Completes one credential-bound host expansion or evidence assessment, or reports failure; late bytes are receipted and discarded. */
+      complete(input: Sdk.HydeHostCompleteRequest): Promise<Sdk.HydeHostReceipt | StoredResult>;
+      /** The owner binds or disables a host HyDE expander for paid recall; replacing the binding cancels unanswered work. */
+      configure(input: Sdk.HydeHostConfigureRequest): Promise<Sdk.HydeHostConfiguration | StoredResult>;
+      /** The owner reads the serving host HyDE binding, grounding and bounded retry options. */
+      get(input: Sdk.EmptyRequest): Promise<Sdk.HydeHostConfiguration | StoredResult>;
+      /** Lists pending expansion and evidence-assessment work for the same credential that called recall; free efforts enqueue nothing. */
+      pending(input: Sdk.HydeHostPendingRequest): Promise<Sdk.HydeHostWork[] | StoredResult>;
+      /** Reads one credential-bound host completion receipt, including expired work and late answers discarded at the recall deadline. */
+      receipt(input: Sdk.HydeHostReceiptRequest): Promise<Sdk.HydeHostReceipt | null | StoredResult>;
+    };
     outcomes: {
       /** The owner records a gate-attributed turn outcome for its exact contributing retrievalRunIds; the engine validates the links and shapes the reward. */
       end(input: Sdk.RetrievalEndOutcome): Promise<Sdk.RetrievalRunEvidence[] | StoredResult>;
@@ -4402,6 +4855,8 @@ declare const vault: Sdk.VaultHost & {
       get(input: Sdk.EmptyRequest): Promise<Sdk.RetrievalWeightsView | StoredResult>;
     };
   };
+  /** The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why. */
+  revert_run(input: Sdk.RevertRunRequest): Promise<Sdk.RevertRunOutcome | StoredResult>;
   rooms: {
     /** Claims one turn addressed to the caller for it to answer: claimed, held by another, or not addressed. */
     claim(input: Sdk.RoomClaimRequest): Promise<Sdk.RoomClaimOutcome | StoredResult>;
@@ -4457,6 +4912,12 @@ declare const vault: Sdk.VaultHost & {
     };
     /** Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run. */
     checkpoint(input: Sdk.CheckpointReadRequest): Promise<Sdk.CheckpointView | null | StoredResult>;
+    /** The owner reviews an explicit cross-kind set of existing changes, including child-job changes, with a content-bound review id and a derived explainer. */
+    review(input: Sdk.RunReviewRequest): Promise<Sdk.RunReview | StoredResult>;
+    /** The owner approves or rejects the exact reviewed set through each kind's existing gate and keeps its ProposalOutcome and run revert handle. */
+    settle(input: Sdk.RunSettleRequest): Promise<Sdk.RunSettlement | StoredResult>;
+    /** The owner reads the durable cross-kind ProposalOutcome of one reviewed job and its revert handle. */
+    settlement(input: Sdk.RunSettlementRequest): Promise<Sdk.RunSettlement | StoredResult>;
     /** Reads one committed model step of a Dreamer attempt by its job reference and step hash: the completion claim, the run identity it recorded and the stored response, without calling a model, spending a lease or admitting work. */
     step(input: Sdk.SettledStepRequest): Promise<Sdk.SettledStepView | null | StoredResult>;
   };
@@ -4565,6 +5026,13 @@ declare const vault: Sdk.VaultHost & {
     view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
   };
   sieve: {
+    /** Read the shared Dreamer/Coach wake policy, the production scheduler cadence receipt and pending recipe evidence ranges; do not tick, enqueue or call a model. */
+    cadence(input: Sdk.WakeCadenceRequest): Promise<Sdk.WakeCadenceView | StoredResult>;
+    /** Read the original TURN identity, sieve reading digest, evidence cursor and owed/continuing state as the owner. */
+    evidence: ((input: Sdk.SieveEvidenceRequest) => Promise<Sdk.SieveEvidenceView | StoredResult>) & {
+      /** Replay the same stored TURN through its owed sieve read under the owner proof; preserve every ingress identity and let the existing digest check decide whether evidence changed. */
+      replay(input: Sdk.SieveEvidenceRequest): Promise<Sdk.SieveEvidenceView | StoredResult>;
+    };
     /** The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id. */
     lease: ((input: Sdk.SieveLeaseRequest) => Promise<Sdk.SieveLeaseView | StoredResult>) & {
       /** The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice. */
@@ -4586,6 +5054,11 @@ declare const vault: Sdk.VaultHost & {
     };
     /** The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence. */
     retained(input: Sdk.SievePageRequest): Promise<Sdk.SieveRetainedPage | StoredResult>;
+    /** Page shared-scheduler root receipts and all Dreamer/Coach descendants, including exact conclusion identities, authority receipts, terminal states and durable parks. */
+    settlements: ((input: Sdk.WakeSettlementsRequest) => Promise<Sdk.WakeSettlementsPage | StoredResult>) & {
+      /** Read one shared-scheduler root and its complete descendant settlement; a completed dispatcher never implies its children completed. */
+      get(input: Sdk.WakeSettlementRequest): Promise<Sdk.WakeSettlementView | null | StoredResult>;
+    };
   };
   skill_hubs: {
     /** Reads one configured hub as the owner. */
@@ -4629,10 +5102,35 @@ declare const vault: Sdk.VaultHost & {
     /** Lists a page of the owner skill library, including inactive skills and their retained evidence. */
     list(input: Sdk.SkillLibraryListRequest): Promise<Sdk.SkillLibraryPage | StoredResult>;
     optimize: {
+      /** Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks. */
+      admit(input: Sdk.SkillOptimizeProposalRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      goal: {
+        /** Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision. */
+        bind(input: Sdk.SkillOptimizeGoalBindRequest): Promise<Sdk.SkillOptimizeGoalRevision | StoredResult>;
+        /** Reads the optimizer goal identity, effective axes, revision and joined project goal claim. */
+        get(input: Sdk.SkillOptimizeGoalRequest): Promise<Sdk.SkillOptimizeGoalView | StoredResult>;
+      };
+      /** Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms. */
+      measure(input: Sdk.SkillOptimizeMeasureRequest): Promise<Sdk.SkillOptimizeMeasurement | StoredResult>;
+      preferences: {
+        /** Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority. */
+        get(input: Sdk.SkillOptimizeGoalRequest): Promise<Sdk.SkillTradeoffPreferences | null | StoredResult>;
+        /** The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp. */
+        set(input: Sdk.SkillOptimizePreferencesSetRequest): Promise<Sdk.SkillOptimizeGoalRevision | StoredResult>;
+      };
+      /** Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules. */
+      propose(input: Sdk.SkillOptimizeProposeRequest): Promise<Sdk.SkillOptimizeProposalReceipt | StoredResult>;
       /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
       result(input: Sdk.SkillOptimizeResultRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      /** Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it. */
+      score(input: Sdk.SkillOptimizeProposalRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
       /** The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued. */
       start(input: Sdk.SkillOptimizeStartRequest): Promise<Sdk.SkillOptimizeStartReceipt | StoredResult>;
+      /** Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence. */
+      tradeoff_asks: ((input: Sdk.EmptyRequest) => Promise<Sdk.SkillOptimizeTradeoffAskView[] | StoredResult>) & {
+        /** Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant. */
+        pick(input: Sdk.SkillOptimizeTradeoffPickRequest): Promise<Sdk.SkillOptimizeResultView | StoredResult>;
+      };
     };
     outcomes: {
       /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */

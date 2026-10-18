@@ -10,7 +10,7 @@ use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbo
 use super::public_authority::booking_writer_with_publication;
 use super::storage::{
     HOLD, calendar_wrap, confirm_receipt_key, encode_claim_value, engine_failure, read_receipt,
-    read_txn, refused, revision_receipt_key, write_receipt,
+    refused, revision_receipt_key, write_receipt,
 };
 use super::token::{
     HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, hold_digest, lease_digest, mint_raw_token,
@@ -91,6 +91,7 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
 /// session-bound lease behind it.
 fn resolve_hold_expiry(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     session_key: &SessionKey,
     lease: &HoldLeaseSpec,
     now_utc: u64,
@@ -101,9 +102,8 @@ fn resolve_hold_expiry(
             server_issued_lease,
         } => {
             let digest = lease_digest(server_issued_lease);
-            let rtxn = read_txn(vault)?;
             let row: CheckoutLeaseRow = CHECKOUT_LEASE
-                .get(&vault.store, &rtxn, &digest)
+                .get(&vault.store, txn, &digest)
                 .map_err(|error| engine_failure("meta read", error))?
                 .ok_or_else(|| refused("checkout extension names no server-issued lease"))?;
             if row.session_hash != session_digest(session_key) {
@@ -130,29 +130,30 @@ pub(crate) fn execute_hold(
     now_utc: u64,
     public_authority: Option<&crate::booking::publication::PublicBookingAuthority>,
 ) -> Result<HoldReceipt, BookingError> {
-    let (expires_at, checkout_lease_hash) =
-        resolve_hold_expiry(vault, &spec.session_key, &spec.lease, now_utc)?;
     let token = OpaqueLifecycleToken(mint_raw_token());
-    let row = SoftHoldRow {
-        page_ref: spec.page_ref,
-        event_type: spec.event_type.clone(),
-        slot: spec.slot,
-        session_key: spec.session_key,
-        visitor_tz: spec.visitor_tz.clone(),
-        constraint: spec.constraint.clone(),
-        token_hash: token_digest(&token),
-        expires_at,
-        checkout_lease_hash,
-    };
     let digest = hold_digest(&spec.session_key);
-    booking_writer_with_publication(
+    let expires_at = booking_writer_with_publication(
         vault,
         public_authority,
         &BookingVerbRequest::Hold(spec.clone()),
         now_utc,
         |wtxn| {
+            let (expires_at, checkout_lease_hash) =
+                resolve_hold_expiry(vault, &*wtxn, &spec.session_key, &spec.lease, now_utc)?;
+            let row = SoftHoldRow {
+                page_ref: spec.page_ref,
+                event_type: spec.event_type.clone(),
+                slot: spec.slot,
+                session_key: spec.session_key,
+                visitor_tz: spec.visitor_tz.clone(),
+                constraint: spec.constraint.clone(),
+                token_hash: token_digest(&token),
+                expires_at,
+                checkout_lease_hash,
+            };
             HOLD.put(&vault.store, wtxn, &digest, &row)
-                .map_err(|error| engine_failure("meta write", error))
+                .map_err(|error| engine_failure("meta write", error))?;
+            Ok(expires_at)
         },
     )?;
     Ok(HoldReceipt {
