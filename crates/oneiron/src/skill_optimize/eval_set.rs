@@ -36,10 +36,15 @@
 //! rubric or canary moved. An unknown card never approves. Only a decision
 //! that waits on an unknown card may ask the owner for a label.
 //!
-//! Phase 1 builds the mechanism only. This module authors no case, runs no
-//! replay or judge, and holds no default generator, threshold or schedule.
+//! The mechanism itself authors no case. The Coach's eval-authoring pass
+//! (`authoring`) reads a metadata-only inventory, the shipped skill decides
+//! purposes, cases, cuts and retirements, and fixed code applies them through
+//! these doors; every cut commits with its near-copy audit (`cut_audit`).
+//! Nothing here runs a replay or a judge, and nothing holds a schedule.
 
+mod authoring;
 mod cohort;
+mod cut_audit;
 mod sufficiency;
 
 use std::collections::BTreeSet;
@@ -52,7 +57,19 @@ use crate::batch::secret_scan::admit_typed;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 
-pub use cohort::{EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease};
+pub use authoring::{
+    CandidateLabel, CaseDecision, CohortSummary, CutDecision, EvalAuthoringInventory,
+    EvalAuthoringPlan, EvalAuthoringReport, EvalAuthoringSkip, EvalCandidate, EvalCohortDecision,
+    EvalSourceGroup, FamilyDecision, PurposeCounts, SeatInventory, UncutFamily,
+    apply_eval_authoring_plan, eval_authoring_inventory,
+};
+pub use cohort::{
+    CohortRetirement, EvalCohort, EvalExposure, EvalExposureCounts, EvalExposureKind, EvalRelease,
+};
+pub use cut_audit::{
+    AuditCase, AuditCoverage, AuditMethodPin, CoverageGap, EvalCutAudit, EvalCutAuditDraft,
+    NearCopyFlag,
+};
 pub use sufficiency::{
     EvalLabelAsk, SufficiencyCard, SufficiencyInput, SufficiencyVerdict, UnknownReason,
     WaitingDecision, sufficiency_card,
@@ -251,6 +268,21 @@ fn root_key(seat: &EvalSeat, root: &str) -> Result<Vec<u8>> {
     .concat())
 }
 
+/// The family `root` belongs to for `seat`, on the caller's snapshot.
+pub(super) fn root_family_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seat: &EvalSeat,
+    root: &str,
+) -> Result<Option<EntityId>> {
+    vault
+        .store
+        .vault_meta
+        .get(txn, &root_key(seat, root)?)?
+        .map(|raw| id_of(&raw))
+        .transpose()
+}
+
 pub(super) fn family_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -421,10 +453,9 @@ impl Vault {
     /// An invalid seat, an unreadable row, or storage errors.
     pub fn eval_family_of_root(&self, seat: &EvalSeat, root: &str) -> Result<Option<SourceFamily>> {
         let txn = self.store.env.read_txn()?;
-        let Some(raw) = self.store.vault_meta.get(&txn, &root_key(seat, root)?)? else {
+        let Some(id) = root_family_in_txn(self, &txn, seat, root)? else {
             return Ok(None);
         };
-        let id = id_of(&raw)?;
         family_in_txn(self, &txn, &id)
     }
 

@@ -182,6 +182,8 @@ impl DreamerWakeDriver<'_> {
 
     /// Completes a try whose execution finished. A TASK's Done is judged by
     /// `exec`'s host first, as the resident pump judges its runs' (OF-533).
+    /// A TASK realization's confession is read before Done settles its TASK
+    /// and sealed once the try has closed (OF-544); neither can fail it.
     pub(super) async fn complete_attempt<E: DreamerAttemptExecutor + ?Sized>(
         &mut self,
         exec: &E,
@@ -193,6 +195,14 @@ impl DreamerWakeDriver<'_> {
                 Some(question) => exec.judge_done(question).await,
                 None => None,
             };
+        let confession = crate::dreamer_consolidation::task_realize_confession(
+            self.vault,
+            &admitted.status.attempt,
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(kind = ?error.kind(), "a TASK realization's confession was not read");
+            None
+        });
         let input = CompleteDreamerAttempt {
             id: admitted.status.attempt.id,
             lease_owner: admitted
@@ -208,9 +218,17 @@ impl DreamerWakeDriver<'_> {
         if let Some(lane) = &mut self.progress {
             self.store
                 .complete_with_progress(input, judged, &mut lane.producer, lane.ephemeral)?;
+            if let Some(confession) = &confession {
+                crate::dreamer_consolidation::seal_task_realize_confession(
+                    self.vault, confession, now,
+                );
+            }
             return Ok(());
         }
         self.store.complete_judged(input, judged)?;
+        if let Some(confession) = &confession {
+            crate::dreamer_consolidation::seal_task_realize_confession(self.vault, confession, now);
+        }
         Ok(())
     }
 

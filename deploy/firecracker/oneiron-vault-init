@@ -16,6 +16,7 @@ owner=""
 allowed_origins=""
 artifact_origin=""
 artifact_domains=""
+config=""
 for word in $(cat /proc/cmdline); do
   case "$word" in
     oneiron.vault=*) vault="${word#oneiron.vault=}" ;;
@@ -23,6 +24,7 @@ for word in $(cat /proc/cmdline); do
     oneiron.allowed_origins=*) allowed_origins="${word#oneiron.allowed_origins=}" ;;
     oneiron.artifact_origin=*) artifact_origin="${word#oneiron.artifact_origin=}" ;;
     oneiron.artifact_domains=*) artifact_domains="${word#oneiron.artifact_domains=}" ;;
+    oneiron.config=*) config="${word#oneiron.config=}" ;;
   esac
 done
 
@@ -35,6 +37,30 @@ if [ "$artifact_origin" = "1" ]; then
   set -- "$@" --artifact-http-socket /run/oneiron/artifacts.sock
   if [ -n "$artifact_domains" ]; then
     set -- "$@" --artifact-domains "$artifact_domains"
+  fi
+fi
+
+# The vault's managed settings, on the read-only third drive (/dev/vdc) when
+# the VM profile names a config_disk: each file present becomes its flag.
+if [ "$config" = "1" ]; then
+  mkdir -p /config
+  mount -t ext4 -o ro,noatime /dev/vdc /config
+  if [ -f /config/models.toml ]; then
+    set -- "$@" --models-file /config/models.toml
+  fi
+  for pair in key:--seal-key-file chain:--seal-chain-file trust:--seal-trust-file; do
+    if [ -f "/config/seal/${pair%%:*}.pem" ]; then
+      set -- "$@" "${pair#*:}" "/config/seal/${pair%%:*}.pem"
+    fi
+  done
+  if [ -f /config/seal/organ ]; then
+    set -- "$@" --seal-organ /config/seal/organ
+  fi
+  if [ -f /config/seal/tsa-url ]; then
+    set -- "$@" --seal-tsa-url "$(head -n 1 /config/seal/tsa-url)"
+  fi
+  if [ -f /config/seal/signing-url ]; then
+    set -- "$@" --seal-signing-url "$(head -n 1 /config/seal/signing-url)"
   fi
 fi
 
@@ -51,5 +77,6 @@ fi
 
 # The engine has drained and flushed. Ending PID 1 ends the VM.
 sync
+umount /config 2>/dev/null || true
 umount /vault || true
 reboot -f

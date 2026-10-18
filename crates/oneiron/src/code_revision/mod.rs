@@ -11,6 +11,9 @@ mod keys;
 mod proposals;
 mod storage;
 mod types;
+pub(crate) use self::keys::archive_revision_tables;
+pub(crate) use self::promotion::archive_promotion_table;
+pub(crate) use self::proposals::archive_proposal_table;
 
 pub(crate) use self::codec::CODE_REVISION_CLAIM_PREDICATE;
 pub use self::codec::{
