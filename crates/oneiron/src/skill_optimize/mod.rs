@@ -305,4 +305,8 @@ use crate::temporal::TimeRange;
 #[cfg(test)]
 use rmpv::Value;
 
-pub(crate) use gate::skill_edit_goal_in_txn;
+pub(crate) use gate::{
+    measure_skill_edit_goal_axes_as_owner, preflight_skill_edit_offline_floors_as_owner,
+    score_gate_skill_edit_as_owner, skill_edit_goal_in_txn,
+};
+pub(crate) use job::propose_skill_edit_as_owner;

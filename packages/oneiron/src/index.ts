@@ -723,6 +723,31 @@ export class Oneiron {
         start: (input: Facade.SkillOptimizeStartRequest): Facade.SkillOptimizeStartReceipt => this.#call(() => this.#client.vaultSkillsOptimizeStart(input) as Facade.SkillOptimizeStartReceipt),
         /** Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal. */
         result: (input: Facade.SkillOptimizeResultRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeResult(input) as Facade.SkillOptimizeResultView),
+        /** Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules. */
+        propose: (input: Facade.SkillOptimizeProposeRequest): Facade.SkillOptimizeProposalReceipt => this.#call(() => this.#client.vaultSkillsOptimizePropose(input) as Facade.SkillOptimizeProposalReceipt),
+        /** Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms. */
+        measure: (input: Facade.SkillOptimizeMeasureRequest): Facade.SkillOptimizeMeasurement => this.#call(() => this.#client.vaultSkillsOptimizeMeasure(input) as Facade.SkillOptimizeMeasurement),
+        /** Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it. */
+        score: (input: Facade.SkillOptimizeProposalRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeScore(input) as Facade.SkillOptimizeResultView),
+        /** Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks. */
+        admit: (input: Facade.SkillOptimizeProposalRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeAdmit(input) as Facade.SkillOptimizeResultView),
+        goal: {
+          /** Reads the optimizer goal identity, effective axes, revision and joined project goal claim. */
+          get: (input: Facade.SkillOptimizeGoalRequest): Facade.SkillOptimizeGoalView => this.#call(() => this.#client.vaultSkillsOptimizeGoalGet(input) as Facade.SkillOptimizeGoalView),
+          /** Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision. */
+          bind: (input: Facade.SkillOptimizeGoalBindRequest): Facade.SkillOptimizeGoalRevision => this.#call(() => this.#client.vaultSkillsOptimizeGoalBind(input) as Facade.SkillOptimizeGoalRevision),
+        },
+        preferences: {
+          /** Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority. */
+          get: (input: Facade.SkillOptimizeGoalRequest): Facade.SkillTradeoffPreferences | null => this.#call(() => this.#client.vaultSkillsOptimizePreferencesGet(input) as Facade.SkillTradeoffPreferences | null),
+          /** The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp. */
+          set: (input: Facade.SkillOptimizePreferencesSetRequest): Facade.SkillOptimizeGoalRevision => this.#call(() => this.#client.vaultSkillsOptimizePreferencesSet(input) as Facade.SkillOptimizeGoalRevision),
+        },
+        /** Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence. */
+        tradeoff_asks: Object.assign((input: Facade.EmptyRequest = {}): Facade.SkillOptimizeTradeoffAskView[] => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsks(input) as Facade.SkillOptimizeTradeoffAskView[]), {
+          /** Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant. */
+          pick: (input: Facade.SkillOptimizeTradeoffPickRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsksPick(input) as Facade.SkillOptimizeResultView),
+        }),
       },
       governance: {
         /** Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it. */
@@ -738,6 +763,35 @@ export class Oneiron {
         /** Reads the persisted anchored pack credit receipt, including its execution context, direct subjects and lineage shares, as the owner. */
         get: (input: Facade.SkillPackCreditRequest): Facade.LateCreditReceipt | null => this.#call(() => this.#client.vaultSkillsOutcomesGet(input) as Facade.LateCreditReceipt | null),
       },
+    },
+    projects: {
+      goal: {
+        /** What a project's goal-intake interview starts from, for a member of its home room. */
+        intake: Object.assign((input: Facade.ProjectRefRequest): Facade.ProjectGoalInterviewContext => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as Facade.ProjectGoalInterviewContext), {
+          /** Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal. */
+          complete: (input: Facade.ProjectGoalIntakeCompleteRequest): Facade.ProjectGoalIntakeReceipt => this.#call(() => this.#client.vaultProjectsGoalIntakeComplete(input) as Facade.ProjectGoalIntakeReceipt),
+        }),
+        /** Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it. */
+        get: (input: Facade.ProjectRefRequest): Facade.ProjectGoalView => this.#call(() => this.#client.vaultProjectsGoalGet(input) as Facade.ProjectGoalView),
+        /** The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first. */
+        revisions: (input: Facade.ProjectRefRequest): Facade.ProjectGoalRevisionProposal[] => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as Facade.ProjectGoalRevisionProposal[]),
+        /** The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry. */
+        dismiss: (input: Facade.ProjectGoalDismissRequest): Facade.ProjectGoalDismissReceipt => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as Facade.ProjectGoalDismissReceipt),
+      },
+      /** The drafting agent proposes a project card on a source message; the card writes no project and confers no authority. */
+      propose: (input: Facade.ProjectProposalRequest): Facade.ProjectProposalCard => this.#call(() => this.#client.vaultProjectsPropose(input) as Facade.ProjectProposalCard),
+      /** The project cards shown in a conversation, each with its state. */
+      proposals: (input: Facade.ProjectConversationRequest): Facade.ProjectCardRecord[] => this.#call(() => this.#client.vaultProjectsProposals(input) as Facade.ProjectCardRecord[]),
+      /** The card's person dismisses a project card so it never mints; false when it was dismissed already. */
+      dismiss_card: (input: Facade.ProjectCardRequest): Facade.ProjectCardDismissal => this.#call(() => this.#client.vaultProjectsDismissCard(input) as Facade.ProjectCardDismissal),
+      /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */
+      confirm: (input: Facade.ProjectCardConfirmRequest): Facade.ProjectMintReceipt => this.#call(() => this.#client.vaultProjectsConfirm(input) as Facade.ProjectMintReceipt),
+      roster: {
+        /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
+        write: (input: Facade.ProjectRosterWriteRequest): Facade.ProjectRosterWriteOutcome => this.#call(() => this.#client.vaultProjectsRosterWrite(input) as Facade.ProjectRosterWriteOutcome),
+      },
+      /** Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room. */
+      route_tradeoff: (input: Facade.ProjectTradeoffRouteRequest): Facade.TaskAskReceipt => this.#call(() => this.#client.vaultProjectsRouteTradeoff(input) as Facade.TaskAskReceipt),
     },
     connectors: {
       subscriptions: {
@@ -1628,30 +1682,6 @@ export class Oneiron {
       }),
       /** A room's effective sharing scope and why it is clamped, for a member of the room. */
       sharing: (input: Facade.RoomRefRequest): Facade.RoomSharingView => this.#call(() => this.#client.vaultRoomsSharing(input) as Facade.RoomSharingView),
-    },
-    projects: {
-      /** The drafting agent proposes a project card on a source message; the card writes no project and confers no authority. */
-      propose: (input: Facade.ProjectProposalRequest): Facade.ProjectProposalCard => this.#call(() => this.#client.vaultProjectsPropose(input) as Facade.ProjectProposalCard),
-      /** The project cards shown in a conversation, each with its state. */
-      proposals: (input: Facade.ProjectConversationRequest): Facade.ProjectCardRecord[] => this.#call(() => this.#client.vaultProjectsProposals(input) as Facade.ProjectCardRecord[]),
-      /** The card's person dismisses a project card so it never mints; false when it was dismissed already. */
-      dismiss_card: (input: Facade.ProjectCardRequest): Facade.ProjectCardDismissal => this.#call(() => this.#client.vaultProjectsDismissCard(input) as Facade.ProjectCardDismissal),
-      /** The owner's tap that confirms a host-held project card; only the host's own door can complete it. */
-      confirm: (input: Facade.ProjectCardConfirmRequest): Facade.ProjectMintReceipt => this.#call(() => this.#client.vaultProjectsConfirm(input) as Facade.ProjectMintReceipt),
-      roster: {
-        /** Writes an existing project's signed roster as the bound caller, filing joins for the newly seated subjects it stands for and an invitation for each unrelated person, who accepts through vault.rooms.consent. */
-        write: (input: Facade.ProjectRosterWriteRequest): Facade.ProjectRosterWriteOutcome => this.#call(() => this.#client.vaultProjectsRosterWrite(input) as Facade.ProjectRosterWriteOutcome),
-      },
-      goal: {
-        /** What a project's goal-intake interview starts from, for a member of its home room. */
-        intake: (input: Facade.ProjectRefRequest): Facade.ProjectGoalInterviewContext => this.#call(() => this.#client.vaultProjectsGoalIntake(input) as Facade.ProjectGoalInterviewContext),
-        /** The learned goal preferences proposed for a project's goal in force and not dismissed, oldest first. */
-        revisions: (input: Facade.ProjectRefRequest): Facade.ProjectGoalRevisionProposal[] => this.#call(() => this.#client.vaultProjectsGoalRevisions(input) as Facade.ProjectGoalRevisionProposal[]),
-        /** The owner dismisses the proposal one tradeoff question made for a project's goal; false for an identical retry. */
-        dismiss: (input: Facade.ProjectGoalDismissRequest): Facade.ProjectGoalDismissReceipt => this.#call(() => this.#client.vaultProjectsGoalDismiss(input) as Facade.ProjectGoalDismissReceipt),
-      },
-      /** Asks the A/B tradeoff question pending on a skill proposal on a project TASK, as a visible turn in its home room. */
-      route_tradeoff: (input: Facade.ProjectTradeoffRouteRequest): Facade.TaskAskReceipt => this.#call(() => this.#client.vaultProjectsRouteTradeoff(input) as Facade.TaskAskReceipt),
     },
     conversations: {
       turn: {

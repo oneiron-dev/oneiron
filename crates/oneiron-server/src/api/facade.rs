@@ -74,6 +74,7 @@ mod feedback_doors;
 mod fold_doors;
 mod gate_policy_doors;
 mod graduation_doors;
+mod goal_optimize_doors;
 mod graph_ask_doors;
 mod guest_doors;
 mod hook_regen_doors;

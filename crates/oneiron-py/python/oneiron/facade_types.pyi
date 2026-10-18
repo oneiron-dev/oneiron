@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 795 facade rows, 2767 declarations.
-Inputs: 743 of 795 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 715 of 795 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 807 facade rows, 2802 declarations.
+Inputs: 755 of 807 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 727 of 807 fully typed, 80 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 99; unread shapes: 0.
 """
 
@@ -3724,6 +3724,174 @@ class SkillOptimizeResultView(TypedDict):
     governance: NotRequired[SkillGovernanceView | None]
     verdict: NotRequired[SkillOptimizeVerdictView | None]
     verdicts: list[SkillOptimizeVerdictView]
+class GoalInterviewTurns(TypedDict):
+    question: EntityId
+    answer: EntityId
+    draft: EntityId
+    confirmation: EntityId
+class GoalAxis(TypedDict):
+    name: str
+    measure: str
+    bound: str
+class GoalPreference(TypedDict):
+    prefer: str
+    over: str
+    reason: str
+class GoalExplorationBudget(TypedDict):
+    max_spend: int
+    exploration_slice: int
+    unit: LeaseUnit
+    human_minutes: int
+class GoalRecord(TypedDict):
+    goal: str
+    why: str
+    primary_axes: list[GoalAxis]
+    floor_axes: list[GoalAxis]
+    cost_axes: list[GoalAxis]
+    preferences: list[GoalPreference]
+    exploration_budget: GoalExplorationBudget
+class ProjectGoalIntakeCompleteRequest(TypedDict):
+    project_ref: EntityId
+    attempt_ref: EntityId
+    turns: GoalInterviewTurns
+    record: GoalRecord
+class ProjectGoalIntakeReceipt(TypedDict):
+    project_ref: EntityId
+    goal_claim: EntityId
+    record: GoalRecord
+class ProjectRefRequest(TypedDict):
+    project_ref: str
+class ProjectGoalView(TypedDict):
+    project_ref: EntityId
+    goal_claim: NotRequired[EntityId | None]
+    record: NotRequired[GoalRecord | None]
+class SkillOptimizeProposeRequest(TypedDict):
+    skill: EntityId
+    expected_version: str
+    attempt_ref: EntityId
+    desc: str
+    rationale: str
+class SkillOptimizeProposalReceipt(TypedDict):
+    skill: EntityId
+    proposal: EntityId
+class SkillOptimizeMeasureRequest(TypedDict):
+    proposal: EntityId
+    pulls_per_axis: NotRequired[int | None]
+class AxisScores(TypedDict):
+    before: float
+    after: float
+class SkillEditPreflight(TypedDict):
+    passed: bool
+    goal_revision: str
+    offline: list[tuple[str, AxisScores]]
+    honesty: AxisScores
+class ConfidenceInterval(TypedDict):
+    lower: float
+    upper: float
+OnlineAxisOutcome = Literal["candidate_better", "incumbent_better", "inconclusive"]
+class OnlineAxisMeasurement(TypedDict):
+    axis: str
+    before_pulls: int
+    after_pulls: int
+    before: ConfidenceInterval
+    after: ConfidenceInterval
+    human_minutes: AxisScores
+    before_timed: int
+    after_timed: int
+    outcome: OnlineAxisOutcome
+class GoalAxisReport(TypedDict):
+    held_out_receipts: list[str]
+    offline: list[tuple[str, AxisScores]]
+    online: list[OnlineAxisMeasurement]
+    human_minutes: NotRequired[AxisScores | None]
+class SkillOptimizeMeasurement(TypedDict):
+    preflight: SkillEditPreflight
+    report: NotRequired[GoalAxisReport | None]
+class SkillOptimizeProposalRequest(TypedDict):
+    proposal: EntityId
+class SkillOptimizeGoalRequest(TypedDict):
+    skill: EntityId
+GoalAxisKind = Literal["primary", "floor", "cost"]
+class GoalAxisSpec(TypedDict):
+    name: str
+    kind: GoalAxisKind
+class SkillOptimizeGoalView(TypedDict):
+    goal_id: EntityId
+    goal_revision: str
+    axes: list[GoalAxisSpec]
+    project: NotRequired[EntityId | None]
+    goal_claim: NotRequired[EntityId | None]
+class SkillOptimizeGoalBindRequest(TypedDict):
+    skill: EntityId
+    project: NotRequired[EntityId | None]
+class SkillOptimizeGoalRevision(TypedDict):
+    goal_revision: str
+TradeoffChoice = Literal["approve", "reject"]
+class TradeoffRule(TypedDict):
+    gains: list[str]
+    losses: list[str]
+    choice: TradeoffChoice
+class DecisionBand(TypedDict):
+    low: float
+    high: float
+class SkillTradeoffPreferences(TypedDict):
+    revision: EntityId
+    responsible: EntityId
+    rules: list[TradeoffRule]
+    learned: list[TradeoffRule]
+    jev_band: NotRequired[DecisionBand | None]
+class SkillOptimizePreferencesSetRequest(TypedDict):
+    skill: EntityId
+    rules: list[TradeoffRule]
+    jev_band: NotRequired[DecisionBand | None]
+class TradeoffRoleAuthor(TypedDict):
+    author: EntityId
+class TradeoffRoleBoardBody(TypedDict):
+    project: EntityId
+    people: list[EntityId]
+class TradeoffRoleBoard(TypedDict):
+    board: TradeoffRoleBoardBody
+class TradeoffRoleVaultOwner(TypedDict):
+    vault_owner: list[EntityId]
+TradeoffRole = TradeoffRoleAuthor | TradeoffRoleBoard | TradeoffRoleVaultOwner
+class GoalAxisScore(TypedDict):
+    kind: GoalAxisKind
+    before: float
+    after: float
+class SkillTradeoffQuestion(TypedDict):
+    goal_id: EntityId
+    goal_revision: str
+    project: NotRequired[EntityId | None]
+    roles: list[TradeoffRole]
+    proposal: EntityId
+    proposal_digest: str
+    target_digest: str
+    evidence_digest: str
+    world_digest: str
+    axes: dict[str, GoalAxisScore]
+    gains: list[str]
+    losses: list[str]
+class ProviderPin(TypedDict):
+    rung: DecisionRung
+    model: str
+    version: str
+class JevTradeoffVerdict(TypedDict):
+    question_digest: str
+    choice: TradeoffChoice
+    probability: float
+    pin: ProviderPin
+class SkillTradeoffAsk(TypedDict):
+    pending: EntityId
+    question: SkillTradeoffQuestion
+    jev: NotRequired[JevTradeoffVerdict | None]
+    rung: int
+class SkillOptimizeTradeoffAskView(TypedDict):
+    question_digest: str
+    ask: SkillTradeoffAsk
+class SkillOptimizeTradeoffPickRequest(TypedDict):
+    proposal: EntityId
+    question_digest: str
+    choice: TradeoffChoice
 class SkillGovernanceSetRequest(TypedDict):
     entity: EntityId
     tier: NotRequired[str | None]
@@ -6433,13 +6601,6 @@ class DecisionAnswerPoint(TypedDict):
 class DecisionAnswerAbstain(TypedDict):
     kind: Literal["abstain"]
 DecisionAnswer = DecisionAnswerNoul | DecisionAnswerChoice | DecisionAnswerScore | DecisionAnswerBox | DecisionAnswerPoint | DecisionAnswerAbstain
-class ProviderPin(TypedDict):
-    rung: DecisionRung
-    model: str
-    version: str
-class DecisionBand(TypedDict):
-    low: float
-    high: float
 class EvidenceVersion(TypedDict):
     id: str
     body_hash: list[int]
@@ -9927,12 +10088,6 @@ class JoinOutcome(TypedDict):
 class ProjectRosterWriteOutcome(TypedDict):
     installed: bool
     invitations: list[JoinOutcome]
-class ProjectRefRequest(TypedDict):
-    project_ref: str
-class GoalPreference(TypedDict):
-    prefer: str
-    over: str
-    reason: str
 class ProjectGoalRevisionProposal(TypedDict):
     project: EntityId
     goal_claim: EntityId

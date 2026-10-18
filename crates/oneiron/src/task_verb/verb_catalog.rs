@@ -165,6 +165,18 @@ pub enum AgentVerb {
     VaultSkillsPermissionsApprove,
     VaultSkillsOptimizeStart,
     VaultSkillsOptimizeResult,
+    VaultProjectsGoalIntakeComplete,
+    VaultProjectsGoalGet,
+    VaultSkillsOptimizePropose,
+    VaultSkillsOptimizeMeasure,
+    VaultSkillsOptimizeScore,
+    VaultSkillsOptimizeAdmit,
+    VaultSkillsOptimizeGoalGet,
+    VaultSkillsOptimizeGoalBind,
+    VaultSkillsOptimizePreferencesGet,
+    VaultSkillsOptimizePreferencesSet,
+    VaultSkillsOptimizeTradeoffAsks,
+    VaultSkillsOptimizeTradeoffAsksPick,
     VaultSkillsGovernanceGet,
     VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
@@ -986,6 +998,18 @@ impl AgentVerb {
         Self::VaultSkillsPermissionsApprove,
         Self::VaultSkillsOptimizeStart,
         Self::VaultSkillsOptimizeResult,
+        Self::VaultProjectsGoalIntakeComplete,
+        Self::VaultProjectsGoalGet,
+        Self::VaultSkillsOptimizePropose,
+        Self::VaultSkillsOptimizeMeasure,
+        Self::VaultSkillsOptimizeScore,
+        Self::VaultSkillsOptimizeAdmit,
+        Self::VaultSkillsOptimizeGoalGet,
+        Self::VaultSkillsOptimizeGoalBind,
+        Self::VaultSkillsOptimizePreferencesGet,
+        Self::VaultSkillsOptimizePreferencesSet,
+        Self::VaultSkillsOptimizeTradeoffAsks,
+        Self::VaultSkillsOptimizeTradeoffAsksPick,
         Self::VaultSkillsGovernanceGet,
         Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
@@ -1810,6 +1834,18 @@ impl AgentVerb {
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
             Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
             Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
+            Self::VaultProjectsGoalIntakeComplete => "vault.projects.goal.intake.complete",
+            Self::VaultProjectsGoalGet => "vault.projects.goal.get",
+            Self::VaultSkillsOptimizePropose => "vault.skills.optimize.propose",
+            Self::VaultSkillsOptimizeMeasure => "vault.skills.optimize.measure",
+            Self::VaultSkillsOptimizeScore => "vault.skills.optimize.score",
+            Self::VaultSkillsOptimizeAdmit => "vault.skills.optimize.admit",
+            Self::VaultSkillsOptimizeGoalGet => "vault.skills.optimize.goal.get",
+            Self::VaultSkillsOptimizeGoalBind => "vault.skills.optimize.goal.bind",
+            Self::VaultSkillsOptimizePreferencesGet => "vault.skills.optimize.preferences.get",
+            Self::VaultSkillsOptimizePreferencesSet => "vault.skills.optimize.preferences.set",
+            Self::VaultSkillsOptimizeTradeoffAsks => "vault.skills.optimize.tradeoff_asks",
+            Self::VaultSkillsOptimizeTradeoffAsksPick => "vault.skills.optimize.tradeoff_asks.pick",
             Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
             Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
@@ -2652,6 +2688,18 @@ impl AgentVerb {
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultProjectsGoalGet
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalGet
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesGet
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsks
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -3500,6 +3548,18 @@ impl AgentVerb {
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultProjectsGoalGet
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalGet
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesGet
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsks
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -4170,6 +4230,7 @@ impl AgentVerb {
                 | Self::VaultWeaveSchedulesList
                 | Self::VaultInboxGroups
                 | Self::VaultWeaveLinkCorrections
+                | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultMeshPathReceipts
@@ -4419,6 +4480,18 @@ impl AgentVerb {
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
                 | Self::VaultSkillsOptimizeResult
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultProjectsGoalGet
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalGet
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesGet
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsks
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -5139,6 +5212,14 @@ impl AgentVerb {
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
                 | Self::VaultSkillsOptimizeStart
+                | Self::VaultProjectsGoalIntakeComplete
+                | Self::VaultSkillsOptimizePropose
+                | Self::VaultSkillsOptimizeMeasure
+                | Self::VaultSkillsOptimizeScore
+                | Self::VaultSkillsOptimizeAdmit
+                | Self::VaultSkillsOptimizeGoalBind
+                | Self::VaultSkillsOptimizePreferencesSet
+                | Self::VaultSkillsOptimizeTradeoffAsksPick
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
@@ -5744,6 +5825,18 @@ impl AgentVerb {
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultProjectsGoalIntakeComplete => &["spec"],
+            Self::VaultProjectsGoalGet => &["spec"],
+            Self::VaultSkillsOptimizePropose => &["spec"],
+            Self::VaultSkillsOptimizeMeasure => &["spec"],
+            Self::VaultSkillsOptimizeScore => &["spec"],
+            Self::VaultSkillsOptimizeAdmit => &["spec"],
+            Self::VaultSkillsOptimizeGoalGet => &["spec"],
+            Self::VaultSkillsOptimizeGoalBind => &["spec"],
+            Self::VaultSkillsOptimizePreferencesGet => &["spec"],
+            Self::VaultSkillsOptimizePreferencesSet => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -6566,6 +6659,18 @@ impl AgentVerb {
             Self::VaultSkillsPermissionsApprove => &["spec"],
             Self::VaultSkillsOptimizeStart => &["spec"],
             Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultProjectsGoalIntakeComplete => &["spec"],
+            Self::VaultProjectsGoalGet => &["spec"],
+            Self::VaultSkillsOptimizePropose => &["spec"],
+            Self::VaultSkillsOptimizeMeasure => &["spec"],
+            Self::VaultSkillsOptimizeScore => &["spec"],
+            Self::VaultSkillsOptimizeAdmit => &["spec"],
+            Self::VaultSkillsOptimizeGoalGet => &["spec"],
+            Self::VaultSkillsOptimizeGoalBind => &["spec"],
+            Self::VaultSkillsOptimizePreferencesGet => &["spec"],
+            Self::VaultSkillsOptimizePreferencesSet => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -7702,6 +7807,42 @@ impl AgentVerb {
             }
             Self::VaultSkillsOptimizeResult => {
                 "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."
+            }
+            Self::VaultProjectsGoalIntakeComplete => {
+                "Completes the witnessed human goal-intake interview with the full confirmed record; no agent proposal can write the effective goal."
+            }
+            Self::VaultProjectsGoalGet => {
+                "Reads the full effective goal record and its claim together; interview drafts and loop proposals never replace it."
+            }
+            Self::VaultSkillsOptimizePropose => {
+                "Submits one explicit optimizer candidate against a fixed baseline version and a real drafting attempt; ordinary held-out admission still rules."
+            }
+            Self::VaultSkillsOptimizeMeasure => {
+                "Judges held-out floors before any online slice, then measures the proposal on the effective goal with the registered judge and bounded live arms."
+            }
+            Self::VaultSkillsOptimizeScore => {
+                "Rules on the submitted proposal through the existing held-out vector gate, floors and tradeoff ladder, without activating it."
+            }
+            Self::VaultSkillsOptimizeAdmit => {
+                "Admits only a standing gate acceptance and supersedes its incumbent atomically, with current body, evidence, tier, goal and owner checks."
+            }
+            Self::VaultSkillsOptimizeGoalGet => {
+                "Reads the optimizer goal identity, effective axes, revision and joined project goal claim."
+            }
+            Self::VaultSkillsOptimizeGoalBind => {
+                "Joins a skill goal to the human project goal record, or unbinds with null; every join changes its admission revision."
+            }
+            Self::VaultSkillsOptimizePreferencesGet => {
+                "Reads authored and learned goal tradeoff rules and the typed judgment band, without changing authority."
+            }
+            Self::VaultSkillsOptimizePreferencesSet => {
+                "The responsible owner sets authored tradeoff rules and the typed judgment band, retaining learned picks and every admission clamp."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsks => {
+                "Lists the exact pending optimizer tradeoffs that have reached a role the caller holds, including bound typed judgment evidence."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsksPick => {
+                "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."
             }
             Self::VaultSkillsGovernanceGet => {
                 "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."
