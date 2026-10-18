@@ -9,10 +9,10 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 950 code-mode rows (926 host rows, 24 run rows), 3184 declarations.
-// Replies: 857 fully typed, 89 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 963 code-mode rows (939 host rows, 24 run rows), 3226 declarations.
+// Replies: 858 fully typed, 101 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 103; unread shapes: BoardVerbOutput.
+// Opaque serde_json::Value leaves: 104; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -2385,6 +2385,48 @@ declare namespace Sdk {
   type AnonymousChatSkippedCheckView = { input: boolean; reason: PolicySkipReason };
   type AnonymousChatBlockReasonView = "policy" | "human_review_unavailable";
   type AnonymousChatResponse = { type: "reply"; content: string; notices: GateSystemNoticeRecord[]; skipped_checks: AnonymousChatSkippedCheckView[]; model_notices: GateSystemNoticeRecord[] } | { type: "blocked"; input: boolean; notice: GateSystemNoticeRecord; preceding_notices: GateSystemNoticeRecord[]; reason: AnonymousChatBlockReasonView; model_notices: GateSystemNoticeRecord[] };
+  type ModelWireFormat = "openai-compat" | "anthropic-messages" | "gemini" | "own-server" | "local";
+  type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null };
+  type LlmCatalogEntry = { model: ModelId; display_name: string; locality: ModelLocality; context_window_tokens: number; max_output_tokens?: number | null; cost?: LlmCatalogCost | null; capabilities?: LlmCapability[]; metadata?: Record<string, unknown> };
+  type ModelRegistryRow = { version: number; wire: ModelWireFormat; catalog: LlmCatalogEntry; scores?: Record<string, Record<string, number>>; fetched_at?: Record<string, number>; tokens_per_o200k?: number | null; stale_since?: number | null };
+  type CatalogSeed = { version: number; rows: ModelRegistryRow[] };
+  type ScoreObservation = { model: ModelId; benchmark: string; score: number };
+  type ScoreSnapshot = { source: string; fetched_at: number; observations: ScoreObservation[] };
+  type ModelCatalogRefresh = { revision: string; expected_revision?: string | null; catalog: CatalogSeed; scores?: ScoreSnapshot[] };
+  type ModelScoreDiff = { model: ModelId; source: string; benchmark: string; previous?: number | null; score: number; fetched_at: number };
+  type ModelCatalogRevision = { revision: string; previous_revision?: string | null; catalog: CatalogSeed; rows: ModelRegistryRow[]; score_diffs: ModelScoreDiff[]; refreshed_at: number };
+  type ModelCatalogGet = { revision?: string | null };
+  type ModelCatalogDiffRequest = { from: string; to: string };
+  type ModelCatalogChange = { model: ModelId; previous?: ModelRegistryRow | null; current?: ModelRegistryRow | null };
+  type ModelCatalogDiff = { from: string; to: string; changes: ModelCatalogChange[] };
+  type ModelBackendPin = { model: ModelId; backend: string; serving_revision: string; quantization?: string | null; context_window_tokens: number };
+  type TrialSetPin = { id: string; version: number; rubric_version: string };
+  type HeldOutSelection = { answer: EntityId; fact: EntityId; source_family: string };
+  type ModelTrialPolicy = { exploration_remaining: number; vault_cost_cap?: number | null; project_cost_cap?: number | null; auto_approve?: boolean; candidate_needs_download: boolean };
+  type ModelTrialRequest = { principal: EntityId; question: EntityId; question_version: number; goal: EntityId; incumbent: ModelBackendPin; candidate: ModelBackendPin; source: string; benchmark: string; set: TrialSetPin; held_out: HeldOutSelection[]; incumbent_usage_bound: LlmUsage; candidate_usage_bound: LlmUsage; future_units: number; policy: ModelTrialPolicy };
+  type ModelTrialNominate = { catalog_revision: string; request: ModelTrialRequest };
+  type PricedModelBackend = { pin: ModelBackendPin; price: LlmCatalogCost };
+  type FrozenTrialCase = { selection: HeldOutSelection; unit: EntityId; source_frontier: number[]; fact_value_hash: number[]; label: boolean; noise_weight: number; derived_from: EntityId[] };
+  type TrialAdmission = "ready" | "ask_exploration";
+  type ModelTrialEvidence = { measurements_hash: number[]; incumbent_loss?: number | null; candidate_loss?: number | null; independent_families: number; incumbent_cost_per_thousand: number; candidate_cost_per_thousand: number; trial_cost: number };
+  type PairedQualityInterval = { low: number; high: number };
+  type TrialAssessment = { set: TrialSetPin; measurements_hash: number[]; paired_gain?: PairedQualityInterval | null; retest_noise: number; stricter_margin?: number | null; required_families: number; rare_slices_sufficient: boolean; versions_match: boolean; canary_diverged: boolean };
+  type TrialQuality = "better" | "not_worse" | "worse" | "unknown";
+  type ModelTrialAction = "stay" | "offer" | "auto_approve" | "ask_tradeoff" | "unknown";
+  type ModelTrialReceipt = { assessment: TrialAssessment; quality: TrialQuality; action: ModelTrialAction; candidate_cost_per_unit: number; added_cost_per_thousand: number; added_future_cost: number; completed_at: number };
+  type ModelTrialView = { catalog_revision: string; id: EntityId; request: ModelTrialRequest; incumbent: PricedModelBackend; candidate: PricedModelBackend; nominated_score: number; score_fetched_at: number; cases: FrozenTrialCase[]; estimated_cost: number; admission: TrialAdmission; prepared_at: number; execution_started: boolean; evidence?: ModelTrialEvidence | null; receipt?: ModelTrialReceipt | null };
+  type ModelTrialRef = { question: EntityId; trial: EntityId };
+  type ModelTrialComplete = { question: EntityId; trial: EntityId; assessment: TrialAssessment };
+  type ModelRole = "retrieval_embedder" | "reranker" | "extraction_encoder" | "extraction_teacher" | "generative_reasoner" | "local_reasoner" | "checker" | "dreamer_current" | "dreamer_target" | "dreamer_distilled" | "asr" | "captioner" | "doc_parsing" | "audio_vad" | "tts_deferred" | "local_vision" | "coach";
+  type ModelDisposition = "offline" | "served";
+  type ModelBinding = { model: ModelId; slot: ModelSlot; tier: ModelTierRef; route_models?: Record<string, ModelId>; disposition?: ModelDisposition | null; reads_audio?: boolean };
+  type ModelBindingPropose = { question: EntityId; trial: EntityId; role: ModelRole; binding: ModelBinding };
+  type ModelBindingStatus = "proposed" | "accepted" | "denied";
+  type ModelBindingProposal = { id: EntityId; principal: EntityId; role: ModelRole; previous: ModelBinding; proposed: ModelBinding; trial: ModelTrialView; status: ModelBindingStatus; proposed_at: number; settled_at?: number | null };
+  type ModelBindingProposalRef = { proposal: EntityId };
+  type ModelBindingRead = { role: ModelRole };
+  type TeacherProbeApproval = { probe_id: string; model: ModelId; binding_hash: string; f1_millionths: number; policy_hash: string; holder_ref?: string | null };
+  type ModelBindingAccept = { proposal: EntityId; teacher_approval?: TeacherProbeApproval | null };
   type AiOptionsRequest = { operation?: string | null; inputs?: string[] };
   type AiOptions = { options: unknown[]; media_units_left?: number | null };
   type AiPart = { kind: "text"; text: string } | { kind: "image"; media_type: string; data: string } | { kind: "audio"; media_type: string; data: string } | { kind: "video"; media_type: string; data?: string | null; uri?: string | null } | { kind: "embedding"; vector: number[] };
@@ -4693,6 +4735,40 @@ declare const vault: Sdk.VaultHost & {
     durability(input: Sdk.MessageDurabilityRequest): Promise<Sdk.ScopedReadResult<Sdk.MessageDurability | null> | StoredResult>;
     /** Puts or removes the caller's own reaction on a message or turn; an owner-grade host also brings a provider's reaction as connector ingress. */
     react(input: Sdk.MessageReactionRequest): Promise<Sdk.MessageReactionReceipt | StoredResult>;
+  };
+  models: {
+    bindings: {
+      /** Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks. */
+      accept(input: Sdk.ModelBindingAccept): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding. */
+      deny(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Reads an owner-reviewed model role-binding proposal and its pinned trial evidence. */
+      get(input: Sdk.ModelBindingProposalRef): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it. */
+      propose(input: Sdk.ModelBindingPropose): Promise<Sdk.ModelBindingProposal | StoredResult>;
+      /** Reads the currently active manifest binding for a model role. */
+      read(input: Sdk.ModelBindingRead): Promise<Sdk.ModelBinding | StoredResult>;
+    };
+    catalog: {
+      /** Diffs two immutable model catalog revisions, including prices, scores and retired offers. */
+      diff(input: Sdk.ModelCatalogDiffRequest): Promise<Sdk.ModelCatalogDiff | StoredResult>;
+      /** Reads a pinned model catalog revision with its prices, backend offers and score evidence. */
+      get(input: Sdk.ModelCatalogGet): Promise<Sdk.ModelCatalogRevision | StoredResult>;
+      /** Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding. */
+      refresh(input: Sdk.ModelCatalogRefresh): Promise<Sdk.ModelCatalogRevision | StoredResult>;
+    };
+    trials: {
+      /** Approves exploration for a held-out model trial only; leaves its role binding unchanged. */
+      approve(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer. */
+      complete(input: Sdk.ModelTrialComplete): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Reads a retained held-out trial, its catalog revision, independent labels and measured cost. */
+      get(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority. */
+      nominate(input: Sdk.ModelTrialNominate): Promise<Sdk.ModelTrialView | StoredResult>;
+      /** Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost. */
+      run(input: Sdk.ModelTrialRef): Promise<Sdk.ModelTrialView | StoredResult>;
+    };
   };
   /** The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight. */
   neighbors(input: Sdk.NeighborsRequest): Promise<Sdk.ScopedReadResult<Sdk.NeighborHit[]> | StoredResult>;

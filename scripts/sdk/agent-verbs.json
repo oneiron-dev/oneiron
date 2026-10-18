@@ -10292,6 +10292,201 @@
       "openapi": true
     },
     {
+      "name": "vault.models.catalog.refresh",
+      "description": "Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding.",
+      "input": "crate::llm::catalog_doors::ModelCatalogRefresh",
+      "output": "crate::llm::catalog_doors::ModelCatalogRevision",
+      "call": "memory.vault().refresh_model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.refresh\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.catalog.get",
+      "description": "Reads a pinned model catalog revision with its prices, backend offers and score evidence.",
+      "input": "crate::llm::catalog_doors::ModelCatalogGet",
+      "output": "crate::llm::catalog_doors::ModelCatalogRevision",
+      "call": "memory.vault().model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.get\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.catalog.diff",
+      "description": "Diffs two immutable model catalog revisions, including prices, scores and retired offers.",
+      "input": "crate::llm::catalog_doors::ModelCatalogDiffRequest",
+      "output": "crate::llm::catalog_doors::ModelCatalogDiff",
+      "call": "memory.vault().diff_model_catalog_as_owner(&memory.embedded_owner(\"vault.models.catalog.diff\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.nominate",
+      "description": "Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority.",
+      "input": "crate::llm::catalog_doors::ModelTrialNominate",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().nominate_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.nominate\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.get",
+      "description": "Reads a retained held-out trial, its catalog revision, independent labels and measured cost.",
+      "input": "crate::llm::catalog_doors::ModelTrialRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.approve",
+      "description": "Approves exploration for a held-out model trial only; leaves its role binding unchanged.",
+      "input": "crate::llm::catalog_doors::ModelTrialRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().approve_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.approve\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.run",
+      "description": "Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost.",
+      "input": "crate::llm::catalog_doors::ModelTrialRef",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.models.trials.run\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.trials.complete",
+      "description": "Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer.",
+      "input": "crate::llm::catalog_doors::ModelTrialComplete",
+      "output": "crate::llm::catalog_doors::ModelTrialView",
+      "call": "memory.vault().complete_model_trial_as_owner(&memory.embedded_owner(\"vault.models.trials.complete\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.propose",
+      "description": "Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it.",
+      "input": "crate::llm::catalog_doors::ModelBindingPropose",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().propose_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.propose\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.get",
+      "description": "Reads an owner-reviewed model role-binding proposal and its pinned trial evidence.",
+      "input": "crate::llm::catalog_doors::ModelBindingProposalRef",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().model_binding_proposal_as_owner(&memory.embedded_owner(\"vault.models.bindings.get\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.read",
+      "description": "Reads the currently active manifest binding for a model role.",
+      "input": "crate::llm::catalog_doors::ModelBindingRead",
+      "output": "crate::llm::manifest::ModelBinding",
+      "call": "memory.vault().model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.read\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.accept",
+      "description": "Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks.",
+      "input": "crate::llm::catalog_doors::ModelBindingAccept",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().accept_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.accept\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.models.bindings.deny",
+      "description": "Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding.",
+      "input": "crate::llm::catalog_doors::ModelBindingProposalRef",
+      "output": "crate::llm::catalog_doors::ModelBindingProposal",
+      "call": "memory.vault().deny_model_binding_as_owner(&memory.embedded_owner(\"vault.models.bindings.deny\")?, input, memory.locality()).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.options",
       "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",

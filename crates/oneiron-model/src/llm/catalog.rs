@@ -55,7 +55,7 @@ impl fmt::Display for LlmCapability {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmCatalogEntry {
     pub model: ModelId,
     pub display_name: String,
@@ -256,7 +256,7 @@ fn raw_control_capability(key: &str, value: &JsonValue) -> Option<LlmCapability>
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LlmCatalogCost {
     pub input_per_million: String,
     pub output_per_million: String,

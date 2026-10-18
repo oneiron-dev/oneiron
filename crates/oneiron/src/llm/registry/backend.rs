@@ -6,7 +6,7 @@ use crate::llm::{LlmCatalogCost, LlmUsage, ModelId};
 use serde::{Deserialize, Serialize};
 
 /// A revision of the backend's serving configuration, not just the upstream weights.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelBackendPin {
     pub model: ModelId,
@@ -16,7 +16,7 @@ pub struct ModelBackendPin {
     pub context_window_tokens: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PricedModelBackend {
     pub pin: ModelBackendPin,
@@ -24,7 +24,7 @@ pub struct PricedModelBackend {
 }
 
 /// Prices and totals use the same monetary unit as the registered catalog price.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelCostReceipt {
     pub backend: ModelBackendPin,

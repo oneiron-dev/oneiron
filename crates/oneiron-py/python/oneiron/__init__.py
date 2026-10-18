@@ -636,6 +636,9 @@ class Oneiron:
         def conversations(self) -> "Oneiron._VaultConversationsVerbs":
             return Oneiron._VaultConversationsVerbs(self._client)
         @property
+        def models(self) -> "Oneiron._VaultModelsVerbs":
+            return Oneiron._VaultModelsVerbs(self._client)
+        @property
         def voices(self) -> "Oneiron._VaultVoicesVerbs":
             return Oneiron._VaultVoicesVerbs(self._client)
         @property
@@ -3473,6 +3476,66 @@ class Oneiron:
         def append(self, spec):
             """Appends one TURN to a conversation's DAG, bylined the caller, with its topology in one transaction; the host lands the turn once."""
             return json.loads(_translate(lambda: self._client.vault_conversations_records_append(json.dumps(spec))))
+    class _VaultModelsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def catalog(self) -> "Oneiron._VaultModelsCatalogVerbs":
+            return Oneiron._VaultModelsCatalogVerbs(self._client)
+        @property
+        def trials(self) -> "Oneiron._VaultModelsTrialsVerbs":
+            return Oneiron._VaultModelsTrialsVerbs(self._client)
+        @property
+        def bindings(self) -> "Oneiron._VaultModelsBindingsVerbs":
+            return Oneiron._VaultModelsBindingsVerbs(self._client)
+    class _VaultModelsCatalogVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def refresh(self, spec):
+            """Refreshes priced model catalog rows and external-score diffs under an immutable revision; changes no role binding."""
+            return json.loads(_translate(lambda: self._client.vault_models_catalog_refresh(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a pinned model catalog revision with its prices, backend offers and score evidence."""
+            return json.loads(_translate(lambda: self._client.vault_models_catalog_get(json.dumps(spec))))
+        def diff(self, spec):
+            """Diffs two immutable model catalog revisions, including prices, scores and retired offers."""
+            return json.loads(_translate(lambda: self._client.vault_models_catalog_diff(json.dumps(spec))))
+    class _VaultModelsTrialsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def nominate(self, spec):
+            """Nominates a question-specific held-out trial at a catalog revision using the caller own labels; external scores grant no authority."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_nominate(json.dumps(spec))))
+        def get(self, spec):
+            """Reads a retained held-out trial, its catalog revision, independent labels and measured cost."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_get(json.dumps(spec))))
+        def approve(self, spec):
+            """Approves exploration for a held-out model trial only; leaves its role binding unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_approve(json.dumps(spec))))
+        def run(self, spec):
+            """Runs both pinned backend arms through decide and normal inference leases on the original held-out source frontier; records real usage and cost."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_run(json.dumps(spec))))
+        def complete(self, spec):
+            """Completes a measured model trial with a sufficiency card bound to its exact set and measurements; only produces an offer."""
+            return json.loads(_translate(lambda: self._client.vault_models_trials_complete(json.dumps(spec))))
+    class _VaultModelsBindingsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def propose(self, spec):
+            """Proposes a role model change from a sufficient held-out trial, retaining catalog revision and real trial cost without activating it."""
+            return json.loads(_translate(lambda: self._client.vault_models_bindings_propose(json.dumps(spec))))
+        def get(self, spec):
+            """Reads an owner-reviewed model role-binding proposal and its pinned trial evidence."""
+            return json.loads(_translate(lambda: self._client.vault_models_bindings_get(json.dumps(spec))))
+        def read(self, spec):
+            """Reads the currently active manifest binding for a model role."""
+            return json.loads(_translate(lambda: self._client.vault_models_bindings_read(json.dumps(spec))))
+        def accept(self, spec):
+            """Accepts a pending model role-binding proposal as the owner after transaction-local incumbent, catalog and trial checks."""
+            return json.loads(_translate(lambda: self._client.vault_models_bindings_accept(json.dumps(spec))))
+        def deny(self, spec):
+            """Denies a pending model role-binding proposal as the owner without changing the incumbent manifest binding."""
+            return json.loads(_translate(lambda: self._client.vault_models_bindings_deny(json.dumps(spec))))
     class _VaultVoicesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

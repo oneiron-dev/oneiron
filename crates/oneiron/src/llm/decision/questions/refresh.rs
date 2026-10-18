@@ -859,9 +859,18 @@ pub fn answer_records(
     question: EntityId,
 ) -> Result<Vec<AnswerRecord>> {
     let txn = vault.store.env.read_txn()?;
-    owned_head(vault, &txn, principal, question)?;
+    answer_records_in_txn(vault, &txn, principal, question)
+}
+
+pub(crate) fn answer_records_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    question: EntityId,
+) -> Result<Vec<AnswerRecord>> {
+    owned_head(vault, txn, principal, question)?;
     QUESTION_ANSWER
-        .scan_from(&vault.store, &txn, &family_prefix(question, b"answer"))
+        .scan_from(&vault.store, txn, &family_prefix(question, b"answer"))
         .map(|rows| rows.into_iter().map(|(_, answer)| answer).collect())
 }
 
@@ -917,6 +926,16 @@ fn validate_proposal(record: &QuestionRecord, proposal: &AnswerProposal) -> Resu
         ));
     }
     Ok(())
+}
+
+pub(crate) fn trial_source_frontier(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    unit: EntityId,
+) -> Result<Option<[u8; 32]>> {
+    source(vault, txn, principal, WriteActor::new(principal, crate::EdgeActorClass::Human), unit)
+        .map(|row| row.map(|row| row.frontier))
 }
 
 fn source(

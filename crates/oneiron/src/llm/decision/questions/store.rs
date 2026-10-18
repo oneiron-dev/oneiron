@@ -167,12 +167,22 @@ pub fn read_question(
     version: Option<u32>,
 ) -> Result<Option<QuestionRecord>> {
     let txn = vault.store.env.read_txn()?;
-    let Some(head) = QUESTION_HEAD.get(&vault.store, &txn, &HeadKey(id))? else {
+    read_question_in_txn(vault, &txn, principal, id, version)
+}
+
+pub(crate) fn read_question_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    id: EntityId,
+    version: Option<u32>,
+) -> Result<Option<QuestionRecord>> {
+    let Some(head) = QUESTION_HEAD.get(&vault.store, txn, &HeadKey(id))? else {
         return Ok(None);
     };
     let record: Option<QuestionRecord> = QUESTION_VERSION.get(
         &vault.store,
-        &txn,
+        txn,
         &VersionKey {
             id,
             version: version.unwrap_or(head.version),

@@ -37,6 +37,7 @@ pub(crate) use oneiron_model::llm::{
 };
 pub mod manifest;
 pub mod model_trials;
+pub mod catalog_doors;
 pub mod registry;
 pub mod routing;
 pub mod run_admission;

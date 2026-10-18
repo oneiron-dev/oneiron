@@ -5871,6 +5871,100 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_models_catalog_refresh(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.catalog.refresh")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.catalog.refresh", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_catalog_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.catalog.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.catalog.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_catalog_diff(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.catalog.diff")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.catalog.diff", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_trials_nominate(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.trials.nominate")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.trials.nominate", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_trials_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.trials.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.trials.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_trials_approve(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.trials.approve")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.trials.approve", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_trials_run(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.trials.run")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.trials.run", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_trials_complete(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.trials.complete")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.trials.complete", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_bindings_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.bindings.propose")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.models.bindings.propose", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_bindings_get(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.bindings.get")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.bindings.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_bindings_read(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.bindings.read")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.bindings.read", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_bindings_accept(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.bindings.accept")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.bindings.accept", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_models_bindings_deny(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.models.bindings.deny")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.models.bindings.deny", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn ai_options(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "ai.options")?;
         let output = py

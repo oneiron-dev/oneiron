@@ -366,6 +366,12 @@ side_tables! {
     /// Task to tracker issue link state. Key: id16.
     LINEAR_SYNC_LINK: VaultMeta b"linear_sync:link:v4:" LegacyJson Authored;
     /// The vault's pinned model-role manifest (role bindings, tier/route defaults). Key: ().
+    /// Owner-reviewed role binding offers with their retained trial evidence. Key: id16.
+    LLM_BINDING_PROPOSAL: VaultMeta b"llm:binding_proposal:v1:" Named;
+    /// The current immutable catalog revision. Key: ().
+    LLM_CATALOG_HEAD: VaultMeta b"llm:catalog_head:v1" Named;
+    /// Pinned catalog prices, scores and refresh diffs. Key: revision string.
+    LLM_CATALOG_REVISION: VaultMeta b"llm:catalog_revision:v1:" Named;
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored;
     /// Vault-owned description policy. Key: ().
@@ -398,4 +404,6 @@ side_tables! {
     /// Rolling window (max 64) of recent benchmark score-change diffs for one model. Key:
     /// string(model id) "\x00".
     LLM_SCORE_DIFFS: VaultMeta b"llm:scores:v1:" LegacyJson Authored;
+    /// The catalog revision pinned when a held-out trial was nominated. Key: id16.
+    LLM_TRIAL_CATALOG: VaultMeta b"llm:trial_catalog:v1:" Named;
 }
