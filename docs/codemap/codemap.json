@@ -26193,7 +26193,7 @@
      "path": "src/inbox/takeover_ask.rs",
      "purpose": "CUA-001: a run guest's takeover ask as the owners' inbox Ask (\"Needs you\")",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -56799,7 +56799,7 @@
      "path": "src/cdp.rs",
      "purpose": "The Chrome DevTools Protocol over Chromium's `--remote-debugging-pipe`: JSON messages, each ended by a NUL…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -56822,13 +56822,13 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/driver.rs",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 25
      }
     },
     {
@@ -56841,6 +56841,7 @@
       "BrowserDriver",
       "BrowserError",
       "BrowserPersonInput",
+      "BrowserTab",
       "ClickInput",
       "CropInput",
       "DecideStep",
@@ -56891,7 +56892,7 @@
       "enum": 8,
       "fn": 12,
       "re-export": 5,
-      "struct": 38,
+      "struct": 39,
       "trait": 2
      }
     },
@@ -56972,7 +56973,7 @@
      "purpose": "A browser session: one Chromium guest in a container and the CDP driver attached to it, with the host's…",
      "surface": {
       "crate-vis": 3,
-      "fn": 18,
+      "fn": 21,
       "struct": 2
      }
     }
@@ -56995,7 +56996,7 @@
     "driver": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "file",
      "purpose": "The CDP driver: one page in a Chromium guest, read as an outline and acted on by ref"
     },
@@ -67755,7 +67756,7 @@
      "path": "src/api/owner_routes/desktop_takeover_routes.rs",
      "purpose": "`/v1/owner/desktops*`: the owner takes a run's desktop over (CUA-001)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -72950,9 +72951,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/server/browser_seats.rs",
-     "purpose": "The run browsers live on this host (CUA-001), so the owner's door can reach the same guest a run's door…",
+     "purpose": "The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 2
      }
     },
     {
@@ -73005,9 +73006,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/server/desktop_seats.rs",
-     "purpose": "The run desktops live on this host (CUA-001), so the owner's door can reach the same guest a run's door…",
+     "purpose": "The run guests live on this host (CUA-001), so the owner's door can reach the same guest a run's door…",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 16
      }
     },
     {
@@ -73118,7 +73119,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 4
      }
     },
