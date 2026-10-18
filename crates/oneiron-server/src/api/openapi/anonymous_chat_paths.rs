@@ -50,28 +50,49 @@ fn responses(answer: &Value) -> Value {
         "content": {"application/json": {"schema": answer}}
     }));
     for (status, description) in [
-        ("400", "Malformed input, empty text, a house_mind target with a model, or a plain_model target without one (invalid_anonymous_chat_request)."),
-        ("409", "The anonymous session could not open or the turn failed (anonymous_session_unavailable or anonymous_chat_failed)."),
-        ("500", "The request-local session could not close (anonymous_session_close_failed)."),
-        ("503", "No configured model serves the selected target (anonymous_model_unavailable)."),
+        (
+            "400",
+            "Malformed input, empty text, a house_mind target with a model, or a plain_model target without one (invalid_anonymous_chat_request).",
+        ),
+        (
+            "409",
+            "The anonymous session could not open or the turn failed (anonymous_session_unavailable or anonymous_chat_failed).",
+        ),
+        (
+            "500",
+            "The request-local session could not close (anonymous_session_close_failed).",
+        ),
+        (
+            "503",
+            "No configured model serves the selected target (anonymous_model_unavailable).",
+        ),
     ] {
-        responses.insert(status.to_owned(), json!({
-            "description": description,
-            "headers": headers,
-            "content": {"application/json": {"schema": refusal}}
-        }));
+        responses.insert(
+            status.to_owned(),
+            json!({
+                "description": description,
+                "headers": headers,
+                "content": {"application/json": {"schema": refusal}}
+            }),
+        );
     }
     for (status, description) in [
         ("401", "No valid credential."),
-        ("403", "The credential lacks core:read or was revoked during the turn (credential_revoked)."),
+        (
+            "403",
+            "The credential lacks core:read or was revoked during the turn (credential_revoked).",
+        ),
     ] {
-        responses.insert(status.to_owned(), json!({
-            "description": description,
-            "headers": headers,
-            "content": {"application/json": {"schema": {"anyOf": [
-                {"$ref": "#/components/schemas/ApiErrorEnvelope"}, refusal
-            ]}}}
-        }));
+        responses.insert(
+            status.to_owned(),
+            json!({
+                "description": description,
+                "headers": headers,
+                "content": {"application/json": {"schema": {"anyOf": [
+                    {"$ref": "#/components/schemas/ApiErrorEnvelope"}, refusal
+                ]}}}
+            }),
+        );
     }
     Value::Object(responses)
 }

@@ -70,6 +70,8 @@ impl Vault {
             locality_rank(row.locality) > locality_rank(prior.voice[key].locality)
         }) || locality_rank(next.extraction_max_locality)
             > locality_rank(prior.extraction_max_locality)
+            || locality_rank(next.self_compaction.locality)
+                > locality_rank(prior.self_compaction.locality)
             || (prior.voice_precedence == VoicePrecedence::VaultOnly
                 && next.voice_precedence != VoicePrecedence::VaultOnly)
         {

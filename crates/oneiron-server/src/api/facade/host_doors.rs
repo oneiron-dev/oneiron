@@ -49,11 +49,11 @@ use crate::models::RungVoices;
 use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
-pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
 pub(crate) use super::credential_doors::*;
+pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
 // The shared-vault doors live beside these; the generated callers name them here.
 pub(crate) use super::agent_definition_doors::*;
@@ -71,10 +71,11 @@ pub(crate) use super::extraction_doors::*;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
-pub(crate) use super::skill_execution_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::asr_doors::*;
 pub(crate) use super::model_step_doors::*;
+pub(crate) use super::cleanup_doors::*;
+pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
@@ -87,9 +88,9 @@ pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
 pub(crate) use super::note_doors::*;
-pub(crate) use super::summary_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::residence_doors::*;
+pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
@@ -122,6 +123,7 @@ pub(crate) use super::craft_candidate_doors::*;
 pub(crate) use super::channel_doors::*;
 pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
+pub(crate) use super::consent_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -135,6 +137,8 @@ pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
 // The secret use door, whose connector.call sends (OF-560), likewise.
 pub(crate) use super::secret_use_doors::*;
+// An agent run's secret grant doors (DOOR-124), likewise.
+pub(crate) use super::secret_grant_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
@@ -144,10 +148,10 @@ pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.
 pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
+pub(crate) use super::affect_doors::*;
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
-pub(crate) use super::affect_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1116,6 +1120,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
+        | "vault.cleanup.run"
+        | "vault.entities.mention"
         | "vault.legal_holds.place"
         | "vault.legal_holds.widen"
         | "vault.legal_holds.list"
@@ -1194,6 +1200,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.policy.owner.get"
         | "vault.policy.owner.configure"
         | "vault.policy.owner.row.change"
+        | "vault.consent.approve_once"
+        | "vault.consent.create_standing_grant"
+        | "vault.consent.registry"
+        | "vault.consent.revoke"
         | "vault.gate.policy.get"
         | "vault.gate.policy.put"
         | "vault.gate.checker.get"

@@ -415,7 +415,11 @@ impl BoundEnvelope {
 }
 
 /// Which of the two disjoint consent domains a shape belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum ConsentDomain {
     /// Data → audience.
     Disclosure,

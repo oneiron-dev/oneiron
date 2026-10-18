@@ -13,6 +13,7 @@ use super::{EvalSeat, OfferModelPin};
 use crate::consent::AuthenticatedOwner;
 use crate::llm::LlmCapability;
 use crate::llm::manifest::{MODEL_ROLES, ModelBinding, ModelRole, read_manifest};
+use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Error, ModelId, Result, Vault};
 
@@ -31,7 +32,7 @@ pub struct OfferSwitchReceipt {
     pub binding: ModelBinding,
     /// The asset the owner approved, at the revision the registry served.
     pub to: OfferModelPin,
-    pub owner: EntityId,
+    pub owner: SwitchOwner,
     pub at: u64,
     pub undone: Option<OfferSwitchUndo>,
 }
@@ -40,8 +41,60 @@ pub struct OfferSwitchReceipt {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OfferSwitchUndo {
-    pub owner: EntityId,
+    pub owner: SwitchOwner,
     pub at: u64,
+}
+
+/// The owner a switch or its undo names: an actor, or no one once that
+/// actor was erased (FIX 3520). It reads and writes as the actor's hex id,
+/// or as [`ERASED_CALL_IDENTITY`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SwitchOwner {
+    Actor(EntityId),
+    Erased,
+}
+
+impl SwitchOwner {
+    /// Whether this is `actor`.
+    #[must_use]
+    pub fn is(self, actor: EntityId) -> bool {
+        self == Self::Actor(actor)
+    }
+
+    /// Makes this no one when it is `actor`; whether it was.
+    fn forget(&mut self, actor: EntityId) -> bool {
+        let named = self.is(actor);
+        if named {
+            *self = Self::Erased;
+        }
+        named
+    }
+}
+
+impl Serialize for SwitchOwner {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self {
+            Self::Actor(id) => serializer.serialize_str(&id.to_hex()),
+            Self::Erased => serializer.serialize_str(ERASED_CALL_IDENTITY),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SwitchOwner {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value == ERASED_CALL_IDENTITY {
+            return Ok(Self::Erased);
+        }
+        EntityId::from_hex(&value)
+            .map(Self::Actor)
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 fn invalid(reason: &str) -> Error {
@@ -138,7 +191,7 @@ pub(super) fn apply_switch_in_txn(
         previous,
         binding,
         to: to.clone(),
-        owner,
+        owner: SwitchOwner::Actor(owner),
         at,
         undone: None,
     };
@@ -178,7 +231,10 @@ pub fn undo_training_offer_switch(
             .roles
             .insert(receipt.role, receipt.previous.clone());
         vault.write_model_manifest_in_txn(txn, &manifest, None, None)?;
-        receipt.undone = Some(OfferSwitchUndo { owner: actor, at });
+        receipt.undone = Some(OfferSwitchUndo {
+            owner: SwitchOwner::Actor(actor),
+            at,
+        });
         SWITCH.put(&vault.store, txn, offer, &receipt)?;
         Ok(receipt)
     })
@@ -193,4 +249,54 @@ pub fn training_offer_switch(
 ) -> Result<Option<OfferSwitchReceipt>> {
     let txn = vault.store.env.read_txn()?;
     SWITCH.get(&vault.store, &txn, offer)
+}
+
+/// Whether `id`'s entity is no actor, so its erase has no one to take out of
+/// the switches.
+fn names_no_actor(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    if let Some(raw) = vault.get_raw_in(txn, id)?
+        && let Some(header) = crate::batch::EntityMetadataHeader::parse(&raw)
+    {
+        return Ok(!matches!(
+            header.entity_type,
+            crate::registry::ENTITY_TYPE_PERSON
+                | crate::registry::ENTITY_TYPE_MACHINE
+                | crate::registry::ENTITY_TYPE_AGENT_DEF
+        ));
+    }
+    Ok(false)
+}
+
+/// Erasing `actor` from the switches (FIX 3520): each switch it approved or
+/// undid keeps its bindings, asset, times and undo state and names no one.
+/// A switch stays bound, since its approver's erase undoes nothing, and a
+/// later undo takes the live owner's proof. One-way, in the erase's own
+/// transaction. An id whose entity is no actor scans nothing.
+///
+/// # Errors
+///
+/// Storage errors, or a switch row that cannot be read.
+pub(crate) fn erase_switch_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if names_no_actor(vault, wtxn, actor)? {
+        return Ok(());
+    }
+    let mut receipts = Vec::new();
+    for (offer, mut receipt) in SWITCH.scan(&vault.store, wtxn)? {
+        let approved = receipt.owner.forget(*actor);
+        let undid = receipt
+            .undone
+            .as_mut()
+            .is_some_and(|undo| undo.owner.forget(*actor));
+        if approved || undid {
+            receipts.push((offer, receipt));
+        }
+    }
+    for (offer, receipt) in receipts {
+        SWITCH.put(&vault.store, wtxn, &offer, &receipt)?;
+    }
+    Ok(())
 }

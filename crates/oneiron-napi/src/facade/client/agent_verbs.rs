@@ -1951,6 +1951,21 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_cleanup_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.cleanup.run", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_entities_mention(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.entities.mention", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_legal_holds_place(
         &self,
         input: serde_json::Value,
@@ -2191,6 +2206,42 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.policy.relay.decide", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_approve_once(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.approve_once", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_create_standing_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.create_standing_grant", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_registry(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.registry", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consent_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consent.revoke", input)
             .map_err(facade_error)
     }
     #[napi]
@@ -2444,6 +2495,36 @@ impl NativeClient {
     pub fn self_use(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.use", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_materialize(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.materialize", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_renew(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.renew", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_teardown(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.teardown", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_secrets_use(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.secrets.use", input)
             .map_err(facade_error)
     }
     #[napi]

@@ -5,39 +5,36 @@
 //! loop, on a cheap seat, under the prompt package's compaction block. A
 //! reply replaces those steps only after the engine's six-check gate. With no
 //! seat or no compaction block, compaction is off and says why; an off seat
-//! never calls a model.
+//! never calls a model. An agent whose profile names `self` writes its own
+//! summaries (FIX 4465): the same cheap route, wearing its home, on its own
+//! compaction model when its definition names one.
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::SpendScopeId;
+use oneiron::code_run::CompactionHostBinding;
 use oneiron::compaction::{
-    CompactionBackend, CompactionBackendRegistry, CompactionCheck, CompactionDriver,
-    CompactionGatePolicy, CompactionOff, CompactionProduct, CompactionRefusal, CompactionRequest,
-    CompactionSuppression, CompactionTierClass, EpochEmbedder, compaction_reply_schema,
-    compaction_request_input,
+    CompactionBackend, CompactionBackendRegistry, CompactionDriver, CompactionGatePolicy,
+    CompactionOff, CompactionRefusal, CompactionSuppression, EpochEmbedder,
 };
 use oneiron::embed::Embedder;
-use oneiron::engine_executor::{
-    CompactionSpawn, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, RunCompaction,
-};
+use oneiron::engine_executor::{CompactionSpawn, RunCompaction};
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{
-    CallClass, CallEnvelope, CallPurpose, ContentPart, FatalLlmError, LlmCapability, LlmError,
-    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence,
-};
+use oneiron::llm::{ModelId, ModelLocality, ModelTierRef};
 use oneiron::{BudgetGuard, CompactionOwnership, EdgeActorClass, MemoryProfile, Vault, WriteActor};
 
 use super::CHAT_ROLE;
-use super::payer_funding::scope_funding;
 use super::status::{CompactionState, CompactionStatus, StatusCell};
 use crate::admission::Admission;
 use crate::config::models::{ModelsConfig, Rung, role_key};
 use crate::embedder::EmbedderSlot;
 use crate::mcp::McpQuickJsProvider;
-use crate::models::{ModelRuntime, RoleRefusal};
+use crate::models::ModelRuntime;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
+
+mod self_writer;
+mod serve;
 
 /// The registry key a run's memory profile names.
 const BACKEND_KEY: &str = "code-mode-compaction";
@@ -232,8 +229,8 @@ impl CodeModeCompaction {
         status.update(|status| status.compaction = self.status());
         let vectors = embedder.map(|slot| slot as Arc<dyn EpochEmbedder>);
         provider.with_compaction(Arc::new(
-            move |byline, credential: &str, spend: Option<&SpendScopeId>| {
-                let seat = self.for_run(byline, credential, spend);
+            move |host: CompactionHostBinding, credential: &str, spend: Option<&SpendScopeId>| {
+                let seat = self.for_run(host, credential, spend);
                 match &vectors {
                     Some(vectors) => seat.with_room_vectors(Arc::clone(vectors)),
                     None => seat,
@@ -242,13 +239,15 @@ impl CodeModeCompaction {
         ))
     }
 
-    /// A fresh seat for one run, its summaries bylined `byline`, its passes
-    /// queued in `credential`'s turn, on the memory profile of the agent
-    /// `byline` names. A run that spends under `spend` compacts on that
-    /// scope's meter (OF-533); any other on code mode's.
+    /// A fresh seat for one run, its summaries bylined by the actor `host`
+    /// authenticated, its passes queued in `credential`'s turn, on the memory
+    /// profile of the agent that actor names. A run that spends under
+    /// `spend` compacts on that scope's meter (OF-533); any other on code
+    /// mode's. An agent whose profile names `self` compacts as itself
+    /// (FIX 4465), wherever its run is served.
     pub(super) fn for_run(
         &self,
-        byline: WriteActor,
+        host: CompactionHostBinding,
         credential: &str,
         spend: Option<&SpendScopeId>,
     ) -> RunCompaction {
@@ -256,13 +255,24 @@ impl CodeModeCompaction {
             Self::Off(why) => return RunCompaction::off(*why),
             Self::Live(live) => live,
         };
-        let profile = live.run_profile(byline);
+        let byline = host.actor();
+        let (profile, definition) = live.run_profile(byline);
         // Docs Q13: the agent's own hot window, when its profile names one.
         let hot_steps = profile.hot_steps.unwrap_or(live.hot_steps);
         let scoped;
-        let registry = match spend {
-            None => &live.registry,
-            Some(scope) => match live.scoped_registry(scope) {
+        let registry = match (definition, spend) {
+            (Some(definition), _) => match live.self_registry(&profile, definition, host, spend) {
+                Ok(registry) => {
+                    scoped = registry;
+                    &scoped
+                }
+                Err(error) => {
+                    tracing::error!(kind = ?error.kind(), "a run's own compaction writer did not register");
+                    return RunCompaction::off(CompactionOff::BackendFailed);
+                }
+            },
+            (None, None) => &live.registry,
+            (None, Some(scope)) => match live.scoped_registry(scope) {
                 Ok(registry) => {
                     scoped = registry;
                     &scoped
@@ -308,26 +318,68 @@ impl LiveCompaction {
         Ok(registry)
     }
 
+    /// The registry a run whose agent writes its own compaction compacts on
+    /// (FIX 4465): one writer, bound to the run's authenticated actor, on
+    /// the house compaction seat's route, metered as the run's other passes
+    /// are. It wears the agent's home and, when its definition names one,
+    /// its own compaction model.
+    fn self_registry(
+        &self,
+        profile: &MemoryProfile,
+        definition: oneiron::agent_def::AgentDefinition,
+        host: CompactionHostBinding,
+        spend: Option<&SpendScopeId>,
+    ) -> oneiron::Result<CompactionBackendRegistry> {
+        let house = self.served.first().ok_or(oneiron::Error::InvariantViolation(
+            "code mode's compaction serves no house seat",
+        ))?;
+        let route = ServedCompactionBackend {
+            meter: spend.map_or_else(
+                || house.meter.clone(),
+                |scope| CompactionMeter::Scope(scope.clone()),
+            ),
+            ..ServedCompactionBackend::clone(house)
+        };
+        let mut registry = CompactionBackendRegistry::new();
+        registry.register(Arc::new(self_writer::SelfCompactionBackend::new(
+            profile.compaction_backend.as_str().to_owned(),
+            route,
+            definition,
+            host,
+        )))?;
+        Ok(registry)
+    }
+
     /// The run's memory profile (agent-runtime-v1 §d7): the profile on the
     /// agent definition its byline names, when it is one and carries one,
     /// else the host's. The profile's window, owner and summary split apply;
     /// a backend this host does not serve falls back to the host's own seat,
-    /// so the run still compacts.
-    fn run_profile(&self, byline: WriteActor) -> MemoryProfile {
+    /// so the run still compacts. A profile naming `self` (FIX 4465) is
+    /// recognized first and never falls back: its definition comes back with
+    /// it, for the run's own writer.
+    fn run_profile(
+        &self,
+        byline: WriteActor,
+    ) -> (MemoryProfile, Option<oneiron::agent_def::AgentDefinition>) {
         if byline.actor_class() != EdgeActorClass::Agent {
-            return self.profile.clone();
+            return (self.profile.clone(), None);
         }
         // An agent actor that is not a definition (a person-backed agent, a
         // connector) has no profile.
-        let Some(mut profile) = self
+        let Some(definition) = self
             .vault
             .get_agent_definition(&byline.entity_ref())
             .ok()
             .flatten()
-            .and_then(|definition| definition.memory_profile)
         else {
-            return self.profile.clone();
+            return (self.profile.clone(), None);
         };
+        let Some(mut profile) = definition.memory_profile.clone() else {
+            return (self.profile.clone(), None);
+        };
+        if profile.compaction == CompactionOwnership::Engine && profile.writes_as_self() {
+            return (profile, Some(definition));
+        }
         if profile.compaction == CompactionOwnership::Engine
             && self.registry.resolve(&profile).is_err()
         {
@@ -337,7 +389,7 @@ impl LiveCompaction {
             );
             profile.compaction_backend = self.profile.compaction_backend.clone();
         }
-        profile
+        (profile, None)
     }
 }
 
@@ -482,186 +534,6 @@ struct ServedCompactionBackend {
     /// window.
     allowances: BTreeMap<ModelId, u64>,
     handle: tokio::runtime::Handle,
-}
-
-impl ServedCompactionBackend {
-    fn llm_request(
-        &self,
-        request: &CompactionRequest,
-        retry: Option<CompactionCheck>,
-    ) -> LlmRequest {
-        let purpose = CallPurpose::Other {
-            name: ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME.to_owned(),
-        };
-        let tier = ModelTierRef(BACKEND_KEY.to_owned());
-        LlmRequest {
-            model: self.model.clone(),
-            envelope: CallEnvelope {
-                seat_effort: None,
-                scope: oneiron::llm::Scope::default(),
-                tier: TierPrecedence::for_purpose(&purpose, tier),
-                purpose,
-                class: CallClass::BestEffort,
-                response_format: ResponseFormat::Json {
-                    schema: compaction_reply_schema(),
-                },
-                locality: self.locality,
-            },
-            messages: vec![
-                LlmMessage {
-                    role: LlmMessageRole::System,
-                    content: vec![ContentPart::Text {
-                        text: self.prompt.clone(),
-                    }],
-                },
-                LlmMessage {
-                    role: LlmMessageRole::User,
-                    content: vec![ContentPart::Text {
-                        text: compaction_request_input(request, retry).to_string(),
-                    }],
-                },
-            ],
-            tools: Vec::new(),
-            params: BTreeMap::from([(
-                "max_output_tokens".to_owned(),
-                serde_json::json!(output_tokens(request.summary_token_budget)),
-            )]),
-            provider_options: BTreeMap::new(),
-        }
-    }
-}
-
-impl CompactionBackend for ServedCompactionBackend {
-    fn backend_key(&self) -> &str {
-        &self.key
-    }
-
-    fn tier_class(&self) -> CompactionTierClass {
-        CompactionTierClass::Cheap
-    }
-
-    /// Read on the vault's live route, as a pass is admitted: what its
-    /// context holds beside the reply and the prompt, as [`Self::compact`]
-    /// counts it.
-    fn input_token_limit(&self, summary_token_budget: u64) -> Option<u64> {
-        let context = self
-            .models
-            .seat(self.role)
-            .and_then(|seat| self.models.route_role(&self.vault, self.role, seat).ok())
-            .and_then(|route| self.allowances.get(&route.model).copied())
-            .unwrap_or(0);
-        Some(
-            context
-                .saturating_sub(output_tokens(summary_token_budget))
-                .saturating_sub(self.prompt_tokens),
-        )
-    }
-
-    fn compact(
-        &self,
-        request: &CompactionRequest,
-        retry: Option<CompactionCheck>,
-    ) -> Result<CompactionProduct, CompactionRefusal> {
-        let started = Instant::now();
-        let mut call = self
-            .models
-            .admit_role(&self.vault, self.role, self.llm_request(request, retry))
-            .map_err(|refusal| {
-                let suppression = match refusal {
-                    RoleRefusal::NoSeat => CompactionSuppression::Sticky {
-                        why: CompactionOff::NoSeat,
-                    },
-                    _ => CompactionSuppression::TurnScoped { check: None },
-                };
-                refused(suppression, refusal.to_string())
-            })?;
-        // The admitted model, not the configured ladder, must hold the call.
-        let Some(&context) = self.allowances.get(&call.request.model) else {
-            return Err(refused(
-                CompactionSuppression::TurnScoped { check: None },
-                format!("no context is known for {}", call.request.model),
-            ));
-        };
-        let input = call
-            .request
-            .messages
-            .iter()
-            .flat_map(|message| &message.content)
-            .map(|part| match part {
-                ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
-                _ => 0,
-            })
-            .sum::<u64>();
-        if input.saturating_add(output_tokens(request.summary_token_budget)) > context {
-            return Err(refused(
-                CompactionSuppression::TurnScoped { check: None },
-                format!(
-                    "a {input}-token window and its reply exceed {}'s {context}-token context",
-                    call.request.model
-                ),
-            ));
-        }
-        // A route that cannot hold a reply to a schema (an Anthropic-style
-        // one) is asked in plain text: the prompt asks for the same JSON, and
-        // the gate's schema check refuses anything else.
-        if !call
-            .ladder
-            .supports(&call.request.model, &LlmCapability::JsonResponse)
-        {
-            call.request.envelope.response_format = ResponseFormat::Text;
-        }
-        let turn =
-            |error: String| refused(CompactionSuppression::TurnScoped { check: None }, error);
-        // A pass under a room-paid scope bills its root payer's own account
-        // (OF-531); a payer this host cannot bill holds the pass for the turn.
-        let (guard, payer) = match &self.meter {
-            CompactionMeter::CodeMode(guard) => (guard.clone(), None),
-            CompactionMeter::Scope(scope) => {
-                let payer = scope_funding(&self.vault, Some(scope), false)
-                    .map_err(|fault| turn(fault.to_string()))?;
-                let guard = AgentDispatcher::new(&self.vault)
-                    .guard_for_scope(scope)
-                    .map_err(|error| turn(error.to_string()))?;
-                (guard, payer)
-            }
-        };
-        let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
-        let reply = self
-            .handle
-            .block_on(call.ladder.generate(&run, call.request, None));
-        if let CompactionMeter::Scope(scope) = &self.meter
-            && let Err(error) =
-                AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)
-        {
-            tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
-        }
-        match reply {
-            Ok(response) => {
-                let summary_text = response
-                    .message
-                    .content
-                    .iter()
-                    .filter_map(|part| match part {
-                        ContentPart::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect();
-                Ok(CompactionProduct {
-                    summary_text,
-                    finish: response.finish_reason,
-                    latency: started.elapsed(),
-                })
-            }
-            Err(error) => {
-                let suppression = match &error {
-                    LlmError::Fatal(FatalLlmError::Auth) => CompactionSuppression::Auth,
-                    LlmError::BudgetDenied(_) => CompactionSuppression::NoCredit,
-                    _ => CompactionSuppression::TurnScoped { check: None },
-                };
-                Err(refused(suppression, error.to_string()))
-            }
-        }
-    }
 }
 
 /// The output a pass reserves: a summary the provider's tokenizer may count

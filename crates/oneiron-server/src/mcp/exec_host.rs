@@ -7,13 +7,16 @@ use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
 use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
-use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
+use oneiron::code_run::{
+    CompactionHostBinding, GatedActorWrite, SpawnHostSeat, bind_compaction_caller,
+};
 use oneiron::engine_executor::{
     EngineExecutorConfig, EngineExecutorOutcome, EngineExecutorStatus, EngineNativeExecutor,
     JsCodeModeRuntime, RunCompaction,
 };
 use oneiron::llm::run_admission::PayerPerson;
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
+use oneiron::task_type::TaskTypeRef;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, Vault, WriteActor};
 use std::collections::HashSet;
 use std::fmt;
@@ -248,12 +251,13 @@ pub trait McpCodeModeProvider: Send + Sync {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig>;
     /// A compaction seat for a run the host holds none for, its summaries
-    /// bylined `byline`, its passes queued in `credential`'s turn, its calls
-    /// spent under `spend` when the run spends under a scope; `None` keeps
-    /// the run's window raw.
+    /// bylined by the actor `host` authenticated (who also writes them, when
+    /// its profile names `self`, FIX 4465), its passes queued in
+    /// `credential`'s turn, its calls spent under `spend` when the run spends
+    /// under a scope; `None` keeps the run's window raw.
     fn compaction(
         &self,
-        _byline: WriteActor,
+        _host: CompactionHostBinding,
         _credential: &str,
         _spend: Option<&SpendScopeId>,
     ) -> Option<RunCompaction> {
@@ -279,11 +283,13 @@ pub trait McpCodeModeProvider: Send + Sync {
     }
 }
 
-/// Builds one run's compaction seat from the run's write actor, the
+/// Builds one run's compaction seat from the run's authenticated host
+/// binding (its write actor, its caller's place and its proof), the
 /// credential its passes queue under (its registered fingerprint's stream
 /// connection) and the spend scope its calls spend under, if any.
-pub type RunCompactionSeat =
-    Arc<dyn Fn(WriteActor, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync>;
+pub type RunCompactionSeat = Arc<
+    dyn Fn(CompactionHostBinding, &str, Option<&SpendScopeId>) -> RunCompaction + Send + Sync,
+>;
 
 /// Builds one reader child's backend over the host's model, its calls spent
 /// on the guard it is given and billed to the payer, when one is given.
@@ -454,7 +460,20 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
                 .take(run_id)
                 .or_else(|| {
-                    provider.compaction(write_actor, &request.actor.stream_connection.0, None)
+                    // The host's own binding of the caller: the actor its
+                    // credential writes as, where its connection sits and
+                    // the slip it proved. Never a tool argument.
+                    let host = bind_compaction_caller(
+                        write_actor,
+                        request.actor.locality(),
+                        request
+                            .actor
+                            .auth
+                            .as_ref()
+                            .and_then(|auth| auth.verified_slip())
+                            .cloned(),
+                    );
+                    provider.compaction(host, &request.actor.stream_connection.0, None)
                 });
             if let Some(seat) = seat.as_mut() {
                 // Its summaries are born where the run's credential writes.
@@ -720,6 +739,30 @@ pub(crate) fn run_seat(
     run_id: EntityId,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
+    seat_for(vault, provider, run_id, None, task)
+}
+
+/// An agent run's seat (DOOR-111 S5), born as `run_seat` births one and
+/// stamped with `type_ref`, the stamp its dispatch carried, so the run's
+/// route reads with its own stamp. A manifest-free vault still bears none.
+pub(crate) fn task_run_seat(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    run_id: EntityId,
+    type_ref: &TaskTypeRef,
+    task: impl FnOnce(&str) -> SeatTask,
+) -> Result<Option<ModelSeat>, String> {
+    seat_for(vault, provider, run_id, Some(type_ref), task)
+}
+
+/// The one birth both seats share: generic, or stamped with `type_ref`.
+fn seat_for(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    run_id: EntityId,
+    type_ref: Option<&TaskTypeRef>,
+    task: impl FnOnce(&str) -> SeatTask,
+) -> Result<Option<ModelSeat>, String> {
     let has_seat = vault
         .model_manifest()
         .map_err(|error| error.to_string())?
@@ -737,10 +780,13 @@ pub(crate) fn run_seat(
     let facet = provider
         .seat_facet()
         .ok_or("manifest-backed run requires a capability profile")?;
-    vault
-        .birth_model_seat(run_id, &task(facet), decisions)
-        .map(Some)
-        .map_err(|error| error.to_string())
+    let task = task(facet);
+    match type_ref {
+        Some(type_ref) => vault.birth_task_model_seat(run_id, type_ref, &task, decisions),
+        None => vault.birth_model_seat(run_id, &task, decisions),
+    }
+    .map(Some)
+    .map_err(|error| error.to_string())
 }
 
 /// The seat an engine-native run is born on (`run_seat`), warm under
@@ -758,7 +804,39 @@ pub(crate) fn engine_run_seat(
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
-    run_seat(vault, provider, config.run_id, |facet| SeatTask {
+    let model = planned_seat(plan);
+    run_seat(vault, provider, config.run_id, |facet| {
+        engine_seat_task(config, facet, warm_scope, model, listed)
+    })
+}
+
+/// An agent run's seat as `engine_run_seat` births one, stamped with its
+/// dispatch's `type_ref` (`task_run_seat`).
+pub(crate) fn task_engine_run_seat(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    config: &EngineExecutorConfig,
+    warm_scope: String,
+    type_ref: &TaskTypeRef,
+    plan: Option<&SpawnPlanReceipt>,
+    listed: Vec<AgentModel>,
+) -> Result<Option<ModelSeat>, String> {
+    let model = planned_seat(plan);
+    task_run_seat(vault, provider, config.run_id, type_ref, |facet| {
+        engine_seat_task(config, facet, warm_scope, model, listed)
+    })
+}
+
+/// The task an engine-native run's seat is born for, from `config` as it
+/// stands now.
+fn engine_seat_task(
+    config: &EngineExecutorConfig,
+    facet: &str,
+    warm_scope: String,
+    override_model: Option<oneiron::ModelId>,
+    listed: Vec<AgentModel>,
+) -> SeatTask {
+    SeatTask {
         kind: SeatKind::Attempt,
         warm_scope,
         task: config.task.clone(),
@@ -769,10 +847,10 @@ pub(crate) fn engine_run_seat(
         required: Vec::new(),
         min_context_tokens: 1,
         locality: config.model_locality,
-        override_model: planned_seat(plan),
+        override_model,
         override_effort: None,
         listed,
-    })
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

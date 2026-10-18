@@ -470,7 +470,8 @@ side_tables! {
     SKILL_OPTIMIZE_OFFER_CHECK: VaultMeta b"skill_optimize:offer_check:v1:" Named;
     /// The stock switch an offer's approval bound: the replaced and new role bindings, and any
     /// undo. Key: id16 (offer).
-    SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named;
+    SKILL_OPTIMIZE_OFFER_SWITCH: VaultMeta b"skill_optimize:offer_switch:v1:" Named
+        => crate::skill_optimize::erase_switch_actor_in_txn;
     /// The prepared training run an approved Train offer handed off, with the exact spec the
     /// owner authorized. Key: id16 (offer).
     SKILL_OPTIMIZE_OFFER_TRAINING: VaultMeta b"skill_optimize:offer_training:v1:" Named;
@@ -501,6 +502,10 @@ side_tables! {
     /// The same outcome row for a named executor's arm. Key: id16 + u16be length + executor string +
     /// receipt string.
     SKILL_RELIABILITY_PAIRED_OUTCOME: VaultMeta b"skill_reliability:outcome:v2:" Raw;
+    /// The owner's planned spawn under one intent key (DOOR-111): the original ask and its
+    /// digest, the custody phase and fence, and the placed stamp and plan receipt or the kept
+    /// refusal. Key: blake3 (32) of the framed owner, parent and intent key.
+    SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64
     /// (blake3 of prefix+agent+world).
     STANDING_BLOCK: VaultMeta b"standing.block.v1:" LegacyJson;
