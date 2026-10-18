@@ -174,7 +174,7 @@ pub enum DerivationKind {
 
 /// Where a case's label came from. Outcomes and the owner's picks anchor; a
 /// judge's verdict never does.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalLabelKind {
     WorldOutcome,

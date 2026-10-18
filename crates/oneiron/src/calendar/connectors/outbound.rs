@@ -708,6 +708,26 @@ pub(super) fn write_remote_object(
     Ok(())
 }
 
+/// Resolves a provider deletion against our retained href cursor, not a
+/// provider-asserted UID. Unknown removals have no local source to retract.
+pub fn calendar_remote_uid_for_href(
+    vault: &Vault,
+    system: &str,
+    calendar_ref: &str,
+    href: &str,
+) -> Result<Option<String>, CalendarConnectorError> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    for (_, row) in REMOTE_OBJECT.scan_from(&vault.store, &txn, REMOTE_OBJECT_TAG)? {
+        if row.system == system
+            && row.calendar_ref == calendar_ref
+            && row.href.as_deref() == Some(href)
+        {
+            return Ok(Some(row.uid));
+        }
+    }
+    Ok(None)
+}
+
 /// Provenance ref for a locally originated write's passport head.
 fn write_source_record_id(provider: &str, seat: &CalendarConnectorSeatState, uid: &str) -> String {
     format!(

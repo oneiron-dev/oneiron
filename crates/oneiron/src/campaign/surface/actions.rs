@@ -1,8 +1,8 @@
 //! Typed campaign enrollment, earned evidence and immediate unsubscribe.
 
-use serde::{Deserialize, Serialize};
 use crate::campaign::claims::{EvidenceBasis, StageEvidenceClass, StageKey};
 use crate::campaign::stage::{PromotionMode, StageLadderDefinition};
+use serde::{Deserialize, Serialize};
 
 /// One evidence-backed channel with its sticky sending identity.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

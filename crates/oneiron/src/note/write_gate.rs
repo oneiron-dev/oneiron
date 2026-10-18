@@ -46,6 +46,17 @@ impl Vault {
         actor_class: EdgeActorClass,
         markdown: &str,
     ) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        self.check_auto_note_birth_in_txn(&txn, kind, actor_class, markdown)
+    }
+
+    pub(crate) fn check_auto_note_birth_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        kind: &NoteKind,
+        actor_class: EdgeActorClass,
+        markdown: &str,
+    ) -> Result<()> {
         if actor_class != EdgeActorClass::Agent {
             return Ok(());
         }
@@ -53,8 +64,7 @@ impl Vault {
         if chars >= AUTO_NOTE_MIN_CHARS {
             return Ok(());
         }
-        let txn = self.store.env.read_txn()?;
-        let descriptor = super::descriptor_in_txn(&self.store, &txn, &kind.as_str())?;
+        let descriptor = super::descriptor_in_txn(&self.store, txn, &kind.as_str())?;
         match auto_note_floor(descriptor.as_ref()) {
             Some(floor) if chars < floor => {
                 Err(invalid("an agent's NOTE body is under the minimum length"))

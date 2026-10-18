@@ -189,6 +189,51 @@ pub(crate) fn submissions_after_in_txn(
         .collect()
 }
 
+/// Erasing `actor` (FIX 3520): its count and first crossing go, in the
+/// erase's own transaction, as the receipts the count numbers do.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_count_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    COUNT.delete(&vault.store, wtxn, actor)?;
+    Ok(())
+}
+
+/// Erasing `actor` (FIX 3520): every receipt in its history goes, in the
+/// erase's own transaction. The history keys on the actor.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_history_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    HISTORY.delete_from(&vault.store, wtxn, actor.as_bytes())?;
+    Ok(())
+}
+
+/// Erasing `actor` (FIX 3520): its latest receipt per proposal goes, in the
+/// erase's own transaction. The receipts key on the actor.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_submission_actor_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    RECEIPT.delete_from(&vault.store, wtxn, actor.as_bytes())?;
+    Ok(())
+}
+
 impl Vault {
     /// The first typed OF-520 crossing for this actor, if any. Observation is
     /// local-only; it never travels on the replicated claim path.

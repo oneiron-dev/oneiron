@@ -86,8 +86,8 @@ pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::coreference_doors::*;
 // The owner's subject-bound feedback and report doors, likewise.
-pub(crate) use super::feedback_doors::*;
 pub(crate) use super::federation_connect_doors::*;
+pub(crate) use super::feedback_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
 pub(crate) use super::skill_doors::*;
@@ -135,6 +135,7 @@ pub(crate) use super::content_policy_doors::*;
 pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
+pub(crate) use super::checkout_doors::*;
 pub(crate) use super::origin_doors::*;
 // The owner's code snapshot doors (DOOR-118), likewise.
 pub(crate) use super::codebase_doors::*;
@@ -175,6 +176,8 @@ pub(crate) use super::code_doors::*;
 pub(crate) use super::code_run_doors::*;
 // The owner's code consent wait answer and receipt doors (DOOR-079), likewise.
 pub(crate) use super::code_wait_doors::*;
+// The owner's hook regeneration due, record and adopt doors (DOOR-077), likewise.
+pub(crate) use super::hook_regen_doors::*;
 // The owner's speculative merge queue doors (DOOR-132), likewise.
 pub(crate) use super::merge_queue_doors::*;
 // The default lens's door, which holds its card's frame (OF-181), likewise.
@@ -1087,6 +1090,13 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.runs.step"
         | "vault.runs.checkpoint"
         | "ai.reply"
+        | "calendar.connector.configure"
+        | "calendar.connector.get"
+        | "calendar.connector.kill"
+        | "calendar.connector.pull"
+        | "calendar.connector.write"
+        | "calendar.imip.configure"
+        | "calendar.imip.get"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
         | "vault.companions.access_requests.answer"
@@ -1123,6 +1133,10 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.skills.rules.set"
         | "vault.skills.code_auto_install.set"
         | "vault.skills.permissions.approve"
+        | "vault.skills.optimize.start"
+        | "vault.skills.optimize.result"
+        | "vault.skills.governance.get"
+        | "vault.skills.governance.set"
         | "vault.skills.pack_receipt"
         | "vault.skills.outcomes.project"
         | "vault.skills.outcomes.get"
@@ -1137,6 +1151,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.authority.history.import"
         | "vault.mesh.path_receipts"
         | "vault.hooks.replay"
+        | "vault.hooks.regen.due"
+        | "vault.hooks.regen.get"
+        | "vault.hooks.regen.adopt"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
         | "vault.packs.setup.prepare"

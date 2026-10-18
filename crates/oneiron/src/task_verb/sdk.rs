@@ -540,6 +540,7 @@ pub use super::sdk_asr::*;
 pub use super::sdk_authority_history::*;
 pub use super::sdk_browser::*;
 pub use super::sdk_calendar::*;
+pub use super::sdk_campaign_archive::*;
 pub use super::sdk_campaign_split::*;
 pub use super::sdk_catalog_fragment::{
     CATALOG_FRAGMENT_REVISION, CatalogFragment, code_mode_catalog_fragment,
@@ -571,7 +572,6 @@ pub use super::sdk_persona::*;
 pub use super::sdk_record_erase::*;
 pub use super::sdk_reply::*;
 pub use super::sdk_research::*;
-pub use super::sdk_campaign_archive::*;
 pub use super::sdk_residence::*;
 pub use super::sdk_retrieval::*;
 pub use super::sdk_scratchpad::*;
