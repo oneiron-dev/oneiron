@@ -56,6 +56,10 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.weights.get`
 - `vault.retrieval.weights.configure`
 - `vault.affect.annotations.put`
+- `vault.tagging.status`
+- `vault.tagging.tags`
+- `vault.tagging.history`
+- `vault.tagging.mentions`
 - `vault.affect.claims.consolidate`
 - `vault.retrieval.recall`
 - `vault.retrieval.runs`

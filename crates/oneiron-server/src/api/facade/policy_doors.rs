@@ -6,7 +6,14 @@
 //! `POST /v1/core/actions/{verb}` does: as the credential's own principal,
 //! reading under its read key. The wake policy also takes the owner's proof,
 //! as `/v1/owner` takes it; the inference defaults leave the caller's Auto
-//! ceiling to the table.
+//! ceiling to the table, and carry the owner's proof when the vault's owner
+//! sets them in person, which the setter revalidates in its own transaction.
+//!
+//! A managed vault's attested owner (`ManagedOwnerAction`) presents no slip:
+//! [`super::owner_binding`] binds the request's own owner proof, the owner's
+//! read key held to it at the caller's locality, and the proof's person as a
+//! human (WILL-PLAN L13 row 01). A setting the owner changes records his act,
+//! with where he spoke from.
 //!
 //! Each lists no row beside its outcome (`host_door_lists`): the wake policy
 //! and the inference defaults live in side tables, an action's replay record
@@ -61,31 +68,44 @@ async fn run_action_answer(
         )
     };
     // A self-hosted root or the dev mode reads with the owner's guarded key
-    // its host action names (FIX 2222); any other caller with its own.
-    let key = match crate::api::host_action::facade_host_action(server, auth)
+    // its host action names (FIX 2222); a managed vault's attested owner with
+    // the owner's key held to the request's own proof (WILL-PLAN L13 row 01);
+    // any other caller with its own.
+    let (key, attested) = match crate::api::host_action::facade_host_action(server, auth)
         .map_err(FacadeApiError::into_memory_error)?
     {
-        Some(action) => action.read_key(),
-        None => {
-            let proof = auth.verified_slip().ok_or_else(unbound)?;
-            server
-                .vault
-                .credential_read_key(proof)?
-                .ok_or_else(unbound)?
-        }
-    }
-    .at(auth.locality());
-    let owner = if needs_owner {
-        Some(crate::api::owner_routes::owner(auth, server).map_err(|_| {
-            MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                format!("{verb} is the vault owner's"),
-                &["Present the owner's own verified, unattenuated credential."],
-            )
-        })?)
-    } else {
-        None
+        Some(action) => (action.read_key().at(auth.locality()), None),
+        None => match super::owner_binding::managed_owner_binding(server, auth)
+            .map_err(FacadeApiError::into_memory_error)?
+        {
+            Some(binding) => (binding.key, Some(binding.owner)),
+            None => {
+                let proof = auth.verified_slip().ok_or_else(unbound)?;
+                let key = server
+                    .vault
+                    .credential_read_key(proof)?
+                    .ok_or_else(unbound)?;
+                (key.at(auth.locality()), None)
+            }
+        },
     };
+    let owner = match attested {
+        Some(owner) => Some(owner),
+        None if needs_owner => {
+            Some(crate::api::owner_routes::owner(auth, server).map_err(|_| {
+                MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    format!("{verb} is the vault owner's"),
+                    &["Present the owner's own verified, unattenuated credential."],
+                )
+            })?)
+        }
+        // The owner's own credential carries its proof; any other caller,
+        // an agent within its Grant included, keeps the Auto ceiling alone.
+        None => super::owner_authorship(auth, server)
+            .map_err(|error| FacadeApiError::from(error).into_memory_error())?,
+    };
+    let owner_surface = Some(super::owner_binding::act_surface(auth));
     let vault = Arc::clone(&server.vault);
     tokio::task::spawn_blocking(move || {
         let actor = WriteActor::new(actor, class);
@@ -98,6 +118,7 @@ async fn run_action_answer(
             ActionHostBinding {
                 verb_door: None,
                 owner: owner.as_ref(),
+                owner_surface,
                 live_run: None,
                 planner: None,
             },
