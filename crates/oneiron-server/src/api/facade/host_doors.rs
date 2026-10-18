@@ -1228,6 +1228,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.trusted_contacts.tier.set"
         | "vault.trusted_contacts.concern.asks"
         | "vault.trusted_contacts.concern.authorize"
+        | "vault.trusted_contacts.concern.propose"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
         | "vault.notes.history_purge"

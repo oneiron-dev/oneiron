@@ -1433,6 +1433,12 @@ class Oneiron:
         def authorize(self, spec):
             """The vault owner answers one open ask, once: a yes stages the fact-of-concern notice (staged, not delivered) and returns the notices that tell the person and the model; a no or a superseded ask stages nothing."""
             return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_authorize(json.dumps(spec))))
+        def propose(self, spec):
+            """The owner's policy gate reads one message the caller reads, fresh; a RouteToHelp asks the owner or stages a just-call notice, and the answer carries only the fact of concern, the gate receipt, open asks and notices."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_propose(json.dumps(spec))))
+        def deliver(self, spec):
+            """The caller sends the next staged fact-of-concern notice it is the stored sender of, as itself, through the consent-checked outbound dispatch; null when none is eligible, never another sender's notice."""
+            return json.loads(_translate(lambda: self._client.vault_trusted_contacts_concern_deliver(json.dumps(spec))))
     class _VaultGuestsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

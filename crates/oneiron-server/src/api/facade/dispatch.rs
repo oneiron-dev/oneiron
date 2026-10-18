@@ -3549,6 +3549,72 @@ async fn vault_trusted_contacts_concern_authorize(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_trusted_contacts_concern_propose(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.concern.propose")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.propose", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.trusted_contacts.concern.propose",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_concern_propose(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_trusted_contacts_concern_deliver(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.trusted_contacts.concern.deliver")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.trusted_contacts.concern.deliver", &value)?;
+    let hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.trusted_contacts.concern.deliver",
+        value,
+    )
+    .await?;
+    let (output, listed) = super::host_doors::vault_trusted_contacts_concern_deliver(
+        server,
+        auth,
+        caller,
+        Some(hooks.call().invocation),
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_guests_revoke(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12395,6 +12461,12 @@ pub(crate) async fn call_verb(
         }
         "vault.trusted_contacts.concern.authorize" => {
             vault_trusted_contacts_concern_authorize(server, call, input).await
+        }
+        "vault.trusted_contacts.concern.propose" => {
+            vault_trusted_contacts_concern_propose(server, call, input).await
+        }
+        "vault.trusted_contacts.concern.deliver" => {
+            vault_trusted_contacts_concern_deliver(server, call, input).await
         }
         "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
         "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,

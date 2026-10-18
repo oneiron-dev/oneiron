@@ -7,24 +7,34 @@
 //!
 //! The notice is a fact, not a message: it carries no text. The host renders
 //! its own fixed check-in wording for it, the same every time.
+//!
+//! Beside the host's worker, the notice's own sender delivers it
+//! ([`Vault::deliver_trusted_contact_notice`]): it claims only a notice it is
+//! the stored sender of, and sends it as itself, through the same dispatch.
+//! Every fire and every yes is also told, in their own inbox, to the person
+//! and to the agent that speaks for them.
 
 use std::sync::{PoisonError, RwLockReadGuard, RwLockWriteGuard};
 
 use serde::{Deserialize, Serialize};
 
-use super::trusted_contact::{RELATIONS, TrustedContact, invalid};
+use super::trusted_contact::{RELATIONS, TrustedContact, TrustedContactTier, invalid};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
     EnqueueAttempt, EnqueueOutcome, FailAttempt, RetryAttempt,
 };
 use crate::edge::EdgeActorClass;
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
+use crate::memory::Memory;
 use crate::outbound::{
-    OutboundDispatchActor, OutboundDispatchError, OutboundDispatchOutcome, OutboundDispatchRequest,
-    OutboundDispatchResult, OutboundExecutionOutcome, OutboundExecutionRequest,
-    OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
+    OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
+    OutboundDispatchGate, OutboundDispatchOutcome, OutboundDispatchRequest, OutboundDispatchResult,
+    OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink, OutboundIntent,
+    OutboundIntentDraft, OutboundIntentTrigger,
 };
 use crate::receipt::{DispatchObservationKey, append_dispatch_observation_in_txn};
 use crate::side_table::{self, Named, SideTable};
+use crate::store::GateSystemNoticeRecord;
 use crate::{EntityId, Result, Vault};
 
 pub const TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND: &str = "trusted_contact.notice";
@@ -32,6 +42,15 @@ pub const TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND: &str = "trusted_contact.notice";
 /// The content a notice's send carries: the fact of concern, which the
 /// host's adapter renders as its fixed check-in line.
 pub const TRUSTED_CONTACT_NOTICE_CONTENT_REF: &str = "trusted-contact-notice:fact_of_concern";
+
+/// The producer of the inbox rows that tell a fire or a yes.
+const TRUSTED_CONTACT_NOTIFICATION_PRODUCER: &str = "trusted_contact";
+
+/// The notice type of the `policy.notice` record that tells an ask.
+const ASK_NOTICE_TYPE: &str = "trusted_contact_ask";
+
+/// The lease a sender's own delivery claims under, before its id.
+const SENDER_LEASE_PREFIX: &str = "trusted-contact-sender:";
 
 /// Every notice the engine staged, by its fire ref. Only the staging door
 /// writes it, so a notice queued any other way is no notice.
@@ -55,8 +74,23 @@ fn send_guard(vault: &Vault) -> RwLockReadGuard<'_, ()> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
-/// Everything the host needs to send one notice, and nothing from the turn,
-/// the verdict, the policy row or its tier.
+/// What authorized one notice, written with it in the transaction that
+/// staged it: the person's yes to their ask, or, for a just-call contact, the
+/// owner's imminent-tier policy row the gate settled. Never a caller's word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
+pub enum TrustedContactNoticeAuthorization {
+    /// The person answered this ask yes, about the naming the notice is for.
+    Ask { ask_ref: String },
+    /// The policy row whose `RouteToHelp` fired the notice, and its tier.
+    Policy {
+        row_ref: String,
+        tier: TrustedContactTier,
+    },
+}
+
+/// Everything the host needs to send one notice, and what authorized it,
+/// and nothing from the turn or the verdict.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TrustedContactNotice {
@@ -70,16 +104,18 @@ pub struct TrustedContactNotice {
     pub channel: String,
     pub verb: String,
     pub target: String,
+    pub authorization: TrustedContactNoticeAuthorization,
 }
 
-/// Stages one notice from `relation` in the transaction that fired it. While
-/// one waits for this naming, another collapses into it; a notice for an
-/// earlier naming never stands in for it.
+/// Stages one notice from `relation` in the transaction that fired it, under
+/// `authorization`. While one waits for this naming, another collapses into
+/// it; a notice for an earlier naming never stands in for it.
 pub(super) fn stage_notice_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     relation: &TrustedContact,
     fire: EntityId,
+    authorization: TrustedContactNoticeAuthorization,
     now: u64,
 ) -> Result<()> {
     let notice = TrustedContactNotice {
@@ -91,6 +127,7 @@ pub(super) fn stage_notice_in_txn(
         channel: relation.reach.channel.clone(),
         verb: relation.reach.verb.clone(),
         target: relation.reach.target.clone(),
+        authorization,
     };
     let payload = serde_json::to_vec(&notice).map_err(|_| invalid("notice encoding"))?;
     let staged = crate::ports::JobQueue::port_job_enqueue(
@@ -109,6 +146,58 @@ pub(super) fn stage_notice_in_txn(
     )?;
     if let EnqueueOutcome::Enqueued(_) = staged {
         FIRES.put(&vault.store, wtxn, &fire, &notice)?;
+    }
+    Ok(())
+}
+
+/// Tells `relation`'s person and the agent that speaks for them (its
+/// sender), each in their own inbox, in the transaction that fired or
+/// answered: one row per `policy.notice` record for the person and the
+/// model, its body as the record words it, and `source` (the fire or the
+/// ask) as its result. The person's ask is an Ask they answer; every other
+/// row is a finding. The rows hold refs and that fixed body, nothing from
+/// the turn. Told again, a row is found, not written twice.
+pub(super) fn inform_inboxes_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    relation: &TrustedContact,
+    source: EntityId,
+    notices: &[GateSystemNoticeRecord],
+    now: u64,
+) -> Result<()> {
+    let mut recipients = vec![relation.person];
+    if relation.reach.sender != relation.person {
+        recipients.push(relation.reach.sender);
+    }
+    let source = source.to_hex();
+    for notice in notices
+        .iter()
+        .filter(|notice| notice.audience == "user_and_model")
+    {
+        for recipient in &recipients {
+            let kind = if notice.notice_type == ASK_NOTICE_TYPE && *recipient == relation.person {
+                NotificationKind::Ask
+            } else {
+                NotificationKind::Finding
+            };
+            vault.record_notification_in_txn(
+                wtxn,
+                &NotificationEvent {
+                    kind,
+                    source: NotificationSource {
+                        producer: TRUSTED_CONTACT_NOTIFICATION_PRODUCER.to_owned(),
+                        event: format!("{source}:{}:{}", notice.notice_type, recipient.to_hex()),
+                        result: Some(source.clone()),
+                        detail: Some(notice.body.clone()),
+                        ..NotificationSource::default()
+                    },
+                    subject_refs: Vec::new(),
+                    recipient: Some(*recipient),
+                    created_at: now,
+                    origin_conversation: None,
+                },
+            )?;
+        }
     }
     Ok(())
 }
@@ -350,6 +439,115 @@ impl Vault {
             Ok(result)
         })
         .map_err(Into::into)
+    }
+
+    /// Claims the next staged notice whose stored sender is `sender`, and
+    /// only such a notice: the filter runs before the lease, so another
+    /// sender's notice is never leased, seen or failed here. One that is no
+    /// longer live is failed, as the host's claim fails it.
+    pub(crate) fn claim_trusted_contact_notice_for_sender(
+        &self,
+        sender: EntityId,
+        lease_owner: &str,
+        now: u64,
+    ) -> Result<Option<(AttemptRecord, TrustedContactNotice)>> {
+        let sender = sender.to_hex();
+        loop {
+            let claimed = self.with_write_txn_grouped(|wtxn| {
+                let queue = AttemptQueue::new(self);
+                let candidate = queue.ready_kind_matching_in_txn(
+                    wtxn,
+                    TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND,
+                    now,
+                    |row| {
+                        Ok(row.accepts_worker(lease_owner)
+                            && decode(row).is_ok_and(|notice| notice.sender == sender))
+                    },
+                )?;
+                match candidate {
+                    Some(id) => queue.claim_id_in_txn(
+                        wtxn,
+                        id,
+                        ClaimAttempt {
+                            lease_owner: lease_owner.into(),
+                            now,
+                        },
+                    ),
+                    None => Ok(ClaimOutcome::Empty),
+                }
+            })?;
+            let ClaimOutcome::Claimed(attempt) = claimed else {
+                return Ok(None);
+            };
+            self.store.notify_attempt_observers();
+            match decode(&attempt) {
+                Ok(notice)
+                    if notice.sender == sender
+                        && self.trusted_contact_notice_is_live(&notice)? =>
+                {
+                    return Ok(Some((attempt, notice)));
+                }
+                _ => self.fail_trusted_contact_notice(&attempt, "consent_not_live", now)?,
+            }
+        }
+    }
+
+    /// The caller `memory` is bound to delivers the next notice it is the
+    /// stored sender of, as itself, with `sink` as the transport: the
+    /// sender's own claim, then the same consent-guarded dispatch, ledger
+    /// replay and receipts as the host's worker. The caller's actor and
+    /// class are the dispatch's verified actor, checked in the gate's own
+    /// transaction; the gate answer, delivery window, clock and receipt id
+    /// are the engine's, and the channel identity is the sender's own on
+    /// the notice's channel. `None` when no notice of this sender is
+    /// eligible: no other sender's notice is ever claimed or sent.
+    pub fn deliver_trusted_contact_notice<S: OutboundExecutionSink>(
+        &self,
+        memory: &Memory<'_>,
+        sink: &mut S,
+    ) -> std::result::Result<
+        Option<(TrustedContactNotice, OutboundDispatchResult)>,
+        OutboundDispatchError,
+    > {
+        if !std::ptr::eq(memory.vault(), self) {
+            return Err(invalid("the caller's scope is bound to another vault").into());
+        }
+        let sender = memory.actor();
+        let now = crate::unix_seconds_now();
+        let lease_owner = format!("{SENDER_LEASE_PREFIX}{}", sender.to_hex());
+        let Some((attempt, notice)) =
+            self.claim_trusted_contact_notice_for_sender(sender, &lease_owner, now)?
+        else {
+            return Ok(None);
+        };
+        let request = OutboundDispatchRequest::new(
+            format!(
+                "trusted-contact-notice:{}:attempt:{}:{}",
+                notice.fire,
+                crate::receipt::hex_lower(attempt.id.as_bytes()),
+                attempt.attempt_count
+            ),
+            format!("trusted-contact-notice:{}", notice.fire),
+            OutboundIntent::from_trigger(
+                OutboundIntentDraft::new(
+                    notice.sender.clone(),
+                    notice.verb.clone(),
+                    notice.channel.clone(),
+                    notice.target.clone(),
+                ),
+                OutboundIntentTrigger::record_transition(notice.fire.clone()),
+            ),
+            OutboundDispatchActor {
+                actor_class: memory.actor_class().gate_actor_class().to_owned(),
+                actor_ref: Some(notice.sender.clone()),
+                actor_entity_ref: Some(sender),
+            },
+            OutboundDispatchGate::allow_when_policy_grants(),
+            now,
+            OutboundDeliveryWindowDecision::DeliverNow,
+        );
+        let result = self.dispatch_trusted_contact_notice(&attempt, request, sink)?;
+        Ok(Some((notice, result)))
     }
 }
 
