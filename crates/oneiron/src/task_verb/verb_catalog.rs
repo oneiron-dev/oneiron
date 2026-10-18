@@ -774,6 +774,16 @@ pub enum AgentVerb {
     SelfRunAttach,
     SelfFoldsDescribe,
     SelfHistory,
+    VaultIdentityMerge,
+    VaultIdentitySplit,
+    VaultIdentityFacet,
+    VaultIdentityAssertDistinct,
+    VaultIdentityPropose,
+    VaultIdentityUndo,
+    VaultIdentityResolve,
+    VaultIdentityEventsGet,
+    VaultIdentityProposalsResolve,
+    VaultIdentityProposalsForPair,
     SelfBrowserOpen,
     SelfBrowserObserve,
     SelfBrowserFind,
@@ -1580,6 +1590,16 @@ impl AgentVerb {
         Self::SelfRunAttach,
         Self::SelfFoldsDescribe,
         Self::SelfHistory,
+        Self::VaultIdentityMerge,
+        Self::VaultIdentitySplit,
+        Self::VaultIdentityFacet,
+        Self::VaultIdentityAssertDistinct,
+        Self::VaultIdentityPropose,
+        Self::VaultIdentityUndo,
+        Self::VaultIdentityResolve,
+        Self::VaultIdentityEventsGet,
+        Self::VaultIdentityProposalsResolve,
+        Self::VaultIdentityProposalsForPair,
         Self::SelfBrowserOpen,
         Self::SelfBrowserObserve,
         Self::SelfBrowserFind,
@@ -2411,6 +2431,16 @@ impl AgentVerb {
             Self::SelfRunAttach => "self.run.attach",
             Self::SelfFoldsDescribe => "self.folds.describe",
             Self::SelfHistory => "self.history",
+            Self::VaultIdentityMerge => "vault.identity.merge",
+            Self::VaultIdentitySplit => "vault.identity.split",
+            Self::VaultIdentityFacet => "vault.identity.facet",
+            Self::VaultIdentityAssertDistinct => "vault.identity.assert_distinct",
+            Self::VaultIdentityPropose => "vault.identity.propose",
+            Self::VaultIdentityUndo => "vault.identity.undo",
+            Self::VaultIdentityResolve => "vault.identity.resolve",
+            Self::VaultIdentityEventsGet => "vault.identity.events.get",
+            Self::VaultIdentityProposalsResolve => "vault.identity.proposals.resolve",
+            Self::VaultIdentityProposalsForPair => "vault.identity.proposals.for_pair",
             Self::SelfBrowserOpen => "self.browser.open",
             Self::SelfBrowserObserve => "self.browser.observe",
             Self::SelfBrowserFind => "self.browser.find",
@@ -3196,6 +3226,16 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityResolve
+                | Self::VaultIdentityEventsGet
+                | Self::VaultIdentityProposalsResolve
+                | Self::VaultIdentityProposalsForPair
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -4029,6 +4069,16 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityResolve
+                | Self::VaultIdentityEventsGet
+                | Self::VaultIdentityProposalsResolve
+                | Self::VaultIdentityProposalsForPair
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -4924,6 +4974,16 @@ impl AgentVerb {
                 | Self::SelfRunAttach
                 | Self::SelfFoldsDescribe
                 | Self::SelfHistory
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityResolve
+                | Self::VaultIdentityEventsGet
+                | Self::VaultIdentityProposalsResolve
+                | Self::VaultIdentityProposalsForPair
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserObserve
                 | Self::SelfBrowserFind
@@ -5418,6 +5478,13 @@ impl AgentVerb {
                 | Self::VaultNotesSetOverrides
                 | Self::VaultTasksLinearMappingEdit
                 | Self::SelfRunAttach
+                | Self::VaultIdentityMerge
+                | Self::VaultIdentitySplit
+                | Self::VaultIdentityFacet
+                | Self::VaultIdentityAssertDistinct
+                | Self::VaultIdentityPropose
+                | Self::VaultIdentityUndo
+                | Self::VaultIdentityProposalsResolve
                 | Self::SelfBrowserOpen
                 | Self::SelfBrowserClick
                 | Self::SelfBrowserClickAt
@@ -6253,6 +6320,16 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultIdentityMerge => &["spec"],
+            Self::VaultIdentitySplit => &["spec"],
+            Self::VaultIdentityFacet => &["spec"],
+            Self::VaultIdentityAssertDistinct => &["spec"],
+            Self::VaultIdentityPropose => &["spec"],
+            Self::VaultIdentityUndo => &["spec"],
+            Self::VaultIdentityResolve => &["spec"],
+            Self::VaultIdentityEventsGet => &["spec"],
+            Self::VaultIdentityProposalsResolve => &["spec"],
+            Self::VaultIdentityProposalsForPair => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -7060,6 +7137,16 @@ impl AgentVerb {
             Self::SelfRunAttach => &["spec"],
             Self::SelfFoldsDescribe => &["spec"],
             Self::SelfHistory => &["spec"],
+            Self::VaultIdentityMerge => &["spec"],
+            Self::VaultIdentitySplit => &["spec"],
+            Self::VaultIdentityFacet => &["spec"],
+            Self::VaultIdentityAssertDistinct => &["spec"],
+            Self::VaultIdentityPropose => &["spec"],
+            Self::VaultIdentityUndo => &["spec"],
+            Self::VaultIdentityResolve => &["spec"],
+            Self::VaultIdentityEventsGet => &["spec"],
+            Self::VaultIdentityProposalsResolve => &["spec"],
+            Self::VaultIdentityProposalsForPair => &["spec"],
             Self::SelfBrowserOpen => &["spec"],
             Self::SelfBrowserObserve => &["spec"],
             Self::SelfBrowserFind => &["spec"],
@@ -9317,6 +9404,36 @@ impl AgentVerb {
             }
             Self::SelfHistory => {
                 "Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled."
+            }
+            Self::VaultIdentityMerge => {
+                "The owner merges source identities into a survivor, retaining claim subjects and append-only evidence."
+            }
+            Self::VaultIdentitySplit => {
+                "The owner splits an identity into zero, one or many heads using an evidence-guided reassignment map."
+            }
+            Self::VaultIdentityFacet => {
+                "The owner mints identity facets and forks assigned claims under their masks without restamping original claims."
+            }
+            Self::VaultIdentityAssertDistinct => {
+                "The owner asserts two identities are distinct through one symmetric claim that suppresses merge re-proposals."
+            }
+            Self::VaultIdentityPropose => {
+                "The owner parks a nominated merge or split candidate with no topology effects; distinct pairs suppress merge proposals."
+            }
+            Self::VaultIdentityUndo => {
+                "The owner undoes one current topology event by appending a counter-event under its observed revision."
+            }
+            Self::VaultIdentityResolve => {
+                "The owner resolves an identity to its current head set and reads shell edges, facets and evidence assignments."
+            }
+            Self::VaultIdentityEventsGet => {
+                "The owner reads one topology decision with its actor, evidence, action and current decision revision."
+            }
+            Self::VaultIdentityProposalsResolve => {
+                "The owner approves, amends then approves, or rejects a parked topology proposal under its observed revision."
+            }
+            Self::VaultIdentityProposalsForPair => {
+                "The owner reads open merge proposals and effective distinctness claims for an unordered identity pair."
             }
             Self::SelfBrowserOpen => {
                 "Opens a URL in the attached run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."

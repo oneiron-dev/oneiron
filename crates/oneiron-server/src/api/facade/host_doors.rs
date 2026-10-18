@@ -91,6 +91,7 @@ pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::feedback_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
+pub(crate) use super::identity_topology_doors::*;
 pub(crate) use super::skill_doors::*;
 // The owner's support grant doors (OF-606), as the guest ones are.
 pub(crate) use super::support_grant_doors::*;
@@ -1113,6 +1114,16 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.personas.preview"
         | "vault.personas.export"
         | "vault.personas.edit"
+        | "vault.identity.merge"
+        | "vault.identity.split"
+        | "vault.identity.facet"
+        | "vault.identity.assert_distinct"
+        | "vault.identity.propose"
+        | "vault.identity.undo"
+        | "vault.identity.resolve"
+        | "vault.identity.events.get"
+        | "vault.identity.proposals.resolve"
+        | "vault.identity.proposals.for_pair"
         | "vault.packs.put"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"

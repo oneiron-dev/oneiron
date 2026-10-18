@@ -780,6 +780,16 @@ vaultTasksLinearProvenance(input: unknown): unknown
 selfRunAttach(input: unknown): unknown
 selfFoldsDescribe(input: unknown): unknown
 selfHistory(input: unknown): unknown
+vaultIdentityMerge(input: unknown): unknown
+vaultIdentitySplit(input: unknown): unknown
+vaultIdentityFacet(input: unknown): unknown
+vaultIdentityAssertDistinct(input: unknown): unknown
+vaultIdentityPropose(input: unknown): unknown
+vaultIdentityUndo(input: unknown): unknown
+vaultIdentityResolve(input: unknown): unknown
+vaultIdentityEventsGet(input: unknown): unknown
+vaultIdentityProposalsResolve(input: unknown): unknown
+vaultIdentityProposalsForPair(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
 selfBrowserFind(input: unknown): unknown
