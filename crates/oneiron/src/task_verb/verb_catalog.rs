@@ -134,6 +134,9 @@ pub enum AgentVerb {
     VaultSharedEraseAsks,
     VaultSharedCloseEraseAsk,
     VaultSharedPolicyGet,
+    VaultSharedPolicyPropose,
+    VaultSharedPolicyAnswer,
+    VaultSharedPolicyChange,
     VaultGuestsRevoke,
     VaultGuestsMintSlip,
     VaultResidenceMode,
@@ -604,6 +607,9 @@ impl AgentVerb {
         Self::VaultSharedEraseAsks,
         Self::VaultSharedCloseEraseAsk,
         Self::VaultSharedPolicyGet,
+        Self::VaultSharedPolicyPropose,
+        Self::VaultSharedPolicyAnswer,
+        Self::VaultSharedPolicyChange,
         Self::VaultGuestsRevoke,
         Self::VaultGuestsMintSlip,
         Self::VaultResidenceMode,
@@ -1077,6 +1083,9 @@ impl AgentVerb {
             Self::VaultSharedEraseAsks => "vault.shared.erase_asks",
             Self::VaultSharedCloseEraseAsk => "vault.shared.close_erase_ask",
             Self::VaultSharedPolicyGet => "vault.shared.policy.get",
+            Self::VaultSharedPolicyPropose => "vault.shared.policy.propose",
+            Self::VaultSharedPolicyAnswer => "vault.shared.policy.answer",
+            Self::VaultSharedPolicyChange => "vault.shared.policy.change",
             Self::VaultGuestsRevoke => "vault.guests.revoke",
             Self::VaultGuestsMintSlip => "vault.guests.mint_slip",
             Self::VaultResidenceMode => "vault.residence.mode",
@@ -1554,6 +1563,9 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyGet
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedPolicyChange
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2031,6 +2043,9 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyGet
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedPolicyChange
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2549,6 +2564,9 @@ impl AgentVerb {
                 | Self::VaultSharedEraseAsks
                 | Self::VaultSharedCloseEraseAsk
                 | Self::VaultSharedPolicyGet
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
+                | Self::VaultSharedPolicyChange
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -2949,6 +2967,8 @@ impl AgentVerb {
                 | Self::VaultSharedWithdrawObjection
                 | Self::VaultSharedEraseAsk
                 | Self::VaultSharedCloseEraseAsk
+                | Self::VaultSharedPolicyPropose
+                | Self::VaultSharedPolicyAnswer
                 | Self::VaultGuestsRevoke
                 | Self::VaultGuestsMintSlip
                 | Self::VaultResidenceMode
@@ -3314,6 +3334,9 @@ impl AgentVerb {
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultSharedPolicyGet => &["spec"],
+            Self::VaultSharedPolicyPropose => &["spec"],
+            Self::VaultSharedPolicyAnswer => &["spec"],
+            Self::VaultSharedPolicyChange => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -3785,6 +3808,9 @@ impl AgentVerb {
             Self::VaultSharedEraseAsks => &["spec"],
             Self::VaultSharedCloseEraseAsk => &["spec"],
             Self::VaultSharedPolicyGet => &["spec"],
+            Self::VaultSharedPolicyPropose => &["spec"],
+            Self::VaultSharedPolicyAnswer => &["spec"],
+            Self::VaultSharedPolicyChange => &["spec"],
             Self::VaultGuestsRevoke => &["spec"],
             Self::VaultGuestsMintSlip => &["spec"],
             Self::VaultResidenceMode => &["spec"],
@@ -4500,6 +4526,15 @@ impl AgentVerb {
             }
             Self::VaultSharedPolicyGet => {
                 "A live Owner reads every shared-act policy row of a shared vault: the rows its kind ships, the vault's own rows, the row each act resolves to, and the policy_hash a change binds."
+            }
+            Self::VaultSharedPolicyPropose => {
+                "A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it."
+            }
+            Self::VaultSharedPolicyAnswer => {
+                "A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row."
+            }
+            Self::VaultSharedPolicyChange => {
+                "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on."
             }
             Self::VaultGuestsRevoke => "",
             Self::VaultGuestsMintSlip => {

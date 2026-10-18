@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 424 facade rows, 1557 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 392.
+// UniFFI census: 427 facade rows, 1562 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 5; generated in and out: 395.
 // WireJson rows: none.
 // WireJson leaves inside the generated types, past each serde_json::Value: DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -9199,6 +9199,85 @@ pub struct SharedActPoliciesView {
     pub effective: std::collections::HashMap<String, SharedActPolicy>,
     #[serde(rename = "policy_hash")]
     pub policy_hash: String,
+}
+
+/// `oneiron::task_verb::sdk_shared_policy::SharedActPolicyProposeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedActPolicyProposeRequest {
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "act")]
+    pub act: String,
+    #[serde(rename = "policy", default)]
+    pub policy: Option<SharedActPolicy>,
+    #[serde(rename = "expected_policy_hash")]
+    pub expected_policy_hash: String,
+}
+
+/// `oneiron::federation::pending_act::policy_change::SharedActPolicyChangeState`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SharedActPolicyChangeState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "applied")]
+    Applied,
+    #[serde(rename = "vetoed")]
+    Vetoed,
+    #[serde(rename = "stale")]
+    Stale,
+}
+
+/// `oneiron::federation::pending_act::policy_change::SharedActPolicyChange`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedActPolicyChange {
+    #[serde(rename = "id")]
+    pub id: String,
+    #[serde(rename = "vault_id")]
+    pub vault_id: String,
+    #[serde(rename = "act")]
+    pub act: String,
+    #[serde(rename = "policy", default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<SharedActPolicy>,
+    #[serde(rename = "base_policy_hash")]
+    pub base_policy_hash: String,
+    #[serde(rename = "proposer")]
+    pub proposer: String,
+    #[serde(rename = "proposed_at")]
+    pub proposed_at: u64,
+    #[serde(rename = "approvals")]
+    pub approvals: Vec<String>,
+    #[serde(rename = "vetoed_by", default, skip_serializing_if = "Option::is_none")]
+    pub vetoed_by: Option<String>,
+    #[serde(rename = "state")]
+    pub state: SharedActPolicyChangeState,
+    #[serde(
+        rename = "settled_at",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub settled_at: Option<u64>,
+    #[serde(rename = "awaiting", default, skip_serializing_if = "Option::is_none")]
+    pub awaiting: Option<Vec<String>>,
+}
+
+/// `oneiron::task_verb::sdk_shared_policy::SharedActPolicyAnswerRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedActPolicyAnswerRequest {
+    #[serde(rename = "change_id")]
+    pub change_id: String,
+    #[serde(rename = "approve")]
+    pub approve: bool,
+}
+
+/// `oneiron::task_verb::sdk_shared_policy::SharedActPolicyChangeRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SharedActPolicyChangeRequest {
+    #[serde(rename = "change_id")]
+    pub change_id: String,
 }
 
 /// `oneiron::task_verb::sdk_guest_revoke::GuestRevokeRequest`.

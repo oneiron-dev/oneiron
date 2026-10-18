@@ -1132,7 +1132,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.code.origin.authority.set"
         | "vault.code.origin.publications"
         | "vault.code.checkout.bind"
-        | "vault.shared.policy.get" => owner_proof(auth, server, verb).map(drop),
+        | "vault.shared.policy.get"
+        | "vault.shared.policy.change" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -1158,7 +1159,9 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.records.erase_preview"
         | "vault.records.erase_confirm"
         | "vault.workspace.establish"
-        | "vault.workspace.members.onboard" => {
+        | "vault.workspace.members.onboard"
+        | "vault.shared.policy.propose"
+        | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
         "vault.artifacts.review_slides" => slide_reviewer(auth).map(drop),

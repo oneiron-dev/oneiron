@@ -2146,6 +2146,51 @@
       "openapi": true
     },
     {
+      "name": "vault.shared.policy.propose",
+      "description": "A live policy editor proposes one shared-act policy row change against the policy_hash they read; it applies only when every live editor approves it, and one no vetoes it.",
+      "input": "crate::task_verb::sdk::SharedActPolicyProposeRequest",
+      "output": "crate::federation::SharedActPolicyChange",
+      "call": "crate::task_verb::sdk::propose_shared_act_policy_change(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.propose\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.shared.policy.answer",
+      "description": "A live policy editor approves or vetoes a pending shared-act policy change under their own credential; the last approval of the live editor set writes the row.",
+      "input": "crate::task_verb::sdk::SharedActPolicyAnswerRequest",
+      "output": "crate::federation::SharedActPolicyChange",
+      "call": "crate::task_verb::sdk::answer_shared_act_policy_change(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.answer\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.shared.policy.change",
+      "description": "A live Owner reads one shared-act policy change: its row, approvals, veto, state and the live editors it still waits on.",
+      "input": "crate::task_verb::sdk::SharedActPolicyChangeRequest",
+      "output": "crate::federation::SharedActPolicyChange",
+      "call": "crate::task_verb::sdk::read_shared_act_policy_change(memory.vault(), &memory.embedded_owner(\"vault.shared.policy.change\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.guests.revoke",
       "input": "crate::task_verb::sdk::GuestRevokeRequest",
       "output": "crate::receipt::GuestRevokeResponse",

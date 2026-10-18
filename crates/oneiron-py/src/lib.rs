@@ -1365,6 +1365,27 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_shared_policy_propose(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.propose")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.propose", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_policy_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.answer", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_shared_policy_change(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.shared.policy.change")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.shared.policy.change", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_guests_revoke(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.guests.revoke")?;
         let output = py

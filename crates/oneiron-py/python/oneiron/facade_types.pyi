@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 424 facade rows, 1637 declarations.
-Inputs: 378 of 424 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 374 of 424 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 427 facade rows, 1642 declarations.
+Inputs: 381 of 427 fully typed, 46 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 377 of 427 fully typed, 50 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 77; unread shapes: 0.
 """
 
@@ -3212,6 +3212,30 @@ class SharedActPoliciesView(TypedDict):
     overrides: dict[str, SharedActPolicy]
     effective: dict[str, SharedActPolicy]
     policy_hash: str
+class SharedActPolicyProposeRequest(TypedDict):
+    vault_id: str
+    act: str
+    policy: NotRequired[SharedActPolicy | None]
+    expected_policy_hash: str
+SharedActPolicyChangeState = Literal["pending", "applied", "vetoed", "stale"]
+class SharedActPolicyChange(TypedDict):
+    id: str
+    vault_id: str
+    act: str
+    policy: NotRequired[SharedActPolicy | None]
+    base_policy_hash: str
+    proposer: str
+    proposed_at: int
+    approvals: list[str]
+    vetoed_by: NotRequired[str | None]
+    state: SharedActPolicyChangeState
+    settled_at: NotRequired[int | None]
+    awaiting: NotRequired[list[str]]
+class SharedActPolicyAnswerRequest(TypedDict):
+    change_id: str
+    approve: bool
+class SharedActPolicyChangeRequest(TypedDict):
+    change_id: str
 class GuestRevokeRequest(TypedDict):
     grant_ref: EntityId
     peer: NotRequired[str | None]

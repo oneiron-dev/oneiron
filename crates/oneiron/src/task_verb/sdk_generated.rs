@@ -660,6 +660,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.shared.policy.propose",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActPolicyProposeRequest,
+                >(),
+            ),
+            (
+                "vault.shared.policy.answer",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActPolicyAnswerRequest,
+                >(),
+            ),
+            (
+                "vault.shared.policy.change",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::SharedActPolicyChangeRequest,
+                >(),
+            ),
+            (
                 "vault.guests.revoke",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::GuestRevokeRequest,
@@ -2459,6 +2477,9 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
     "vault.shared.policy.get",
+    "vault.shared.policy.propose",
+    "vault.shared.policy.answer",
+    "vault.shared.policy.change",
     "vault.claims.review",
     "vault.claims.settle",
 ];
@@ -2467,6 +2488,15 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
         "vault.shared.policy.get" => crate::code_run::vault_read::request_schema::<
             crate::federation::SharedActPoliciesView,
+        >(),
+        "vault.shared.policy.propose" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPolicyChange,
+        >(),
+        "vault.shared.policy.answer" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPolicyChange,
+        >(),
+        "vault.shared.policy.change" => crate::code_run::vault_read::request_schema::<
+            crate::federation::SharedActPolicyChange,
         >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
@@ -3449,6 +3479,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.shared.policy.get" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.answer" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.shared.policy.change" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5939,6 +5990,18 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.shared.policy.get" => {
             let _input: crate::task_verb::sdk::SharedVaultRequest = decode(value.clone())?;
         }
+        "vault.shared.policy.propose" => {
+            let _input: crate::task_verb::sdk::SharedActPolicyProposeRequest =
+                decode(value.clone())?;
+        }
+        "vault.shared.policy.answer" => {
+            let _input: crate::task_verb::sdk::SharedActPolicyAnswerRequest =
+                decode(value.clone())?;
+        }
+        "vault.shared.policy.change" => {
+            let _input: crate::task_verb::sdk::SharedActPolicyChangeRequest =
+                decode(value.clone())?;
+        }
         "vault.guests.revoke" => {
             let _input: crate::task_verb::sdk::GuestRevokeRequest = decode(value.clone())?;
         }
@@ -7218,6 +7281,11 @@ pub fn invoke(
             encode(vault_shared_close_erase_ask(memory, decode(value)?)?)
         }
         "vault.shared.policy.get" => encode(vault_shared_policy_get(memory, decode(value)?)?),
+        "vault.shared.policy.propose" => {
+            encode(vault_shared_policy_propose(memory, decode(value)?)?)
+        }
+        "vault.shared.policy.answer" => encode(vault_shared_policy_answer(memory, decode(value)?)?),
+        "vault.shared.policy.change" => encode(vault_shared_policy_change(memory, decode(value)?)?),
         "vault.guests.revoke" => encode(vault_guests_revoke(memory, decode(value)?)?),
         "vault.guests.mint_slip" => encode(vault_guests_mint_slip(memory, decode(value)?)?),
         "vault.residence.mode" => encode(vault_residence_mode(memory, decode(value)?)?),
@@ -9005,6 +9073,36 @@ pub fn vault_shared_policy_get(
     crate::task_verb::sdk::read_shared_act_policies(
         memory.vault(),
         &memory.embedded_owner("vault.shared.policy.get")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_propose(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActPolicyProposeRequest,
+) -> MemoryResult<crate::federation::SharedActPolicyChange> {
+    crate::task_verb::sdk::propose_shared_act_policy_change(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.propose")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_answer(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActPolicyAnswerRequest,
+) -> MemoryResult<crate::federation::SharedActPolicyChange> {
+    crate::task_verb::sdk::answer_shared_act_policy_change(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.answer")?,
+        input,
+    )
+}
+pub fn vault_shared_policy_change(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::SharedActPolicyChangeRequest,
+) -> MemoryResult<crate::federation::SharedActPolicyChange> {
+    crate::task_verb::sdk::read_shared_act_policy_change(
+        memory.vault(),
+        &memory.embedded_owner("vault.shared.policy.change")?,
         input,
     )
 }
