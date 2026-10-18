@@ -747,6 +747,8 @@ class Oneiron:
         @property
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs": ...
         @property
+        def sieve(self) -> "Oneiron._VaultSieveVerbs": ...
+        @property
         def memory(self) -> "Oneiron._VaultMemoryVerbs": ...
         @property
         def channel_identities(self) -> "Oneiron._VaultChannelIdentitiesVerbs": ...
@@ -2018,6 +2020,34 @@ class Oneiron:
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
         def evidence(self, spec: Facade.ConsolidationEvidenceRequest) -> Facade.ScopedReadResult[list[Facade.ConsolidationEvidenceSource]]:
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
+    class _VaultSieveVerbs:
+        def queue(self, spec: Facade.SievePageRequest) -> Facade.SieveQueuePage:
+            """The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."""
+        def retained(self, spec: Facade.SievePageRequest) -> Facade.SieveRetainedPage:
+            """The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence."""
+        def receipts(self, spec: Facade.SievePageRequest) -> Facade.SieveReceiptsPage:
+            """The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it."""
+        @property
+        def policy(self) -> "Oneiron._VaultSievePolicyVerbs": ...
+        @property
+        def recipe_policy(self) -> "Oneiron._VaultSieveRecipePolicyVerbs": ...
+        @property
+        def lease(self) -> "Oneiron._VaultSieveLeaseVerbs": ...
+    class _VaultSievePolicyVerbs:
+        def __call__(self, spec: Facade.SievePolicyRequest) -> Facade.SievePolicy:
+            """The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band."""
+        def set(self, spec: Facade.SievePolicySetRequest) -> Facade.SievePolicy:
+            """The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given."""
+    class _VaultSieveRecipePolicyVerbs:
+        def __call__(self, spec: Facade.SievePolicyRequest) -> Facade.WakeRecipePolicy:
+            """The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings."""
+        def set(self, spec: Facade.SieveRecipePolicySetRequest) -> Facade.WakeRecipePolicy:
+            """The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets."""
+    class _VaultSieveLeaseVerbs:
+        def __call__(self, spec: Facade.SieveLeaseRequest) -> Facade.SieveLeaseView:
+            """The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id."""
+        def refill(self, spec: Facade.SieveLeaseRefillRequest) -> Facade.SieveLeaseView:
+            """The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice."""
     class _VaultMemoryVerbs:
         @property
         def signal_extraction(self) -> "Oneiron._VaultMemorySignalExtractionVerbs": ...

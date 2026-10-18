@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 700 code-mode rows (679 host rows, 21 run rows), 2475 declarations.
-// Replies: 621 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 709 code-mode rows (688 host rows, 21 run rows), 2490 declarations.
+// Replies: 630 fully typed, 75 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 95; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -2278,6 +2278,21 @@ declare namespace Sdk {
   type ConsolidationEvidenceSource = { source_ref: string; source?: string | null; approval?: string | null; lifecycle?: string | null; evidence_taint?: string | null; generated_origin: boolean; writer_ref?: string | null; foreign_world_ref?: string | null; consolidation_eligible: boolean; corroboration_eligible: boolean; first_party_corroboration: boolean; effector_evidence_eligible: boolean; refusal?: PromotionEvidenceReason | null; source_refs: string[]; evidence_refs: EvidenceRef[]; source_meet?: string | null; chain: ConsolidationEvidenceHop[]; locators: ConsolidationEvidenceLocator[] };
   type ConsolidationPromotion = { job_ref: string; landed: string[]; pended: string[]; held: string[]; rejected: ConsolidationRejection[]; input_evidence: ConsolidationEvidenceSource[]; output_evidence: ConsolidationEvidenceSource[] };
   type ConsolidationEvidenceRequest = { source_refs: string[] };
+  type SievePageRequest = { limit?: number | null };
+  type SieveSpanView = { span: string; turn: string; source: string; start: number; end: number; kind: string; entity?: string | null; novel?: boolean | null; confidence: number; score: number; band: string; owed: string[]; queued_at: number; source_digest: string; policy_digest: string };
+  type SieveQueuePage = { spans: SieveSpanView[]; skipped_unreadable: number; skipped_detached: number };
+  type SieveRetainedPage = { spans: SieveSpanView[] };
+  type SieveReceiptView = { span: string; turn: string; source: string; start: number; end: number; kind: string; score: number; attempt: string; consumed_at: number };
+  type SieveReceiptsPage = { receipts: SieveReceiptView[] };
+  type SievePolicyRequest = Record<string, never>;
+  type SievePolicy = { max_turns_per_pass: number; max_scan_per_pass: number; max_text_bytes_per_pass: number; date_interest: number; name_interest: number; absolute_date_confidence: number; relative_date_confidence: number; vague_date_confidence: number; name_confidence: number; initial_name_confidence: number; katakana_name_confidence: number; uncertain_low: number; uncertain_high: number };
+  type SievePolicySetRequest = { policy: SievePolicy };
+  type WakeRecipePolicy = { continuous_rung_spans: number; nightly_spans: number; nightly_children: number; rung_retry_secs: number; audit_percent: number; audit_spans: number; novelty_instruction: string; typing_instruction: string; narrative_instruction: string };
+  type SieveRecipePolicySetRequest = { policy: WakeRecipePolicy };
+  type SieveLeaseRequest = { budget_id: string };
+  type SieveLeaseCounter = { total_units: number; remaining_units: number; reserved_units: number; updated_at: number };
+  type SieveLeaseView = { budget_id: string; counter?: SieveLeaseCounter | null };
+  type SieveLeaseRefillRequest = { budget_id: string; total_units: number };
   type SignalExtractionRequest = { turn_refs: string[] };
   type SignalExtractionTicket = { job_refs: string[] };
   type SignalExtractionResultRequest = { job_ref: string };
@@ -4004,6 +4019,29 @@ declare const vault: Sdk.VaultHost & {
     create(input: Sdk.ShareCreateRequest): Promise<Sdk.ShareCreated | StoredResult>;
     revoke(input: Sdk.ShareRevokeRequest): Promise<Sdk.ShareRevokeReceipt | StoredResult>;
     view(input: Sdk.ShareViewRequest): Promise<Sdk.ScopedReadResult<Sdk.SharedBriefView | null> | StoredResult>;
+  };
+  sieve: {
+    /** The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id. */
+    lease: ((input: Sdk.SieveLeaseRequest) => Promise<Sdk.SieveLeaseView | StoredResult>) & {
+      /** The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice. */
+      refill(input: Sdk.SieveLeaseRefillRequest): Promise<Sdk.SieveLeaseView | StoredResult>;
+    };
+    /** The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band. */
+    policy: ((input: Sdk.SievePolicyRequest) => Promise<Sdk.SievePolicy | StoredResult>) & {
+      /** The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given. */
+      set(input: Sdk.SievePolicySetRequest): Promise<Sdk.SievePolicy | StoredResult>;
+    };
+    /** The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed. */
+    queue(input: Sdk.SievePageRequest): Promise<Sdk.SieveQueuePage | StoredResult>;
+    /** The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it. */
+    receipts(input: Sdk.SievePageRequest): Promise<Sdk.SieveReceiptsPage | StoredResult>;
+    /** The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings. */
+    recipe_policy: ((input: Sdk.SievePolicyRequest) => Promise<Sdk.WakeRecipePolicy | StoredResult>) & {
+      /** The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets. */
+      set(input: Sdk.SieveRecipePolicySetRequest): Promise<Sdk.WakeRecipePolicy | StoredResult>;
+    };
+    /** The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence. */
+    retained(input: Sdk.SievePageRequest): Promise<Sdk.SieveRetainedPage | StoredResult>;
   };
   skill_hubs: {
     /** Reads one configured hub as the owner. */

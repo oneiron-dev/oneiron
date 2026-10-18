@@ -603,6 +603,15 @@ pub enum AgentVerb {
     VaultConsolidationStatus,
     VaultConsolidationPromote,
     VaultConsolidationEvidence,
+    VaultSieveQueue,
+    VaultSieveRetained,
+    VaultSieveReceipts,
+    VaultSievePolicy,
+    VaultSievePolicySet,
+    VaultSieveRecipePolicy,
+    VaultSieveRecipePolicySet,
+    VaultSieveLease,
+    VaultSieveLeaseRefill,
     VaultClaimsVet,
     VaultClaimsVetting,
     VaultMemorySignalExtraction,
@@ -1294,6 +1303,15 @@ impl AgentVerb {
         Self::VaultConsolidationStatus,
         Self::VaultConsolidationPromote,
         Self::VaultConsolidationEvidence,
+        Self::VaultSieveQueue,
+        Self::VaultSieveRetained,
+        Self::VaultSieveReceipts,
+        Self::VaultSievePolicy,
+        Self::VaultSievePolicySet,
+        Self::VaultSieveRecipePolicy,
+        Self::VaultSieveRecipePolicySet,
+        Self::VaultSieveLease,
+        Self::VaultSieveLeaseRefill,
         Self::VaultClaimsVet,
         Self::VaultClaimsVetting,
         Self::VaultMemorySignalExtraction,
@@ -2000,6 +2018,15 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => "vault.consolidation.status",
             Self::VaultConsolidationPromote => "vault.consolidation.promote",
             Self::VaultConsolidationEvidence => "vault.consolidation.evidence",
+            Self::VaultSieveQueue => "vault.sieve.queue",
+            Self::VaultSieveRetained => "vault.sieve.retained",
+            Self::VaultSieveReceipts => "vault.sieve.receipts",
+            Self::VaultSievePolicy => "vault.sieve.policy",
+            Self::VaultSievePolicySet => "vault.sieve.policy.set",
+            Self::VaultSieveRecipePolicy => "vault.sieve.recipe_policy",
+            Self::VaultSieveRecipePolicySet => "vault.sieve.recipe_policy.set",
+            Self::VaultSieveLease => "vault.sieve.lease",
+            Self::VaultSieveLeaseRefill => "vault.sieve.lease.refill",
             Self::VaultClaimsVet => "vault.claims.vet",
             Self::VaultClaimsVetting => "vault.claims.vetting",
             Self::VaultMemorySignalExtraction => "vault.memory.signal_extraction",
@@ -2669,6 +2696,15 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
+                | Self::VaultSieveQueue
+                | Self::VaultSieveRetained
+                | Self::VaultSieveReceipts
+                | Self::VaultSievePolicy
+                | Self::VaultSievePolicySet
+                | Self::VaultSieveRecipePolicy
+                | Self::VaultSieveRecipePolicySet
+                | Self::VaultSieveLease
+                | Self::VaultSieveLeaseRefill
                 | Self::VaultClaimsVet
                 | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
@@ -3382,6 +3418,15 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
+                | Self::VaultSieveQueue
+                | Self::VaultSieveRetained
+                | Self::VaultSieveReceipts
+                | Self::VaultSievePolicy
+                | Self::VaultSievePolicySet
+                | Self::VaultSieveRecipePolicy
+                | Self::VaultSieveRecipePolicySet
+                | Self::VaultSieveLease
+                | Self::VaultSieveLeaseRefill
                 | Self::VaultClaimsVet
                 | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
@@ -4162,6 +4207,15 @@ impl AgentVerb {
                 | Self::VaultConsolidationStatus
                 | Self::VaultConsolidationPromote
                 | Self::VaultConsolidationEvidence
+                | Self::VaultSieveQueue
+                | Self::VaultSieveRetained
+                | Self::VaultSieveReceipts
+                | Self::VaultSievePolicy
+                | Self::VaultSievePolicySet
+                | Self::VaultSieveRecipePolicy
+                | Self::VaultSieveRecipePolicySet
+                | Self::VaultSieveLease
+                | Self::VaultSieveLeaseRefill
                 | Self::VaultClaimsVet
                 | Self::VaultClaimsVetting
                 | Self::VaultMemorySignalExtraction
@@ -4603,6 +4657,9 @@ impl AgentVerb {
                 | Self::VaultArtifactsAppend
                 | Self::VaultConsolidationEnqueue
                 | Self::VaultConsolidationPromote
+                | Self::VaultSievePolicySet
+                | Self::VaultSieveRecipePolicySet
+                | Self::VaultSieveLeaseRefill
                 | Self::VaultClaimsVet
                 | Self::VaultMemorySignalExtraction
                 | Self::VaultClaimsSeed
@@ -5299,6 +5356,15 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultSieveQueue => &["spec"],
+            Self::VaultSieveRetained => &["spec"],
+            Self::VaultSieveReceipts => &["spec"],
+            Self::VaultSievePolicy => &["spec"],
+            Self::VaultSievePolicySet => &["spec"],
+            Self::VaultSieveRecipePolicy => &["spec"],
+            Self::VaultSieveRecipePolicySet => &["spec"],
+            Self::VaultSieveLease => &["spec"],
+            Self::VaultSieveLeaseRefill => &["spec"],
             Self::VaultClaimsVet => &["spec"],
             Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
@@ -5991,6 +6057,15 @@ impl AgentVerb {
             Self::VaultConsolidationStatus => &["spec"],
             Self::VaultConsolidationPromote => &["spec"],
             Self::VaultConsolidationEvidence => &["spec"],
+            Self::VaultSieveQueue => &["spec"],
+            Self::VaultSieveRetained => &["spec"],
+            Self::VaultSieveReceipts => &["spec"],
+            Self::VaultSievePolicy => &["spec"],
+            Self::VaultSievePolicySet => &["spec"],
+            Self::VaultSieveRecipePolicy => &["spec"],
+            Self::VaultSieveRecipePolicySet => &["spec"],
+            Self::VaultSieveLease => &["spec"],
+            Self::VaultSieveLeaseRefill => &["spec"],
             Self::VaultClaimsVet => &["spec"],
             Self::VaultClaimsVetting => &["spec"],
             Self::VaultMemorySignalExtraction => &["spec"],
@@ -7791,6 +7866,33 @@ impl AgentVerb {
             }
             Self::VaultConsolidationEvidence => {
                 "Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."
+            }
+            Self::VaultSieveQueue => {
+                "The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."
+            }
+            Self::VaultSieveRetained => {
+                "The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence."
+            }
+            Self::VaultSieveReceipts => {
+                "The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it."
+            }
+            Self::VaultSievePolicy => {
+                "The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band."
+            }
+            Self::VaultSievePolicySet => {
+                "The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given."
+            }
+            Self::VaultSieveRecipePolicy => {
+                "The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings."
+            }
+            Self::VaultSieveRecipePolicySet => {
+                "The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets."
+            }
+            Self::VaultSieveLease => {
+                "The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id."
+            }
+            Self::VaultSieveLeaseRefill => {
+                "The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice."
             }
             Self::VaultClaimsVet => {
                 "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration."

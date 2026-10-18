@@ -160,6 +160,8 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 pub(crate) use super::consolidation_doors::*;
+// The owner's sieve interest-queue, policy and lease doors (DOOR-130), likewise.
+pub(crate) use super::sieve_doors::*;
 // The owner's standing-block and dreaming-choice doors (DOOR-134), likewise.
 pub(crate) use super::standing_doors::*;
 // The owner's symbol lease, proposal submit and oplog doors (DOOR-137), likewise.
@@ -1185,6 +1187,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.claims.vetting"
         | "vault.consolidation.promote"
         | "vault.consolidation.evidence"
+        | "vault.sieve.queue"
+        | "vault.sieve.retained"
+        | "vault.sieve.receipts"
+        | "vault.sieve.policy"
+        | "vault.sieve.policy.set"
+        | "vault.sieve.recipe_policy"
+        | "vault.sieve.recipe_policy.set"
+        | "vault.sieve.lease"
+        | "vault.sieve.lease.refill"
         | "vault.settings.wake_policy.set"
         | "vault.agents.create"
         | "vault.agents.update"

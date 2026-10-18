@@ -3194,6 +3194,60 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.sieve.queue",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePageRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.retained",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePageRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.receipts",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePageRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.recipe_policy",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.recipe_policy.set",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.lease",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SieveLeaseRequest,
+                >(),
+            ),
+            (
+                "vault.sieve.lease.refill",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest,
+                >(),
+            ),
+            (
                 "vault.claims.vet",
                 crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettleRequest>(),
             ),
@@ -3969,6 +4023,15 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.productivity.create",
     "vault.productivity.tree",
     "vault.consolidation.promote",
+    "vault.sieve.queue",
+    "vault.sieve.retained",
+    "vault.sieve.receipts",
+    "vault.sieve.policy",
+    "vault.sieve.policy.set",
+    "vault.sieve.recipe_policy",
+    "vault.sieve.recipe_policy.set",
+    "vault.sieve.lease",
+    "vault.sieve.lease.refill",
     "vault.claims.vet",
     "vault.claims.vetting",
     "vault.memory.signal_extraction",
@@ -4753,6 +4816,33 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
+        >(),
+        "vault.sieve.queue" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveQueuePage,
+        >(),
+        "vault.sieve.retained" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveRetainedPage,
+        >(),
+        "vault.sieve.receipts" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveReceiptsPage,
+        >(),
+        "vault.sieve.policy" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::SievePolicy>()
+        }
+        "vault.sieve.policy.set" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::SievePolicy>()
+        }
+        "vault.sieve.recipe_policy" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeRecipePolicy>()
+        }
+        "vault.sieve.recipe_policy.set" => {
+            crate::code_run::vault_read::request_schema::<crate::dreamer_wake::WakeRecipePolicy>()
+        }
+        "vault.sieve.lease" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveLeaseView,
+        >(),
+        "vault.sieve.lease.refill" => crate::code_run::vault_read::request_schema::<
+            crate::dreamer_wake::sieve_doors::SieveLeaseView,
         >(),
         "vault.claims.vet" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimSettlement>()
@@ -9046,6 +9136,69 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.sieve.queue" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.retained" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.receipts" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.recipe_policy" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.recipe_policy.set" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.lease" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.sieve.lease.refill" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.claims.vet" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11616,6 +11769,39 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
             let _input: crate::memory::consolidation::ConsolidationEvidenceRequest =
                 decode(value.clone())?;
         }
+        "vault.sieve.queue" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
+        }
+        "vault.sieve.retained" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
+        }
+        "vault.sieve.receipts" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePageRequest = decode(value.clone())?;
+        }
+        "vault.sieve.policy" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.policy.set" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.recipe_policy" => {
+            let _input: crate::dreamer_wake::sieve_doors::SievePolicyRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.recipe_policy.set" => {
+            let _input: crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.lease" => {
+            let _input: crate::dreamer_wake::sieve_doors::SieveLeaseRequest =
+                decode(value.clone())?;
+        }
+        "vault.sieve.lease.refill" => {
+            let _input: crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest =
+                decode(value.clone())?;
+        }
         "vault.claims.vet" => {
             let _input: crate::memory::ClaimSettleRequest = decode(value.clone())?;
         }
@@ -13037,6 +13223,17 @@ pub fn invoke(
         "vault.consolidation.evidence" => {
             encode(vault_consolidation_evidence(memory, decode(value)?)?)
         }
+        "vault.sieve.queue" => encode(vault_sieve_queue(memory, decode(value)?)?),
+        "vault.sieve.retained" => encode(vault_sieve_retained(memory, decode(value)?)?),
+        "vault.sieve.receipts" => encode(vault_sieve_receipts(memory, decode(value)?)?),
+        "vault.sieve.policy" => encode(vault_sieve_policy(memory, decode(value)?)?),
+        "vault.sieve.policy.set" => encode(vault_sieve_policy_set(memory, decode(value)?)?),
+        "vault.sieve.recipe_policy" => encode(vault_sieve_recipe_policy(memory, decode(value)?)?),
+        "vault.sieve.recipe_policy.set" => {
+            encode(vault_sieve_recipe_policy_set(memory, decode(value)?)?)
+        }
+        "vault.sieve.lease" => encode(vault_sieve_lease(memory, decode(value)?)?),
+        "vault.sieve.lease.refill" => encode(vault_sieve_lease_refill(memory, decode(value)?)?),
         "vault.claims.vet" => encode(vault_claims_vet(memory, decode(value)?)?),
         "vault.claims.vetting" => encode(vault_claims_vetting(memory, decode(value)?)?),
         "vault.memory.signal_extraction" => {
@@ -18352,6 +18549,105 @@ pub fn vault_consolidation_evidence(
         &memory.embedded_owner("vault.consolidation.evidence")?,
         &input,
     )
+}
+pub fn vault_sieve_queue(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePageRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveQueuePage> {
+    crate::dreamer_wake::sieve_doors::sieve_queue_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.queue")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_retained(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePageRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveRetainedPage> {
+    crate::dreamer_wake::sieve_doors::sieve_retained_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.retained")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_receipts(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePageRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveReceiptsPage> {
+    crate::dreamer_wake::sieve_doors::sieve_receipts_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.receipts")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_policy(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+) -> MemoryResult<crate::dreamer_wake::SievePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.policy")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_policy_set(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePolicySetRequest,
+) -> MemoryResult<crate::dreamer_wake::SievePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_policy_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.policy.set")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_recipe_policy(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SievePolicyRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeRecipePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_recipe_policy_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.recipe_policy")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_recipe_policy_set(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest,
+) -> MemoryResult<crate::dreamer_wake::WakeRecipePolicy> {
+    crate::dreamer_wake::sieve_doors::sieve_recipe_policy_set_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.recipe_policy.set")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_lease(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SieveLeaseRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveLeaseView> {
+    crate::dreamer_wake::sieve_doors::sieve_lease_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.lease")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
+}
+pub fn vault_sieve_lease_refill(
+    memory: &Memory<'_>,
+    input: crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest,
+) -> MemoryResult<crate::dreamer_wake::sieve_doors::SieveLeaseView> {
+    crate::dreamer_wake::sieve_doors::sieve_lease_refill_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.sieve.lease.refill")?,
+        &input,
+    )
+    .map_err(crate::memory::MemoryError::from)
 }
 pub fn vault_claims_vet(
     memory: &Memory<'_>,

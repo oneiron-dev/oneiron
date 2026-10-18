@@ -1799,6 +1799,33 @@ impl OneironClient {
                         Vec<oneiron::memory::consolidation::ConsolidationEvidenceSource>,
                     >,
                 >(client, verb, &input),
+                "vault.sieve.queue" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_doors::SieveQueuePage,
+                >(client, verb, &input),
+                "vault.sieve.retained" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_doors::SieveRetainedPage,
+                >(client, verb, &input),
+                "vault.sieve.receipts" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_doors::SieveReceiptsPage,
+                >(client, verb, &input),
+                "vault.sieve.policy" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::SievePolicy,
+                >(client, verb, &input),
+                "vault.sieve.policy.set" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::SievePolicy,
+                >(client, verb, &input),
+                "vault.sieve.recipe_policy" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::WakeRecipePolicy,
+                >(client, verb, &input),
+                "vault.sieve.recipe_policy.set" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::WakeRecipePolicy,
+                >(client, verb, &input),
+                "vault.sieve.lease" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_doors::SieveLeaseView,
+                >(client, verb, &input),
+                "vault.sieve.lease.refill" => remote_agent_verb_output::<
+                    oneiron::dreamer_wake::sieve_doors::SieveLeaseView,
+                >(client, verb, &input),
                 "vault.claims.vet" => remote_agent_verb_output::<oneiron::memory::ClaimSettlement>(
                     client, verb, &input,
                 ),
@@ -9174,6 +9201,114 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.consolidation.evidence", value)
+    }
+    pub fn vault_sieve_queue(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SievePageRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_doors::SieveQueuePage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.queue", value)
+    }
+    pub fn vault_sieve_retained(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SievePageRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_doors::SieveRetainedPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.retained", value)
+    }
+    pub fn vault_sieve_receipts(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SievePageRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_doors::SieveReceiptsPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.receipts", value)
+    }
+    pub fn vault_sieve_policy(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SievePolicyRequest,
+    ) -> Result<oneiron::dreamer_wake::SievePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.policy", value)
+    }
+    pub fn vault_sieve_policy_set(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest,
+    ) -> Result<oneiron::dreamer_wake::SievePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.policy.set", value)
+    }
+    pub fn vault_sieve_recipe_policy(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SievePolicyRequest,
+    ) -> Result<oneiron::dreamer_wake::WakeRecipePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.recipe_policy", value)
+    }
+    pub fn vault_sieve_recipe_policy_set(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest,
+    ) -> Result<oneiron::dreamer_wake::WakeRecipePolicy, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.recipe_policy.set", value)
+    }
+    pub fn vault_sieve_lease(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_doors::SieveLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.lease", value)
+    }
+    pub fn vault_sieve_lease_refill(
+        &self,
+        input: &oneiron::dreamer_wake::sieve_doors::SieveLeaseRefillRequest,
+    ) -> Result<oneiron::dreamer_wake::sieve_doors::SieveLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.sieve.lease.refill", value)
     }
     pub fn vault_claims_vet(
         &self,

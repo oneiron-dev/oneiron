@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 660 facade rows, 2423 declarations.
-Inputs: 608 of 660 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 590 of 660 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 669 facade rows, 2438 declarations.
+Inputs: 617 of 669 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 599 of 669 fully typed, 70 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 93; unread shapes: 0.
 """
 
@@ -11449,6 +11449,85 @@ class ConsolidationPromotion(TypedDict):
     output_evidence: list[ConsolidationEvidenceSource]
 class ConsolidationEvidenceRequest(TypedDict):
     source_refs: list[str]
+class SievePageRequest(TypedDict):
+    limit: NotRequired[int | None]
+class SieveSpanView(TypedDict):
+    span: str
+    turn: str
+    source: str
+    start: int
+    end: int
+    kind: str
+    entity: NotRequired[str | None]
+    novel: NotRequired[bool | None]
+    confidence: int
+    score: int
+    band: str
+    owed: list[str]
+    queued_at: int
+    source_digest: str
+    policy_digest: str
+class SieveQueuePage(TypedDict):
+    spans: list[SieveSpanView]
+    skipped_unreadable: int
+    skipped_detached: int
+class SieveRetainedPage(TypedDict):
+    spans: list[SieveSpanView]
+class SieveReceiptView(TypedDict):
+    span: str
+    turn: str
+    source: str
+    start: int
+    end: int
+    kind: str
+    score: int
+    attempt: str
+    consumed_at: int
+class SieveReceiptsPage(TypedDict):
+    receipts: list[SieveReceiptView]
+class SievePolicyRequest(TypedDict):
+    ...
+class SievePolicy(TypedDict):
+    max_turns_per_pass: int
+    max_scan_per_pass: int
+    max_text_bytes_per_pass: int
+    date_interest: int
+    name_interest: int
+    absolute_date_confidence: int
+    relative_date_confidence: int
+    vague_date_confidence: int
+    name_confidence: int
+    initial_name_confidence: int
+    katakana_name_confidence: int
+    uncertain_low: int
+    uncertain_high: int
+class SievePolicySetRequest(TypedDict):
+    policy: SievePolicy
+class WakeRecipePolicy(TypedDict):
+    continuous_rung_spans: int
+    nightly_spans: int
+    nightly_children: int
+    rung_retry_secs: int
+    audit_percent: int
+    audit_spans: int
+    novelty_instruction: str
+    typing_instruction: str
+    narrative_instruction: str
+class SieveRecipePolicySetRequest(TypedDict):
+    policy: WakeRecipePolicy
+class SieveLeaseRequest(TypedDict):
+    budget_id: str
+class SieveLeaseCounter(TypedDict):
+    total_units: int
+    remaining_units: int
+    reserved_units: int
+    updated_at: int
+class SieveLeaseView(TypedDict):
+    budget_id: str
+    counter: NotRequired[SieveLeaseCounter | None]
+class SieveLeaseRefillRequest(TypedDict):
+    budget_id: str
+    total_units: int
 class SignalExtractionRequest(TypedDict):
     turn_refs: list[str]
 class SignalExtractionTicket(TypedDict):

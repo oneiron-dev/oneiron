@@ -5320,6 +5320,78 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_sieve_queue(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.queue", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_retained(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.retained", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.receipts", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_policy(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.policy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_recipe_policy(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.recipe_policy", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_recipe_policy_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.recipe_policy.set", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_lease(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.lease", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_sieve_lease_refill(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.sieve.lease.refill", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_claims_vet(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.claims.vet", input)

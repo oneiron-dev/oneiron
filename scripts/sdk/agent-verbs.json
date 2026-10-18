@@ -10190,6 +10190,141 @@
       "section": false
     },
     {
+      "name": "vault.sieve.queue",
+      "description": "The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed.",
+      "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",
+      "output": "crate::dreamer_wake::sieve_doors::SieveQueuePage",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_queue_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.queue\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.retained",
+      "description": "The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence.",
+      "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",
+      "output": "crate::dreamer_wake::sieve_doors::SieveRetainedPage",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_retained_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.retained\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.receipts",
+      "description": "The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it.",
+      "input": "crate::dreamer_wake::sieve_doors::SievePageRequest",
+      "output": "crate::dreamer_wake::sieve_doors::SieveReceiptsPage",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_receipts_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.receipts\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.policy",
+      "description": "The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band.",
+      "input": "crate::dreamer_wake::sieve_doors::SievePolicyRequest",
+      "output": "crate::dreamer_wake::SievePolicy",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.policy\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.policy.set",
+      "description": "The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given.",
+      "input": "crate::dreamer_wake::sieve_doors::SievePolicySetRequest",
+      "output": "crate::dreamer_wake::SievePolicy",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.recipe_policy",
+      "description": "The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings.",
+      "input": "crate::dreamer_wake::sieve_doors::SievePolicyRequest",
+      "output": "crate::dreamer_wake::WakeRecipePolicy",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_recipe_policy_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.recipe_policy\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.recipe_policy.set",
+      "description": "The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets.",
+      "input": "crate::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest",
+      "output": "crate::dreamer_wake::WakeRecipePolicy",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_recipe_policy_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.recipe_policy.set\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.lease",
+      "description": "The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id.",
+      "input": "crate::dreamer_wake::sieve_doors::SieveLeaseRequest",
+      "output": "crate::dreamer_wake::sieve_doors::SieveLeaseView",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_lease_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.lease\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.sieve.lease.refill",
+      "description": "The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice.",
+      "input": "crate::dreamer_wake::sieve_doors::SieveLeaseRefillRequest",
+      "output": "crate::dreamer_wake::sieve_doors::SieveLeaseView",
+      "call": "crate::dreamer_wake::sieve_doors::sieve_lease_refill_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sieve.lease.refill\")?, &input).map_err(crate::memory::MemoryError::from)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.claims.vet",
       "description": "Vets a reviewed generated-origin Auto claim or proposal through the owner Gate and signed settlement; it still contributes zero corroboration.",
       "input": "crate::memory::ClaimSettleRequest",

@@ -2871,6 +2871,51 @@ export_facade! {
     let output = client.vault_consolidation_evidence(&input)?;
     crate::codec::lift_record("vault.consolidation.evidence", &output)
 };
+"vault.sieve.queue" => fn vault_sieve_queue(&self, input: SievePageRequest) -> SieveQueuePage = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest = crate::codec::lower_record("vault.sieve.queue", input)?;
+    let output = client.vault_sieve_queue(&input)?;
+    crate::codec::lift_record("vault.sieve.queue", &output)
+};
+"vault.sieve.retained" => fn vault_sieve_retained(&self, input: SievePageRequest) -> SieveRetainedPage = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest = crate::codec::lower_record("vault.sieve.retained", input)?;
+    let output = client.vault_sieve_retained(&input)?;
+    crate::codec::lift_record("vault.sieve.retained", &output)
+};
+"vault.sieve.receipts" => fn vault_sieve_receipts(&self, input: SievePageRequest) -> SieveReceiptsPage = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest = crate::codec::lower_record("vault.sieve.receipts", input)?;
+    let output = client.vault_sieve_receipts(&input)?;
+    crate::codec::lift_record("vault.sieve.receipts", &output)
+};
+"vault.sieve.policy" => fn vault_sieve_policy(&self) -> SievePolicy = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SievePolicyRequest = crate::codec::lower_empty("vault.sieve.policy")?;
+    let output = client.vault_sieve_policy(&input)?;
+    crate::codec::lift_record("vault.sieve.policy", &output)
+};
+"vault.sieve.policy.set" => fn vault_sieve_policy_set(&self, input: SievePolicySetRequest) -> SievePolicy = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest = crate::codec::lower_record("vault.sieve.policy.set", input)?;
+    let output = client.vault_sieve_policy_set(&input)?;
+    crate::codec::lift_record("vault.sieve.policy.set", &output)
+};
+"vault.sieve.recipe_policy" => fn vault_sieve_recipe_policy(&self) -> WakeRecipePolicy = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SievePolicyRequest = crate::codec::lower_empty("vault.sieve.recipe_policy")?;
+    let output = client.vault_sieve_recipe_policy(&input)?;
+    crate::codec::lift_record("vault.sieve.recipe_policy", &output)
+};
+"vault.sieve.recipe_policy.set" => fn vault_sieve_recipe_policy_set(&self, input: SieveRecipePolicySetRequest) -> WakeRecipePolicy = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest = crate::codec::lower_record("vault.sieve.recipe_policy.set", input)?;
+    let output = client.vault_sieve_recipe_policy_set(&input)?;
+    crate::codec::lift_record("vault.sieve.recipe_policy.set", &output)
+};
+"vault.sieve.lease" => fn vault_sieve_lease(&self, input: SieveLeaseRequest) -> SieveLeaseView = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest = crate::codec::lower_record("vault.sieve.lease", input)?;
+    let output = client.vault_sieve_lease(&input)?;
+    crate::codec::lift_record("vault.sieve.lease", &output)
+};
+"vault.sieve.lease.refill" => fn vault_sieve_lease_refill(&self, input: SieveLeaseRefillRequest) -> SieveLeaseView = |client| {
+    let input: oneiron::dreamer_wake::sieve_doors::SieveLeaseRefillRequest = crate::codec::lower_record("vault.sieve.lease.refill", input)?;
+    let output = client.vault_sieve_lease_refill(&input)?;
+    crate::codec::lift_record("vault.sieve.lease.refill", &output)
+};
 "vault.claims.vet" => fn vault_claims_vet(&self, input: ClaimSettleRequest) -> ClaimSettlement = |client| {
     let input: oneiron::memory::ClaimSettleRequest = crate::codec::lower_record("vault.claims.vet", input)?;
     let output = client.vault_claims_vet(&input)?;

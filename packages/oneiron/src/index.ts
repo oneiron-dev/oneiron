@@ -1725,6 +1725,29 @@ export class Oneiron {
       /** Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner. */
       evidence: (input: Facade.ConsolidationEvidenceRequest): Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]> => this.#call(() => this.#client.vaultConsolidationEvidence(input) as Facade.ScopedReadResult<Facade.ConsolidationEvidenceSource[]>),
     },
+    sieve: {
+      /** The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed. */
+      queue: (input: Facade.SievePageRequest): Facade.SieveQueuePage => this.#call(() => this.#client.vaultSieveQueue(input) as Facade.SieveQueuePage),
+      /** The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence. */
+      retained: (input: Facade.SievePageRequest): Facade.SieveRetainedPage => this.#call(() => this.#client.vaultSieveRetained(input) as Facade.SieveRetainedPage),
+      /** The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it. */
+      receipts: (input: Facade.SievePageRequest): Facade.SieveReceiptsPage => this.#call(() => this.#client.vaultSieveReceipts(input) as Facade.SieveReceiptsPage),
+      /** The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band. */
+      policy: Object.assign((input: Facade.SievePolicyRequest): Facade.SievePolicy => this.#call(() => this.#client.vaultSievePolicy(input) as Facade.SievePolicy), {
+        /** The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given. */
+        set: (input: Facade.SievePolicySetRequest): Facade.SievePolicy => this.#call(() => this.#client.vaultSievePolicySet(input) as Facade.SievePolicy),
+      }),
+      /** The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings. */
+      recipe_policy: Object.assign((input: Facade.SievePolicyRequest): Facade.WakeRecipePolicy => this.#call(() => this.#client.vaultSieveRecipePolicy(input) as Facade.WakeRecipePolicy), {
+        /** The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets. */
+        set: (input: Facade.SieveRecipePolicySetRequest): Facade.WakeRecipePolicy => this.#call(() => this.#client.vaultSieveRecipePolicySet(input) as Facade.WakeRecipePolicy),
+      }),
+      /** The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id. */
+      lease: Object.assign((input: Facade.SieveLeaseRequest): Facade.SieveLeaseView => this.#call(() => this.#client.vaultSieveLease(input) as Facade.SieveLeaseView), {
+        /** The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice. */
+        refill: (input: Facade.SieveLeaseRefillRequest): Facade.SieveLeaseView => this.#call(() => this.#client.vaultSieveLeaseRefill(input) as Facade.SieveLeaseView),
+      }),
+    },
     memory: {
       /** Queues typed extraction of witnessed turns on the configured production Dreamer role; returns durable partition job refs, never caller-authored candidates. */
       signal_extraction: Object.assign((input: Facade.SignalExtractionRequest): Facade.SignalExtractionTicket => this.#call(() => this.#client.vaultMemorySignalExtraction(input) as Facade.SignalExtractionTicket), {

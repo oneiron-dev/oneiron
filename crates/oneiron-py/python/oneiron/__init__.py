@@ -919,6 +919,9 @@ class Oneiron:
         def consolidation(self) -> "Oneiron._VaultConsolidationVerbs":
             return Oneiron._VaultConsolidationVerbs(self._client)
         @property
+        def sieve(self) -> "Oneiron._VaultSieveVerbs":
+            return Oneiron._VaultSieveVerbs(self._client)
+        @property
         def memory(self) -> "Oneiron._VaultMemoryVerbs":
             return Oneiron._VaultMemoryVerbs(self._client)
         @property
@@ -3150,6 +3153,54 @@ class Oneiron:
         def evidence(self, spec):
             """Reads exact generated-claim evidence, source lineage and separate consolidation, corroboration and effector-evidence eligibility as the owner."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_evidence(json.dumps(spec))))
+    class _VaultSieveVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def queue(self, spec):
+            """The owner reads one ordered page of the sieve interest queue: span handles, source and range refs, kind, score and the rungs still owed."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_queue(json.dumps(spec))))
+        def retained(self, spec):
+            """The owner reads the sieve retained original span readings, which spending never removes, for a later weave over evidence."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_retained(json.dumps(spec))))
+        def receipts(self, spec):
+            """The owner reads consumed-span receipts: each span nightly spending consumed once, its source ref and the attempt that spent it."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_receipts(json.dumps(spec))))
+        @property
+        def policy(self) -> "Oneiron._VaultSievePolicyVerbs":
+            return Oneiron._VaultSievePolicyVerbs(self._client)
+        @property
+        def recipe_policy(self) -> "Oneiron._VaultSieveRecipePolicyVerbs":
+            return Oneiron._VaultSieveRecipePolicyVerbs(self._client)
+        @property
+        def lease(self) -> "Oneiron._VaultSieveLeaseVerbs":
+            return Oneiron._VaultSieveLeaseVerbs(self._client)
+    class _VaultSievePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads the sieve policy row: how much one pass reads, each kind interest, rule confidences and the uncertain band."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_policy(json.dumps(spec))))
+        def set(self, spec):
+            """The owner replaces the sieve policy row; the new row scores spans read after it and queued spans keep the score they were given."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_policy_set(json.dumps(spec))))
+    class _VaultSieveRecipePolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads the wake recipe policy row: per-receipt span and child budgets, rung retry and the sampled audit settings."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_recipe_policy(json.dumps(spec))))
+        def set(self, spec):
+            """The owner replaces the wake recipe policy row; unspent interest stays queued and only later receipts spend under the new budgets."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_recipe_policy_set(json.dumps(spec))))
+    class _VaultSieveLeaseVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The owner reads one wake-budget lease counter without creating it: total, remaining and reserved units by its budget id."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_lease(json.dumps(spec))))
+        def refill(self, spec):
+            """The owner refills one wake-budget lease to a replacement total; spent and reserved units keep their claim and replay adds nothing twice."""
+            return json.loads(_translate(lambda: self._client.vault_sieve_lease_refill(json.dumps(spec))))
     class _VaultMemoryVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
