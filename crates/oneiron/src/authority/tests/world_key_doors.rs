@@ -92,7 +92,13 @@ pub(super) fn enrol_own(host: &Host) -> EntityId {
 
 pub(super) fn set(host: &Host, world: EntityId, read: ReadLocation) {
     host.vault
-        .set_world_privacy_as(&host.owner, EditOrigin::ThisMachine, world, settings(read))
+        .set_world_privacy_as(
+            &host.owner,
+            ActSurface::ThisInstall,
+            world,
+            settings(read),
+            None,
+        )
         .unwrap();
 }
 

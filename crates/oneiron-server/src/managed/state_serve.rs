@@ -568,17 +568,17 @@ async fn run_admitted_request(state: Arc<ManagedState>, request: Request, next: 
     // transition so their completion receipt reports what they actually did.
     let lifecycle_observation = match (request.method().as_str(), request.uri().path()) {
         ("GET", "/api/health") => true,
-        ("POST", path) => matches!(path,
+        ("POST", path) => matches!(
+            path,
             "/v1/core/facade/vault.slim.policy"
-            | "/v1/core/facade/vault.slim.state"
-            | "/v1/core/facade/vault.slim.resume_step"
-            | "/v1/core/facade/vault.slim.drop_heavy"
-            | "/v1/core/facade/vault.slim.resume"
+                | "/v1/core/facade/vault.slim.state"
+                | "/v1/core/facade/vault.slim.resume_step"
+                | "/v1/core/facade/vault.slim.drop_heavy"
+                | "/v1/core/facade/vault.slim.resume"
         ),
         _ => false,
     };
-    if !lifecycle_observation
-        && let Err(error) = state.server.vault().resume_from_slim_on_inbound()
+    if !lifecycle_observation && let Err(error) = state.server.vault().resume_from_slim_on_inbound()
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, error.to_string()).into_response();
     }

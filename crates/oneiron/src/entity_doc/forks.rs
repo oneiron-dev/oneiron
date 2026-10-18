@@ -459,17 +459,10 @@ pub(super) fn open_proposal_in_txn(
         bind_actor(vault, txn, &fork, req.actor, at)?;
         // A handle of a key the live text's lift marked writes its
         // value again (OF-067).
-        let lifted = crate::batch::secret_scan::LiftedKeys::of_in_txn(
-            &vault.store,
-            txn,
-            [live.text()],
-        )?;
+        let lifted =
+            crate::batch::secret_scan::LiftedKeys::of_in_txn(&vault.store, txn, [live.text()])?;
         if let Some(text) = &req.rewrite {
-            crate::batch::secret_scan::scan_content_in_txn(
-                &vault.store,
-                txn,
-                text.as_bytes(),
-            )?;
+            crate::batch::secret_scan::scan_content_in_txn(&vault.store, txn, text.as_bytes())?;
             let resolved = lifted.resolved(text);
             let text = resolved.as_deref().unwrap_or(text);
             fork.edit_as(req.actor, at, |body| {
@@ -496,9 +489,7 @@ pub(super) fn open_proposal_in_txn(
             ForkStatus::Pending,
             at,
         )?;
-        if req.rewrite.is_none()
-            && covered(vault, txn, authorization, &req.entity, req.actor)?
-        {
+        if req.rewrite.is_none() && covered(vault, txn, authorization, &req.entity, req.actor)? {
             settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
         }
     }

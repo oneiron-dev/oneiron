@@ -29,10 +29,10 @@ pub use doors::{
     BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation,
     FIXTURE_TREE_VERSION_MAX, LaunchedMember, LearningCellView, LearningEvidenceView,
     LearningObservation, ObservationIssue, PlanObservation, PlannedSpawnObservation,
-    PlannedSpawnRead, ProviderPinView, ResolvedTeam, RouteObservation, RouteStampState,
-    SkillRevisionView, SpawnPhase, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin,
-    TaskTypeTreePinReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView,
-    TeamBindingView, TeamReceiptView, TypeStamp, observe_spawn_as, pin_tree_as, read_tree_as,
+    PlannedSpawnRead, ProviderPinView, ResolvedTeam, RouteObservation, SkillRevisionView,
+    SpawnPhase, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin, TaskTypeTreePinReceipt,
+    TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TeamBindingView, TeamReceiptView,
+    TypeStamp, observe_spawn_as, pin_tree_as, read_tree_as,
 };
 pub use market::{
     LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind,
