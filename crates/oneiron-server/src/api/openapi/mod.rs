@@ -6,6 +6,7 @@ mod endpoints_merge;
 mod facade_paths;
 mod owner_paths;
 mod security;
+mod voice_bank_paths;
 
 // The children keep the `super::...` paths they carried in the flat module;
 // these names resolve through this module back into `api`.
