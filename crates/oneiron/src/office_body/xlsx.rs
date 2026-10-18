@@ -30,9 +30,10 @@ use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContaine
 use oneiron_docedit::xlsx_body::{
     SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxFormat, XlsxLock,
     XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1, check_cell,
-    check_format, check_name, check_sheet_name, parse_a1, retarget_sheets, shift_axis_formula,
+    check_format, check_name, check_sheet_name, drop_tables, parse_a1, retarget_sheets,
+    shift_axis_formula,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const OFFICE: &str = "office";
 const CELLS: &str = "cells";
@@ -598,13 +599,18 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp, effects: &mut Vec<String>) -
             list[at].1.clone_from(name);
             set_sheet_list(doc, &list)?;
             let old = sheet.to_lowercase();
-            retarget_body(doc, &order, &|held: &str| {
-                if held.to_lowercase() == old {
-                    SheetFate::Rename(name.clone())
-                } else {
-                    SheetFate::Keep
-                }
-            })
+            retarget_body(
+                doc,
+                &order,
+                &|held: &str| {
+                    if held.to_lowercase() == old {
+                        SheetFate::Rename(name.clone())
+                    } else {
+                        SheetFate::Keep
+                    }
+                },
+                &HashSet::new(),
+            )
         }
         XlsxBodyOp::MoveSheet { sheet, at } => {
             let mut list = sheet_list(doc)?;
@@ -625,6 +631,8 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp, effects: &mut Vec<String>) -
             }
             let order = sheet_names(&list);
             let (key, _) = list.remove(at);
+            // Its tables go with it, and the formulas naming them read #REF!.
+            let gone = gone_tables(&read(doc)?, |held| held.key == key);
             set_sheet_list(doc, &list)?;
             let names = doc.get_map(NAMES);
             let LoroValue::Map(entries) = names.get_value() else {
@@ -640,13 +648,18 @@ pub(super) fn apply(doc: &LoroDoc, op: &XlsxBodyOp, effects: &mut Vec<String>) -
             keep_one_visible(doc, &mut list, &mut states, None, effects)?;
             set_sheet_states(doc, &states)?;
             let old = sheet.to_lowercase();
-            retarget_body(doc, &order, &|held: &str| {
-                if held.to_lowercase() == old {
-                    SheetFate::Delete
-                } else {
-                    SheetFate::Keep
-                }
-            })
+            retarget_body(
+                doc,
+                &order,
+                &|held: &str| {
+                    if held.to_lowercase() == old {
+                        SheetFate::Delete
+                    } else {
+                        SheetFate::Keep
+                    }
+                },
+                &gone,
+            )
         }
         XlsxBodyOp::SetSheetVisibility { sheet, visibility } => {
             let mut list = sheet_list(doc)?;
@@ -875,34 +888,59 @@ fn axis(
 }
 
 /// Retarget every formula and defined name in the body's sheets that names a
-/// renamed or deleted sheet; `order` is the sheets' names before the change.
-fn retarget_body(doc: &LoroDoc, order: &[String], fate: &dyn Fn(&str) -> SheetFate) -> Result<()> {
+/// renamed or deleted sheet, or a table in `gone` (lower case) that went
+/// with one; `order` is the sheets' names before the change.
+fn retarget_body(
+    doc: &LoroDoc,
+    order: &[String],
+    fate: &dyn Fn(&str) -> SheetFate,
+    gone: &HashSet<String>,
+) -> Result<()> {
     let before = read(doc)?;
     let mut after = before.clone();
-    retarget(&mut after, order, fate);
+    retarget(&mut after, order, fate, gone);
     write_back(doc, &before, &after)
+}
+
+/// The names (lower case) of the tables on the sheets `picked` names.
+fn gone_tables(body: &XlsxBody, picked: impl Fn(&BodySheet) -> bool) -> HashSet<String> {
+    body.sheets
+        .iter()
+        .filter(|sheet| picked(sheet))
+        .flat_map(|sheet| sheet.tables.iter().map(|table| table.name.to_lowercase()))
+        .collect()
 }
 
 /// Retarget every formula and defined name that names a renamed or deleted
 /// sheet, read-only ones too, as an export's sheet layout does; `order` is
-/// the sheets' names before the change. A formula loses its cached value.
-fn retarget(body: &mut XlsxBody, order: &[String], fate: &dyn Fn(&str) -> SheetFate) {
+/// the sheets' names before the change. A reference to a table in `gone`
+/// (lower case), which went with its sheet, reads `#REF!`. A formula loses
+/// its cached value.
+fn retarget(
+    body: &mut XlsxBody,
+    order: &[String],
+    fate: &dyn Fn(&str) -> SheetFate,
+    gone: &HashSet<String>,
+) {
+    let rewrite = |formula: &str| -> Option<String> {
+        let moved = retarget_sheets(formula, order, fate);
+        if gone.is_empty() {
+            return moved;
+        }
+        drop_tables(moved.as_deref().unwrap_or(formula), gone).or(moved)
+    };
     for cell in body
         .sheets
         .iter_mut()
         .flat_map(|sheet| sheet.cells.values_mut())
     {
-        if let Some(formula) = cell
-            .formula
-            .as_deref()
-            .and_then(|formula| retarget_sheets(formula, order, fate))
-        {
+        if let Some(formula) = cell.formula.as_deref().and_then(&rewrite) {
             cell.formula = Some(formula);
             cell.value = XlsxValue::Blank;
         }
     }
     for held in body.names.values_mut() {
-        if let Some(formula) = retarget_sheets(&held.formula, order, fate) {
+        if let Some(formula) = rewrite(&held.formula) {
             held.formula = formula;
         }
     }
@@ -1240,12 +1278,20 @@ fn moved(
         .collect();
     if !fates.is_empty() {
         let order: Vec<String> = base.sheets.iter().map(|sheet| sheet.name.clone()).collect();
-        retarget(&mut moved, &order, &|name: &str| {
-            fates
-                .get(&name.to_lowercase())
-                .cloned()
-                .unwrap_or(SheetFate::Keep)
+        let gone = gone_tables(base, |sheet| {
+            !current.sheets.iter().any(|held| held.key == sheet.key)
         });
+        retarget(
+            &mut moved,
+            &order,
+            &|name: &str| {
+                fates
+                    .get(&name.to_lowercase())
+                    .cloned()
+                    .unwrap_or(SheetFate::Keep)
+            },
+            &gone,
+        );
     }
     moved.sheets.retain_mut(|sheet| {
         match current.sheets.iter().find(|held| held.key == sheet.key) {
