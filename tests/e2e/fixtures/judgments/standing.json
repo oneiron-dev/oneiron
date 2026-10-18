@@ -1,0 +1,71 @@
+{
+  "scenario": "JUDGMENTS-03",
+  "note": "The fixture.fulfillment predicate is fixture pack data to install through a typed public pack call, not an engine predicate or raw row.",
+  "unit": {
+    "alias": "promise-r17",
+    "text": "I will deliver parcel R17."
+  },
+  "question": {
+    "text": "Will parcel R17 be delivered?",
+    "contract": {
+      "kind": "noul"
+    }
+  },
+  "definition": {
+    "adapter": "graph",
+    "activation": "standing",
+    "refresh": {
+      "on_arrival": false,
+      "every_seconds": 86400
+    },
+    "learning": true,
+    "audience": "asker",
+    "dial": {
+      "first": "system_one",
+      "ceiling": "big",
+      "band": {
+        "low": 0.35,
+        "high": 0.65
+      }
+    }
+  },
+  "binding": {
+    "source": {
+      "kind": "claim",
+      "predicate": "fixture.fulfillment"
+    },
+    "horizon": 604800,
+    "mapping": {
+      "fulfilled": true,
+      "lapsed": false
+    },
+    "noise_weight": 0.75
+  },
+  "prediction": {
+    "answer": {
+      "kind": "noul",
+      "value": true
+    },
+    "probability": 0.9
+  },
+  "outcome": {
+    "value": "fulfilled",
+    "withinHorizon": true,
+    "source": "user_stated",
+    "repeat": "replay the same fact identity, not a newly authored fact"
+  },
+  "expected": {
+    "standingRecords": 1,
+    "outcomeLabelsAfterArrival": 1,
+    "outcomeLabelsAfterReplay": 1,
+    "mappedLabel": true,
+    "noiseWeight": 0.75,
+    "linkFields": [
+      "answer",
+      "fact",
+      "fact_value_hash",
+      "occurred_at"
+    ],
+    "afterPause": "no scheduled or manual provider work; existing definition, answers and label remain readable"
+  }
+}

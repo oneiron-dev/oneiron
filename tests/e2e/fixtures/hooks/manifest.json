@@ -1,0 +1,247 @@
+{
+  "version": 1,
+  "area": "hooks",
+  "assets": [
+    {
+      "id": "hooks-replay-PACK-md",
+      "path": "replay/PACK.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "4006b42df9c5a408247462a7a80df2d29546082421d10cd927866daa6b27f052",
+      "expectedFacts": {
+        "packPath": "PACK.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-replay-hooks-replay-observer-HOOK-md",
+      "path": "replay/hooks/replay-observer/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "208c4efc49ff02da575ae7ae47bbf28d6b6023f250e97ece8460d093fed3cd8d",
+      "expectedFacts": {
+        "packPath": "hooks/replay-observer/HOOK.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-replay-hooks-replay-observer-intent-md",
+      "path": "replay/hooks/replay-observer/intent.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "12277d51577edec7229b0389474caaba7974ecf5ce101c3ba7da0aabbfc132dc",
+      "expectedFacts": {
+        "packPath": "hooks/replay-observer/intent.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-replay-hooks-replay-observer-body-js",
+      "path": "replay/hooks/replay-observer/body.js",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "5970335a067afbabf822efb6b01e10381caed7816231defb5e4a2e3cef7d105e",
+      "expectedFacts": {
+        "packPath": "hooks/replay-observer/body.js",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-02"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-PACK-md",
+      "path": "redaction/PACK.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "addff679bd213a05449d34e5241bd0b75778b2d6a3c9bf9f9a3fcf68d5405fdf",
+      "expectedFacts": {
+        "packPath": "PACK.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-hooks-hide-private-HOOK-md",
+      "path": "redaction/hooks/hide-private/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "46d2dd4df952995fcc1ffeb4b90cb93a4e516911c5b5fec94f2942d45bb63ede",
+      "expectedFacts": {
+        "packPath": "hooks/hide-private/HOOK.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-hooks-hide-private-intent-md",
+      "path": "redaction/hooks/hide-private/intent.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "28256cfcf210f35ede72624ec28a71190a21120ad5963ef47073b4a61eb5c91e",
+      "expectedFacts": {
+        "packPath": "hooks/hide-private/intent.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-hooks-hide-private-body-js",
+      "path": "redaction/hooks/hide-private/body.js",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "7a98247fe3a7109b217961bb06364efab34b78a775121785acbe93430827e088",
+      "expectedFacts": {
+        "packPath": "hooks/hide-private/body.js",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-hooks-try-restore-HOOK-md",
+      "path": "redaction/hooks/try-restore/HOOK.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "09f408634b50e628f0422532f1de981859d4e42ff360e6d0e2757034157a0105",
+      "expectedFacts": {
+        "packPath": "hooks/try-restore/HOOK.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-hooks-try-restore-intent-md",
+      "path": "redaction/hooks/try-restore/intent.md",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "74f753b5da3ca5db097e7a6ee0114f737d77f57cf317bf12b48692d5c8080466",
+      "expectedFacts": {
+        "packPath": "hooks/try-restore/intent.md",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-redaction-hooks-try-restore-body-js",
+      "path": "redaction/hooks/try-restore/body.js",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "91c06a2e3e731c736fb7dd5a30a72fc2891bb605c42363f267b3c9d413870298",
+      "expectedFacts": {
+        "packPath": "hooks/try-restore/body.js",
+        "runtime": "engine-owned Wasmtime hook world; no file/network/secret imports"
+      },
+      "scenarios": [
+        "HOOKS-04"
+      ],
+      "requires": []
+    },
+    {
+      "id": "hooks-scenarios",
+      "path": "scenarios.json",
+      "source": {
+        "uri": "independent-oracle:owner-authored-runtime-hooks",
+        "revision": "hooks-fixtures-v1"
+      },
+      "licence": "Apache-2.0",
+      "sha256": "3196a9981d388ce64a53acfd4d93ac26f73ad6baa9f8cee103099b1f18aafe21",
+      "expectedFacts": {
+        "firstFactSlice": "claim.landed",
+        "replayLandsNothing": true,
+        "redaction": "caller view only, monotone",
+        "sourcePins": [
+          {
+            "page": "/oneiron/agents/oneiron-arch-0080-runtime-hooks-v1/",
+            "sha256": "e88a774544ab4d3f9eba764a331fee0f01be5a933165aa22dbd7b70500d41a6d"
+          },
+          {
+            "page": "/oneiron/agents/oneiron-arch-0053-skills-agent-self-knowledge-v1/",
+            "sha256": "dcfa341d856a48d1c5f4f02de932d3af6ff573890c53b8f7b5ea5c7506e02f76"
+          },
+          {
+            "page": "/oneiron/agents/oneiron-arch-0067-context-board-v1/",
+            "sha256": "4342ddebdeee0bc1ae71a6fe07a7d1da296170fd9141d5788c3f8faee17d0d12"
+          },
+          {
+            "page": "/oneiron/gate/oneiron-arch-0069-secret-custody-v1/",
+            "sha256": "a4c8df15efb88100eaaaef8ba4b90560074dd605bb5fa96a866d406f869d3b83"
+          }
+        ]
+      },
+      "scenarios": [
+        "HOOKS-01",
+        "HOOKS-02",
+        "HOOKS-03",
+        "HOOKS-04",
+        "HOOKS-05",
+        "HOOKS-06",
+        "HOOKS-07"
+      ],
+      "requires": []
+    }
+  ]
+}
