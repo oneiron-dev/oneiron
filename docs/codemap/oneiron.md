@@ -2166,7 +2166,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/identity_topology/op_apply.rs` | src | m | 1 struct · 1 enum · 4 fn · 9 crate-vis | IdentityOpOutcome, IdentityOpWrite | The apply door: the per-write consent metadata, the door outcome, the merge/split/facet/assert_distinct… |
 | `src/identity_topology/op_undo.rs` | src | m | 2 fn · 1 crate-vis | — | The undo door: a counter-event appended over an applied merge, split or facet, never a rewrite of the event… |
 | `src/identity_topology/op_vocabulary.rs` | src | s | 6 struct · 2 enum · 1 fn · 2 crate-vis | AssertDistinctOp, FacetOp, FacetSpec, IdentityOpEvidence, IdentityTopologyOp, MergeOp, SplitOp, SurvivorshipPlan | The typed identity-topology op vocabulary (ARCH-0055 §2): merge, split, facet and assert_distinct, plus the… |
-| `src/identity_topology/proposal_resolution.rs` | src | m | 4 fn · 7 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
+| `src/identity_topology/proposal_resolution.rs` | src | m | 4 fn · 8 crate-vis | — | The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds… |
 | `src/identity_topology/reassignment_map.rs` | src | m | 3 struct · 1 enum · 2 fn · 12 crate-vis | ReassignmentEntry, ReassignmentMap, ReassignmentStats, ReassignmentTarget | The ONE-1745 reassignment projection end to end: the typed map model, its canonical wire codec, and the… |
 | `src/identity_topology/replicated_event_validation.rs` | src | m | 11 crate-vis | — | Sync-path ingest for the type-76 family: event reads, participant and actor validation shared with the local… |
 | `src/identity_topology/shell_edge_reconcile.rs` | src | m | 7 crate-vis | — | Derives and reconciles the canonical `merged_into` / `split_into` shell edge set from the ledger fold — the… |
@@ -2484,6 +2484,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/claims/lifecycle.rs` | src | s | 5 fn · 4 crate-vis | — | — |
 | `src/memory/claims/mod.rs` | src | m | 6 struct · 3 enum · 4 fn · 1 const · 1 re-export · 5 crate-vis | ClaimInput, CommitOutcome, CommitReceipt, DeleteReceipt, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason +1 | Claim lifecycle verbs: commit/upsert/retract and the internal commit-decision plumbing (gate… |
 | `src/memory/claims/settle.rs` | src | m | 6 struct · 4 enum · 5 fn | ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason +2 | One proposed claim's review and settlement (DOOR-115, e2e MEMORY-01): `vault.claims.review` reads one… |
+| `src/memory/clustering/doors.rs` | src | s | 6 fn | — | Scoped clustering and authenticated judgments through the existing topology gate |
+| `src/memory/clustering/mod.rs` | src | s | 16 struct · 5 enum | ClusterClaimInput, ClusterCohort, ClusterEvidence, ClusterMerge, ClusterMergeRequest, ClusterOperation, ClusterPartition, ClusterProposal +13 | Typed clustering diagnostics and the merge/split judgments they may inform |
+| `src/memory/clustering/operation.rs` | src | s | 5 crate-vis | — | Wire projection only |
 | `src/memory/code_doors/conflict_types.rs` | src | s | 10 struct | CodeConflictHistory, CodeConflictRecordRequest, CodeConflictResolutionView, CodeConflictView, CodeConflictViewRequest, CodeProposalResolveRequest, CodeProposalReviewRequest, CodeProposalSettleRequest +2 | — |
 | `src/memory/code_doors/conflicts.rs` | src | s | 2 fn · 1 crate-vis | — | — |
 | `src/memory/code_doors/leases.rs` | src | s | 3 fn | — | — |
@@ -2538,7 +2541,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/operations.rs` | src | s | 6 fn | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 9 struct | MergeQueueBatchRequest, MergeQueueBatchView, MergeQueueEnqueueRequest, MergeQueueObservation, MergeQueueObserveRequest, MergeQueuePathView, MergeQueuePointersView, MergeQueueRepoRequest +1 | — |
 | `src/memory/message_result.rs` | src | s | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
-| `src/memory/mod.rs` | src | s | 20 mod · 49 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `src/memory/mod.rs` | src | s | 21 mod · 49 re-export · 15 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
 | `src/memory/notes.rs` | src | s | 3 fn | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 re-export | — | Typed origin and checkout doors (DOOR-139): tested-tree export, the origin authority epoch, publication… |
@@ -4095,7 +4098,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/sdk_fanout_launch.rs` | src | s | 5 struct · 1 enum · 7 fn | FanoutAckRequest, FanoutLaunchHold, FanoutLaunchRequest, FanoutLaunchRuling, FanoutLaunchView, FanoutResumeRequest | The fan-out launch doors (OF-393): `vault.fanout.launch` reads one held or launched fan-out… |
 | `src/task_verb/sdk_federation.rs` | src | s | 19 struct · 1 enum · 1 fn · 1 crate-vis | AcceptConnect, AcceptRescopeConnect, ConnectAccepted, ConnectDelivery, ConnectDisconnected, ConnectExportRequest, ConnectGrant, ConnectIdentity +12 | Typed Connect, reciprocal re-scope, disconnect and foreign-world delivery |
 | `src/task_verb/sdk_feedback.rs` | src | m | 11 struct · 7 fn | FeedbackPreviewRequest, FeedbackSendSubjectRequest, FeedbackSubjectPreview, FeedbackSubjectSent, ReportDisclosureRequest, ReportOutboundRequest, ReportOutboundView, ReportPayloadView +3 | Subject-bound feedback over one report issue: its publisher disclosure, its content-free outbound payload… |
-| `src/task_verb/sdk_generated.rs` | src | XL | 902 fn · 4 const | — | — |
+| `src/task_verb/sdk_generated.rs` | src | XL | 908 fn · 4 const | — | — |
 | `src/task_verb/sdk_goal_optimize.rs` | src | m | 15 struct · 12 fn | ProjectGoalIntakeCompleteRequest, ProjectGoalIntakeReceipt, ProjectGoalView, SkillOptimizeGoalBindRequest, SkillOptimizeGoalRequest, SkillOptimizeGoalRevision, SkillOptimizeGoalView, SkillOptimizeMeasureRequest +7 | Full witnessed goal intake and explicit optimizer proposal/admission doors |
 | `src/task_verb/sdk_guest_document.rs` | src | s | 3 struct · 1 fn · 1 crate-vis | GuestDocumentContext, GuestDocumentEnvelope, GuestDocumentShareRequest | Typed guest document sharing over live Connect grants (ARCH-0043) |
 | `src/task_verb/sdk_guest_revoke.rs` | src | s | 1 struct · 2 fn | GuestRevokeRequest | The input and answer of the owner's guest revoke row (OF-232): `vault.guests.revoke`, a host door |

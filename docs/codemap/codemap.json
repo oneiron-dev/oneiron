@@ -27630,7 +27630,7 @@
      "path": "src/identity_topology/proposal_resolution.rs",
      "purpose": "The ARCH-0055 r7 proposal-resolution lane: scope derivation, the amendment codec and its narrowing bounds…",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 4
      }
     },
@@ -32242,6 +32242,59 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/memory/clustering/doors.rs",
+     "purpose": "Scoped clustering and authenticated judgments through the existing topology gate",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ClusterClaimInput",
+      "ClusterCohort",
+      "ClusterEvidence",
+      "ClusterMerge",
+      "ClusterMergeRequest",
+      "ClusterOperation",
+      "ClusterPartition",
+      "ClusterProposal",
+      "ClusterProposalRequest",
+      "ClusterProposalView",
+      "ClusterProposeRequest",
+      "ClusterReassignment",
+      "ClusterReassignmentTarget",
+      "ClusterRequest",
+      "ClusterResolveRequest",
+      "ClusterRuling",
+      "ClusterSplit",
+      "ClusterSplitRequest",
+      "ClusterSurvivorship",
+      "ClusterTopologyOutcome",
+      "ClusterTopologyReceipt"
+     ],
+     "path": "src/memory/clustering/mod.rs",
+     "purpose": "Typed clustering diagnostics and the merge/split judgments they may inform",
+     "surface": {
+      "enum": 5,
+      "struct": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/clustering/operation.rs",
+     "purpose": "Wire projection only",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CodeConflictHistory",
       "CodeConflictRecordRequest",
@@ -33017,7 +33070,7 @@
      "purpose": "BRIDGE-01 (ONE-1454): transport-agnostic memory facade",
      "surface": {
       "crate-vis": 15,
-      "mod": 20,
+      "mod": 21,
       "re-export": 49
      }
     },
@@ -52449,7 +52502,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 902
+      "fn": 908
      }
     },
     {
@@ -59340,7 +59393,7 @@
      "purpose": "—"
     },
     "memory": {
-     "files": 201,
+     "files": 204,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -60021,7 +60074,7 @@
    },
    "over_bar": 199,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3662,
+   "source_files": 3665,
    "test_files": 902
   },
   "oneiron-android": {
@@ -68596,7 +68649,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 871
+      "fn": 877
      }
     },
     {
@@ -69659,7 +69712,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 872
+      "fn": 878
      }
     },
     {
@@ -72759,6 +72812,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/facade/clustering_doors.rs",
+     "purpose": "The typed clustering judgments bind only the caller's own owner proof or agent Grant",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/facade/coach_offer_doors.rs",
      "purpose": "Typed owner doors for Coach offers and counted pilot evidence",
      "surface": {
@@ -73142,7 +73205,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 145
+      "crate-vis": 146
      }
     },
     {
@@ -81072,7 +81135,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 409,
+     "files": 410,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -81501,7 +81564,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 759,
+   "source_files": 760,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -82155,6 +82218,27 @@
       "CleanupRunView",
       "ClickInput",
       "CloseLensFrameReply",
+      "ClusterClaimInput",
+      "ClusterCohort",
+      "ClusterEvidence",
+      "ClusterMerge",
+      "ClusterMergeRequest",
+      "ClusterOperation",
+      "ClusterPartition",
+      "ClusterProposal",
+      "ClusterProposalRequest",
+      "ClusterProposalView",
+      "ClusterProposeRequest",
+      "ClusterReassignment",
+      "ClusterReassignmentTarget",
+      "ClusterRequest",
+      "ClusterResolveRequest",
+      "ClusterRuling",
+      "ClusterSplit",
+      "ClusterSplitRequest",
+      "ClusterSurvivorship",
+      "ClusterTopologyOutcome",
+      "ClusterTopologyReceipt",
       "CoachInspectRequest",
       "CoachInspectionView",
       "CoachProposalView",
@@ -83960,6 +84044,8 @@
       "ScopedReadResultCalendarFreebusyDto",
       "ScopedReadResultCalendarOccurrenceViewList",
       "ScopedReadResultCalendarPassportRevisionList",
+      "ScopedReadResultClusterProposal",
+      "ScopedReadResultClusterProposalView",
       "ScopedReadResultCoachInspectionView",
       "ScopedReadResultConsolidationEvidenceSourceList",
       "ScopedReadResultDiagnosticEventViewList",
@@ -84670,8 +84756,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 732,
-      "struct": 2239
+      "enum": 737,
+      "struct": 2257
      }
     },
     {
