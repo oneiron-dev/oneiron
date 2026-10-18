@@ -257,6 +257,11 @@ both bindings and their export-census tests in one change.
 - `vault.shared.receipt`
 - `vault.shared.outcomes`
 - `vault.shared.deletion`
+- `vault.org_admin.configure`
+- `vault.org_admin.powers`
+- `vault.members.reset_project_access`
+- `vault.members.delegate`
+- `vault.members.projection`
 - `vault.members.add`
 - `vault.members.invitation_slip`
 - `vault.members.change`
