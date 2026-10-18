@@ -78,6 +78,7 @@ mod gate_policy_doors;
 mod graduation_doors;
 mod goal_optimize_doors;
 mod graph_ask_doors;
+mod guest_document_doors;
 mod guest_doors;
 mod hook_regen_doors;
 pub(super) mod host_doors;

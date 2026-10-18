@@ -187,6 +187,49 @@ public final class Vault {
         return Vault(handle: handle)
     }
 
+    /// `open(path:dimensions:)`, then this install's own machine profile from the vault's
+    /// host root secret (FIX 4730), so the owner's acts carry from it. `hostRootSecret` is the
+    /// exact bytes of the server's configured `auth_secret`; nil opens as `open(path:dimensions:)`
+    /// does. `initializeRoot` roots the vault under that secret when this open creates its
+    /// store and its authority log is empty, a new local-origin vault: never set it for a
+    /// replica awaiting its root. A secret that cannot profile the install throws
+    /// `engineError`, and the engine logs why.
+    public static func open(
+        path: String,
+        dimensions: Int = 0,
+        hostRootSecret: Data?,
+        initializeRoot: Bool = false
+    ) throws -> Vault {
+        if hostRootSecret?.isEmpty == true || (initializeRoot && hostRootSecret == nil) {
+            throw OneironStorageError.invalidArgument
+        }
+        var rawHandle: OpaquePointer?
+        var mutablePath = path
+        let status: OneironStatus = try mutablePath.withUTF8 { pathBytes in
+            guard let pathBase = pathBytes.baseAddress else {
+                throw OneironStorageError.invalidArgument
+            }
+            return withOptionalBytes(hostRootSecret) { secretPtr, secretLen in
+                oneiron_vault_open_with_host_root(
+                    pathBase,
+                    pathBytes.count,
+                    dimensions,
+                    nil,
+                    0,
+                    secretPtr,
+                    secretLen,
+                    initializeRoot ? 1 : 0,
+                    &rawHandle
+                )
+            }
+        }
+        try OneironStorageError.check(status)
+        guard let handle = rawHandle else {
+            throw OneironStorageError.missingHandle
+        }
+        return Vault(handle: handle)
+    }
+
     /// A NEW handle over this same open vault, from `open` or `Engine.vault()`, whose
     /// writes run as one caller (OF-063): the principal `actorKey` names (`human:<ref>`,
     /// `agent:<ref>` or `system:<ref>`), or the embedded owner when it is nil, inside the

@@ -63,6 +63,7 @@ mod credential_key;
 mod dreamer;
 mod entity_delete;
 mod entity_erase;
+pub mod erase_sweep;
 mod export;
 mod expression_preference;
 pub mod extraction;
