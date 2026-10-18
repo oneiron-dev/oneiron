@@ -26722,7 +26722,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/ingest/meeting_audio/command/process.rs",
-     "purpose": "Bounded native-host process lifetime and output",
+     "purpose": "Bounded native-host process lifetime; its output is read whole (Rule 5)",
      "surface": {
       "crate-vis": 1
      }
@@ -26794,9 +26794,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/ingest/meeting_audio/packing.rs",
-     "purpose": "Silence removal with source-clock maps and boundary-only 90–120 second packs",
+     "purpose": "Silence removal with source-clock maps and 90–120 second packs, cut at speech boundaries, and inside an…",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "fn": 1
      }
     },
