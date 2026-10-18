@@ -326,7 +326,13 @@ fn census(
     for row in store.entities.iter(txn)? {
         let (key, raw) = row?;
         if let Ok(bytes) = <[u8; 16]>::try_from(&*key) {
-            let id = EntityId::from_bytes_unchecked(bytes);
+            let Ok(id) = EntityId::from_bytes(bytes) else {
+                tracing::warn!(
+                    key = ?bytes,
+                    "left-env purge skips an entity row keyed by a reserved id"
+                );
+                continue;
+            };
             if let Some(reason) = keep_reason(store, txn, &id, &raw, carrier)? {
                 kept.insert(&id);
                 report.keep(id, reason);
@@ -383,7 +389,13 @@ fn remove_entities(
     for key in doomed {
         match <[u8; 16]>::try_from(key.as_slice()) {
             Ok(bytes) => {
-                let id = EntityId::from_bytes_unchecked(bytes);
+                let Ok(id) = EntityId::from_bytes(bytes) else {
+                    tracing::warn!(
+                        key = ?bytes,
+                        "left-env purge skips an entity row keyed by a reserved id"
+                    );
+                    continue;
+                };
                 store.port_remove_entity_row(txn, &id)?;
                 removed.push(id);
             }
