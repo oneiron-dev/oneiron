@@ -58,7 +58,7 @@ impl Default for ComponentBudget {
             wall_time: Duration::from_secs(5),
             host_calls: 256,
             message_bytes: 1024 * 1024,
-            foreign_budget: super::microvm::ExecutionBudget::new(30, 512, 64),
+            foreign_budget: super::microvm::ExecutionBudget::default(),
         }
     }
 }

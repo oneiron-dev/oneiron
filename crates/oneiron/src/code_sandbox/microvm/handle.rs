@@ -203,6 +203,12 @@ pub struct ExecutionBudget {
     pub pids: u32,
 }
 
+impl Default for ExecutionBudget {
+    fn default() -> Self {
+        Self::new(30, 512, 64)
+    }
+}
+
 impl ExecutionBudget {
     #[must_use]
     pub const fn new(wall_clock_secs: u64, mem_mib: u32, pids: u32) -> Self {

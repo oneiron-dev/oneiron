@@ -1285,6 +1285,7 @@ fn mcp_agent_verb_input(
         "vault.code.proposal_settle" => a.spec.clone().ok_or_else(invalid),
         "vault.code.proposal_settlement" => a.spec.clone().ok_or_else(invalid),
         "vault.code.oplog" => a.spec.clone().ok_or_else(invalid),
+        "execute_code" => a.spec.clone().ok_or_else(invalid),
         "vault.code.model_heal_count" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.resolve" => a.spec.clone().ok_or_else(invalid),
         "vault.code.waits.receipt" => a.spec.clone().ok_or_else(invalid),
@@ -3115,6 +3116,9 @@ pub(crate) fn mcp_agent_verb_arguments(
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.oplog" => {
+            arguments.insert("spec".to_owned(), input.clone());
+        }
+        "execute_code" => {
             arguments.insert("spec".to_owned(), input.clone());
         }
         "vault.code.model_heal_count" => {
@@ -11728,6 +11732,34 @@ async fn execute_agent_verb_row(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_code_oplog(server, auth, input).await;
+            // Derived from the rows its reads listed, when its path lists them.
+            served.extend(
+                crate::api::facade::host_doors::ListedRows::rows(listed)
+                    .into_iter()
+                    .flatten(),
+            );
+            let output = output.map_err(mcp_facade_error)?;
+            let source = crate::mcp::McpPageSource::complete(1);
+            mcp_agent_verb_output(output, source)
+        }
+        "execute_code" => {
+            let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+            oneiron::task_verb::sdk::validate_input("execute_code", &input)
+                .map_err(mcp_facade_error)?;
+            let input: oneiron::memory::foreign_code::ForeignCodeRunRequest =
+                serde_json::from_value(input).map_err(|_| invalid())?;
+            let (output, listed) = crate::api::facade::host_doors::execute_code(
+                server,
+                auth,
+                actor
+                    .off_record_session
+                    .as_deref()
+                    .map(oneiron::EntityId::from_hex)
+                    .transpose()
+                    .map_err(|_| invalid())?,
+                input,
+            )
+            .await;
             // Derived from the rows its reads listed, when its path lists them.
             served.extend(
                 crate::api::facade::host_doors::ListedRows::rows(listed)

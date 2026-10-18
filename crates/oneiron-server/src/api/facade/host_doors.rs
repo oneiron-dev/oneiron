@@ -97,6 +97,7 @@ pub(crate) use super::skill_doors::*;
 pub(crate) use super::support_grant_doors::*;
 // The owner's residence doors (OF-534), likewise.
 pub(crate) use super::fold_doors::*;
+pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::persona_doors::*;
@@ -1504,6 +1505,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "self.off_record.execute" => {
             super::off_record_doors::off_record_admits(server, auth, verb)
         }
+        "execute_code" => super::foreign_code_doors::foreign_code_admits(server, auth),
         "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),

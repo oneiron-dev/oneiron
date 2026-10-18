@@ -435,6 +435,7 @@ pub enum AgentVerb {
     VaultCodeProposalSettle,
     VaultCodeProposalSettlement,
     VaultCodeOplog,
+    ExecuteCode,
     VaultCodeModelHealCount,
     VaultCodeWaitsResolve,
     VaultCodeWaitsReceipt,
@@ -1260,6 +1261,7 @@ impl AgentVerb {
         Self::VaultCodeProposalSettle,
         Self::VaultCodeProposalSettlement,
         Self::VaultCodeOplog,
+        Self::ExecuteCode,
         Self::VaultCodeModelHealCount,
         Self::VaultCodeWaitsResolve,
         Self::VaultCodeWaitsReceipt,
@@ -2106,6 +2108,7 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => "vault.code.proposal_settle",
             Self::VaultCodeProposalSettlement => "vault.code.proposal_settlement",
             Self::VaultCodeOplog => "vault.code.oplog",
+            Self::ExecuteCode => "execute_code",
             Self::VaultCodeModelHealCount => "vault.code.model_heal_count",
             Self::VaultCodeWaitsResolve => "vault.code.waits.resolve",
             Self::VaultCodeWaitsReceipt => "vault.code.waits.receipt",
@@ -2934,6 +2937,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -3786,6 +3790,7 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeProposalSettlement
                 | Self::VaultCodeOplog
+                | Self::ExecuteCode
                 | Self::VaultCodeModelHealCount
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeWaitsReceipt
@@ -4263,6 +4268,7 @@ impl AgentVerb {
                 | Self::VaultScopePosition
                 | Self::VaultScopeCeiling
                 | Self::VaultExportScoped
+                | Self::ExecuteCode
                 | Self::VaultCommit
                 | Self::VaultCalendarOccurrences
                 | Self::VaultCalendarRead
@@ -6040,6 +6046,7 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -6866,6 +6873,7 @@ impl AgentVerb {
             Self::VaultCodeProposalSettle => &["spec"],
             Self::VaultCodeProposalSettlement => &["spec"],
             Self::VaultCodeOplog => &["spec"],
+            Self::ExecuteCode => &["spec"],
             Self::VaultCodeModelHealCount => &["spec"],
             Self::VaultCodeWaitsResolve => &["spec"],
             Self::VaultCodeWaitsReceipt => &["spec"],
@@ -8522,6 +8530,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOplog => {
                 "Read the durable mutation log of one repository in sequence order: prepared, applied and failed mutations. Owner only. It is not a proposal queue and holds no pending proposal."
+            }
+            Self::ExecuteCode => {
+                "Run foreign JavaScript with only scoped record snapshots and inert, receipted proposals in the existing isolated tier; no host writes, credentials or network grant are lent."
             }
             Self::VaultCodeModelHealCount => {
                 "Read the tally this vault keeps of its own durable executor turns one model needed wire healing for, by full provider/name@revision id, zero when absent. Owner only. A routing signal, not a run correction receipt or repair policy."

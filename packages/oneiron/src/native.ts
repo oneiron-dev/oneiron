@@ -461,6 +461,7 @@ vaultCodeProposalReview(input: unknown): unknown
 vaultCodeProposalSettle(input: unknown): unknown
 vaultCodeProposalSettlement(input: unknown): unknown
 vaultCodeOplog(input: unknown): unknown
+executeCode(input: unknown): unknown
 vaultCodeModelHealCount(input: unknown): unknown
 vaultCodeWaitsResolve(input: unknown): unknown
 vaultCodeWaitsReceipt(input: unknown): unknown
