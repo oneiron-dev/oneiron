@@ -49,6 +49,8 @@ const SERVED_FIELDS: [&str; 6] = [
 /// The rung of the lazy-image ladder one read served an image at.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ServedRung {
+    /// The audio clip's bytes.
+    Audio,
     /// The full image's bytes.
     Full,
     /// A thumbnail beside the image's description and its view handle.
@@ -131,6 +133,12 @@ impl ServedForm {
         Self::served(asset, ServedRung::Full, None)
     }
 
+    /// `asset`'s audio bytes, served to a reader that declared audio input.
+    #[must_use]
+    pub const fn audio(asset: EntityId) -> Self {
+        Self::served(asset, ServedRung::Audio, None)
+    }
+
     /// `asset`'s thumbnail, beside `asset_text` when it has one.
     #[must_use]
     pub const fn thumbnail(asset: EntityId, asset_text: Option<EntityId>) -> Self {
@@ -208,6 +216,7 @@ pub(super) fn served_form_receipt(
     let mut fields = BTreeMap::new();
     fields.insert(FIELD_ASSET_REF.to_owned(), served.asset.to_hex());
     let form = match served.rung {
+        ServedRung::Audio => FORM_AUDIO,
         ServedRung::Full if served.audio => FORM_AUDIO,
         ServedRung::Full => FORM_IMAGE,
         ServedRung::Thumbnail => FORM_THUMBNAIL,
@@ -289,7 +298,7 @@ pub(super) fn binds(id: &EntityId, receipt: &ReceiptRecord) -> bool {
         && entity_ref(field(FIELD_ASSET_REF))
         && match field(FIELD_FORM) {
             Some(FORM_IMAGE | FORM_ASK) => text.is_none(),
-            Some(FORM_AUDIO) => text.is_none() && pull == Some(PULL_ASK_AUDIO),
+            Some(FORM_AUDIO) => text.is_none() && (pull.is_none() || pull == Some(PULL_ASK_AUDIO)),
             Some(FORM_THUMBNAIL) => text.is_none_or(|_| entity_ref(text)),
             Some(FORM_TEXT) => entity_ref(text),
             _ => false,

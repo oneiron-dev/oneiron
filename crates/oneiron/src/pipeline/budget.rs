@@ -378,6 +378,8 @@ impl VectorEvidence<'_> {
 /// RET-01's read of the declared spaces' hits (OF-370).
 #[derive(Debug, Clone, Default)]
 pub(super) struct MediaEvidence {
+    /// Per-hit raw evidence retained for typed readers, never fused across spaces.
+    pub(super) matches: HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// Hits at or above their space's floor: each one keeps the pack.
     pub(super) kept: HashSet<EntityId>,
     /// Hits under it, judged in their own space's list by its floors.

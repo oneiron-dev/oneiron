@@ -429,6 +429,12 @@ class Oneiron:
         def receipts(self) -> "Oneiron._VaultReceiptsVerbs":
             return Oneiron._VaultReceiptsVerbs(self._client)
         @property
+        def assets(self) -> "Oneiron._VaultAssetsVerbs":
+            return Oneiron._VaultAssetsVerbs(self._client)
+        @property
+        def search(self) -> "Oneiron._VaultSearchVerbs":
+            return Oneiron._VaultSearchVerbs(self._client)
+        @property
         def images(self) -> "Oneiron._VaultImagesVerbs":
             return Oneiron._VaultImagesVerbs(self._client)
         @property
@@ -647,9 +653,6 @@ class Oneiron:
         @property
         def refs(self) -> "Oneiron._VaultRefsVerbs":
             return Oneiron._VaultRefsVerbs(self._client)
-        @property
-        def search(self) -> "Oneiron._VaultSearchVerbs":
-            return Oneiron._VaultSearchVerbs(self._client)
         def neighbors(self, input: dict[str, Any]) -> Any:
             """The weighted-edge neighbourhood of one entity, filtered by edge kind and minimum weight."""
             return json.loads(_translate(lambda: self._client.vault_neighbors(json.dumps(input, allow_nan=False))))
@@ -1142,6 +1145,30 @@ class Oneiron:
         def context(self, spec):
             """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
             return json.loads(_translate(lambda: self._client.vault_receipts_context(json.dumps(spec))))
+    class _VaultAssetsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def ingest(self, spec):
+            """Lands typed text, image or audio bytes as an ASSET and optional source-bound text form, atomically under the caller's content gate."""
+            return json.loads(_translate(lambda: self._client.vault_assets_ingest(json.dumps(spec))))
+        def resolve(self, spec):
+            """Serves an admitted ASSET in the reader's declared image, audio or text form, with a handle and committed served-form receipt refs."""
+            return json.loads(_translate(lambda: self._client.vault_assets_resolve(json.dumps(spec))))
+    class _VaultSearchVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def vector(self, spec):
+            """Searches the text index or one declared embedding space through its query tower, with per-kind raw match evidence and the caller's read receipt."""
+            return json.loads(_translate(lambda: self._client.vault_search_vector(json.dumps(spec))))
+        def hybrid(self, input: dict[str, Any]) -> Any:
+            """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
+            return json.loads(_translate(lambda: self._client.vault_search_hybrid(json.dumps(input, allow_nan=False))))
+        def temporal(self, input: dict[str, Any]) -> Any:
+            """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
+            return json.loads(_translate(lambda: self._client.vault_search_temporal(json.dumps(input, allow_nan=False))))
+        def bm25(self, input: dict[str, Any]) -> Any:
+            """BM25 text search over the engine index; surfaceable claims only."""
+            return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
     class _VaultImagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3509,18 +3536,6 @@ class Oneiron:
         def links(self, spec):
             """A text, the texts a read surface returned, or a turn's readable messages, as typed spans whose record links resolve under the caller's own read."""
             return json.loads(_translate(lambda: self._client.vault_refs_links(json.dumps(spec))))
-    class _VaultSearchVerbs:
-        def __init__(self, client: _NativeClient) -> None:
-            self._client = client
-        def hybrid(self, input: dict[str, Any]) -> Any:
-            """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
-            return json.loads(_translate(lambda: self._client.vault_search_hybrid(json.dumps(input, allow_nan=False))))
-        def temporal(self, input: dict[str, Any]) -> Any:
-            """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
-            return json.loads(_translate(lambda: self._client.vault_search_temporal(json.dumps(input, allow_nan=False))))
-        def bm25(self, input: dict[str, Any]) -> Any:
-            """BM25 text search over the engine index; surfaceable claims only."""
-            return json.loads(_translate(lambda: self._client.vault_search_bm25(json.dumps(input, allow_nan=False))))
     class _VaultStructuralVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

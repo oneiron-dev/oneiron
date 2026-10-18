@@ -38,6 +38,7 @@ use super::{
 
 /// What a scoped pack run reports beside its pack.
 pub(crate) struct PackRunStatus {
+    pub(crate) embedding_matches: std::collections::HashMap<EntityId, Vec<crate::embed::EmbeddingMatchEvidence>>,
     /// Only the handle returned by successful post-filter finalization.
     pub(crate) run_id: Option<crate::store::RetrievalRunId>,
     /// Whether the vector channel completed.
@@ -138,6 +139,7 @@ impl<'a> ContextPackBuilder<'a> {
             .caller_off_device(lane.off_device())
             .run_unfinalized()?;
         let mut status = PackRunStatus {
+            embedding_matches: run.embedding_matches,
             run_id: None,
             vector_completed: run.vector_completed,
             temporal_hints: run.temporal_hints,
@@ -214,6 +216,7 @@ impl<'a> ContextPackBuilder<'a> {
     pub(in crate::context_pack) fn run_unfinalized(self) -> Result<ContextPackRun<'a>> {
         if self.skip_optional_recall {
             return Ok(ContextPackRun {
+                embedding_matches: Default::default(),
                 vector_completed: false,
                 temporal_hints: Vec::new(),
                 cited_messages: std::collections::HashMap::new(),
@@ -644,6 +647,7 @@ impl<'a> ContextPackBuilder<'a> {
             let units: Vec<_> = results.iter().chain(&neighbors).map(|row| row.id).collect();
             let instruction_files = self.vault.code_instruction_handles(&units)?;
             Ok(ContextPackRun {
+                embedding_matches: pipeline_output.embedding_matches,
                 vector_completed: pipeline_output.vector_completed,
                 temporal_hints: pipeline_output.temporal_hints,
                 cited_messages: pipeline_output.cited_messages,

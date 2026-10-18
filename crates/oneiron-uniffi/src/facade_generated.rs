@@ -541,6 +541,21 @@ export_facade! {
     let output = client.vault_receipts(limit, kinds.as_deref().unwrap_or_default())?;
     Lift::lift(output)
 };
+"vault.assets.ingest" => fn vault_assets_ingest(&self, input: AssetIngestRequest) -> AssetIngestReceipt = |client| {
+    let input: oneiron::memory::AssetIngestRequest = crate::codec::lower_record("vault.assets.ingest", input)?;
+    let output = client.vault_assets_ingest(&input)?;
+    crate::codec::lift_record("vault.assets.ingest", &output)
+};
+"vault.assets.resolve" => fn vault_assets_resolve(&self, input: AssetResolveRequest) -> ScopedReadResultAssetResolved = |client| {
+    let input: oneiron::memory::AssetResolveRequest = crate::codec::lower_record("vault.assets.resolve", input)?;
+    let output = client.vault_assets_resolve(&input)?;
+    crate::codec::lift_record("vault.assets.resolve", &output)
+};
+"vault.search.vector" => fn vault_search_vector(&self, input: VectorSearchRequest) -> ScopedReadResultVectorSearchHitList = |client| {
+    let input: oneiron::memory::VectorSearchRequest = crate::codec::lower_record("vault.search.vector", input)?;
+    let output = client.vault_search_vector(&input)?;
+    crate::codec::lift_record("vault.search.vector", &output)
+};
 "vault.images.view" => fn vault_images_view(&self, input: ImageViewRequest) -> PulledImage = |client| {
     let input: oneiron::memory::ImageViewRequest = crate::codec::lower_record("vault.images.view", input)?;
     let output = client.vault_images_view(&input)?;

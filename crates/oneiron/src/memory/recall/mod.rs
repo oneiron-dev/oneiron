@@ -233,6 +233,12 @@ pub struct MemoryProvenance {
 /// One memory pack item (S6 schema).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct MemoryItem {
+    /// The ASSET id, when this hit is a media or text asset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asset_ref: Option<String>,
+    /// Raw per-kind evidence from each exact space, before fusion.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub embedding_matches: Vec<crate::embed::EmbeddingMatchEvidence>,
     /// Short ref, hydratable via [`Memory::hydrate`]: the same `name:hash`
     /// a witness receipt returns, never revision-qualified.
     pub short_id: String,
@@ -854,7 +860,7 @@ impl Memory<'_> {
                 }
                 for seed in execution.media {
                     pipeline =
-                        pipeline.search_media(seed.space, seed.kind, seed.vector, &[], limit);
+                        pipeline.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
                 }
                 if !execution.phonetic_codes.is_empty() {
                     pipeline = pipeline.search_phonetic(execution.phonetic_codes);
@@ -891,7 +897,7 @@ impl Memory<'_> {
                         .cited_messages
                         .get(&hit.id)
                         .map_or(&[][..], Vec::as_slice);
-                    if let Some(item) = self.memory_item_for(
+                    if let Some(mut item) = self.memory_item_for(
                         &lane,
                         &hit.id,
                         Some(facet_id),
@@ -899,6 +905,7 @@ impl Memory<'_> {
                         cited,
                         &mut receipt,
                     )? {
+                        item.embedding_matches = retrieval.embedding_matches.get(&hit.id).cloned().unwrap_or_default();
                         items.push(item);
                     }
                 }
@@ -959,7 +966,7 @@ impl Memory<'_> {
                     builder = builder.hyde(expander, grounding.clone(), options);
                 }
                 for seed in execution.media {
-                    builder = builder.search_media(seed.space, seed.kind, seed.vector, &[], limit);
+                    builder = builder.search_media(seed.space, seed.kind, seed.vector, seed.kinds, limit);
                 }
                 if !execution.phonetic_codes.is_empty() {
                     builder = builder.search_phonetic(execution.phonetic_codes);
@@ -1045,9 +1052,10 @@ impl Memory<'_> {
                         .cited_messages
                         .get(&entity.id)
                         .map_or(&[][..], Vec::as_slice);
-                    if let Some(item) =
+                    if let Some(mut item) =
                         self.memory_item_for(&lane, &entity.id, None, mode, cited, &mut receipt)?
                     {
+                        item.embedding_matches = status.embedding_matches.get(&entity.id).cloned().unwrap_or_default();
                         items.push(item);
                     }
                 }

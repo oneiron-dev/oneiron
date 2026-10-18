@@ -285,6 +285,8 @@ pub struct RecallMediaSeed<'a> {
     /// The kind of query the vector encodes.
     pub kind: InputKind,
     pub vector: &'a [f32],
+    /// Stored input kinds to keep; empty keeps every kind in this space.
+    pub kinds: &'a [InputKind],
 }
 
 /// What a recall door's host embedded the query into: the vault's own text
@@ -292,8 +294,8 @@ pub struct RecallMediaSeed<'a> {
 #[derive(Debug, Clone, Default)]
 pub struct RecallQueryVectors {
     pub text_index: Option<Vec<f32>>,
-    /// Space id, query kind and vector.
-    pub media: Vec<(String, InputKind, Vec<f32>)>,
+    /// Space id, query kind, vector and stored-input-kind narrowing.
+    pub media: Vec<(String, InputKind, Vec<f32>, Vec<InputKind>)>,
 }
 
 impl RecallQueryVectors {
@@ -302,10 +304,11 @@ impl RecallQueryVectors {
     pub fn media_seeds(&self) -> Vec<RecallMediaSeed<'_>> {
         self.media
             .iter()
-            .map(|(space, kind, vector)| RecallMediaSeed {
+            .map(|(space, kind, vector, kinds)| RecallMediaSeed {
                 space,
                 kind: *kind,
                 vector,
+                kinds,
             })
             .collect()
     }
