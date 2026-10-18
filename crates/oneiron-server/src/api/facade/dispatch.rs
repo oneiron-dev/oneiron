@@ -6524,6 +6524,46 @@ async fn self_skills_callables(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn ai_steps_submit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.steps.submit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.steps.submit", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.steps.submit", value).await?;
+    let (output, listed) =
+        super::host_doors::ai_steps_submit(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn ai_steps_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "ai.steps.receipt")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.steps.receipt", &value)?;
+    let hooks = facade_hooks_pre(server, call, "ai.steps.receipt", value).await?;
+    let (output, listed) =
+        super::host_doors::ai_steps_receipt(server, auth, facade_input(hooks.args.clone())?).await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn ai_options(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -9972,6 +10012,8 @@ pub(crate) async fn call_verb(
         "self.skills.save" => self_skills_save(server, call, input).await,
         "self.skills.fork" => self_skills_fork(server, call, input).await,
         "self.skills.callables" => self_skills_callables(server, call, input).await,
+        "ai.steps.submit" => ai_steps_submit(server, call, input).await,
+        "ai.steps.receipt" => ai_steps_receipt(server, call, input).await,
         "ai.options" => ai_options(server, call, input).await,
         "ai.image" => ai_image(server, call, input).await,
         "ai.speech" => ai_speech(server, call, input).await,

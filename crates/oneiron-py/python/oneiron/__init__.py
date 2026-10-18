@@ -2306,6 +2306,9 @@ class Oneiron:
     class _AiVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
+        @property
+        def steps(self) -> "Oneiron._AiStepsVerbs":
+            return Oneiron._AiStepsVerbs(self._client)
         def options(self, spec):
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
             return json.loads(_translate(lambda: self._client.ai_options(json.dumps(spec))))
@@ -2327,6 +2330,15 @@ class Oneiron:
         def verdict(self, spec):
             """The caller's own typed question through the host's decision ladder: yes or no, one of its options, a score in the caller's range, or a box or point in an image, answered with a probability and a decision receipt."""
             return json.loads(_translate(lambda: self._client.ai_verdict(json.dumps(spec))))
+    class _AiStepsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def submit(self, spec):
+            """Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."""
+            return json.loads(_translate(lambda: self._client.ai_steps_submit(json.dumps(spec))))
+        def receipt(self, spec):
+            """Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."""
+            return json.loads(_translate(lambda: self._client.ai_steps_receipt(json.dumps(spec))))
     class _AiVideoVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -317,6 +317,8 @@ vaultWorkspaceWorkCompanionSet(input: unknown): unknown
 selfSkillsSave(input: unknown): unknown
 selfSkillsFork(input: unknown): unknown
 selfSkillsCallables(input: unknown): unknown
+aiStepsSubmit(input: unknown): unknown
+aiStepsReceipt(input: unknown): unknown
 aiOptions(input: unknown): unknown
 aiImage(input: unknown): unknown
 aiSpeech(input: unknown): unknown

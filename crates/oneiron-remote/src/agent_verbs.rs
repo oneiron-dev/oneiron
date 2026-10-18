@@ -922,6 +922,12 @@ impl OneironClient {
                 "self.skills.callables" => remote_agent_verb_output::<
                     Vec<oneiron::skill::helper::CallableCardView>,
                 >(client, verb, &input),
+                "ai.steps.submit" => remote_agent_verb_output::<
+                    oneiron::llm::model_step::ModelStepReceipt,
+                >(client, verb, &input),
+                "ai.steps.receipt" => remote_agent_verb_output::<
+                    oneiron::llm::model_step::ModelStepReceipt,
+                >(client, verb, &input),
                 "ai.options" => remote_agent_verb_output::<oneiron::task_verb::sdk::AiOptions>(
                     client, verb, &input,
                 ),
@@ -4896,6 +4902,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.skills.callables", value)
+    }
+    pub fn ai_steps_submit(
+        &self,
+        input: &oneiron::llm::model_step::ModelStepSubmit,
+    ) -> Result<oneiron::llm::model_step::ModelStepReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.steps.submit", value)
+    }
+    pub fn ai_steps_receipt(
+        &self,
+        input: &oneiron::llm::model_step::ModelStepReceiptRequest,
+    ) -> Result<oneiron::llm::model_step::ModelStepReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("ai.steps.receipt", value)
     }
     pub fn ai_options(
         &self,

@@ -4734,6 +4734,36 @@
       "section": false
     },
     {
+      "name": "ai.steps.submit",
+      "description": "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result.",
+      "input": "crate::llm::model_step::ModelStepSubmit",
+      "output": "crate::llm::model_step::ModelStepReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.submit\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "ai.steps.receipt",
+      "description": "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease.",
+      "input": "crate::llm::model_step::ModelStepReceiptRequest",
+      "output": "crate::llm::model_step::ModelStepReceipt",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.steps.receipt\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "openapi": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "ai.options",
       "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",

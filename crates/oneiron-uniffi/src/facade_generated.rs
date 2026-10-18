@@ -1436,6 +1436,16 @@ export_facade! {
     let output = client.self_skills_callables(&input)?;
     crate::codec::lift_record("self.skills.callables", &output)
 };
+"ai.steps.submit" => fn ai_steps_submit(&self, input: ModelStepSubmit) -> ModelStepReceipt = |client| {
+    let input: oneiron::llm::model_step::ModelStepSubmit = crate::codec::lower_record("ai.steps.submit", input)?;
+    let output = client.ai_steps_submit(&input)?;
+    crate::codec::lift_record("ai.steps.submit", &output)
+};
+"ai.steps.receipt" => fn ai_steps_receipt(&self, input: ModelStepReceiptRequest) -> ModelStepReceipt = |client| {
+    let input: oneiron::llm::model_step::ModelStepReceiptRequest = crate::codec::lower_record("ai.steps.receipt", input)?;
+    let output = client.ai_steps_receipt(&input)?;
+    crate::codec::lift_record("ai.steps.receipt", &output)
+};
 "ai.options" => fn ai_options(&self, input: AiOptionsRequest) -> AiOptions = |client| {
     let input: oneiron::task_verb::sdk::AiOptionsRequest = crate::codec::lower_record("ai.options", input)?;
     let output = client.ai_options(&input)?;

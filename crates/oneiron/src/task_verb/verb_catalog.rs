@@ -291,6 +291,8 @@ pub enum AgentVerb {
     SelfSkillsSave,
     SelfSkillsFork,
     SelfSkillsCallables,
+    AiStepsSubmit,
+    AiStepsReceipt,
     AiOptions,
     AiImage,
     AiSpeech,
@@ -752,6 +754,8 @@ impl AgentVerb {
         Self::SelfSkillsSave,
         Self::SelfSkillsFork,
         Self::SelfSkillsCallables,
+        Self::AiStepsSubmit,
+        Self::AiStepsReceipt,
         Self::AiOptions,
         Self::AiImage,
         Self::AiSpeech,
@@ -1220,6 +1224,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => "self.skills.save",
             Self::SelfSkillsFork => "self.skills.fork",
             Self::SelfSkillsCallables => "self.skills.callables",
+            Self::AiStepsSubmit => "ai.steps.submit",
+            Self::AiStepsReceipt => "ai.steps.receipt",
             Self::AiOptions => "ai.options",
             Self::AiImage => "ai.image",
             Self::AiSpeech => "ai.speech",
@@ -1684,6 +1690,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiStepsSubmit
+                | Self::AiStepsReceipt
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2152,6 +2160,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiStepsSubmit
+                | Self::AiStepsReceipt
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2660,6 +2670,8 @@ impl AgentVerb {
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
                 | Self::SelfSkillsCallables
+                | Self::AiStepsSubmit
+                | Self::AiStepsReceipt
                 | Self::AiOptions
                 | Self::AiImage
                 | Self::AiSpeech
@@ -2996,6 +3008,7 @@ impl AgentVerb {
                 | Self::VaultWorkspaceWorkCompanionSet
                 | Self::SelfSkillsSave
                 | Self::SelfSkillsFork
+                | Self::AiStepsSubmit
                 | Self::AiImage
                 | Self::AiSpeech
                 | Self::AiTranscribe
@@ -3412,6 +3425,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiStepsSubmit => &["spec"],
+            Self::AiStepsReceipt => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -3874,6 +3889,8 @@ impl AgentVerb {
             Self::SelfSkillsSave => &["spec"],
             Self::SelfSkillsFork => &["spec"],
             Self::SelfSkillsCallables => &[],
+            Self::AiStepsSubmit => &["spec"],
+            Self::AiStepsReceipt => &["spec"],
             Self::AiOptions => &["spec"],
             Self::AiImage => &["spec"],
             Self::AiSpeech => &["spec"],
@@ -4864,6 +4881,12 @@ impl AgentVerb {
             }
             Self::SelfSkillsCallables => {
                 "Every loadable callable helper skill and its call contract: what it takes and returns."
+            }
+            Self::AiStepsSubmit => {
+                "Submit or resume one owner-bound durable model step with declared transport attempts, deterministic fallback and a schema-validated JSON result."
+            }
+            Self::AiStepsReceipt => {
+                "Read the owner-bound model-step checkpoints and persisted terminal result without calling a model or spending another lease."
             }
             Self::AiOptions => {
                 "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."
