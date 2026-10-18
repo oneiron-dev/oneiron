@@ -405,6 +405,8 @@ class Oneiron:
         def grants(self) -> "Oneiron._SelfGrantsVerbs": ...
         @property
         def budget(self) -> "Oneiron._SelfBudgetVerbs": ...
+        @property
+        def off_record(self) -> "Oneiron._SelfOffRecordVerbs": ...
         def use(self, spec: Facade.SecretUseRequest) -> Facade.SecretUseAnswer:
             """Hands a secret to one trusted operation by its handle, under the owner's binding; answers what the operation got back, never the value."""
         @property
@@ -473,6 +475,9 @@ class Oneiron:
             """The caller's own dispatched attempt: its persisted spend allowance, landing reserve, checkpoint and saved hold, without substituting a token meter for money."""
         def land(self, spec: Facade.BudgetLandRequest) -> Facade.PartialResultHold:
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
+    class _SelfOffRecordVerbs:
+        def execute(self, spec: Facade.OffRecordExecuteRequest) -> Facade.OffRecordExecuted:
+            """The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close."""
     class _SelfSkillsVerbs:
         def save(self, spec: Facade.SkillSaveRequest) -> Facade.SkillAuthoringReceipt:
             """An agent saves a skill it wrote, SKILL.md and scripts together; it lands as a proposed candidate and nothing activates it."""
@@ -547,6 +552,8 @@ class Oneiron:
         def guests(self) -> "Oneiron._VaultGuestsVerbs": ...
         @property
         def residence(self) -> "Oneiron._VaultResidenceVerbs": ...
+        @property
+        def off_record(self) -> "Oneiron._VaultOffRecordVerbs": ...
         @property
         def records(self) -> "Oneiron._VaultRecordsVerbs": ...
         @property
@@ -713,6 +720,8 @@ class Oneiron:
         def __call__(self, limit: int = 100, kinds: list[str] | None = None) -> list[FacadeReceipt]: ...
         def get(self, spec: Facade.CallReceiptRequest) -> Facade.CallReceipt | None:
             """One call receipt by ref, readable by its own actor or the vault's live owner; anything else reads as none."""
+        def context(self, spec: Facade.CallReceiptRequest) -> Facade.ContextEmitReceipt | None:
+            """Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly."""
     class _VaultImagesVerbs:
         def view(self, request: Facade.ImageViewRequest) -> Facade.PulledImage: ...
     class _VaultExplainVerbs:
@@ -944,6 +953,27 @@ class Oneiron:
             """The thin index one of the owner's machines holds, window by window: what exists, never a body."""
         def prune(self, spec: Facade.ResidencePruneRequest) -> Facade.ResidencePruned:
             """Drops the opened-item caches one of the owner's machines last touched before a time."""
+    class _VaultOffRecordVerbs:
+        def start(self, spec: Facade.OffRecordStartRequest) -> Facade.OffRecordSessionView:
+            """The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it."""
+        def status(self, spec: Facade.OffRecordSessionRequest) -> Facade.OffRecordSessionView:
+            """The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing."""
+        def witness(self, spec: Facade.OffRecordWitnessRequest) -> Facade.WitnessReceipt:
+            """The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close."""
+        def discard(self, spec: Facade.OffRecordSessionRequest) -> Facade.OffRecordClosed:
+            """The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay."""
+        def recall(self, spec: Facade.OffRecordRecallRequest) -> Facade.MemoryPack:
+            """The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike."""
+        @property
+        def notes(self) -> "Oneiron._VaultOffRecordNotesVerbs": ...
+        @property
+        def claims(self) -> "Oneiron._VaultOffRecordClaimsVerbs": ...
+    class _VaultOffRecordNotesVerbs:
+        def create(self, spec: Facade.OffRecordNoteRequest) -> Facade.EntityRefReceipt:
+            """The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it."""
+    class _VaultOffRecordClaimsVerbs:
+        def upsert(self, spec: Facade.OffRecordClaimRequest) -> Facade.CommitReceipt:
+            """The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it."""
     class _VaultRecordsVerbs:
         def erase_preview(self, spec: Facade.RecordEraseRequest) -> Facade.RecordErasePreview:
             """What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back."""
@@ -1110,6 +1140,12 @@ class Oneiron:
             """The owner replays a fact hook over past facts on the hook sandbox, as a dry run where nothing lands."""
     class _VaultArtifactsVerbs:
         def view(self, request: Facade.ArtifactRefRequest) -> Facade.ArtifactView | None: ...
+        def units(self, spec: Facade.ArtifactUnitsRequest) -> Facade.ArtifactUnitsView:
+            """Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter."""
+        @property
+        def anchors(self) -> "Oneiron._VaultArtifactsAnchorsVerbs": ...
+        @property
+        def threads(self) -> "Oneiron._VaultArtifactsThreadsVerbs": ...
         def export(self, request: Facade.ArtifactExportRequest) -> Facade.ArtifactExportFile | None: ...
         def born_from(self, request: Facade.BornFromRequest) -> Facade.BornFromView: ...
         def proposals(self, request: Facade.ArtifactRefRequest) -> list[Facade.PendingProposalView]: ...
@@ -1133,6 +1169,22 @@ class Oneiron:
             """Appends one version of bytes to a blob artifact's append-only chain."""
         def read(self, input: Facade.ReadBlobVersionRequest) -> Facade.BlobContent | None:
             """Reads one version of a blob artifact's bytes."""
+    class _VaultArtifactsAnchorsVerbs:
+        def pin(self, spec: Facade.AnnotationPinRequest) -> Facade.AnnotationAnchorView:
+            """Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable."""
+    class _VaultArtifactsThreadsVerbs:
+        def open(self, spec: Facade.AnnotationThreadOpenRequest) -> Facade.AnnotationThreadView:
+            """Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote."""
+        def comment(self, spec: Facade.AnnotationCommentRequest) -> Facade.AnnotationCommentView:
+            """Appends a comment as the caller; returns its first stored part, with every part available through threads.read."""
+        def read(self, spec: Facade.AnnotationThreadRequest) -> Facade.AnnotationThreadView | None:
+            """Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment."""
+        def list(self, spec: Facade.ArtifactRefRequest) -> list[Facade.AnnotationThreadView]:
+            """Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments."""
+        def assign(self, spec: Facade.AnnotationAssignRequest) -> Facade.AnnotationBriefView:
+            """Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine."""
+        def state(self, spec: Facade.AnnotationStateRequest) -> Facade.AnnotationThreadView:
+            """Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift."""
     class _VaultArtifactsBodyVerbs:
         def import_(self, request: Facade.OfficeBodyImportRequest) -> Facade.OfficeBodyHead: ...
         def head(self, request: Facade.OfficeBodyArtifactRequest) -> Facade.OfficeBodyHead | None: ...
@@ -1335,7 +1387,16 @@ class Oneiron:
             """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
     class _VaultDecisionsVerbs:
         @property
+        def bands(self) -> "Oneiron._VaultDecisionsBandsVerbs": ...
+        @property
         def asks(self) -> "Oneiron._VaultDecisionsAsksVerbs": ...
+    class _VaultDecisionsBandsVerbs:
+        def read(self, spec: Facade.DecisionBandReadRequest) -> Facade.LearnedBand:
+            """The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero."""
+        def learn(self, spec: Facade.DecisionBandLearnRequest) -> Facade.LearnedBand:
+            """The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility."""
+        def enforce(self, spec: Facade.DecisionBandEnforceRequest) -> Facade.LearnedBand:
+            """The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority."""
     class _VaultDecisionsAsksVerbs:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
@@ -1507,6 +1568,8 @@ class Oneiron:
     class _AiVerbs:
         @property
         def steps(self) -> "Oneiron._AiStepsVerbs": ...
+        def reply(self, spec: Facade.AiReplyRequest) -> Facade.AiReply:
+            """Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs."""
         def options(self, spec: Facade.AiOptionsRequest) -> Facade.AiOptions:
             """The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left."""
         def image(self, spec: Facade.AiCallRequest) -> Facade.AiAnswer:

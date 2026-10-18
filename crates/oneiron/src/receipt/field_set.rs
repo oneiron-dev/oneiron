@@ -53,7 +53,7 @@ const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';
 /// mirror the ratified provenance ABI, where `substrate_ref` and
 /// `reasoning_effort` are themselves optional fields: they are recorded
 /// when the emit's provenance carries them, absent otherwise.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ContextReceiptFields {
     /// The OF-217 B9 standing-block compile id in effect for this emit.
     pub persona_compile_stamp: String,

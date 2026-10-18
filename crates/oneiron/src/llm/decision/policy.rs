@@ -7,7 +7,16 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, PoisonError, RwLock};
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum Reversibility {
@@ -15,18 +24,53 @@ pub enum Reversibility {
     OutboundEffect,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum BandMode {
     Shadow,
     Enforce,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(deny_unknown_fields)]
 pub struct LearnedBand {
     pub band: DecisionBand,
     pub version: u32,
     pub mode: BandMode,
+}
+
+/// Resolves one question version's band on the running host. Without a learned
+/// row, `seed` is returned in shadow mode at version zero.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionBandReadRequest {
+    pub question: DecisionQuestion,
+    pub reversibility: Reversibility,
+    pub seed: DecisionBand,
+}
+
+/// Declares a learned band in shadow mode. `version` must advance the learned
+/// row for this question id, question version and reversibility.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionBandLearnRequest {
+    pub question: DecisionQuestion,
+    pub reversibility: Reversibility,
+    pub band: DecisionBand,
+    pub version: u32,
+}
+
+/// Enforces an already learned band on the running host. It does not change
+/// any decision dial, ceiling, principal, grant or egress policy.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionBandEnforceRequest {
+    pub question: DecisionQuestion,
+    pub reversibility: Reversibility,
 }
 
 /// The owner's "ask a person?" row. A read whose P(ask a person) reaches `threshold`
@@ -47,13 +91,14 @@ pub struct ThinkThreshold {
     pub version: u32,
 }
 
-/// Vault-owned policy snapshot. No learned row means shadow at the dial's
-/// seed band, not an implicit permission to enforce a global threshold.
-/// No person row means a person reading never routes. Every clone shares one
-/// person row, so the host's accepted row reaches each caller that cloned it.
+/// Vault-owned policy for the running host. No learned row means shadow at
+/// the dial's seed band, not an implicit permission to enforce a global
+/// threshold. Learned bands and the person row are shared by every clone,
+/// so an owner's update reaches callers that already hold the policy.
+/// No person row means a person reading never routes.
 #[derive(Debug, Clone, Default)]
 pub struct DecisionBandPolicy {
-    rows: BTreeMap<(EntityId, u32, Reversibility), LearnedBand>,
+    rows: Arc<RwLock<BTreeMap<(EntityId, u32, Reversibility), LearnedBand>>>,
     person: Arc<RwLock<Option<PersonThreshold>>>,
     think: Option<ThinkThreshold>,
     questions_per_call: Option<usize>,
@@ -126,43 +171,38 @@ impl DecisionBandPolicy {
         reversibility: Reversibility,
         band: DecisionBand,
         version: u32,
-    ) -> Result<()> {
+    ) -> Result<LearnedBand> {
         question.validate()?;
         band.validate()?;
         if version == 0 {
             return Err(invalid("invalid learned band version"));
         }
         let key = (question.id, question.version, reversibility);
-        if self
-            .rows
-            .get(&key)
-            .is_some_and(|row| row.version >= version)
-        {
+        let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
+        if rows.get(&key).is_some_and(|row| row.version >= version) {
             return Err(invalid("learned band version must advance"));
         }
-        self.rows.insert(
-            key,
-            LearnedBand {
-                band,
-                version,
-                mode: BandMode::Shadow,
-            },
-        );
-        Ok(())
+        let row = LearnedBand {
+            band,
+            version,
+            mode: BandMode::Shadow,
+        };
+        rows.insert(key, row);
+        Ok(row)
     }
 
     pub fn enforce(
         &mut self,
         question: &DecisionQuestion,
         reversibility: Reversibility,
-    ) -> Result<()> {
+    ) -> Result<LearnedBand> {
         question.validate()?;
-        let row = self
-            .rows
+        let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
+        let row = rows
             .get_mut(&(question.id, question.version, reversibility))
             .ok_or_else(|| invalid("band must be learned before enforcement"))?;
         row.mode = BandMode::Enforce;
-        Ok(())
+        Ok(*row)
     }
 
     pub fn resolve(
@@ -173,8 +213,8 @@ impl DecisionBandPolicy {
     ) -> Result<LearnedBand> {
         question.validate()?;
         seed.validate()?;
-        Ok(self
-            .rows
+        let rows = self.rows.read().unwrap_or_else(PoisonError::into_inner);
+        Ok(rows
             .get(&(question.id, question.version, reversibility))
             .copied()
             .unwrap_or(LearnedBand {

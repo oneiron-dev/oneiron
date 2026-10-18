@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 417 facade rows, 1644 declarations.
-Inputs: 370 of 417 fully typed, 47 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 365 of 417 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 438 facade rows, 1690 declarations.
+Inputs: 389 of 438 fully typed, 49 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 386 of 438 fully typed, 52 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 86; unread shapes: 0.
 """
 
@@ -3289,6 +3289,63 @@ class ResidencePruneRequest(TypedDict):
     before: int
 class ResidencePruned(TypedDict):
     dropped: int
+OffRecordEnterMode = Literal["off_record", "anonymous"]
+OffRecordBackendClass = Literal["local", "remote_provider"]
+class OffRecordStartRequest(TypedDict):
+    session_ref: str
+    mode: OffRecordEnterMode
+    backend: OffRecordBackendClass
+OffRecordMode = Literal["off_record", "on_record", "anonymous"]
+class OffRecordSessionView(TypedDict):
+    session_ref: str
+    mode: OffRecordMode
+    backend: OffRecordBackendClass
+    entered_at: str
+    promoted_turns: list[str]
+    closing: bool
+class OffRecordSessionRequest(TypedDict):
+    session_ref: str
+class OffRecordWitnessRequest(TypedDict):
+    session_ref: str
+    turn: WitnessTurn
+    summary: NotRequired[str | None]
+class OffRecordClosed(TypedDict):
+    session_ref: str
+    turns_dropped: int
+    context_receipts_dropped: int
+    emit_receipts_dropped: int
+    emit_receipts_kept: int
+    promoted_turns_kept: int
+class OffRecordRecallRequest(TypedDict):
+    session_ref: str
+    query: str
+    limit: int
+class CreateNoteRequest(TypedDict):
+    kind: str
+    markdown: str
+class OffRecordNoteRequest(TypedDict):
+    session_ref: str
+    note: CreateNoteRequest
+class EntityRefReceipt(TypedDict):
+    entity_ref: str
+    id_hex: str
+    receipt_ref: str
+    record: NotRequired[RecordRef | None]
+class OffRecordClaimRequest(TypedDict):
+    session_ref: str
+    claim: ScopedClaimInput
+class OffRecordExecuteRequest(TypedDict):
+    session_ref: str
+    run_ref: str
+    task: str
+OffRecordRunStatus = Literal["complete", "waiting", "yielded", "window_full"]
+class OffRecordExecuted(TypedDict):
+    run_ref: str
+    run_id: str
+    status: OffRecordRunStatus
+    next_step_seq: NotRequired[int | None]
+    steps_run: int
+    bridge_calls: int
 class RecordEraseRequest(TypedDict):
     record: EntityId
 class EraseShare(TypedDict):
@@ -4635,6 +4692,97 @@ class ArtifactView(TypedDict):
     media_type: str
     head: NotRequired[int | None]
     versions: list[ArtifactVersionView]
+class ArtifactUnitsRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+class AnnotationLocatorXlsx(TypedDict):
+    format: Literal["xlsx"]
+    sheet: str
+    range: str
+class AnnotationLocatorDocx(TypedDict):
+    format: Literal["docx"]
+    para_path: str
+    char_start: int
+    char_end: int
+class AnnotationLocatorPptx(TypedDict):
+    format: Literal["pptx"]
+    slide: int
+    shape_id: str
+AnnotationLocator = AnnotationLocatorXlsx | AnnotationLocatorDocx | AnnotationLocatorPptx
+class ArtifactUnitView(TypedDict):
+    locator: AnnotationLocator
+    quote: NotRequired[str | None]
+class ArtifactUnitsViewSupported(TypedDict):
+    status: Literal["supported"]
+    artifact_id: EntityId
+    version: int
+    content_hash: str
+    kind: ArtifactKind
+    units: list[ArtifactUnitView]
+class ArtifactUnitsViewUnsupported(TypedDict):
+    status: Literal["unsupported"]
+    artifact_id: EntityId
+    kind: ArtifactKind
+    reason: str
+ArtifactUnitsView = ArtifactUnitsViewSupported | ArtifactUnitsViewUnsupported
+class AnnotationPinRequest(TypedDict):
+    artifact_ref: str
+    version: NotRequired[int | None]
+    locator: AnnotationLocator
+class AnnotationAnchorView(TypedDict):
+    artifact_id: EntityId
+    version: int
+    locator: AnnotationLocator
+    quote: NotRequired[str | None]
+class AnnotationThreadOpenRequest(TypedDict):
+    artifact_ref: str
+    version: int
+    locator: AnnotationLocator
+    text: str
+AnnotationResolution = Literal["pinned", "mapped", "drifted"]
+class AnnotationDriftView(TypedDict):
+    drifted_at_version: int
+    pinned_version: int
+AnnotationThreadState = Literal["open", "resolved"]
+class AnnotationCommentView(TypedDict):
+    thread_id: EntityId
+    author: EntityId
+    text: str
+    at: int
+    claim_id: EntityId
+class AnnotationBriefView(TypedDict):
+    brief_ref: str
+    task_id: EntityId
+    thread_id: EntityId
+    anchor: AnnotationAnchorView
+    artifact_version: int
+    thread_text: str
+    assignee: NotRequired[EntityId | None]
+class AnnotationThreadView(TypedDict):
+    thread_id: EntityId
+    origin: AnnotationAnchorView
+    anchor: AnnotationAnchorView
+    resolution: AnnotationResolution
+    drift: NotRequired[AnnotationDriftView | None]
+    state: AnnotationThreadState
+    head_claim_id: EntityId
+    comments: list[AnnotationCommentView]
+    brief: NotRequired[AnnotationBriefView | None]
+class AnnotationCommentRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    text: str
+class AnnotationThreadRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+class AnnotationAssignRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    assignee_ref: NotRequired[str | None]
+class AnnotationStateRequest(TypedDict):
+    artifact_ref: str
+    thread_ref: str
+    state: AnnotationThreadState
 class CodeStateRequest(TypedDict):
     repo: str
     path: str
@@ -6140,6 +6288,66 @@ class ModelStepReceipt(TypedDict):
     result: NotRequired[ModelStepResult | None]
 class ModelStepReceiptRequest(TypedDict):
     step_key: str
+class AiReplyReader(TypedDict):
+    definition: str
+    task_family: NotRequired[str | None]
+class ContextPackRetrievalBudgetControls(TypedDict):
+    claims: NotRequired[int | None]
+    turns: NotRequired[int | None]
+    summaries: NotRequired[int | None]
+    facets: NotRequired[int | None]
+    other: NotRequired[int | None]
+    selected_edges: NotRequired[int | None]
+class ContextPackBudgetControls(TypedDict):
+    token_budget: NotRequired[int | None]
+    max_item_tokens: NotRequired[int | None]
+    max_field_chars: NotRequired[int | None]
+    retrieval: NotRequired[ContextPackRetrievalBudgetControls | None]
+class AiReplyCompanion(TypedDict):
+    person_ref: NotRequired[str | None]
+    persona_ref: NotRequired[str | None]
+    expression: NotRequired[str | None]
+class AiReplyStanding(TypedDict):
+    world_ref: NotRequired[str | None]
+    token_budget: int
+    block_tokens: NotRequired[int | None]
+class AiReplyRequest(TypedDict):
+    model: str
+    conversation_id: str
+    message: str
+    session_id: NotRequired[str | None]
+    reader: NotRequired[AiReplyReader | None]
+    budget: NotRequired[ContextPackBudgetControls | None]
+    limit: NotRequired[int | None]
+    pinned_refs: NotRequired[list[str]]
+    companion: NotRequired[AiReplyCompanion | None]
+    standing: NotRequired[AiReplyStanding | None]
+    reasoning_effort: NotRequired[str | None]
+class AiReplyL2Base(TypedDict):
+    content_hash: str
+    body: str
+class AiReply(TypedDict):
+    reply: str
+    model: str
+    receipt_refs: list[str]
+    l2_base: NotRequired[AiReplyL2Base | None]
+class ContextReceiptFields(TypedDict):
+    persona_compile_stamp: str
+    activated_memory_ids: list[str]
+    board_state_ref: str
+    substrate_ref: NotRequired[str | None]
+    model: NotRequired[str | None]
+    reasoning_effort: NotRequired[str | None]
+    prompt_input_ref: NotRequired[str | None]
+    disclosure_stamp: NotRequired[str | None]
+class ContextEmitReceipt(TypedDict):
+    receipt_ref: str
+    occurred_at: int
+    actor: str
+    conversation_id: str
+    request_digest: str
+    result_digest: str
+    context: ContextReceiptFields
 class AiOptionsRequest(TypedDict):
     operation: NotRequired[str | None]
     inputs: NotRequired[list[str]]
@@ -6394,6 +6602,23 @@ class QuestionAnswerArtifact(ArtifactAskRecord):
 QuestionAnswer = QuestionAnswerGraph | QuestionAnswerArtifact
 class QuestionRefreshRequest(TypedDict):
     id: EntityId
+class DecisionBandReadRequest(TypedDict):
+    question: DecisionQuestion
+    reversibility: Reversibility
+    seed: DecisionBand
+BandMode = Literal["shadow", "enforce"]
+class LearnedBand(TypedDict):
+    band: DecisionBand
+    version: int
+    mode: BandMode
+class DecisionBandLearnRequest(TypedDict):
+    question: DecisionQuestion
+    reversibility: Reversibility
+    band: DecisionBand
+    version: int
+class DecisionBandEnforceRequest(TypedDict):
+    question: DecisionQuestion
+    reversibility: Reversibility
 class DecisionAskAnswerRequest(TypedDict):
     seq: int
     answer: DecisionAnswer
@@ -6772,11 +6997,6 @@ class StructuralPutInput(TypedDict):
     edges: NotRequired[list[StructuralEdgeSpec] | None]
     occurred_at: int
     learned_at: NotRequired[int | None]
-class EntityRefReceipt(TypedDict):
-    entity_ref: str
-    id_hex: str
-    receipt_ref: str
-    record: NotRequired[RecordRef | None]
 class HabitCheckinInput(TypedDict):
     habit_ref: str
     id: NotRequired[str | None]
@@ -8165,9 +8385,6 @@ class OutboundIntentReceipt(TypedDict):
     gate_decision_ref: NotRequired[str | None]
     gate_reason_codes: list[str]
     deduped: bool
-class CreateNoteRequest(TypedDict):
-    kind: str
-    markdown: str
 class CreateNoteFromEntityRequest(TypedDict):
     source_ref: str
     kind: str

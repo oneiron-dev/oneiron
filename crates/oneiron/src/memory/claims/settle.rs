@@ -380,40 +380,44 @@ impl Memory<'_> {
                 ClaimSettlementReason::OwnerDeclined,
             ),
         };
-        let written = self.vault.try_with_write_txn_grouped(|wtxn| -> MemoryResult<_> {
-            // The proof is rechecked where the decision commits: an owner
-            // whose person, credential or ownership went away while the call
-            // waited for the writer decides nothing.
-            let person = owner.revalidate_in_txn(self.vault, &*wtxn)?;
-            self.require_settling_owner(person)?;
-            let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;
-            let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
-            reviewed.settleable(review_id, person, action)?;
-            let actor = WriteActor::new(person, EdgeActorClass::Human);
-            let settled = self.vault.settle_proposed_claim_in_txn(
-                wtxn,
-                id,
-                action,
-                actor,
-                owner_answer.as_ref(),
-                now,
-            )?;
-            let mut record = crate::memory::authorship::decision(
-                actor,
-                CLAIM_SETTLEMENT_CONTENT_KIND,
-                match action {
-                    GateConsentBundleAction::Approve => "approved",
-                    GateConsentBundleAction::Decline => "rejected",
-                },
-                reason.as_str(),
-                Some(id),
-                reviewed.digest.to_vec(),
-                now,
-            );
-            record.read_frontier_hash = reviewed.frontier;
-            self.vault.store.append_gate_decision_in_txn(wtxn, &record)?;
-            Ok((settled, record, person))
-        });
+        let written = self
+            .vault
+            .try_with_write_txn_grouped(|wtxn| -> MemoryResult<_> {
+                // The proof is rechecked where the decision commits: an owner
+                // whose person, credential or ownership went away while the call
+                // waited for the writer decides nothing.
+                let person = owner.revalidate_in_txn(self.vault, &*wtxn)?;
+                self.require_settling_owner(person)?;
+                let owner_answer = owner.owner_answer_in_txn(self.vault, &*wtxn)?;
+                let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
+                reviewed.settleable(review_id, person, action)?;
+                let actor = WriteActor::new(person, EdgeActorClass::Human);
+                let settled = self.vault.settle_proposed_claim_in_txn(
+                    wtxn,
+                    id,
+                    action,
+                    actor,
+                    owner_answer.as_ref(),
+                    now,
+                )?;
+                let mut record = crate::memory::authorship::decision(
+                    actor,
+                    CLAIM_SETTLEMENT_CONTENT_KIND,
+                    match action {
+                        GateConsentBundleAction::Approve => "approved",
+                        GateConsentBundleAction::Decline => "rejected",
+                    },
+                    reason.as_str(),
+                    Some(id),
+                    reviewed.digest.to_vec(),
+                    now,
+                );
+                record.read_frontier_hash = reviewed.frontier;
+                self.vault
+                    .store
+                    .append_gate_decision_in_txn(wtxn, &record)?;
+                Ok((settled, record, person))
+            });
         let (settled, record, person) = written?;
         for decision in &settled.recorded {
             decision.record_metrics(&self.vault.store.diagnostics.gate);
@@ -478,7 +482,12 @@ impl Memory<'_> {
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.resolve_ref_in_lane(&lane, claim_ref)?;
         let rows = lane.read(&[crate::claim::PointRead::id(id)], None)?;
-        if rows.value.into_iter().flatten().any(|row| row.id == id && row.body.is_some()) {
+        if rows
+            .value
+            .into_iter()
+            .flatten()
+            .any(|row| row.id == id && row.body.is_some())
+        {
             return Ok(id);
         }
         Err(self.with_lane_receipt(

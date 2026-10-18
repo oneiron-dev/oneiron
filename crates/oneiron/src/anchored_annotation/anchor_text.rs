@@ -334,3 +334,71 @@ fn find_in_sheets(bytes: &[u8], text: &str, limits: &TextLimits) -> Vec<Locator>
     }
     out
 }
+
+/// The units the existing office readers can address, in document order.
+/// This reads the same blocks, displayed cells and slide-scoped shape identities
+/// as anchor_text; unsupported artifact kinds have no implied adapter here.
+pub(super) fn unit_texts(
+    bytes: &[u8],
+    format: OfficeFormat,
+    limits: &TextLimits,
+) -> Option<Vec<(Locator, Option<String>)>> {
+    match format {
+        OfficeFormat::Docx => docx_blocks(bytes, limits)?
+            .into_iter()
+            .map(|(path, text)| {
+                let end = text.chars().count() as u64;
+                let locator = Locator::docx(path, 0, end).ok()?;
+                Some((locator, (end > 0).then_some(text)))
+            })
+            .collect(),
+        OfficeFormat::Xlsx => {
+            let book = read_xlsx_cells(bytes, limits.package).ok()?;
+            let mut units = Vec::new();
+            for sheet in &book.sheets {
+                for cell in &sheet.cells {
+                    let address = CellRef {
+                        col: cell.col,
+                        row: cell.row,
+                    }
+                    .to_a1();
+                    let locator = Locator::xlsx(sheet.name.clone(), &address).ok()?;
+                    let text = cell_display_text(&book, cell);
+                    units.push((locator, (!text.trim().is_empty()).then_some(text)));
+                }
+            }
+            Some(units)
+        }
+        OfficeFormat::Pptx => {
+            let deck = deck_view(bytes, limits)?;
+            let mut units = Vec::new();
+            for (index, slide) in deck.slides.iter().enumerate() {
+                for shape in &slide.shapes {
+                    let Some(identity) = shape
+                        .creation_id
+                        .clone()
+                        .or_else(|| shape.id.map(|id| id.to_string()))
+                    else {
+                        continue;
+                    };
+                    let wanted = guid_key(&identity);
+                    let matches = slide
+                        .shapes
+                        .iter()
+                        .filter(|candidate| {
+                            candidate
+                                .creation_id
+                                .as_deref()
+                                .is_some_and(|guid| guid_key(guid) == wanted)
+                                || candidate.id.is_some_and(|id| id.to_string() == identity)
+                        })
+                        .count();
+                    let locator = Locator::pptx(index as u64 + 1, identity).ok()?;
+                    let quote = (matches == 1).then(|| shape_text(shape)).flatten();
+                    units.push((locator, quote));
+                }
+            }
+            Some(units)
+        }
+    }
+}

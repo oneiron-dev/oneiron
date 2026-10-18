@@ -58,7 +58,16 @@ mod pptx_tests;
 mod reanchor;
 mod recovery;
 mod threads;
+mod verbs;
+mod wire;
 pub use self::recovery::{ReattachOffer, UnattachedThread};
+pub use self::wire::{
+    AnnotationAnchorView, AnnotationAssignRequest, AnnotationBriefView, AnnotationCommentRequest,
+    AnnotationCommentView, AnnotationDriftView, AnnotationLocator, AnnotationPinRequest,
+    AnnotationResolution, AnnotationStateRequest, AnnotationThreadOpenRequest,
+    AnnotationThreadRequest, AnnotationThreadState, AnnotationThreadView, ArtifactUnitView,
+    ArtifactUnitsRequest, ArtifactUnitsView,
+};
 pub(crate) use threads::thread_brief_ref;
 
 pub(crate) use self::codec::{decode_locator, encode_locator};

@@ -690,6 +690,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.off_record.start",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordStartRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.status",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordSessionRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.witness",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordWitnessRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.discard",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordSessionRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.recall",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordRecallRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.notes.create",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordNoteRequest,
+                >(),
+            ),
+            (
+                "vault.off_record.claims.upsert",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordClaimRequest,
+                >(),
+            ),
+            (
+                "self.off_record.execute",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::OffRecordExecuteRequest,
+                >(),
+            ),
+            (
                 "vault.records.erase_preview",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::RecordEraseRequest,
@@ -1114,6 +1162,54 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.artifacts.units",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::ArtifactUnitsRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.anchors.pin",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationPinRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.open",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationThreadOpenRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.comment",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationCommentRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationThreadRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.list",
+                crate::code_run::vault_read::request_schema::<
+                    crate::blob_artifact::ArtifactRefRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.assign",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationAssignRequest,
+                >(),
+            ),
+            (
+                "vault.artifacts.threads.state",
+                crate::code_run::vault_read::request_schema::<
+                    crate::anchored_annotation::AnnotationStateRequest,
+                >(),
+            ),
+            (
                 "vault.code.diff",
                 crate::code_run::vault_read::request_schema::<crate::code_document::CodeDiffRequest>(
                 ),
@@ -1520,6 +1616,15 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "ai.reply",
+                crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReplyRequest>(
+                ),
+            ),
+            (
+                "vault.receipts.context",
+                crate::code_run::vault_read::request_schema::<crate::receipt::CallReceiptRequest>(),
+            ),
+            (
                 "ai.options",
                 crate::code_run::vault_read::request_schema::<AiOptionsRequest>(),
             ),
@@ -1596,6 +1701,24 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.questions.refresh",
                 crate::code_run::vault_read::request_schema::<crate::receipt::QuestionRefreshRequest>(
                 ),
+            ),
+            (
+                "vault.decisions.bands.read",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::decision::DecisionBandReadRequest,
+                >(),
+            ),
+            (
+                "vault.decisions.bands.learn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::decision::DecisionBandLearnRequest,
+                >(),
+            ),
+            (
+                "vault.decisions.bands.enforce",
+                crate::code_run::vault_read::request_schema::<
+                    crate::llm::decision::DecisionBandEnforceRequest,
+                >(),
             ),
             (
                 "vault.decisions.asks.answer",
@@ -2416,14 +2539,47 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
 /// The facade rows the server's OpenAPI document publishes, each beside its
 /// [`input_schema`] and [`output_schema`].
 pub const OPENAPI_ROWS: &[&str] = &[
+    "vault.off_record.start",
+    "vault.off_record.status",
+    "vault.off_record.witness",
+    "vault.off_record.discard",
+    "vault.off_record.notes.create",
+    "vault.off_record.claims.upsert",
+    "self.off_record.execute",
     "vault.claims.review",
     "vault.claims.settle",
     "ai.steps.submit",
     "ai.steps.receipt",
+    "ai.reply",
+    "vault.receipts.context",
+    "vault.decisions.bands.read",
+    "vault.decisions.bands.learn",
+    "vault.decisions.bands.enforce",
 ];
 /// The JSON schema of an [`OPENAPI_ROWS`] row's answer; `None` for any other row.
 pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
     Some(match verb {
+        "vault.off_record.start" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordSessionView,
+        >(),
+        "vault.off_record.status" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordSessionView,
+        >(),
+        "vault.off_record.witness" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
+        }
+        "vault.off_record.discard" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::OffRecordClosed>()
+        }
+        "vault.off_record.notes.create" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::EntityRefReceipt>()
+        }
+        "vault.off_record.claims.upsert" => {
+            crate::code_run::vault_read::request_schema::<crate::memory::CommitReceipt>()
+        }
+        "self.off_record.execute" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::OffRecordExecuted,
+        >(),
         "vault.claims.review" => {
             crate::code_run::vault_read::request_schema::<crate::memory::ClaimProposalReview>()
         }
@@ -2436,9 +2592,36 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "ai.steps.receipt" => crate::code_run::vault_read::request_schema::<
             crate::llm::model_step::ModelStepReceipt,
         >(),
+        "ai.reply" => {
+            crate::code_run::vault_read::request_schema::<crate::task_verb::sdk::AiReply>()
+        }
+        "vault.receipts.context" => crate::code_run::vault_read::request_schema::<
+            Option<crate::receipt::ContextEmitReceipt>,
+        >(),
+        "vault.decisions.bands.read" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
+        }
+        "vault.decisions.bands.learn" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
+        }
+        "vault.decisions.bands.enforce" => {
+            crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
+        }
         _ => return None,
     })
 }
+/// The facade rows no transport keeps a call receipt of (DOOR-127): an
+/// off-record session's own rows.
+pub const NO_RECORD_ROWS: &[&str] = &[
+    "vault.off_record.start",
+    "vault.off_record.status",
+    "vault.off_record.witness",
+    "vault.off_record.discard",
+    "vault.off_record.recall",
+    "vault.off_record.notes.create",
+    "vault.off_record.claims.upsert",
+    "self.off_record.execute",
+];
 pub fn mcp_arguments_schema(verb: &str) -> Option<serde_json::Value> {
     mcp_arguments_schema_from_input(verb, input_schema(verb)?)
 }
@@ -3452,6 +3635,62 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.off_record.start" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.status" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.witness" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.discard" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.recall" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.notes.create" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.off_record.claims.upsert" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "self.off_record.execute" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.records.erase_preview" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -3930,6 +4169,62 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.artifacts.view" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.units" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.anchors.pin" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.comment" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.list" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.assign" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.artifacts.threads.state" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -4514,6 +4809,20 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "ai.reply" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.receipts.context" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "ai.options" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4627,6 +4936,27 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.questions.refresh" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.bands.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.bands.learn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.decisions.bands.enforce" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -5867,6 +6197,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.residence.prune" => {
             let _input: crate::task_verb::sdk::ResidencePruneRequest = decode(value.clone())?;
         }
+        "vault.off_record.start" => {
+            let _input: crate::task_verb::sdk::OffRecordStartRequest = decode(value.clone())?;
+        }
+        "vault.off_record.status" => {
+            let _input: crate::task_verb::sdk::OffRecordSessionRequest = decode(value.clone())?;
+        }
+        "vault.off_record.witness" => {
+            let _input: crate::task_verb::sdk::OffRecordWitnessRequest = decode(value.clone())?;
+        }
+        "vault.off_record.discard" => {
+            let _input: crate::task_verb::sdk::OffRecordSessionRequest = decode(value.clone())?;
+        }
+        "vault.off_record.recall" => {
+            let _input: crate::task_verb::sdk::OffRecordRecallRequest = decode(value.clone())?;
+        }
+        "vault.off_record.notes.create" => {
+            let _input: crate::task_verb::sdk::OffRecordNoteRequest = decode(value.clone())?;
+        }
+        "vault.off_record.claims.upsert" => {
+            let _input: crate::task_verb::sdk::OffRecordClaimRequest = decode(value.clone())?;
+        }
+        "self.off_record.execute" => {
+            let _input: crate::task_verb::sdk::OffRecordExecuteRequest = decode(value.clone())?;
+        }
         "vault.records.erase_preview" => {
             let _input: crate::task_verb::sdk::RecordEraseRequest = decode(value.clone())?;
         }
@@ -6111,6 +6465,34 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.artifacts.view" => {
             let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
         }
+        "vault.artifacts.units" => {
+            let _input: crate::anchored_annotation::ArtifactUnitsRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.anchors.pin" => {
+            let _input: crate::anchored_annotation::AnnotationPinRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.threads.open" => {
+            let _input: crate::anchored_annotation::AnnotationThreadOpenRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.comment" => {
+            let _input: crate::anchored_annotation::AnnotationCommentRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.read" => {
+            let _input: crate::anchored_annotation::AnnotationThreadRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.list" => {
+            let _input: crate::blob_artifact::ArtifactRefRequest = decode(value.clone())?;
+        }
+        "vault.artifacts.threads.assign" => {
+            let _input: crate::anchored_annotation::AnnotationAssignRequest =
+                decode(value.clone())?;
+        }
+        "vault.artifacts.threads.state" => {
+            let _input: crate::anchored_annotation::AnnotationStateRequest = decode(value.clone())?;
+        }
         "vault.code.diff" => {
             let _input: crate::code_document::CodeDiffRequest = decode(value.clone())?;
         }
@@ -6351,6 +6733,12 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "ai.steps.receipt" => {
             let _input: crate::llm::model_step::ModelStepReceiptRequest = decode(value.clone())?;
         }
+        "ai.reply" => {
+            let _input: crate::task_verb::sdk::AiReplyRequest = decode(value.clone())?;
+        }
+        "vault.receipts.context" => {
+            let _input: crate::receipt::CallReceiptRequest = decode(value.clone())?;
+        }
         "ai.options" => {
             let _input: AiOptionsRequest = decode(value.clone())?;
         }
@@ -6404,6 +6792,15 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.questions.refresh" => {
             let _input: crate::receipt::QuestionRefreshRequest = decode(value.clone())?;
+        }
+        "vault.decisions.bands.read" => {
+            let _input: crate::llm::decision::DecisionBandReadRequest = decode(value.clone())?;
+        }
+        "vault.decisions.bands.learn" => {
+            let _input: crate::llm::decision::DecisionBandLearnRequest = decode(value.clone())?;
+        }
+        "vault.decisions.bands.enforce" => {
+            let _input: crate::llm::decision::DecisionBandEnforceRequest = decode(value.clone())?;
         }
         "vault.decisions.asks.answer" => {
             let _input: crate::receipt::DecisionAskAnswerRequest = decode(value.clone())?;
@@ -7111,6 +7508,18 @@ pub fn invoke(
         "vault.residence.open" => encode(vault_residence_open(memory, decode(value)?)?),
         "vault.residence.index" => encode(vault_residence_index(memory, decode(value)?)?),
         "vault.residence.prune" => encode(vault_residence_prune(memory, decode(value)?)?),
+        "vault.off_record.start" => encode(vault_off_record_start(memory, decode(value)?)?),
+        "vault.off_record.status" => encode(vault_off_record_status(memory, decode(value)?)?),
+        "vault.off_record.witness" => encode(vault_off_record_witness(memory, decode(value)?)?),
+        "vault.off_record.discard" => encode(vault_off_record_discard(memory, decode(value)?)?),
+        "vault.off_record.recall" => encode(vault_off_record_recall(memory, decode(value)?)?),
+        "vault.off_record.notes.create" => {
+            encode(vault_off_record_notes_create(memory, decode(value)?)?)
+        }
+        "vault.off_record.claims.upsert" => {
+            encode(vault_off_record_claims_upsert(memory, decode(value)?)?)
+        }
+        "self.off_record.execute" => encode(self_off_record_execute(memory, decode(value)?)?),
         "vault.records.erase_preview" => {
             encode(vault_records_erase_preview(memory, decode(value)?)?)
         }
@@ -7260,6 +7669,28 @@ pub fn invoke(
         "vault.shares.view" => encode(vault_shares_view(memory, decode(value)?)?),
         "vault.hooks.replay" => encode(vault_hooks_replay(memory, decode(value)?)?),
         "vault.artifacts.view" => encode(vault_artifacts_view(memory, decode(value)?)?),
+        "vault.artifacts.units" => encode(vault_artifacts_units(memory, decode(value)?)?),
+        "vault.artifacts.anchors.pin" => {
+            encode(vault_artifacts_anchors_pin(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.open" => {
+            encode(vault_artifacts_threads_open(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.comment" => {
+            encode(vault_artifacts_threads_comment(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.read" => {
+            encode(vault_artifacts_threads_read(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.list" => {
+            encode(vault_artifacts_threads_list(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.assign" => {
+            encode(vault_artifacts_threads_assign(memory, decode(value)?)?)
+        }
+        "vault.artifacts.threads.state" => {
+            encode(vault_artifacts_threads_state(memory, decode(value)?)?)
+        }
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
@@ -7376,6 +7807,8 @@ pub fn invoke(
         "self.skills.callables" => encode(self_skills_callables(memory, decode(value)?)?),
         "ai.steps.submit" => encode(ai_steps_submit(memory, decode(value)?)?),
         "ai.steps.receipt" => encode(ai_steps_receipt(memory, decode(value)?)?),
+        "ai.reply" => encode(ai_reply(memory, decode(value)?)?),
+        "vault.receipts.context" => encode(vault_receipts_context(memory, decode(value)?)?),
         "ai.options" => encode(ai_options(memory, decode(value)?)?),
         "ai.image" => encode(ai_image(memory, decode(value)?)?),
         "ai.speech" => encode(ai_speech(memory, decode(value)?)?),
@@ -7393,6 +7826,13 @@ pub fn invoke(
         "vault.questions.read" => encode(vault_questions_read(memory, decode(value)?)?),
         "vault.questions.answers" => encode(vault_questions_answers(memory, decode(value)?)?),
         "vault.questions.refresh" => encode(vault_questions_refresh(memory, decode(value)?)?),
+        "vault.decisions.bands.read" => encode(vault_decisions_bands_read(memory, decode(value)?)?),
+        "vault.decisions.bands.learn" => {
+            encode(vault_decisions_bands_learn(memory, decode(value)?)?)
+        }
+        "vault.decisions.bands.enforce" => {
+            encode(vault_decisions_bands_enforce(memory, decode(value)?)?)
+        }
         "vault.decisions.asks.answer" => {
             encode(vault_decisions_asks_answer(memory, decode(value)?)?)
         }
@@ -8901,6 +9341,54 @@ pub fn vault_residence_prune(
 ) -> MemoryResult<crate::task_verb::sdk::ResidencePruned> {
     crate::task_verb::sdk::residence_host_only(memory, "vault.residence.prune", &input)
 }
+pub fn vault_off_record_start(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordStartRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordSessionView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.start", &input)
+}
+pub fn vault_off_record_status(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordSessionView> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.status", &input)
+}
+pub fn vault_off_record_witness(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordWitnessRequest,
+) -> MemoryResult<crate::memory::WitnessReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.witness", &input)
+}
+pub fn vault_off_record_discard(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordSessionRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordClosed> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.discard", &input)
+}
+pub fn vault_off_record_recall(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordRecallRequest,
+) -> MemoryResult<crate::memory::MemoryPack> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.recall", &input)
+}
+pub fn vault_off_record_notes_create(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordNoteRequest,
+) -> MemoryResult<crate::memory::EntityRefReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.notes.create", &input)
+}
+pub fn vault_off_record_claims_upsert(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordClaimRequest,
+) -> MemoryResult<crate::memory::CommitReceipt> {
+    crate::task_verb::sdk::off_record_host_only(memory, "vault.off_record.claims.upsert", &input)
+}
+pub fn self_off_record_execute(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::OffRecordExecuteRequest,
+) -> MemoryResult<crate::task_verb::sdk::OffRecordExecuted> {
+    crate::task_verb::sdk::off_record_host_only(memory, "self.off_record.execute", &input)
+}
 pub fn vault_records_erase_preview(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::RecordEraseRequest,
@@ -9500,6 +9988,118 @@ pub fn vault_artifacts_view(
     input: crate::blob_artifact::ArtifactRefRequest,
 ) -> MemoryResult<Option<crate::blob_artifact::ArtifactView>> {
     memory.artifacts_view(&input)
+}
+pub fn vault_artifacts_units(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::ArtifactUnitsRequest,
+) -> MemoryResult<crate::anchored_annotation::ArtifactUnitsView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.units",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_units(&input)
+}
+pub fn vault_artifacts_anchors_pin(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationPinRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationAnchorView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.anchors.pin",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_anchors_pin(&input)
+}
+pub fn vault_artifacts_threads_open(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationThreadOpenRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationThreadView> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.artifacts.threads.open",
+        &input,
+        &["/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.open",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    let landed = memory.artifacts_threads_open(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_artifacts_threads_comment(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationCommentRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationCommentView> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.artifacts.threads.comment",
+        &input,
+        &["/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.comment",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    let landed = memory.artifacts_threads_comment(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_artifacts_threads_read(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationThreadRequest,
+) -> MemoryResult<Option<crate::anchored_annotation::AnnotationThreadView>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.read",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_threads_read(&input)
+}
+pub fn vault_artifacts_threads_list(
+    memory: &Memory<'_>,
+    input: crate::blob_artifact::ArtifactRefRequest,
+) -> MemoryResult<Vec<crate::anchored_annotation::AnnotationThreadView>> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.list",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_threads_list(&input)
+}
+pub fn vault_artifacts_threads_assign(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationAssignRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationBriefView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.assign",
+        &input,
+        &["/artifact_ref", "/assignee_ref"],
+    )?;
+    memory.artifacts_threads_assign(&input)
+}
+pub fn vault_artifacts_threads_state(
+    memory: &Memory<'_>,
+    input: crate::anchored_annotation::AnnotationStateRequest,
+) -> MemoryResult<crate::anchored_annotation::AnnotationThreadView> {
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.artifacts.threads.state",
+        &input,
+        &["/artifact_ref"],
+    )?;
+    memory.artifacts_threads_state(&input)
 }
 pub fn vault_code_diff(
     memory: &Memory<'_>,
@@ -10130,6 +10730,18 @@ pub fn ai_steps_receipt(
 ) -> MemoryResult<crate::llm::model_step::ModelStepReceipt> {
     crate::task_verb::sdk::host_only(memory, "ai.steps.receipt", &input)
 }
+pub fn ai_reply(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::AiReplyRequest,
+) -> MemoryResult<crate::task_verb::sdk::AiReply> {
+    crate::task_verb::sdk::host_only(memory, "ai.reply", &input)
+}
+pub fn vault_receipts_context(
+    memory: &Memory<'_>,
+    input: crate::receipt::CallReceiptRequest,
+) -> MemoryResult<Option<crate::receipt::ContextEmitReceipt>> {
+    memory.context_emit_receipt(&input.receipt_ref)
+}
 pub fn ai_options(
     memory: &Memory<'_>,
     input: AiOptionsRequest,
@@ -10234,6 +10846,24 @@ pub fn vault_questions_refresh(
     input: crate::receipt::QuestionRefreshRequest,
 ) -> MemoryResult<Vec<crate::llm::decision::questions::AnswerRecord>> {
     crate::task_verb::sdk::host_only(memory, "vault.questions.refresh", &input)
+}
+pub fn vault_decisions_bands_read(
+    memory: &Memory<'_>,
+    input: crate::llm::decision::DecisionBandReadRequest,
+) -> MemoryResult<crate::llm::decision::LearnedBand> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.bands.read", &input)
+}
+pub fn vault_decisions_bands_learn(
+    memory: &Memory<'_>,
+    input: crate::llm::decision::DecisionBandLearnRequest,
+) -> MemoryResult<crate::llm::decision::LearnedBand> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.bands.learn", &input)
+}
+pub fn vault_decisions_bands_enforce(
+    memory: &Memory<'_>,
+    input: crate::llm::decision::DecisionBandEnforceRequest,
+) -> MemoryResult<crate::llm::decision::LearnedBand> {
+    crate::task_verb::sdk::host_only(memory, "vault.decisions.bands.enforce", &input)
 }
 pub fn vault_decisions_asks_answer(
     memory: &Memory<'_>,

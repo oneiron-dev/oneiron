@@ -134,7 +134,7 @@ pub struct WitnessAssertions {
 }
 
 /// Receipt for one witnessed turn.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WitnessReceipt {
     /// Short-id ref of the TURN (hex fallback if no short id exists).
     pub turn_short_id: String,

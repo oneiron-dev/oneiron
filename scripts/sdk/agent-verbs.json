@@ -2214,6 +2214,133 @@
       "section": false
     },
     {
+      "name": "vault.off_record.start",
+      "description": "The owner enters an off-record session, off record or anonymous, as the owner route does; nothing of it reaches the vault unless the owner promotes or saves it.",
+      "input": "crate::task_verb::sdk::OffRecordStartRequest",
+      "output": "crate::task_verb::sdk::OffRecordSessionView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.start\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.status",
+      "description": "The owner reads one live off-record session: its mode, backend, entry time, promoted turns and whether it is closing.",
+      "input": "crate::task_verb::sdk::OffRecordSessionRequest",
+      "output": "crate::task_verb::sdk::OffRecordSessionView",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.status\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.witness",
+      "description": "The owner witnesses one turn into an off-record session; it stays in the room until promoted or dropped at close.",
+      "input": "crate::task_verb::sdk::OffRecordWitnessRequest",
+      "output": "crate::memory::WitnessReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.witness\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.discard",
+      "description": "The owner closes an off-record session without saving it: its turns, writes, receipts and spilled outputs are dropped, and promoted turns stay.",
+      "input": "crate::task_verb::sdk::OffRecordSessionRequest",
+      "output": "crate::task_verb::sdk::OffRecordClosed",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.discard\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.recall",
+      "description": "The owner recalls over an off-record session and the vault together, on their own credential: rows the room holds and vault rows alike.",
+      "input": "crate::task_verb::sdk::OffRecordRecallRequest",
+      "output": "crate::memory::MemoryPack",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.recall\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.off_record.notes.create",
+      "description": "The owner writes one NOTE into an off-record session through its handle; it lands in the room, never in the vault, and close drops it.",
+      "input": "crate::task_verb::sdk::OffRecordNoteRequest",
+      "output": "crate::memory::EntityRefReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.notes.create\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.off_record.claims.upsert",
+      "description": "The owner admits one claim into an off-record session through its handle and the gate; it lands in the room beside the vault heads, and close drops it.",
+      "input": "crate::task_verb::sdk::OffRecordClaimRequest",
+      "output": "crate::memory::CommitReceipt",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.claims.upsert\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "self.off_record.execute",
+      "description": "The owner runs one entry of a durable code-mode run bound to an off-record session; its rows and spilled outputs stay in the room until close.",
+      "input": "crate::task_verb::sdk::OffRecordExecuteRequest",
+      "output": "crate::task_verb::sdk::OffRecordExecuted",
+      "call": "crate::task_verb::sdk::off_record_host_only(memory, \"self.off_record.execute\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "no_record": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.records.erase_preview",
       "description": "What erasing one record would take: the brief grants it revokes, the records holding the same bytes and the LFS chunks it shares, with the digest erase_confirm takes back.",
       "input": "crate::task_verb::sdk::RecordEraseRequest",
@@ -3255,6 +3382,158 @@
           "py": "One artifact's kind, head and versions, each with its made_by and born-from."
         }
       }
+    },
+    {
+      "name": "vault.artifacts.units",
+      "description": "Inspects real DOCX blocks, XLSX cells and PPTX shapes in one version; other kinds explicitly report no annotation unit adapter.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::ArtifactUnitsRequest",
+      "output": "crate::anchored_annotation::ArtifactUnitsView",
+      "call": "memory.artifacts_units(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.anchors.pin",
+      "description": "Pins an exact readable locator and quote in an artifact version; opening a thread makes the pin durable.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationPinRequest",
+      "output": "crate::anchored_annotation::AnnotationAnchorView",
+      "call": "memory.artifacts_anchors_pin(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.open",
+      "description": "Opens an anchored thread with its first comment as the caller, retaining its exact version, locator and quote.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationThreadOpenRequest",
+      "output": "crate::anchored_annotation::AnnotationThreadView",
+      "call": "memory.artifacts_threads_open(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "prose_links": [
+        "/text"
+      ]
+    },
+    {
+      "name": "vault.artifacts.threads.comment",
+      "description": "Appends a comment as the caller; returns its first stored part, with every part available through threads.read.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationCommentRequest",
+      "output": "crate::anchored_annotation::AnnotationCommentView",
+      "call": "memory.artifacts_threads_comment(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false,
+      "prose_links": [
+        "/text"
+      ]
+    },
+    {
+      "name": "vault.artifacts.threads.read",
+      "description": "Reads a thread, its opening quote, current anchor, explicit pinned, mapped or drifted disposition, comments and assignment.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationThreadRequest",
+      "output": "Option<crate::anchored_annotation::AnnotationThreadView>",
+      "call": "memory.artifacts_threads_read(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.list",
+      "description": "Lists an artifact's readable threads with their opening pins, current anchors, drift, comments and assignments.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::blob_artifact::ArtifactRefRequest",
+      "output": "Vec<crate::anchored_annotation::AnnotationThreadView>",
+      "call": "memory.artifacts_threads_list(&input)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.assign",
+      "description": "Assigns an anchored thread into a durable task brief with its anchor and transcript; an agent-definition assignee dispatches through the engine.",
+      "refs": [
+        "/artifact_ref",
+        "/assignee_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationAssignRequest",
+      "output": "crate::anchored_annotation::AnnotationBriefView",
+      "call": "memory.artifacts_threads_assign(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref",
+          "assignee_ref"
+        ]
+      },
+      "section": false
+    },
+    {
+      "name": "vault.artifacts.threads.state",
+      "description": "Opens or resolves a thread through its existing claim gate, preserving its anchor, comments and drift.",
+      "refs": [
+        "/artifact_ref"
+      ],
+      "input": "crate::anchored_annotation::AnnotationStateRequest",
+      "output": "crate::anchored_annotation::AnnotationThreadView",
+      "call": "memory.artifacts_threads_state(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "readable": [
+          "artifact_ref"
+        ]
+      },
+      "section": false
     },
     {
       "name": "vault.code.diff",
@@ -4764,6 +5043,36 @@
       "section": false
     },
     {
+      "name": "ai.reply",
+      "description": "Generate one context-bearing reply from the caller's scoped conversation, standing prefix and reader profile through an exact configured model; return durable emit-context receipt refs.",
+      "input": "crate::task_verb::sdk::AiReplyRequest",
+      "output": "crate::task_verb::sdk::AiReply",
+      "call": "crate::task_verb::sdk::host_only(memory, \"ai.reply\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "host_door_session": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.receipts.context",
+      "description": "Read the frozen context of one actual reply emit, as its actor or the live vault owner; never rebuild the assembly.",
+      "input": "crate::receipt::CallReceiptRequest",
+      "output": "Option<crate::receipt::ContextEmitReceipt>",
+      "call": "memory.context_emit_receipt(&input.receipt_ref)?",
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "ai.options",
       "description": "The model rows the caller could call now: where each runs, what it takes, its price and rates, and what its meter has left.",
       "input": "AiOptionsRequest",
@@ -4995,6 +5304,51 @@
         "unrestricted_record_scope": true
       },
       "section": false
+    },
+    {
+      "name": "vault.decisions.bands.read",
+      "description": "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero.",
+      "input": "crate::llm::decision::DecisionBandReadRequest",
+      "output": "crate::llm::decision::LearnedBand",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.decisions.bands.learn",
+      "description": "The owner declares a question version's learned band in shadow mode on the running host, advancing its band version for that reversibility.",
+      "input": "crate::llm::decision::DecisionBandLearnRequest",
+      "output": "crate::llm::decision::LearnedBand",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.learn\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.decisions.bands.enforce",
+      "description": "The owner enforces an already learned question-version and reversibility band on the running host without widening any decision dial or authority.",
+      "input": "crate::llm::decision::DecisionBandEnforceRequest",
+      "output": "crate::llm::decision::LearnedBand",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.bands.enforce\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.decisions.asks.answer",
