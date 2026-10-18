@@ -268,6 +268,11 @@ vaultArtifactsThreadsState(input: unknown): unknown
 vaultCodeDiff(requestJson: string): string
 vaultCodeBlame(requestJson: string): string
 vaultCodeProposalView(requestJson: string): string
+vaultCodeSymbolsDeclare(input: unknown): unknown
+vaultCodeSymbolsRenew(input: unknown): unknown
+vaultCodeSymbolsRelease(input: unknown): unknown
+vaultCodeProposalSubmit(input: unknown): unknown
+vaultCodeOplog(input: unknown): unknown
 vaultCodeRepoDiff(requestJson: string): string
 vaultCodeExport(input: unknown): unknown
 vaultCodeOriginAuthorityGet(input: unknown): unknown

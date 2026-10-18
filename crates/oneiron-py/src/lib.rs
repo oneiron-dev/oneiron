@@ -2283,6 +2283,41 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_code_symbols_declare(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.declare")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.declare", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_symbols_renew(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.renew")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.renew", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_symbols_release(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.symbols.release")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.symbols.release", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_proposal_submit(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.proposal_submit")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.proposal_submit", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_code_oplog(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.code.oplog")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.code.oplog", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_code_repo_diff(&self, py: Python<'_>, request_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(request_json, "vault.code.repo_diff")?;
         let output = py

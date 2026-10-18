@@ -773,6 +773,21 @@ impl OneironClient {
                 "vault.code.proposal_view" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeProposalView>,
                 >(client, verb, &input),
+                "vault.code.symbols.declare" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeSymbolsDeclared,
+                >(client, verb, &input),
+                "vault.code.symbols.renew" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeSymbolLeaseView,
+                >(client, verb, &input),
+                "vault.code.symbols.release" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeSymbolsReleased,
+                >(client, verb, &input),
+                "vault.code.proposal_submit" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeProposalSubmitted,
+                >(client, verb, &input),
+                "vault.code.oplog" => remote_agent_verb_output::<
+                    oneiron::memory::code_doors::CodeMutationLog,
+                >(client, verb, &input),
                 "vault.code.repo_diff" => remote_agent_verb_output::<
                     Option<oneiron::code_document::CodeRepoDiffView>,
                 >(client, verb, &input),
@@ -4407,6 +4422,66 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.code.proposal_view", value)
+    }
+    pub fn vault_code_symbols_declare(
+        &self,
+        input: &oneiron::memory::code_doors::CodeSymbolsDeclareRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeSymbolsDeclared, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.declare", value)
+    }
+    pub fn vault_code_symbols_renew(
+        &self,
+        input: &oneiron::memory::code_doors::CodeSymbolsTaskRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeSymbolLeaseView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.renew", value)
+    }
+    pub fn vault_code_symbols_release(
+        &self,
+        input: &oneiron::memory::code_doors::CodeSymbolsTaskRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeSymbolsReleased, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.symbols.release", value)
+    }
+    pub fn vault_code_proposal_submit(
+        &self,
+        input: &oneiron::memory::code_doors::CodeProposalSubmitRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeProposalSubmitted, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.proposal_submit", value)
+    }
+    pub fn vault_code_oplog(
+        &self,
+        input: &oneiron::memory::code_doors::CodeRepoRequest,
+    ) -> Result<oneiron::memory::code_doors::CodeMutationLog, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.code.oplog", value)
     }
     /// Every file changed between two trees of a repository, unit by unit, with the operations that wrote each.
     pub fn vault_code_repo_diff(

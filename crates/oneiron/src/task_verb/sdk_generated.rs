@@ -1273,6 +1273,36 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.code.symbols.declare",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsDeclareRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.renew",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsTaskRequest,
+                >(),
+            ),
+            (
+                "vault.code.symbols.release",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeSymbolsTaskRequest,
+                >(),
+            ),
+            (
+                "vault.code.proposal_submit",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeProposalSubmitRequest,
+                >(),
+            ),
+            (
+                "vault.code.oplog",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::code_doors::CodeRepoRequest,
+                >(),
+            ),
+            (
                 "vault.code.repo_diff",
                 crate::code_run::vault_read::request_schema::<
                     crate::code_document::CodeRepoDiffRequest,
@@ -4803,6 +4833,41 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.code.symbols.declare" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.renew" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.symbols.release" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.proposal_submit" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.code.oplog" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.code.repo_diff" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -7129,6 +7194,23 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.code.proposal_view" => {
             let _input: crate::code_document::CodeProposalViewRequest = decode(value.clone())?;
         }
+        "vault.code.symbols.declare" => {
+            let _input: crate::memory::code_doors::CodeSymbolsDeclareRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.symbols.renew" => {
+            let _input: crate::memory::code_doors::CodeSymbolsTaskRequest = decode(value.clone())?;
+        }
+        "vault.code.symbols.release" => {
+            let _input: crate::memory::code_doors::CodeSymbolsTaskRequest = decode(value.clone())?;
+        }
+        "vault.code.proposal_submit" => {
+            let _input: crate::memory::code_doors::CodeProposalSubmitRequest =
+                decode(value.clone())?;
+        }
+        "vault.code.oplog" => {
+            let _input: crate::memory::code_doors::CodeRepoRequest = decode(value.clone())?;
+        }
         "vault.code.repo_diff" => {
             let _input: crate::code_document::CodeRepoDiffRequest = decode(value.clone())?;
         }
@@ -8359,6 +8441,11 @@ pub fn invoke(
         "vault.code.diff" => encode(vault_code_diff(memory, decode(value)?)?),
         "vault.code.blame" => encode(vault_code_blame(memory, decode(value)?)?),
         "vault.code.proposal_view" => encode(vault_code_proposal_view(memory, decode(value)?)?),
+        "vault.code.symbols.declare" => encode(vault_code_symbols_declare(memory, decode(value)?)?),
+        "vault.code.symbols.renew" => encode(vault_code_symbols_renew(memory, decode(value)?)?),
+        "vault.code.symbols.release" => encode(vault_code_symbols_release(memory, decode(value)?)?),
+        "vault.code.proposal_submit" => encode(vault_code_proposal_submit(memory, decode(value)?)?),
+        "vault.code.oplog" => encode(vault_code_oplog(memory, decode(value)?)?),
         "vault.code.repo_diff" => encode(vault_code_repo_diff(memory, decode(value)?)?),
         "vault.code.export" => encode(vault_code_export(memory, decode(value)?)?),
         "vault.code.origin.authority.get" => {
@@ -10863,6 +10950,36 @@ pub fn vault_code_proposal_view(
     input: crate::code_document::CodeProposalViewRequest,
 ) -> MemoryResult<Option<crate::code_document::CodeProposalView>> {
     memory.code_proposal_view(&input)
+}
+pub fn vault_code_symbols_declare(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsDeclareRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolsDeclared> {
+    memory.code_symbols_declare_as(&memory.embedded_owner("vault.code.symbols.declare")?, input)
+}
+pub fn vault_code_symbols_renew(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsTaskRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolLeaseView> {
+    memory.code_symbols_renew_as(&memory.embedded_owner("vault.code.symbols.renew")?, input)
+}
+pub fn vault_code_symbols_release(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeSymbolsTaskRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeSymbolsReleased> {
+    memory.code_symbols_release_as(&memory.embedded_owner("vault.code.symbols.release")?, input)
+}
+pub fn vault_code_proposal_submit(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeProposalSubmitRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeProposalSubmitted> {
+    memory.code_proposal_submit_as(&memory.embedded_owner("vault.code.proposal_submit")?, input)
+}
+pub fn vault_code_oplog(
+    memory: &Memory<'_>,
+    input: crate::memory::code_doors::CodeRepoRequest,
+) -> MemoryResult<crate::memory::code_doors::CodeMutationLog> {
+    memory.code_mutation_log_as(&memory.embedded_owner("vault.code.oplog")?, input)
 }
 pub fn vault_code_repo_diff(
     memory: &Memory<'_>,
