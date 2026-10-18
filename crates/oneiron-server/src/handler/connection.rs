@@ -90,14 +90,21 @@ async fn ws_upgrade_handler(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
+    // OF-237: over an embedded engine's channel the whole socket, hello
+    // included, lives under the engine's stop, and its stop waits for it
+    // from before the upgrade registers.
+    let hold = crate::embedded::UpgradeHold::take(&extensions);
     let mut response = ws
         .max_frame_size(server.config.max_frame_size)
         .write_buffer_size(WS_WRITE_BUFFER_SIZE)
         .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
         .on_upgrade(move |socket| {
-            crate::api::call_receipt::on_connection(
-                connection,
-                handle_connection(socket, server, conn_id, session_jti, locality, machine),
+            crate::embedded::UpgradeHold::run(
+                hold,
+                crate::api::call_receipt::on_connection(
+                    connection,
+                    handle_connection(socket, server, conn_id, session_jti, locality, machine),
+                ),
             )
         })
         .into_response();
@@ -839,25 +846,6 @@ fn window_delivery(
     state: &super::conn_state::ConnState,
     frame: Vec<u8>,
 ) -> Option<Vec<u8>> {
-    // A sealed packet forwards only where its world may be read or a sealed
-    // copy may rest, judged for this socket's proved destination (OF-292).
-    // It is never turned into a WINDOW_INVALIDATE.
-    if let Some(world) = sealed_update_world(&frame) {
-        if !window_broadcast_allowed(protocol_version, state, &frame) {
-            return None;
-        }
-        let world = world?;
-        let vault = server.vault();
-        let destination = state.destination(vault);
-        let may = vault
-            .sealed_copy_may_rest_on(world, destination)
-            .unwrap_or(false)
-            || vault
-                .authority_fold()
-                .map(|fold| fold.world_readable_on(world, destination))
-                .unwrap_or(false);
-        return may.then_some(frame);
-    }
     if window_broadcast_allowed(protocol_version, state, &frame) {
         let peer = state.peer_machine(server.vault());
         return (!window_update_withheld(server, peer, &frame)).then_some(frame);
@@ -877,22 +865,6 @@ fn window_delivery(
     protocol::encode_window_sync(key, protocol::window_sub_tags::WINDOW_INVALIDATE, &[])
         .into_result()
         .ok()
-}
-
-/// The world of a `SEALED_UPDATE` frame's window (`None` inside for a base
-/// window), or `None` when `frame` is not one.
-fn sealed_update_world(frame: &[u8]) -> Option<Option<oneiron::EntityId>> {
-    if frame.first() != Some(&protocol::TAG_WINDOW_SYNC) {
-        return None;
-    }
-    let (key, sub_tag, _) = protocol::decode_window_sync(frame.get(1..)?).ok()?;
-    if sub_tag != protocol::window_sub_tags::SEALED_UPDATE {
-        return None;
-    }
-    match oneiron::sync::WindowKey::try_new(key) {
-        Some(window) => Some(window.world()),
-        None => Some(None),
-    }
 }
 
 /// Whether `frame` is a window UPDATE or REPLACEMENT this server now

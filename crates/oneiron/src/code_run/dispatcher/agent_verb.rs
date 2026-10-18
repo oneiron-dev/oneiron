@@ -34,6 +34,11 @@ const VERB_HOOK_STOPPED: &str = "verb_hook_stopped";
 /// the write ran: kept, so a replay never writes again.
 const VERB_HOOK_HIDDEN: &str = "verb_hook_hidden";
 
+/// The mark a receipt keeps when no provider answered the write's model call
+/// (FIX 3194): nothing was written, so the run parks, and a replay of the
+/// step asks the door again.
+const PROVIDER_UNAVAILABLE: &str = "provider_unavailable";
+
 impl HostSelfDispatcher<'_> {
     /// A refused verb is the guest's to handle, like any typed refusal: it
     /// does not halt the run, and the verb's own gate owns its writes.
@@ -97,10 +102,11 @@ impl HostSelfDispatcher<'_> {
         let ordinal = site.earlier.iter().filter(is_write).count() as u64;
         let receipt_id = self.write_receipt_id(site.run_id, site.step_start, ordinal)?;
         let kept = self.storage.get_code_run_replay_record(&receipt_id)?;
-        // A hook stopped this write before it ran, so nothing was written:
-        // the door is asked again, under a fresh reservation.
+        // A hook stopped this write before it ran, or no provider answered
+        // it, so nothing was written: the door is asked again, under a fresh
+        // reservation.
         let stopped = match &kept {
-            Some(receipt) if receipt.bridge_calls.first().is_some_and(hook_stopped) => {
+            Some(receipt) if receipt.bridge_calls.first().is_some_and(never_ran) => {
                 Some(receipt.generation()?)
             }
             _ => None,
@@ -160,7 +166,7 @@ impl HostSelfDispatcher<'_> {
                 receipt.bridge_calls.push(CodeRunBridgeCall::record(
                     0,
                     &SelfCall::AgentVerb(call),
-                    &hook_stop_mark(),
+                    &never_ran_mark(VERB_HOOK_STOPPED),
                     0,
                     0,
                 )?);
@@ -171,6 +177,24 @@ impl HostSelfDispatcher<'_> {
                         None,
                     )?;
                 return Err(Error::VerbHook(stop));
+            }
+            // No provider answered: the receipt keeps the outage's mark, and
+            // the outage goes to the dispatcher, which parks the run on it.
+            Err(error @ Error::ProviderUnavailable { .. }) => {
+                receipt.bridge_calls.push(CodeRunBridgeCall::record(
+                    0,
+                    &SelfCall::AgentVerb(call),
+                    &never_ran_mark(PROVIDER_UNAVAILABLE),
+                    0,
+                    0,
+                )?);
+                self.storage
+                    .put_code_run_replay_record_if_generation_with_heal(
+                        &receipt,
+                        Some(generation),
+                        None,
+                    )?;
+                return Err(error);
             }
             Err(error) => return Err(error),
         };
@@ -349,30 +373,34 @@ fn standing_refusal(receipt: &CodeRunReplayRecord) -> Option<&CodeRunBridgeCall>
 
 /// Whether a write row met its receipt: it is the receipt's call with the
 /// answer the receipt kept, and no refusal of that answer stands. A write a
-/// hook stopped before it ran meets its mark whatever the run made of the
-/// stop.
+/// hook stopped before it ran, or no provider answered, meets its mark
+/// whatever the run made of it.
 fn meets(receipt: &CodeRunReplayRecord, made: &CodeRunBridgeCall) -> bool {
     standing_refusal(receipt).is_none()
         && receipt.bridge_calls.first().is_some_and(|kept| {
             row_identity(kept) == row_identity(made)
-                && (hook_stopped(kept) || answered_as_kept(kept, made))
+                && (never_ran(kept) || answered_as_kept(kept, made))
         })
 }
 
-/// The mark a write's receipt keeps when a verb hook stopped it before it ran.
-fn hook_stop_mark() -> SelfDispatchOutcome {
+/// The mark a write's receipt keeps when it never ran: a verb hook stopped it
+/// ([`VERB_HOOK_STOPPED`]), or no provider answered it
+/// ([`PROVIDER_UNAVAILABLE`]).
+fn never_ran_mark(why: &str) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(SelfDeniedResult {
         effect: SelfEffect::AgentVerb,
-        outcome: VERB_HOOK_STOPPED.to_owned(),
-        reason_codes: vec![VERB_HOOK_STOPPED.to_owned()],
+        outcome: why.to_owned(),
+        reason_codes: vec![why.to_owned()],
     })
 }
 
-/// Whether a receipt's row is [`hook_stop_mark`]: the write never ran.
-fn hook_stopped(row: &CodeRunBridgeCall) -> bool {
+/// Whether a receipt's row is a [`never_ran_mark`]: the write never ran.
+fn never_ran(row: &CodeRunBridgeCall) -> bool {
     matches!(
         decode_self_dispatch_outcome(&row.outcome),
-        Ok(SelfDispatchOutcome::Denied(refused)) if refused.reason_codes == [VERB_HOOK_STOPPED]
+        Ok(SelfDispatchOutcome::Denied(refused))
+            if refused.reason_codes == [VERB_HOOK_STOPPED]
+                || refused.reason_codes == [PROVIDER_UNAVAILABLE]
     )
 }
 
