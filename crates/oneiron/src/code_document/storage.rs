@@ -721,3 +721,16 @@ fn path_generation(store: &Store, txn: &RoTxn<'_>, repo: &str, path: &str) -> Re
         .get(store, txn, &generation_key(repo, path))?
         .unwrap_or(0))
 }
+
+/// OF-222 (FIX 2768) archive seam: the code-document history tables a whole-vault archive
+/// carries (ingress receipts, tested frontiers, path and generation rows, heads), lent with
+/// their own key types and codec.
+pub(crate) fn archive_document_tables() -> [crate::batch::export::LentSideTable; 5] {
+    [
+        &CODE_DOCUMENT_INGRESS,
+        &CODE_DOCUMENT_FRONTIER,
+        &CODE_DOCUMENT_PATH,
+        &CODE_DOCUMENT_GENERATION,
+        &CODE_DOCUMENT_HEAD,
+    ]
+}

@@ -26,7 +26,9 @@ use crate::store::ManifestDbs;
 use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
-/// Most inputs one birth may name; the text-commit fold keeps the same bound.
+/// The count a few producers still cut their birth inputs to. A birth itself
+/// names any number: its row is one Named MessagePack value, so the shape
+/// check refuses no count (Rule 5).
 pub const MAX_BIRTH_INPUTS: usize = 1024;
 
 /// Most hex characters a birth's input hash may carry.
@@ -210,15 +212,15 @@ impl RowBirth {
         if class == MadeByClass::Concluded && inputs.is_empty() {
             return None;
         }
-        let mut named: Vec<MadeByInput> = Vec::with_capacity(inputs.len());
-        for row in inputs {
-            if !named.iter().any(|input| input.row == *row) {
-                named.push(MadeByInput {
-                    row: *row,
-                    role: MadeByInputRole::Input,
-                });
-            }
-        }
+        let mut seen = std::collections::BTreeSet::new();
+        let named: Vec<MadeByInput> = inputs
+            .iter()
+            .filter(|row| seen.insert(**row))
+            .map(|row| MadeByInput {
+                row: *row,
+                role: MadeByInputRole::Input,
+            })
+            .collect();
         Some(Self {
             made_by: MadeBy {
                 inputs: named,
@@ -261,9 +263,10 @@ impl RowBirth {
     }
 
     /// The shape rules a birth must meet before any row is read: a valid
-    /// process, bounded inputs, a hex input hash, and a prompt input on every
-    /// triggered birth (the same rule `RowProvenance::fold` applies to a
-    /// birth commit). A concluded birth names what it was made from.
+    /// process, a hex input hash, well-formed withheld handles, and a prompt
+    /// input on every triggered birth (the same rule `RowProvenance::fold`
+    /// applies to a birth commit). A concluded birth names what it was made
+    /// from. No count of inputs or handles is refused.
     fn check_shape(&self) -> Result<()> {
         let made_by = &self.made_by;
         let withheld = |role: WithheldRole| self.withheld.iter().any(|w| w.role == role);
@@ -276,30 +279,28 @@ impl RowBirth {
         let names_input = !made_by.inputs.is_empty()
             || withheld(WithheldRole::Input)
             || withheld(WithheldRole::Prompt);
-        let handles_ok = self.withheld.len() <= MAX_BIRTH_INPUTS + 1
-            && self.withheld.iter().all(|w| {
-                w.handle.strip_prefix("wh_").is_some_and(|hex| {
-                    hex.len() == WITHHELD_HANDLE_HEX
-                        && hex
-                            .bytes()
-                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-                })
-            });
+        let handles_ok = self.withheld.iter().all(|w| {
+            w.handle.strip_prefix("wh_").is_some_and(|hex| {
+                hex.len() == WITHHELD_HANDLE_HEX
+                    && hex
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            })
+        });
         let hash_ok = self.content_hash.len() <= MAX_CONTENT_HASH_HEX
             && self
                 .content_hash
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
         if !made_by.process.is_valid()
-            || made_by.inputs.len() > MAX_BIRTH_INPUTS
             || !hash_ok
             || !handles_ok
             || (names_trigger && !has_prompt)
             || (made_by.process.class == MadeByClass::Concluded && !names_input)
         {
             return Err(Error::InvalidConfig(
-                "a row birth needs a valid process, bounded inputs, a hex input hash and a prompt \
-                 input when it names a trigger"
+                "a row birth needs a valid process, a hex input hash, well-formed withheld handles \
+                 and a prompt input when it names a trigger"
                     .into(),
             ));
         }
