@@ -666,6 +666,9 @@ class Oneiron:
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
         @property
+        def learning(self) -> "Oneiron._VaultLearningVerbs":
+            return Oneiron._VaultLearningVerbs(self._client)
+        @property
         def settings(self) -> "Oneiron._VaultSettingsVerbs":
             return Oneiron._VaultSettingsVerbs(self._client)
         @property
@@ -1750,6 +1753,15 @@ class Oneiron:
         def set(self, spec):
             """The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."""
             return json.loads(_translate(lambda: self._client.vault_gate_checker_set(json.dumps(spec))))
+    class _VaultLearningVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def read(self, spec):
+            """The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."""
+            return json.loads(_translate(lambda: self._client.vault_learning_read(json.dumps(spec))))
+        def projection(self, spec):
+            """The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."""
+            return json.loads(_translate(lambda: self._client.vault_learning_projection(json.dumps(spec))))
     class _VaultSettingsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

@@ -9303,7 +9303,7 @@
      "path": "src/channel_identity/facts.rs",
      "purpose": "Channel facts as claims (OF-272): every write of a ChannelIdentity row moves its `channel_identity.*` heads…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -9343,7 +9343,7 @@
      "path": "src/channel_identity/mod.rs",
      "purpose": "ChannelIdentity record substrate (OF-347 CID-1)",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 14
      }
     },
@@ -11133,7 +11133,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/code_document/mod.rs",
-     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers",
+     "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…",
      "surface": {
       "crate-vis": 2,
       "re-export": 5
@@ -11180,7 +11180,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 9
      }
     },
@@ -11190,6 +11190,16 @@
      "notable": [],
      "path": "src/code_document/storage/lift.rs",
      "purpose": "Code documents the historical lift sweep reads again (OF-067, Engine ruling G2 = b)",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_document/storage/receipt_actor.rs",
+     "purpose": "Whose operation a code-document receipt records, and the erase that forgets it (FIX 3520)",
      "surface": {
       "crate-vis": 4
      }
@@ -11221,7 +11231,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 3,
+      "fn": 4,
       "struct": 8
      }
     },
@@ -24662,7 +24672,7 @@
      "path": "src/gate/mod.rs",
      "purpose": "DEC-0005 Gate policy manifest resolver",
      "surface": {
-      "crate-vis": 64,
+      "crate-vis": 65,
       "mod": 1,
       "re-export": 8
      }
@@ -24977,7 +24987,7 @@
      "path": "src/gate/resolution/manifest_fold.rs",
      "purpose": "Store-scanning manifest fold plus budget-guard and trust adapters",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 2
      }
     },
@@ -25018,7 +25028,7 @@
      "path": "src/gate/resolution/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -27760,6 +27770,35 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "LearningBetaValue",
+      "LearningCellKey",
+      "LearningCellView",
+      "LearningEvidenceView",
+      "LearningHeadView",
+      "LearningMeanValue",
+      "LearningPriorValue",
+      "LearningPriorView",
+      "LearningProjectionRequest",
+      "LearningProjectionView",
+      "LearningProvenanceView",
+      "LearningReadRequest",
+      "MeasuredLearningEstimate",
+      "MeasuredLearningPredicate",
+      "MeasuredLearningValue",
+      "MeasuredLearningView"
+     ],
+     "path": "src/learning/doors.rs",
+     "purpose": "Owner reads of measured learning state and anchored outcome projection",
+     "surface": {
+      "enum": 3,
+      "fn": 2,
+      "struct": 13
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
       "BetaView",
       "Estimate",
       "EstimateForm",
@@ -27841,7 +27880,7 @@
       "const": 6,
       "crate-vis": 2,
       "fn": 1,
-      "mod": 10,
+      "mod": 11,
       "re-export": 9
      }
     },
@@ -32091,7 +32130,7 @@
      "path": "src/memory/shape_doors.rs",
      "purpose": "The vault shape on code mode and MCP (ARCH-0070): the free reads `describe(vault)`, `vault.shape.read` and…",
      "surface": {
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -39727,9 +39766,9 @@
      "path": "src/repo_mutation/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 4,
       "mod": 2,
-      "re-export": 4
+      "re-export": 5
      }
     },
     {
@@ -39755,7 +39794,7 @@
      "purpose": "—",
      "surface": {
       "const": 1,
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 3
      }
     },
@@ -39770,10 +39809,26 @@
      "path": "src/repo_mutation/proposal.rs",
      "purpose": "Durable per-operation code proposals",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 16,
       "enum": 2,
       "fn": 6,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "PendingRepoProposalErase",
+      "ProposalActor"
+     ],
+     "path": "src/repo_mutation/proposal/actor_erase.rs",
+     "purpose": "Whose act a repo proposal records, and the erase that forgets it (FIX 3520)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 2,
+      "fn": 3
      }
     },
     {
@@ -39814,7 +39869,7 @@
      "path": "src/repo_mutation/support.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -39870,7 +39925,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 2,
       "fn": 7,
       "struct": 6,
@@ -43031,7 +43086,7 @@
      "purpose": "Late credit over the run's recorded, actually-used derived-from edges",
      "surface": {
       "crate-vis": 3,
-      "fn": 1,
+      "fn": 2,
       "struct": 2
      }
     },
@@ -50005,7 +50060,7 @@
      "purpose": "—",
      "surface": {
       "const": 4,
-      "fn": 587
+      "fn": 589
      }
     },
     {
@@ -52214,7 +52269,7 @@
      "surface": {
       "crate-vis": 4,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "struct": 3
      }
     },
@@ -52295,7 +52350,7 @@
      "path": "src/vault_shape/live.rs",
      "purpose": "The live arrangement read as a shape: every setup-plane row the vault holds now, under the names a seed…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 16
      }
     },
     {
@@ -52360,6 +52415,7 @@
      "path": "src/vault_shape/plan.rs",
      "purpose": "Plan: a pure read at a pinned frontier that renders the difference between a seed and the vault, one item…",
      "surface": {
+      "crate-vis": 1,
       "enum": 2,
       "fn": 6,
       "struct": 3
@@ -55719,11 +55775,11 @@
      "purpose": "—"
     },
     "code_document": {
-     "files": 10,
+     "files": 11,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
-     "purpose": "Base-mode live code files: actor-stamped Loro operations and verified tested frontiers"
+     "purpose": "Base-mode live code files: stamped Loro operations, receipts naming their actors, and verified tested…"
     },
     "code_memory": {
      "files": 7,
@@ -56244,7 +56300,7 @@
      "purpose": "Interlocutor resolution substrate (OF-365 ILD-1)"
     },
     "learning": {
-     "files": 11,
+     "files": 12,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -56566,7 +56622,7 @@
      "purpose": "Entity-type registry: type bytes, v3 zones, classification, the registry array + lookups/validators"
     },
     "repo_mutation": {
-     "files": 19,
+     "files": 20,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -57023,7 +57079,7 @@
    },
    "over_bar": 194,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3475,
+   "source_files": 3478,
    "test_files": 902
   },
   "oneiron-android": {
@@ -65490,7 +65546,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 537
+      "fn": 539
      }
     },
     {
@@ -66539,7 +66595,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 538
+      "fn": 540
      }
     },
     {
@@ -69752,7 +69808,7 @@
      "path": "src/api/facade/host_doors.rs",
      "purpose": "The host doors of the verb-table rows only a server's own state answers: the owner's `vault.packs.put`…",
      "surface": {
-      "crate-vis": 104
+      "crate-vis": 105
      }
     },
     {
@@ -69763,6 +69819,16 @@
      "purpose": "Owner-proof facade doors for configured hubs and pinned foreign imports",
      "surface": {
       "crate-vis": 16
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/facade/learning_doors.rs",
+     "purpose": "Read-only measured-learning doors under the vault owner's existing proof",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -77282,7 +77348,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 363,
+     "files": 364,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -77697,7 +77763,7 @@
    },
    "over_bar": 55,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 693,
+   "source_files": 694,
    "test_files": 182
   },
   "oneiron-spawn": {
@@ -77954,6 +78020,7 @@
       "AiVideoTicket",
       "AiVoice",
       "AllRelationships",
+      "Anchor",
       "AnnotationAnchorView",
       "AnnotationAssignRequest",
       "AnnotationBriefView",
@@ -78292,6 +78359,7 @@
       "ContextSpec",
       "ContractDiff",
       "ContractVerdict",
+      "ContributionCheck",
       "ConversationCreateInput",
       "ConversationTurnCreateInput",
       "CooperativeDeletionDispositionKind",
@@ -78323,6 +78391,7 @@
       "CredentialAttenuated",
       "CredentialAttenuationRequest",
       "CredentialCeiling",
+      "CreditOptions",
       "Criterion",
       "CriticBinding",
       "CriticLens",
@@ -78459,6 +78528,8 @@
       "EsignNoticeSwitches",
       "EsignRecipient",
       "EsignVoidRequest",
+      "EstimateLabels",
+      "EstimateWindow",
       "EvalAuthoringInventory",
       "EvalAuthoringReport",
       "EvalAuthoringSkip",
@@ -78477,6 +78548,7 @@
       "EvidenceFloors",
       "EvidenceKind",
       "EvidenceRef",
+      "EvidenceRow",
       "EvidenceVersion",
       "ExceptionalWidthCheck",
       "ExpectedSpend",
@@ -78678,13 +78750,27 @@
       "Landing",
       "LandingReceipt",
       "LandingTrigger",
+      "LateCreditReceipt",
+      "LateCreditShare",
       "LaunchStatement",
       "LeaderSplitInput",
       "LeaderSplitOutput",
       "LearnedBand",
+      "LearningBetaValue",
       "LearningCell",
+      "LearningCellKey",
+      "LearningCellView",
       "LearningChoiceValue",
+      "LearningEvidenceView",
+      "LearningHeadView",
+      "LearningMeanValue",
       "LearningPredicate",
+      "LearningPriorValue",
+      "LearningPriorView",
+      "LearningProjectionRequest",
+      "LearningProjectionView",
+      "LearningProvenanceView",
+      "LearningReadRequest",
       "LearningSettingClear",
       "LearningSettingMode",
       "LearningSettingPut",
@@ -78789,6 +78875,10 @@
       "MadeByInputRole",
       "MadeByProcess",
       "MadeByTrigger",
+      "MeasuredLearningEstimate",
+      "MeasuredLearningPredicate",
+      "MeasuredLearningValue",
+      "MeasuredLearningView",
       "Measurement",
       "MediaAtom",
       "MediaUsage",
@@ -78886,6 +78976,7 @@
       "NotificationPage",
       "NotificationRow",
       "NotificationSource",
+      "Observation",
       "Of360Ar3MetricTier",
       "Of360CaseEvalReport",
       "Of360CaseExtractionOutput",
@@ -78984,6 +79075,7 @@
       "OwnerPolicyConfigurationView",
       "OwnerPolicyConfigureRequest",
       "PackAdapter",
+      "PackAttributionFields",
       "PackCandidateReason",
       "PackConnectorReceipt",
       "PackFileInput",
@@ -78991,6 +79083,7 @@
       "PackInstallReceipt",
       "PackInstallStatus",
       "PackKind",
+      "PackLearningContext",
       "PackLineAtom",
       "PackPermissions",
       "PackPutOutcome",
@@ -79082,6 +79175,7 @@
       "PolicyVerdictCategory",
       "PostmarkAtom",
       "Preset",
+      "PriorOrigin",
       "PriorRung",
       "PriorSeed",
       "ProbeRequest",
@@ -79501,6 +79595,7 @@
       "SignedAuthorityHistory",
       "SigningStatus",
       "SkillAuthoringReceipt",
+      "SkillContribution",
       "SkillForkRequest",
       "SkillHubConfigured",
       "SkillHubKind",
@@ -79709,6 +79804,7 @@
       "UnknownReason",
       "UnsupportedCapability",
       "UpdateCampaignProgramRequest",
+      "UsedProvenanceEdge",
       "VadBadge",
       "VerdictBinding",
       "VerdictMode",
@@ -79820,8 +79916,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 507,
-      "struct": 1418
+      "enum": 513,
+      "struct": 1442
      }
     },
     {

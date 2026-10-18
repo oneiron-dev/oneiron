@@ -11,7 +11,7 @@
 //! there back into its journal. Each apply is one run-tree root with a child
 //! per item (see [`super::run`]), and its waiting items are one inbox group
 //! (see [`super::group`]).
-use super::live::{facet_name, world_name};
+use super::live::{ShapeSources, facet_name, world_name};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
 use super::{ShapeRow, ShapeTarget, invalid};
@@ -199,6 +199,15 @@ fn next_version(version: &str) -> String {
 
 type LiveByTarget = BTreeMap<ShapeTarget, (ShapeRow, Option<EntityId>)>;
 
+/// Lists the pack source a pack catalog receipt names; a receipt naming no
+/// entity leaves the rows unknown.
+fn list_pack_source(sources: &mut ShapeSources, source_id: &str) {
+    match EntityId::from_hex(source_id) {
+        Ok(source) => sources.list(source),
+        Err(_) => sources.unknown(),
+    }
+}
+
 impl Vault {
     /// The journal of the apply landing the plan at `frontier`.
     ///
@@ -252,21 +261,66 @@ impl Vault {
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeApplyReceipt> {
+        self.apply_shape_into(applier, request, now, visible, &mut ShapeSources::off())
+    }
+
+    /// [`Self::apply_shape`], beside the rows its receipt stands on
+    /// (`host_door_lists`): what its re-plan read (see
+    /// [`Self::plan_shape_into`]), the seed revision it stored, every live
+    /// read an owner's landing made, the staged source a pack installs
+    /// from, and the entity each landing wrote. `None` for a resumed apply:
+    /// its journal holds no source set, and the rows its plan was read from
+    /// may have moved since. `None` too once an item lands through a door
+    /// whose reads it does not follow (a channel provision; a skill import
+    /// that refuses).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::apply_shape`].
+    pub fn apply_shape_listing(
+        &self,
+        applier: ShapeApplier<'_>,
+        request: &ShapeApplyRequest,
+        now: u64,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
+        let mut sources = ShapeSources::on();
+        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources)?;
+        Ok((receipt, sources.into_rows()))
+    }
+
+    /// [`Self::apply_shape`]'s landing, listing in `sources`.
+    fn apply_shape_into(
+        &self,
+        applier: ShapeApplier<'_>,
+        request: &ShapeApplyRequest,
+        now: u64,
+        visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
+        sources: &mut ShapeSources,
+    ) -> Result<ShapeApplyReceipt> {
         // The owner's proof names the author; it must still hold.
         let author = match applier {
             ShapeApplier::Owner { owner, .. } => owner.revalidate(self)?,
             ShapeApplier::Actor { actor, .. } => actor,
         };
         let mut journal = if let Some(journal) = self.shape_apply(&request.plan.frontier)? {
+            // A resumed apply lists nothing: its journal holds no source
+            // set, and nothing is re-planned to make one.
+            sources.unknown();
             journal
         } else {
-            let plan = self.plan_shape_visible(Some(&request.plan.seed), visible)?;
+            let plan = self.plan_shape_into(Some(&request.plan.seed), visible, sources)?;
             if plan.frontier != request.plan.frontier {
                 return Err(invalid(
                     "the vault has moved since this plan was read; plan again",
                 ));
             }
             let stored = self.put_shape_seed(author, &plan.seed, now)?;
+            // The receipt names the seed revision stored first.
+            match EntityId::from_hex(&stored.id) {
+                Ok(seed) => sources.list(seed),
+                Err(_) => sources.unknown(),
+            }
             self.with_write_txn_grouped(|txn| {
                 let journal = ShapeApplyReceipt {
                     run: self.open_shape_run_in_txn(txn, &plan.frontier, &plan.items, now)?,
@@ -307,7 +361,7 @@ impl Vault {
                 return Ok(journal);
             }
         };
-        self.land_shape_journal(owner, slips, &mut journal, &request.approve, now)?;
+        self.land_shape_journal_into(owner, slips, &mut journal, &request.approve, now, sources)?;
         Ok(journal)
     }
 
@@ -366,8 +420,29 @@ impl Vault {
         approve: &[u32],
         now: u64,
     ) -> Result<()> {
+        self.land_shape_journal_into(
+            owner,
+            slips,
+            journal,
+            approve,
+            now,
+            &mut ShapeSources::off(),
+        )
+    }
+
+    /// [`Self::land_shape_journal`], listing in `sources` every live read it
+    /// makes and what each landing wrote.
+    fn land_shape_journal_into(
+        &self,
+        owner: &AuthenticatedOwner,
+        slips: Option<&HostSlipIssuer>,
+        journal: &mut ShapeApplyReceipt,
+        approve: &[u32],
+        now: u64,
+        sources: &mut ShapeSources,
+    ) -> Result<()> {
         let author = owner.revalidate(self)?;
-        let mut live = self.live_by_target()?;
+        let mut live = self.live_by_target(sources)?;
         for index in 0..journal.items.len() {
             if !open(&journal.items[index].state) {
                 continue;
@@ -396,7 +471,7 @@ impl Vault {
                                 };
                             }
                             // The members after it read the vault shared.
-                            live = self.live_by_target()?;
+                            live = self.live_by_target(sources)?;
                             ShapeItemState::Landed { at: now, receipt }
                         }
                         Err(error) => ShapeItemState::Refused {
@@ -405,7 +480,7 @@ impl Vault {
                     }
                 }
                 ShapeItemState::Proposed => {
-                    match self.land_shape_item(owner, slips, &item, &live, now) {
+                    match self.land_shape_item(owner, slips, &item, &live, now, sources) {
                         Ok(receipt) => {
                             // The skills a pack bundles, and the actors a
                             // channel binds, read live for the items after.
@@ -413,7 +488,7 @@ impl Vault {
                                 item.target,
                                 ShapeTarget::Pack { .. } | ShapeTarget::Actor { .. }
                             ) {
-                                live = self.live_by_target()?;
+                                live = self.live_by_target(sources)?;
                             }
                             ShapeItemState::Landed { at: now, receipt }
                         }
@@ -473,9 +548,9 @@ impl Vault {
 
     /// Lands one item through its door, after checking the structure is
     /// still as the plan read it. An item already true is landed.
-    fn live_by_target(&self) -> Result<LiveByTarget> {
+    fn live_by_target(&self, sources: &mut ShapeSources) -> Result<LiveByTarget> {
         Ok(self
-            .read_live_shape(&mut |_| Ok(true))?
+            .read_live_shape_into(&mut |_| Ok(true), sources)?
             .rows
             .into_iter()
             .map(|(row, entity)| (row.target(), (row, entity)))
@@ -510,6 +585,8 @@ impl Vault {
         Ok(creation.vault_id.to_string())
     }
 
+    /// The entities `live` holds were listed when it was read; `sources`
+    /// lists what a landing writes and the source a pack installs from.
     fn land_shape_item(
         &self,
         owner: &AuthenticatedOwner,
@@ -517,6 +594,7 @@ impl Vault {
         item: &ShapePlanItem,
         live: &LiveByTarget,
         now: u64,
+        sources: &mut ShapeSources,
     ) -> Result<String> {
         let current = live.get(&item.target);
         let already = |row: &ShapeRow| {
@@ -575,7 +653,9 @@ impl Vault {
                 .remove_shared_member(owner, shared()?, person(member)?, slips)?
                 .id),
             (ShapeChange::Create, ShapeTarget::World { name }, _) => {
-                Ok(self.create_world(owner, name, now)?.to_hex())
+                let world = self.create_world(owner, name, now)?;
+                sources.list(world);
+                Ok(world.to_hex())
             }
             (
                 ShapeChange::Create,
@@ -584,9 +664,11 @@ impl Vault {
                     name,
                 },
                 _,
-            ) => Ok(self
-                .create_facet(owner, person(wearer)?, name, now)?
-                .to_hex()),
+            ) => {
+                let facet = self.create_facet(owner, person(wearer)?, name, now)?;
+                sources.list(facet);
+                Ok(facet.to_hex())
+            }
             (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }, _) => {
                 self.delete_shape_entity(owner, entity.ok_or_else(stale)?)
             }
@@ -623,6 +705,7 @@ impl Vault {
                 );
                 owner.revalidate(self)?;
                 self.put_agent_definition(&id, &def, occurred, now)?;
+                sources.list(id);
                 Ok(id.to_hex())
             }
             (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }, after) => {
@@ -647,11 +730,10 @@ impl Vault {
                 ShapeTarget::Pack { name },
                 Some(ShapeRow::Pack { version, .. }),
             ) => {
-                let source = self
+                let (staged, source) = self
                     .list_pack_sources()?
                     .into_iter()
-                    .map(|(_, source)| source)
-                    .filter(|source| {
+                    .filter(|(_, source)| {
                         source.manifest().name == *name
                             && version
                                 .as_ref()
@@ -659,8 +741,14 @@ impl Vault {
                     })
                     .last()
                     .ok_or_else(|| invalid("no staged source of that pack and version"))?;
+                // The pack installs from this staged source.
+                sources.list(staged);
                 match self.put_pack(owner, source.files().to_vec())? {
-                    PackInstallDisposition::Installed(receipt) => Ok(receipt.content_hash),
+                    PackInstallDisposition::Installed(receipt) => {
+                        // ... into the source its install receipt names.
+                        list_pack_source(sources, &receipt.source_id);
+                        Ok(receipt.content_hash)
+                    }
                     PackInstallDisposition::Candidate(_) => {
                         Err(invalid("the pack is held a candidate until it qualifies"))
                     }
@@ -675,7 +763,16 @@ impl Vault {
                     source: Some(source),
                     ..
                 }),
-            ) => self.import_shape_skill(owner, skill_id, version.as_deref(), source, now),
+            ) => {
+                let imported =
+                    self.import_shape_skill(owner, skill_id, version.as_deref(), source, now);
+                // A refusal can carry the name and version of a skill the
+                // import read, which no row here names: the rows are unknown.
+                if imported.is_err() {
+                    sources.unknown();
+                }
+                imported
+            }
             (
                 ShapeChange::Update,
                 ShapeTarget::Skill { .. },
@@ -704,6 +801,9 @@ impl Vault {
                     ..
                 }),
             ) => {
+                // The identity a provision writes is not named here, and its
+                // receipt names the lifecycle ledger: the rows are unknown.
+                sources.unknown();
                 let binding = provision.binding.resolve(|agent_id| {
                     live.get(&ShapeTarget::Actor {
                         agent_id: agent_id.to_owned(),
@@ -761,7 +861,9 @@ impl Vault {
                 Ok(released.receipt_id)
             }
             (ShapeChange::Retire, ShapeTarget::Pack { name }, _) => {
-                Ok(self.remove_pack(owner, name)?.content_hash)
+                let removed = self.remove_pack(owner, name)?;
+                list_pack_source(sources, &removed.source_id);
+                Ok(removed.content_hash)
             }
             (
                 ShapeChange::Create,
@@ -783,7 +885,13 @@ impl Vault {
                 Some(ShapeRow::Manifest { body, .. }),
             ) => {
                 let narrowing = item.class == ShapeItemClass::Receipted;
-                self.install_shape_manifest(owner, manifest_ref, body, narrowing, now)
+                let installed =
+                    self.install_shape_manifest(owner, manifest_ref, body, narrowing, now)?;
+                // The door installs at the id the row names.
+                if let Ok(id) = EntityId::from_hex(manifest_ref) {
+                    sources.list(id);
+                }
+                Ok(installed)
             }
             (ShapeChange::Retire, ShapeTarget::Manifest { .. }, _) => {
                 // A manifest is never deleted. Retiring one quarantines its

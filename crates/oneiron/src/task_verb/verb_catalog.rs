@@ -231,6 +231,8 @@ pub enum AgentVerb {
     VaultGatePolicyPropose,
     VaultGateCheckerGet,
     VaultGateCheckerSet,
+    VaultLearningRead,
+    VaultLearningProjection,
     VaultSettingsLearning,
     VaultSettingsLearningPut,
     VaultSettingsLearningClear,
@@ -815,6 +817,8 @@ impl AgentVerb {
         Self::VaultGatePolicyPropose,
         Self::VaultGateCheckerGet,
         Self::VaultGateCheckerSet,
+        Self::VaultLearningRead,
+        Self::VaultLearningProjection,
         Self::VaultSettingsLearning,
         Self::VaultSettingsLearningPut,
         Self::VaultSettingsLearningClear,
@@ -1406,6 +1410,8 @@ impl AgentVerb {
             Self::VaultGatePolicyPropose => "vault.gate.policy.propose",
             Self::VaultGateCheckerGet => "vault.gate.checker.get",
             Self::VaultGateCheckerSet => "vault.gate.checker.set",
+            Self::VaultLearningRead => "vault.learning.read",
+            Self::VaultLearningProjection => "vault.learning.projection",
             Self::VaultSettingsLearning => "vault.settings.learning",
             Self::VaultSettingsLearningPut => "vault.settings.learning.put",
             Self::VaultSettingsLearningClear => "vault.settings.learning.clear",
@@ -1995,6 +2001,8 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerGet
                 | Self::VaultGateCheckerSet
+                | Self::VaultLearningRead
+                | Self::VaultLearningProjection
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -2586,6 +2594,8 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerGet
                 | Self::VaultGateCheckerSet
+                | Self::VaultLearningRead
+                | Self::VaultLearningProjection
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -3226,6 +3236,8 @@ impl AgentVerb {
                 | Self::VaultGatePolicyPropose
                 | Self::VaultGateCheckerGet
                 | Self::VaultGateCheckerSet
+                | Self::VaultLearningRead
+                | Self::VaultLearningProjection
                 | Self::VaultSettingsLearning
                 | Self::VaultSettingsLearningPut
                 | Self::VaultSettingsLearningClear
@@ -4181,6 +4193,8 @@ impl AgentVerb {
             Self::VaultGatePolicyPropose => &["spec"],
             Self::VaultGateCheckerGet => &["spec"],
             Self::VaultGateCheckerSet => &["spec"],
+            Self::VaultLearningRead => &["spec"],
+            Self::VaultLearningProjection => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -4766,6 +4780,8 @@ impl AgentVerb {
             Self::VaultGatePolicyPropose => &["spec"],
             Self::VaultGateCheckerGet => &["spec"],
             Self::VaultGateCheckerSet => &["spec"],
+            Self::VaultLearningRead => &["spec"],
+            Self::VaultLearningProjection => &["spec"],
             Self::VaultSettingsLearning => &["spec"],
             Self::VaultSettingsLearningPut => &["spec"],
             Self::VaultSettingsLearningClear => &["spec"],
@@ -5777,6 +5793,12 @@ impl AgentVerb {
             }
             Self::VaultGateCheckerSet => {
                 "The owner sets the calibrated checker model, slot, confidence floor and shadow or enforce mode without changing other model bindings."
+            }
+            Self::VaultLearningRead => {
+                "The owner reads a measured learning cell, its explicit prior, derived UNTESTED mark, projector heads and anchored evidence; borrowed provenance stays separate from own runs."
+            }
+            Self::VaultLearningProjection => {
+                "The owner observes the stored projection receipt for an anchored attempt outcome; an absent receipt means projection has not committed, never a successful empty projection."
             }
             Self::VaultSettingsLearning => {
                 "The owner reads the learned-setting catalog, each knob's value now, and the owner's seed and pin rows at the vault, a project or a task type."
