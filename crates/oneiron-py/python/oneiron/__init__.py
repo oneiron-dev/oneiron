@@ -1433,6 +1433,9 @@ class Oneiron:
         def join(self, spec):
             """Files and decides a request to take part in a room or one of its threads."""
             return json.loads(_translate(lambda: self._client.vault_rooms_join(json.dumps(spec))))
+        def invite(self, spec):
+            """The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent."""
+            return json.loads(_translate(lambda: self._client.vault_rooms_invite(json.dumps(spec))))
         def consent(self, spec):
             """One party's answer to a join that waits on it, after which the join is decided again."""
             return json.loads(_translate(lambda: self._client.vault_rooms_consent(json.dumps(spec))))

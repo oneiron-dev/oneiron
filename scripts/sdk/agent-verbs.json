@@ -3168,6 +3168,20 @@
       "section": false
     },
     {
+      "name": "vault.rooms.invite",
+      "description": "The vault's owner invites a person into an ordinary room: files her join with the owner's admission yes, which holds until she answers yes through vault.rooms.consent.",
+      "input": "crate::workspace_roster::JoinRequest",
+      "output": "crate::workspace_roster::JoinOutcome",
+      "call": "memory.rooms_invite(&input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$",
+        "room_ref": "=room"
+      },
+      "mcp_scope": "unrestricted",
+      "section": false
+    },
+    {
       "name": "vault.rooms.consent",
       "description": "One party's answer to a join that waits on it, after which the join is decided again.",
       "input": "crate::workspace_roster::ConsentAnswer",

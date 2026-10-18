@@ -235,6 +235,7 @@ vaultProjectsConfirm(input: unknown): unknown
 vaultProjectsRosterWrite(input: unknown): unknown
 vaultProjectsGoalIntake(input: unknown): unknown
 vaultRoomsJoin(input: unknown): unknown
+vaultRoomsInvite(input: unknown): unknown
 vaultRoomsConsent(input: unknown): unknown
 vaultRoomsOffer(input: unknown): unknown
 vaultRoomsOfferAnswer(input: unknown): unknown

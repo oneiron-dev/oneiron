@@ -1108,6 +1108,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 ),
             ),
             (
+                "vault.rooms.invite",
+                crate::code_run::vault_read::request_schema::<crate::workspace_roster::JoinRequest>(
+                ),
+            ),
+            (
                 "vault.rooms.consent",
                 crate::code_run::vault_read::request_schema::<crate::workspace_roster::ConsentAnswer>(
                 ),
@@ -3349,6 +3354,17 @@ pub fn mcp_arguments_schema_from_input(
             );
             &["spec", "room_ref"]
         }
+        "vault.rooms.invite" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            properties.insert(
+                "room_ref".to_owned(),
+                schema.pointer("/properties/room")?.clone(),
+            );
+            &["spec", "room_ref"]
+        }
         "vault.rooms.consent" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -4749,6 +4765,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.rooms.join" => {
             let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
         }
+        "vault.rooms.invite" => {
+            let _input: crate::workspace_roster::JoinRequest = decode(value.clone())?;
+        }
         "vault.rooms.consent" => {
             let _input: crate::workspace_roster::ConsentAnswer = decode(value.clone())?;
         }
@@ -5549,6 +5568,7 @@ pub fn invoke(
         }
         "vault.projects.goal.intake" => encode(vault_projects_goal_intake(memory, decode(value)?)?),
         "vault.rooms.join" => encode(vault_rooms_join(memory, decode(value)?)?),
+        "vault.rooms.invite" => encode(vault_rooms_invite(memory, decode(value)?)?),
         "vault.rooms.consent" => encode(vault_rooms_consent(memory, decode(value)?)?),
         "vault.rooms.offer" => encode(vault_rooms_offer(memory, decode(value)?)?),
         "vault.rooms.offer.answer" => encode(vault_rooms_offer_answer(memory, decode(value)?)?),
@@ -7563,6 +7583,12 @@ pub fn vault_rooms_join(
     input: crate::workspace_roster::JoinRequest,
 ) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
     memory.rooms_join(&input)
+}
+pub fn vault_rooms_invite(
+    memory: &Memory<'_>,
+    input: crate::workspace_roster::JoinRequest,
+) -> MemoryResult<crate::workspace_roster::JoinOutcome> {
+    memory.rooms_invite(&input)
 }
 pub fn vault_rooms_consent(
     memory: &Memory<'_>,
