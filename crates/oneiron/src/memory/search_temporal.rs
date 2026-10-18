@@ -88,7 +88,10 @@ impl TemporalSearchRequest {
                 ));
             }
         }
-        for range in [self.occurred_range, self.learned_range].into_iter().flatten() {
+        for range in [self.occurred_range, self.learned_range]
+            .into_iter()
+            .flatten()
+        {
             range.validate()?;
         }
         Ok(())
@@ -139,11 +142,12 @@ impl Memory<'_> {
             let Some(header) = EntityMetadataHeader::parse(&raw) else {
                 return Ok(false);
             };
-            Ok(input.occurred_range.is_none_or(|range| {
-                range.overlaps(header.occurred_start, header.occurred_end)
-            }) && input.learned_range.is_none_or(|range| {
-                range.overlaps(header.learned_at, header.learned_at)
-            }))
+            Ok(input
+                .occurred_range
+                .is_none_or(|range| range.overlaps(header.occurred_start, header.occurred_end))
+                && input
+                    .learned_range
+                    .is_none_or(|range| range.overlaps(header.learned_at, header.learned_at)))
         };
         let mut pipeline = self
             .vault
