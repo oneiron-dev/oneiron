@@ -5378,7 +5378,7 @@
      "purpose": "Session-less, high-entropy capabilities",
      "surface": {
       "crate-vis": 4,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -5402,17 +5402,25 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "EsignCreateRequest",
-      "EsignDraftView"
+      "EsignDispatchRequest",
+      "EsignDispatchView",
+      "EsignDocumentView",
+      "EsignDraftView",
+      "EsignGetRequest",
+      "EsignIssuedLink",
+      "EsignLinksIssueRequest",
+      "EsignLinksView",
+      "EsignVoidRequest"
      ],
      "path": "src/blob_artifact/esign/door.rs",
-     "purpose": "`vault.esign.create` (ARCH-0064 D3, D5): a signing document's draft from outside Rust",
+     "purpose": "The e-sign doors outside Rust (ARCH-0064 D3, D5, SGN-02)",
      "surface": {
-      "fn": 1,
-      "struct": 2
+      "fn": 6,
+      "struct": 10
      }
     },
     {
@@ -5463,7 +5471,7 @@
      "purpose": "Claims are the document state machine",
      "surface": {
       "const": 1,
-      "crate-vis": 12,
+      "crate-vis": 13,
       "fn": 3
      }
     },
@@ -5521,7 +5529,7 @@
      "path": "src/blob_artifact/esign/model.rs",
      "purpose": "Typed document, recipient, field and event vocabulary for ARCH-0064",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 9,
       "struct": 10
      }
@@ -19789,7 +19797,7 @@
      "path": "src/dreamer_wake/mod.rs",
      "purpose": "Dreamer wake-pass driver (ONE-1288, DREAM-001 residual)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "re-export": 11
      }
     },
@@ -19839,7 +19847,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ProjectorPolicy"
@@ -19847,7 +19855,7 @@
      "path": "src/dreamer_wake/projector.rs",
      "purpose": "The projector's surprise check (ARCH-0026 RD-26): a due wake writes only when its material is new to the…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "fn": 2,
       "struct": 1
      }
@@ -19959,7 +19967,7 @@
      "path": "src/dreamer_wake/sieve/mod.rs",
      "purpose": "The continuous sieve (ARCH-0026, the Continuous recipe): the cheap check that tags what is new on the local…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 2,
       "re-export": 3,
@@ -43687,7 +43695,7 @@
      "path": "src/store/local_replica.rs",
      "purpose": "Local-only removal of one canonical window's replica (OF-534 demotion)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -45723,7 +45731,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "AuthorityCheckpointPart",
@@ -45733,7 +45741,7 @@
      "purpose": "Authority history for a machine that syncs what it opened (OF-469, the delivery half)",
      "surface": {
       "const": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -46474,7 +46482,7 @@
      "path": "src/tagging/mod.rs",
      "purpose": "The tagging marker and its drain: the write path's outbox rule applied to the Oneironer slot (ARCH-0036…",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "re-export": 8
      }
     },
@@ -46500,7 +46508,7 @@
      "path": "src/tagging/provisional.rs",
      "purpose": "Provisional entities: what a save mints when the identity key names nothing (ARCH-0055 §10), for the Dreamer…",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 5,
       "struct": 1
      }
@@ -46540,7 +46548,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "DerivationEnvelope",
@@ -46554,7 +46562,7 @@
      "path": "src/tagging/tags.rs",
      "purpose": "The saved tag sets: what save mode keeps for a tagged turn, the index of the entities they name, and the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 2,
       "fn": 7,
       "struct": 5
@@ -47872,7 +47880,7 @@
      "purpose": "—",
      "surface": {
       "const": 2,
-      "fn": 359
+      "fn": 364
      }
     },
     {
@@ -54476,7 +54484,7 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 185,
+   "over_bar": 187,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 3311,
    "test_files": 902
@@ -62601,7 +62609,7 @@
      "path": "src/facade/client/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 310
+      "fn": 315
      }
     },
     {
@@ -63621,7 +63629,7 @@
      "path": "src/agent_verbs.rs",
      "purpose": "—",
      "surface": {
-      "fn": 311
+      "fn": 316
      }
     },
     {
@@ -74309,6 +74317,7 @@
      "bucket": "XL",
      "kind": "src",
      "notable": [
+      "AccessStatus",
       "ActExecution",
       "AdmissionBasis",
       "AdmissionConsent",
@@ -74566,6 +74575,7 @@
       "DeckProposeRequest",
       "DeckReviewView",
       "DeclaredMaximum",
+      "DeliveryStatus",
       "DerivationKind",
       "DiaryEntryReceipt",
       "DiaryEntryRequest",
@@ -74613,14 +74623,25 @@
       "EraseShare",
       "EscalationRule",
       "EscalationTrigger",
+      "EsignAuditActor",
       "EsignCreateRequest",
+      "EsignDispatchRequest",
+      "EsignDispatchView",
       "EsignDocument",
+      "EsignDocumentView",
       "EsignDraftView",
+      "EsignEvent",
+      "EsignEventRow",
       "EsignField",
+      "EsignGetRequest",
+      "EsignIssuedLink",
       "EsignItem",
       "EsignLifecycleRules",
+      "EsignLinksIssueRequest",
+      "EsignLinksView",
       "EsignNoticeSwitches",
       "EsignRecipient",
+      "EsignVoidRequest",
       "EvalCase",
       "EvalExposure",
       "EvalExposureKind",
@@ -74656,6 +74677,7 @@
       "FeedbackProposal",
       "FieldGeometry",
       "FieldMeta",
+      "FieldValue",
       "FolderItemInput",
       "ForkKind",
       "ForkState",
@@ -75025,6 +75047,7 @@
       "ReceiptKind",
       "ReceiptRecord",
       "RecipientRole",
+      "RecipientState",
       "RecordEraseConfirmRequest",
       "RecordEraseOutcome",
       "RecordErasePreview",
@@ -75257,6 +75280,8 @@
       "SharedVaultChange",
       "SharedVaultDeletion",
       "SharedVaultRequest",
+      "SignatureRow",
+      "SigningStatus",
       "SkillAuthoringReceipt",
       "SkillForkRequest",
       "SkillSaveRequest",
@@ -75435,8 +75460,8 @@
      "path": "src/facade_types_generated.rs",
      "purpose": "—",
      "surface": {
-      "enum": 307,
-      "struct": 815
+      "enum": 312,
+      "struct": 827
      }
     },
     {
