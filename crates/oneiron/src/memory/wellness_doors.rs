@@ -53,7 +53,9 @@ impl Memory<'_> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         self.affect_owner_in_txn(&txn, owner)?;
         drop(txn);
-        Ok(self.vault.set_action_mode_policy(owner, input.policy.clone())?)
+        Ok(self
+            .vault
+            .set_action_mode_policy(owner, input.policy.clone())?)
     }
 
     pub fn wellness_derive_as_owner(
@@ -87,17 +89,26 @@ impl Memory<'_> {
             if self.vault.get_entity_type_in_txn(txn, &person)?
                 != Some(crate::registry::ENTITY_TYPE_PERSON)
             {
-                return Err(MemoryError::bad_request("wellness projection requires a PERSON"));
+                return Err(MemoryError::bad_request(
+                    "wellness projection requires a PERSON",
+                ));
             }
-            let measured = self.vault.project_action_mode_in_txn(txn, &person, now, refresh)?;
+            let measured = self
+                .vault
+                .project_action_mode_in_txn(txn, &person, now, refresh)?;
             let coping = self.coping_aggregate_in_txn(txn, person, None)?;
             let mut refs = vec![person];
             if let Some(claim) = &measured.state_index.claim {
                 let claim = EntityId::from_hex(claim)?;
                 refs.push(claim);
-                let body = self.vault.get_claim_in_txn(txn, &claim)?.ok_or(Error::EntityNotFound)?;
+                let body = self
+                    .vault
+                    .get_claim_in_txn(txn, &claim)?
+                    .ok_or(Error::EntityNotFound)?;
                 let mut inputs = Vec::new();
-                if let Some(evidence) = &body.evidence { collect_refs(evidence, &mut inputs); }
+                if let Some(evidence) = &body.evidence {
+                    collect_refs(evidence, &mut inputs);
+                }
                 for id in &inputs {
                     if self.vault.get_entity_type_in_txn(txn, id)?
                         != Some(crate::registry::ENTITY_TYPE_CLAIM)
@@ -105,14 +116,18 @@ impl Memory<'_> {
                         continue;
                     }
                     if let Some(body) = self.vault.get_claim_in_txn(txn, id)? {
-                        if let Some(evidence) = &body.evidence { collect_refs(evidence, &mut refs); }
+                        if let Some(evidence) = &body.evidence {
+                            collect_refs(evidence, &mut refs);
+                        }
                     }
                 }
                 refs.extend(inputs);
             }
             for outcome in &coping.outcomes {
                 refs.push(EntityId::from_hex(&outcome.claim_ref)?);
-                for reference in &outcome.evidence_refs { refs.push(EntityId::from_hex(reference)?); }
+                for reference in &outcome.evidence_refs {
+                    refs.push(EntityId::from_hex(reference)?);
+                }
             }
             // Annotation claims are separate evidence, not the factual claims the person stated.
             for turn in refs.clone() {
@@ -120,9 +135,14 @@ impl Memory<'_> {
                     == Some(crate::registry::ENTITY_TYPE_TURN)
                 {
                     let annotation = crate::affect::vad_annotation_claim_id(
-                        crate::registry::ENTITY_TYPE_TURN, &turn,
+                        crate::registry::ENTITY_TYPE_TURN,
+                        &turn,
                     )?;
-                    if self.vault.get_entity_type_in_txn(txn, &annotation)?.is_some() {
+                    if self
+                        .vault
+                        .get_entity_type_in_txn(txn, &annotation)?
+                        .is_some()
+                    {
                         refs.push(annotation);
                     }
                 }
@@ -143,15 +163,25 @@ impl Memory<'_> {
             if refresh {
                 let bytes = serde_json::to_vec(&projection)
                     .map_err(|_| MemoryError::bad_request("invalid wellness projection"))?;
-                let target = projection.state_index.claim.as_deref()
-                    .map(EntityId::from_hex).transpose()?;
+                let target = projection
+                    .state_index
+                    .claim
+                    .as_deref()
+                    .map(EntityId::from_hex)
+                    .transpose()?;
                 let decision = super::authorship::decision(
                     WriteActor::new(self.actor, self.actor_class),
-                    "wellness_projection", "approved", "gate.affect.wellness.configured_policy",
-                    target, bytes, now,
+                    "wellness_projection",
+                    "approved",
+                    "gate.affect.wellness.configured_policy",
+                    target,
+                    bytes,
+                    now,
                 );
                 projection.receipt_ref = Some(format!("gate:{}", decision.decision_id.to_hex()));
-                self.vault.store.append_gate_decision_in_txn(txn, &decision)?;
+                self.vault
+                    .store
+                    .append_gate_decision_in_txn(txn, &decision)?;
             }
             Ok(projection)
         })

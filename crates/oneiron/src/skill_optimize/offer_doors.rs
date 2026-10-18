@@ -3,16 +3,17 @@
 use serde::{Deserialize, Serialize};
 
 use super::{
-    EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCheck, TrainingOffer,
-    settle_training_offer, training_offer, training_offer_checks, training_offers,
-    undo_training_offer_switch,
+    EvalSeat, OfferAnswer, OfferAnswerRecord, OfferCheck, TrainingOffer, settle_training_offer,
+    training_offer, training_offer_checks, training_offers, undo_training_offer_switch,
 };
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::coach::{
     COACH_HOST_QUEUE_KIND, COACH_TRAINING_OFFER_FACET,
 };
-use crate::dreamer_runner::{DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
+use crate::dreamer_runner::{
+    DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
+};
 use crate::{EntityId, Error, Result, Vault};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
@@ -121,7 +122,9 @@ pub fn result(
         return Ok(None);
     };
     if status.payload.attempt_type != COACH_TRAINING_OFFER_FACET {
-        return Err(Error::InvalidConfig("the attempt is not a Coach offer pass".into()));
+        return Err(Error::InvalidConfig(
+            "the attempt is not a Coach offer pass".into(),
+        ));
     }
     let offers = training_offers(vault, None)?
         .into_iter()
@@ -136,10 +139,19 @@ pub fn result(
     }))
 }
 
-pub fn list(vault: &Vault, owner: &AuthenticatedOwner, input: OfferListRequest) -> Result<Vec<OfferView>> {
+pub fn list(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferListRequest,
+) -> Result<Vec<OfferView>> {
     owner.revalidate_person(vault)?;
     let pending = if input.pending_only {
-        Some(super::pending_training_offers(vault)?.into_iter().map(|row| row.id).collect::<std::collections::BTreeSet<_>>())
+        Some(
+            super::pending_training_offers(vault)?
+                .into_iter()
+                .map(|row| row.id)
+                .collect::<std::collections::BTreeSet<_>>(),
+        )
     } else {
         None
     };
@@ -148,25 +160,57 @@ pub fn list(vault: &Vault, owner: &AuthenticatedOwner, input: OfferListRequest) 
         .filter(|(offer, _)| pending.as_ref().is_none_or(|ids| ids.contains(&offer.id)))
         .map(|(offer, answer)| {
             let checks = training_offer_checks(vault, &offer.id)?;
-            Ok(OfferView { offer, answer, checks })
+            Ok(OfferView {
+                offer,
+                answer,
+                checks,
+            })
         })
         .collect()
 }
 
-pub fn get(vault: &Vault, owner: &AuthenticatedOwner, input: OfferRef) -> Result<Option<OfferView>> {
+pub fn get(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferRef,
+) -> Result<Option<OfferView>> {
     owner.revalidate_person(vault)?;
-    let Some(offer) = training_offer(vault, &input.offer)? else { return Ok(None); };
+    let Some(offer) = training_offer(vault, &input.offer)? else {
+        return Ok(None);
+    };
     let answer = training_offers(vault, Some(&offer.seat))?
-        .into_iter().find(|(row, _)| row.id == input.offer).and_then(|(_, answer)| answer);
+        .into_iter()
+        .find(|(row, _)| row.id == input.offer)
+        .and_then(|(_, answer)| answer);
     let checks = training_offer_checks(vault, &input.offer)?;
-    Ok(Some(OfferView { offer, answer, checks }))
+    Ok(Some(OfferView {
+        offer,
+        answer,
+        checks,
+    }))
 }
 
-pub fn answer(vault: &Vault, owner: &AuthenticatedOwner, input: OfferAnswerRequest) -> Result<OfferAnswerRecord> {
-    settle_training_offer(vault, owner, &input.offer, &input.digest, input.answer, None, vault.now_recorded_at())
+pub fn answer(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferAnswerRequest,
+) -> Result<OfferAnswerRecord> {
+    settle_training_offer(
+        vault,
+        owner,
+        &input.offer,
+        &input.digest,
+        input.answer,
+        None,
+        vault.now_recorded_at(),
+    )
 }
 
-pub fn undo(vault: &Vault, owner: &AuthenticatedOwner, input: OfferRef) -> Result<OfferUndoReceipt> {
+pub fn undo(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OfferRef,
+) -> Result<OfferUndoReceipt> {
     let receipt = undo_training_offer_switch(vault, owner, &input.offer, vault.now_recorded_at())?;
     Ok(OfferUndoReceipt {
         offer: receipt.offer,

@@ -7,6 +7,14 @@ use super::*;
 #[napi]
 impl NativeClient {
     #[napi]
+    pub fn fetch(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("fetch", input).map_err(facade_error)
+    }
+    #[napi]
+    pub fn crawl(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner.agent_verb("crawl", input).map_err(facade_error)
+    }
+    #[napi]
     pub fn report(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner.agent_verb("report", input).map_err(facade_error)
     }
@@ -794,6 +802,24 @@ impl NativeClient {
     pub fn vault_receipts_get(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.receipts.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_admission_status(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.admission.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_admission_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.admission.receipts", input)
             .map_err(facade_error)
     }
     #[napi]

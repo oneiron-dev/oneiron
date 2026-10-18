@@ -111,17 +111,26 @@ impl Vault {
         let policy = POLICY.get(&self.store, txn, &())?;
         let state_index = if refresh {
             match &policy {
-                Some(policy) => self.refresh_state_index_in_txn(txn, subject, &policy.window, now)?
-                    .map(|(_, index)| index).unwrap_or_default(),
+                Some(policy) => self
+                    .refresh_state_index_in_txn(txn, subject, &policy.window, now)?
+                    .map(|(_, index)| index)
+                    .unwrap_or_default(),
                 None => Default::default(),
             }
         } else {
             self.state_index_in_txn(txn, subject, now)?
         };
         let mode = state_index.inputs.as_ref().and_then(|_| {
-            policy.as_ref().and_then(|policy| policy.mode_for(state_index.value)).cloned()
+            policy
+                .as_ref()
+                .and_then(|policy| policy.mode_for(state_index.value))
+                .cloned()
         });
-        Ok(ActionModeProjection { policy, state_index, mode })
+        Ok(ActionModeProjection {
+            policy,
+            state_index,
+            mode,
+        })
     }
 
     /// Replaces the owner's action-mode policy; `None` clears it.

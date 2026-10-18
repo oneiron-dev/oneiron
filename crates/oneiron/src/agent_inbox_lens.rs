@@ -132,7 +132,11 @@ impl Vault {
         limit: usize,
         before: Option<(InboxImpact, u64, String)>,
     ) -> Result<Vec<AgentInboxLensItem>> {
-        let query = AgentInboxLensQuery { identity_ref: None, limit, before };
+        let query = AgentInboxLensQuery {
+            identity_ref: None,
+            limit,
+            before,
+        };
         self.agent_inbox_view(&query, |row| {
             row.actor_ref == actor && identity.is_none_or(|id| row.identity_ref == id)
         })

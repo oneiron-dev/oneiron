@@ -300,6 +300,20 @@ impl NativeClient {
     }
 
     // BEGIN GENERATED AGENT VERBS
+    fn fetch(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "fetch")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("fetch", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn crawl(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "crawl")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("crawl", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn report(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "report")?;
         let output = py
@@ -1067,6 +1081,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.receipts.get")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.receipts.get", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_admission_status(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.admission.status")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.admission.status", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn self_admission_receipts(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "self.admission.receipts")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("self.admission.receipts", input))
             .map_err(raise)?;
         encode(&output)
     }
