@@ -114,8 +114,8 @@ pub(crate) use super::widen_proposal_doors::*;
 pub(crate) use super::craft_candidate_doors::*;
 // The app's policy-action doors (OF-181), likewise.
 pub(crate) use super::channel_doors::*;
-pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::content_policy_doors::*;
+pub(crate) use super::gate_policy_doors::*;
 pub(crate) use super::policy_doors::*;
 // The owner's origin and checkout doors (DOOR-139), likewise.
 pub(crate) use super::origin_doors::*;
@@ -139,6 +139,7 @@ pub(crate) use super::critic_review_doors::*;
 // The owner's campaign split evaluation door (FIX 655), likewise.
 pub(crate) use super::campaign_split_doors::*;
 pub(crate) use super::research_doors::*;
+pub(crate) use super::retrieval_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
@@ -1112,6 +1113,15 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.decisions.bands.read"
         | "vault.decisions.bands.learn"
         | "vault.decisions.bands.enforce"
+        | "vault.retrieval.recall"
+        | "vault.retrieval.runs"
+        | "vault.retrieval.run"
+        | "vault.retrieval.turn"
+        | "vault.retrieval.outcomes.put"
+        | "vault.retrieval.outcomes.end"
+        | "vault.retrieval.trace"
+        | "vault.retrieval.export"
+        | "vault.retrieval.replay"
         | "vault.learning.read"
         | "vault.learning.projection"
         | "vault.settings.learning"

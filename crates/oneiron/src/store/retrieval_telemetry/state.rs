@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 /// The sixteen ARCH-0037 inputs. Missing named-msgpack fields have zero
 /// defaults; outcome-dependent features never enter this hot-path bus.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct RetrievalState {
     pub top_score_norm: f32,
@@ -126,7 +126,7 @@ impl RetrievalState {
 
 /// A caller's turn identity. Each run remains independent; grouping is a read
 /// projection, never a collapsing write.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalTurn {
     pub turn_id: [u8; 16],
     pub episode_id: [u8; 16],
@@ -137,7 +137,7 @@ pub struct RetrievalTurn {
 /// query packet (or session message) and corpus snapshot. Neither raw query
 /// content nor a query hash is written to telemetry. An absent reference means
 /// this row alone cannot reconstruct that part of the request.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RetrievalReplayInputs {
     pub query_ref: Option<String>,
     pub config: serde_json::Value,
