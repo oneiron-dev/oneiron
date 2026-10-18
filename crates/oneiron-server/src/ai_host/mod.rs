@@ -61,6 +61,7 @@ pub(crate) mod test_support;
 mod tests;
 pub(crate) mod trained_serving;
 mod training_offer;
+pub(crate) mod training_pack;
 mod turn_actions;
 mod turns;
 pub(crate) mod waves;
