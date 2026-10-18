@@ -167,6 +167,8 @@ pub struct DecisionHost {
     booking_parse: Option<BookingParseSettings>,
     connector_slate: Option<ConnectorSlateSettings>,
     import_audience: Option<ImportAudienceSettings>,
+    /// `[models.decisions].wire_health`: the wire health question's wording.
+    wire_health: Option<String>,
     /// The owner's explicit opt-in to send unit text off the host,
     /// `[models.decisions.system_one].remote_opt_in`.
     remote_opt_in: bool,
@@ -206,6 +208,7 @@ impl DecisionHost {
             booking_parse: None,
             connector_slate: None,
             import_audience: None,
+            wire_health: None,
             remote_opt_in: false,
             big_model: None,
             verdict_spend: Arc::default(),
@@ -494,6 +497,19 @@ impl DecisionHost {
     #[must_use]
     pub fn import_audience(&self) -> Option<&ImportAudienceSettings> {
         self.import_audience.as_ref()
+    }
+
+    /// The wire health question's wording (FIX 1088).
+    fn with_wire_health(mut self, wording: Option<&str>) -> Self {
+        self.wire_health = wording.map(str::to_owned);
+        self
+    }
+
+    /// The wording `[models.decisions].wire_health` gives the wire health
+    /// question; `None` asks in the host's own words.
+    #[must_use]
+    pub fn wire_health_wording(&self) -> Option<&str> {
+        self.wire_health.as_deref()
     }
 
     /// The seat `[models.decisions.booking_parse]` names for a booking's
@@ -998,7 +1014,8 @@ impl SyncServer {
             .with_image_pick(models.decisions.image_pick.as_ref())
             .with_booking_parse(models.decisions.booking_parse.clone())
             .with_connector_slate(models.decisions.connector_slate.as_ref())
-            .with_import_audience(models.decisions.import_audience.as_ref());
+            .with_import_audience(models.decisions.import_audience.as_ref())
+            .with_wire_health(models.decisions.wire_health.as_deref());
         self
     }
 
@@ -1095,13 +1112,15 @@ impl DecisionReadGate for HouseGate {
             .turns
             .admit_background_blocking()
             .map_err(|_| refused("waited out its turn"))?;
-        // Inside a verdict, the caller's own line (FIX 1123).
+        // Inside a verdict, the caller's own line (FIX 1123), billing the
+        // payer its run binds (FIX 3574).
         let meter = crate::decision_verdict::rung_meter(&self.meter);
-        let run = crate::models::undeclared_run(
+        let run = crate::models::funded_run(
             HOUSE_READ_RUN,
             meter.clone(),
             Some(Arc::clone(&self.admission.host)),
             Arc::clone(&self.admission.receipts),
+            crate::decision_verdict::rung_payer(),
         );
         let permit = run
             .admit_paid(&self.connector, meter.reserve_units())

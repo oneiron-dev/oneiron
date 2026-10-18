@@ -5,6 +5,11 @@
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
+//! The owner's pack, subscription, setup, audit, mesh and lens doors list
+//! their rows (`host_door_lists`): each lists the rows its answer is read
+//! from, and none for the state that lives in side tables or the authority
+//! log, which hold no row.
+//!
 //! The `ai.*` doors admit as `/v1/ai/<operation>` does (api/ai/media.rs):
 //! the call is the owner's, the vault's inference policy admits its model,
 //! then its seat's ladder admits, sends and settles each rung it reaches.
@@ -101,7 +106,7 @@ pub(crate) use crate::api::context_board::{vault_explain_gate, vault_explain_mem
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
 /// request. The put is the consent for the pack's hooks.
-pub(crate) async fn vault_packs_put(
+async fn vault_packs_put_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackPutRequest,
@@ -115,9 +120,25 @@ pub(crate) async fn vault_packs_put(
     .map_err(|_| internal("vault.packs.put"))?
 }
 
+/// [`vault_packs_put_answer`], listing the pack's source row its receipt names, when it installed
+/// one (`host_door_lists`).
+pub(crate) async fn vault_packs_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackPutRequest,
+) -> Listed<PackPutReceipt> {
+    naming(vault_packs_put_answer(server, auth, input).await, |put| {
+        put.receipt
+            .as_deref()
+            .and_then(pack_source)
+            .into_iter()
+            .collect()
+    })
+}
+
 /// `vault.packs.remove`: the owner removes an installed pack, under the
 /// proof `/v1/owner/packs/remove` takes. Answers the removed receipt.
-pub(crate) async fn vault_packs_remove(
+async fn vault_packs_remove_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackRemoveRequest,
@@ -131,10 +152,22 @@ pub(crate) async fn vault_packs_remove(
     .map_err(|_| internal("vault.packs.remove"))?
 }
 
+/// [`vault_packs_remove_answer`], listing the removed pack's source row (`host_door_lists`).
+pub(crate) async fn vault_packs_remove(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: PackRemoveRequest,
+) -> Listed<oneiron::skill_hub::pack_catalog::PackInstallReceipt> {
+    naming(
+        vault_packs_remove_answer(server, auth, input).await,
+        |removed| pack_source(removed).into_iter().collect(),
+    )
+}
+
 /// `vault.connectors.subscriptions.put`: the owner subscribes an agent to
 /// the messages a built-in channel's pack routes to it (OF-519), as
 /// `POST /v1/owner/connectors/subscriptions` does.
-pub(crate) async fn vault_connectors_subscriptions_put(
+async fn vault_connectors_subscriptions_put_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ChannelSubscriptionRequest,
@@ -148,9 +181,28 @@ pub(crate) async fn vault_connectors_subscriptions_put(
     .map_err(|_| internal("vault.connectors.subscriptions.put"))?
 }
 
+/// [`vault_connectors_subscriptions_put_answer`], listing the subscription, its connector key and
+/// its agent (`host_door_lists`).
+pub(crate) async fn vault_connectors_subscriptions_put(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRequest,
+) -> Listed<oneiron::connector_key::ChannelMessageSubscription> {
+    naming(
+        vault_connectors_subscriptions_put_answer(server, auth, input).await,
+        |subscribed| {
+            hex_rows([
+                &subscribed.subscription,
+                &subscribed.connector_key,
+                &subscribed.agent,
+            ])
+        },
+    )
+}
+
 /// `vault.connectors.subscriptions.list`: an agent's connector event
 /// subscriptions, standing and revoked, for the owner.
-pub(crate) async fn vault_connectors_subscriptions_list(
+async fn vault_connectors_subscriptions_list_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ChannelSubscriptionsRequest,
@@ -164,9 +216,28 @@ pub(crate) async fn vault_connectors_subscriptions_list(
     .map_err(|_| internal("vault.connectors.subscriptions.list"))?
 }
 
+/// [`vault_connectors_subscriptions_list_answer`], listing each subscription it shows and its
+/// connector key (`host_door_lists`).
+pub(crate) async fn vault_connectors_subscriptions_list(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionsRequest,
+) -> Listed<ChannelSubscriptions> {
+    naming(
+        vault_connectors_subscriptions_list_answer(server, auth, input).await,
+        |listed| {
+            listed
+                .subscriptions
+                .iter()
+                .flat_map(|row| hex_rows([&row.subscription, &row.connector_key]))
+                .collect()
+        },
+    )
+}
+
 /// `vault.connectors.subscriptions.revoke`: the owner stops a subscription;
 /// its key stays.
-pub(crate) async fn vault_connectors_subscriptions_revoke(
+async fn vault_connectors_subscriptions_revoke_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ChannelSubscriptionRevokeRequest,
@@ -182,6 +253,19 @@ pub(crate) async fn vault_connectors_subscriptions_revoke(
     })
     .await
     .map_err(|_| internal("vault.connectors.subscriptions.revoke"))?
+}
+
+/// [`vault_connectors_subscriptions_revoke_answer`], listing the subscription it stopped
+/// (`host_door_lists`).
+pub(crate) async fn vault_connectors_subscriptions_revoke(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ChannelSubscriptionRevokeRequest,
+) -> Listed<ChannelSubscriptionRevoked> {
+    naming(
+        vault_connectors_subscriptions_revoke_answer(server, auth, input).await,
+        |revoked| hex_rows([&revoked.subscription]),
+    )
 }
 
 /// `vault.artifacts.review_slides`: reviews an artifact's head through the
@@ -310,7 +394,8 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
-    let beside = read_beside([input.artifact_ref.as_str()]);
+    let beside =
+        read_beside(std::iter::once(input.artifact_ref.as_str()).chain(input.fork_ref.as_deref()));
     let (answer, mut listed) =
         credential_listing(server, auth, caller, VERB, move |_, _, memory| {
             memory.artifacts_body_deck_preview(
@@ -327,7 +412,7 @@ pub(crate) async fn vault_artifacts_body_deck_preview(
 
 /// `vault.authority.audit`: one page of the dated AUTHORITY_LOG audit, the
 /// owner's view under the proof `/v1/owner` takes from the request.
-pub(crate) async fn vault_authority_audit(
+async fn vault_authority_audit_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::receipt::AuthorityAuditQuery,
@@ -344,10 +429,23 @@ pub(crate) async fn vault_authority_audit(
     .map_err(|_| internal("vault.authority.audit"))?
 }
 
+/// [`vault_authority_audit_answer`], listing no row: the authority log holds none
+/// (`host_door_lists`).
+pub(crate) async fn vault_authority_audit(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::receipt::AuthorityAuditQuery,
+) -> Listed<oneiron::receipt::AuthorityAuditPage> {
+    naming(
+        vault_authority_audit_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
 /// `vault.mesh.path_receipts`: the newest path receipts this machine's
 /// paired-machine mesh left, newest first and bounded, the owner's view
 /// under the proof `/v1/owner` takes from the request.
-pub(crate) async fn vault_mesh_path_receipts(
+async fn vault_mesh_path_receipts_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: oneiron::task_verb::sdk::MeshPathReceiptsRequest,
@@ -362,6 +460,19 @@ pub(crate) async fn vault_mesh_path_receipts(
     })
     .await
     .map_err(|_| internal("vault.mesh.path_receipts"))?
+}
+
+/// [`vault_mesh_path_receipts_answer`], listing no row: path receipts live in a side table
+/// (`host_door_lists`).
+pub(crate) async fn vault_mesh_path_receipts(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::task_verb::sdk::MeshPathReceiptsRequest,
+) -> Listed<Vec<oneiron::sync::mesh_path::MeshPathReceipt>> {
+    naming(
+        vault_mesh_path_receipts_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
 }
 
 /// `ai.options`: the rows the credential could call now, where each runs,
@@ -700,6 +811,8 @@ pub(crate) async fn ai_verdict(
                 lane.as_ref(),
                 held,
                 &input,
+                // A facade caller's verdict bills the vault owner.
+                None,
             )
         })
         .await;
@@ -896,6 +1009,10 @@ pub(super) fn internal(verb: &str) -> MemoryError {
 /// its typed error, with the rows read before it.
 pub(crate) type Listed<T> = (MemoryResult<T>, Vec<EntityId>);
 
+/// [`Listed`] for a door one of whose paths lists none: `None` beside that
+/// path's answer ([`ListedRows`]).
+pub(crate) type MaybeListed<T> = (MemoryResult<T>, Option<Vec<EntityId>>);
+
 /// The rows a listing door answers beside its result, as every served door
 /// releases it by them: a list, or `None` for a call one of whose paths
 /// lists none, never an empty list standing in for it.
@@ -919,6 +1036,90 @@ impl ListedRows for Option<Vec<EntityId>> {
 /// A refusal before any read: it lists no row.
 pub(super) fn refused<T>(refusal: MemoryError) -> Listed<T> {
     (Err(refusal), Vec::new())
+}
+
+/// The rows hex ids name; a value that is no id names none.
+fn hex_rows<S: AsRef<str>>(ids: impl IntoIterator<Item = S>) -> Vec<EntityId> {
+    ids.into_iter()
+        .filter_map(|hex| EntityId::from_hex(hex.as_ref()).ok())
+        .collect()
+}
+
+/// The pack source row an install receipt is read from.
+fn pack_source(receipt: &oneiron::skill_hub::pack_catalog::PackInstallReceipt) -> Option<EntityId> {
+    EntityId::from_hex(&receipt.source_id).ok()
+}
+
+/// The lenses a slot decision names: the one it selected or cleared, and
+/// the one the slot held before. Its pack slot and decision live in side
+/// tables.
+fn lens_rows(receipt: &LensActivationReceipt) -> Vec<EntityId> {
+    hex_rows(std::iter::once(&receipt.lens_ref).chain(receipt.previous_ref.iter()))
+}
+
+/// A pack setup door's act off the runtime as the owner, listing what its
+/// view is read from (`host_door_lists`): the pack's source row, each
+/// connection's connector key, each standing grant and each stored secret's
+/// custody record. The session and its checks live in side tables. `None`
+/// when a stored secret's record cannot be read again.
+async fn setup_listing(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(
+        &Arc<SyncServer>,
+        &oneiron::consent::AuthenticatedOwner,
+    ) -> MemoryResult<PackSetupReceipt>
+    + Send
+    + 'static,
+) -> MaybeListed<PackSetupReceipt> {
+    let owner = match owner_proof(auth, server, verb) {
+        Ok(owner) => owner,
+        Err(refusal) => return (Err(refusal), Some(Vec::new())),
+    };
+    let server = Arc::clone(server);
+    tokio::task::spawn_blocking(move || {
+        let answer = act(&server, &owner);
+        let rows = match &answer {
+            Ok(receipt) => setup_rows(server.vault(), &receipt.setup),
+            Err(_) => Some(Vec::new()),
+        };
+        (answer, rows)
+    })
+    .await
+    .unwrap_or_else(|_| (Err(internal(verb)), Some(Vec::new())))
+}
+
+/// The rows a pack setup view is read from, as [`setup_listing`] lists them.
+fn setup_rows(
+    vault: &oneiron::Vault,
+    setup: &oneiron::skill_hub::pack_catalog::PackSetupView,
+) -> Option<Vec<EntityId>> {
+    let mut rows = hex_rows([&setup.source_id]);
+    for connection in &setup.connections {
+        rows.extend(hex_rows(connection.connector_key.iter()));
+        rows.extend(hex_rows(
+            connection
+                .permissions
+                .iter()
+                .filter_map(|permission| permission.grant_ref.as_ref()),
+        ));
+        for secret in connection.secrets.iter().filter(|secret| secret.stored) {
+            rows.extend(vault.resolve_secret_ref(&secret.name).ok()?);
+        }
+    }
+    Some(rows)
+}
+
+/// `answer` beside the rows `named` reads off it, for a door whose answer
+/// derives from no row but those it names (`host_door_lists`). A refusal
+/// lists none.
+pub(super) fn naming<T>(
+    answer: MemoryResult<T>,
+    named: impl FnOnce(&T) -> Vec<EntityId>,
+) -> Listed<T> {
+    let rows = answer.as_ref().map_or_else(|_| Vec::new(), named);
+    (answer, rows)
 }
 
 /// `act` off the runtime with a fresh collector, which its handles list
@@ -1143,7 +1344,7 @@ fn owner_proof(
 /// `vault.lenses.activate`: the owner selects a proposed lens revision for
 /// its pack slot, under the proof `/v1/owner` takes from the request. The
 /// owner's confirmation is the consent; an agent can only propose.
-pub(crate) async fn vault_lenses_activate(
+async fn vault_lenses_activate_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LensActivateRequest,
@@ -1155,9 +1356,22 @@ pub(crate) async fn vault_lenses_activate(
         .map_err(|_| internal("vault.lenses.activate"))?
 }
 
+/// [`vault_lenses_activate_answer`], listing the lens it selected and the one the slot held before
+/// (`host_door_lists`).
+pub(crate) async fn vault_lenses_activate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LensActivateRequest,
+) -> Listed<LensActivationReceipt> {
+    naming(
+        vault_lenses_activate_answer(server, auth, input).await,
+        lens_rows,
+    )
+}
+
 /// `vault.lenses.deactivate`: the owner clears a pack slot's selected lens,
 /// under the same proof. The pack, its skill and the proposal stay.
-pub(crate) async fn vault_lenses_deactivate(
+async fn vault_lenses_deactivate_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LensDeactivateRequest,
@@ -1169,6 +1383,18 @@ pub(crate) async fn vault_lenses_deactivate(
         .map_err(|_| internal("vault.lenses.deactivate"))?
 }
 
+/// [`vault_lenses_deactivate_answer`], listing the lens it cleared (`host_door_lists`).
+pub(crate) async fn vault_lenses_deactivate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: LensDeactivateRequest,
+) -> Listed<LensActivationReceipt> {
+    naming(
+        vault_lenses_deactivate_answer(server, auth, input).await,
+        lens_rows,
+    )
+}
+
 /// `vault.packs.setup.prepare`: the owner opens, or resumes, a pack's guided
 /// setup (OF-378), under the proof `/v1/owner` takes from the request.
 /// Opening grants nothing.
@@ -1176,14 +1402,16 @@ pub(crate) async fn vault_packs_setup_prepare(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackSetupRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = owner_proof(auth, server, "vault.packs.setup.prepare")?;
-    let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::prepare_pack_setup_as_owner(server.vault(), &owner, &input)
-    })
+) -> MaybeListed<PackSetupReceipt> {
+    setup_listing(
+        server,
+        auth,
+        "vault.packs.setup.prepare",
+        move |server, owner| {
+            oneiron::task_verb::sdk::prepare_pack_setup_as_owner(server.vault(), owner, &input)
+        },
+    )
     .await
-    .map_err(|_| internal("vault.packs.setup.prepare"))?
 }
 
 /// `vault.packs.setup.get`: a pack's guided setup as it stands, under the
@@ -1192,14 +1420,16 @@ pub(crate) async fn vault_packs_setup_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackSetupRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = owner_proof(auth, server, "vault.packs.setup.get")?;
-    let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
-        oneiron::task_verb::sdk::pack_setup_as_owner(server.vault(), &owner, &input)
-    })
+) -> MaybeListed<PackSetupReceipt> {
+    setup_listing(
+        server,
+        auth,
+        "vault.packs.setup.get",
+        move |server, owner| {
+            oneiron::task_verb::sdk::pack_setup_as_owner(server.vault(), owner, &input)
+        },
+    )
     .await
-    .map_err(|_| internal("vault.packs.setup.get"))?
 }
 
 /// `vault.packs.setup.answer`: one answer or card action, under the same
@@ -1210,15 +1440,22 @@ pub(crate) async fn vault_packs_setup_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackSetupAnswerRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = owner_proof(auth, server, "vault.packs.setup.answer")?;
-    let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
-        let checks = HostConnectionChecks::new(&server)?;
-        oneiron::task_verb::sdk::answer_pack_setup_as_owner(server.vault(), &owner, &input, &checks)
-    })
+) -> MaybeListed<PackSetupReceipt> {
+    setup_listing(
+        server,
+        auth,
+        "vault.packs.setup.answer",
+        move |server, owner| {
+            let checks = HostConnectionChecks::new(&server)?;
+            oneiron::task_verb::sdk::answer_pack_setup_as_owner(
+                server.vault(),
+                owner,
+                &input,
+                &checks,
+            )
+        },
+    )
     .await
-    .map_err(|_| internal("vault.packs.setup.answer"))?
 }
 
 /// `vault.packs.setup.verify`: checks one connection with the engine's fixed
@@ -1227,13 +1464,20 @@ pub(crate) async fn vault_packs_setup_verify(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackSetupVerifyRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = owner_proof(auth, server, "vault.packs.setup.verify")?;
-    let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
-        let checks = HostConnectionChecks::new(&server)?;
-        oneiron::task_verb::sdk::verify_pack_setup_as_owner(server.vault(), &owner, &input, &checks)
-    })
+) -> MaybeListed<PackSetupReceipt> {
+    setup_listing(
+        server,
+        auth,
+        "vault.packs.setup.verify",
+        move |server, owner| {
+            let checks = HostConnectionChecks::new(&server)?;
+            oneiron::task_verb::sdk::verify_pack_setup_as_owner(
+                server.vault(),
+                owner,
+                &input,
+                &checks,
+            )
+        },
+    )
     .await
-    .map_err(|_| internal("vault.packs.setup.verify"))?
 }

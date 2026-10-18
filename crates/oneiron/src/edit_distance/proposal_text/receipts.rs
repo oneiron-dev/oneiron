@@ -195,10 +195,7 @@ pub(super) fn receipted_message(
         trigger: None,
     });
     receipt.at = at;
-    if receipt.process.actor != actor.entity_ref()
-        || !receipt.process.is_valid()
-        || receipt.inputs.len() > 1024
-    {
+    if receipt.process.actor != actor.entity_ref() || !receipt.process.is_valid() {
         return Err(Error::InvalidConfig("invalid text commit process".into()));
     }
     let encoded = serde_json::to_string(&receipt)
