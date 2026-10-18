@@ -1659,6 +1659,14 @@ class Oneiron:
             """Reads live NOTE text or one retained NoteVersion, acquiring stable edit anchors in the same scoped snapshot."""
         def history(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteHistoryView | None]:
             """Reads authenticated NOTE operation identities and actors with the retained history boundary; hidden or purged history is never invented."""
+        def fork(self, input: Facade.NoteForkRequest) -> Facade.NoteForkView:
+            """Forks one NOTE at the exact live-head version the caller read, retaining its edits or rewrite without moving the live head."""
+        @property
+        def forks(self) -> "Oneiron._VaultNotesForksVerbs": ...
+        @property
+        def proposals(self) -> "Oneiron._VaultNotesProposalsVerbs": ...
+        def version_tree(self, input: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteVersionTree | None]:
+            """Reads NOTE birth, current version, fork parent and frontier links, proposal membership, verdicts and durable head-move receipts."""
         def history_purge(self, spec: Facade.NoteHistoryPurgeRequest) -> Facade.NoteHistoryPurgeOutcome:
             """The owner explicitly erases a NOTE's safe history, or opens its shared-vault erase veto window; no grant names this action."""
         def history_purge_execute(self, spec: Facade.NoteHistoryPurgeExecuteRequest) -> Facade.NoteHistoryPurgeReceipt:
@@ -1673,6 +1681,20 @@ class Oneiron:
         def lifecycle(self, request: Facade.NoteRefRequest) -> Facade.NoteLifecycleView: ...
         def set_overrides(self, request: Facade.SetNoteOverridesRequest) -> Facade.NoteDefaultsView: ...
         def defaults(self, request: Facade.NoteRefRequest) -> Facade.NoteDefaultsView: ...
+    class _VaultNotesForksVerbs:
+        def read(self, input: Facade.NoteForkReadRequest) -> Facade.ScopedReadResult[Facade.NoteForkView | None]:
+            """Reads a NOTE fork and its retained pending text through the same scoped, reason-logged read as the live NOTE."""
+    class _VaultNotesProposalsVerbs:
+        def open(self, input: Facade.NoteProposalOpenRequest) -> Facade.NoteProposalView:
+            """Opens one explicit set of NOTE forks with its shared explainer; the engine routes each member under the caller's own existing grants."""
+        def read(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Reads an entire NOTE proposal set, its pending fork text, explainer and head-move receipts only when every member is readable."""
+        def merge(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Accepts the complete NOTE proposal set by merge under the caller's existing NOTE grants, retaining concurrent head edits and durable receipts."""
+        def switch(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Accepts the complete NOTE proposal set by explicit switch under the caller's existing NOTE grants, recording every head move."""
+        def reject(self, input: Facade.NoteProposalRequest) -> Facade.NoteProposalView:
+            """Rejects the complete NOTE proposal set under the caller's existing NOTE grants, dropping pending text without changing live heads."""
     class _VaultNotesEditorVerbs:
         def bind(self, spec: Facade.NoteAccessRequest) -> Facade.ScopedReadResult[Facade.NoteEditorBinding | None]:
             """Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves."""

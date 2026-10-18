@@ -1465,6 +1465,30 @@ impl OneironClient {
                 "vault.notes.history" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteHistoryView>>,
                 >(client, verb, &input),
+                "vault.notes.fork" => {
+                    remote_agent_verb_output::<oneiron::note::NoteForkView>(client, verb, &input)
+                }
+                "vault.notes.forks.read" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteForkView>>,
+                >(client, verb, &input),
+                "vault.notes.proposals.open" => remote_agent_verb_output::<
+                    oneiron::note::NoteProposalView,
+                >(client, verb, &input),
+                "vault.notes.proposals.read" => remote_agent_verb_output::<
+                    oneiron::note::NoteProposalView,
+                >(client, verb, &input),
+                "vault.notes.proposals.merge" => remote_agent_verb_output::<
+                    oneiron::note::NoteProposalView,
+                >(client, verb, &input),
+                "vault.notes.proposals.switch" => remote_agent_verb_output::<
+                    oneiron::note::NoteProposalView,
+                >(client, verb, &input),
+                "vault.notes.proposals.reject" => remote_agent_verb_output::<
+                    oneiron::note::NoteProposalView,
+                >(client, verb, &input),
+                "vault.notes.version_tree" => remote_agent_verb_output::<
+                    oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteVersionTree>>,
+                >(client, verb, &input),
                 "vault.notes.history_purge" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::NoteHistoryPurgeOutcome,
                 >(client, verb, &input),
@@ -7304,6 +7328,104 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.notes.history", value)
+    }
+    pub fn vault_notes_fork(
+        &self,
+        input: &oneiron::note::NoteForkRequest,
+    ) -> Result<oneiron::note::NoteForkView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.fork", value)
+    }
+    pub fn vault_notes_forks_read(
+        &self,
+        input: &oneiron::note::NoteForkReadRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteForkView>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.forks.read", value)
+    }
+    pub fn vault_notes_proposals_open(
+        &self,
+        input: &oneiron::note::NoteProposalOpenRequest,
+    ) -> Result<oneiron::note::NoteProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.proposals.open", value)
+    }
+    pub fn vault_notes_proposals_read(
+        &self,
+        input: &oneiron::note::NoteProposalRequest,
+    ) -> Result<oneiron::note::NoteProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.proposals.read", value)
+    }
+    pub fn vault_notes_proposals_merge(
+        &self,
+        input: &oneiron::note::NoteProposalRequest,
+    ) -> Result<oneiron::note::NoteProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.proposals.merge", value)
+    }
+    pub fn vault_notes_proposals_switch(
+        &self,
+        input: &oneiron::note::NoteProposalRequest,
+    ) -> Result<oneiron::note::NoteProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.proposals.switch", value)
+    }
+    pub fn vault_notes_proposals_reject(
+        &self,
+        input: &oneiron::note::NoteProposalRequest,
+    ) -> Result<oneiron::note::NoteProposalView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.proposals.reject", value)
+    }
+    pub fn vault_notes_version_tree(
+        &self,
+        input: &oneiron::note::NoteAccessRequest,
+    ) -> Result<oneiron::claim::ScopedReadResult<Option<oneiron::note::NoteVersionTree>>, MemoryError>
+    {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.notes.version_tree", value)
     }
     pub fn vault_notes_history_purge(
         &self,

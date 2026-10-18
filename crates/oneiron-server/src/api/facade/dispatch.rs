@@ -10741,6 +10741,188 @@ async fn vault_notes_history(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_notes_fork(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    facade_room_turn_serves(
+        call,
+        "vault.notes.fork",
+        oneiron::memory::RoomTurnHandle::serves("vault.notes.fork"),
+    )?;
+    facade_admit_readable_ref(&server.vault, auth, &value, "note_ref")?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.fork",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_forks_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.forks.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_proposals_open(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.proposals.open",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_proposals_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.proposals.read",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_proposals_merge(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.proposals.merge",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_proposals_switch(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.proposals.switch",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_proposals_reject(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.proposals.reject",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_notes_version_tree(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.notes.version_tree",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_notes_history_purge(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -12032,6 +12214,14 @@ pub(crate) async fn call_verb(
         "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,
         "vault.notes.read" => vault_notes_read(server, call, input).await,
         "vault.notes.history" => vault_notes_history(server, call, input).await,
+        "vault.notes.fork" => vault_notes_fork(server, call, input).await,
+        "vault.notes.forks.read" => vault_notes_forks_read(server, call, input).await,
+        "vault.notes.proposals.open" => vault_notes_proposals_open(server, call, input).await,
+        "vault.notes.proposals.read" => vault_notes_proposals_read(server, call, input).await,
+        "vault.notes.proposals.merge" => vault_notes_proposals_merge(server, call, input).await,
+        "vault.notes.proposals.switch" => vault_notes_proposals_switch(server, call, input).await,
+        "vault.notes.proposals.reject" => vault_notes_proposals_reject(server, call, input).await,
+        "vault.notes.version_tree" => vault_notes_version_tree(server, call, input).await,
         "vault.notes.history_purge" => vault_notes_history_purge(server, call, input).await,
         "vault.notes.history_purge_execute" => {
             vault_notes_history_purge_execute(server, call, input).await

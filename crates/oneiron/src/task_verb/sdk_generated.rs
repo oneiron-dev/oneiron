@@ -2627,6 +2627,39 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
             ),
             (
+                "vault.notes.fork",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteForkRequest>(),
+            ),
+            (
+                "vault.notes.forks.read",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteForkReadRequest>(),
+            ),
+            (
+                "vault.notes.proposals.open",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteProposalOpenRequest>(
+                ),
+            ),
+            (
+                "vault.notes.proposals.read",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteProposalRequest>(),
+            ),
+            (
+                "vault.notes.proposals.merge",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteProposalRequest>(),
+            ),
+            (
+                "vault.notes.proposals.switch",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteProposalRequest>(),
+            ),
+            (
+                "vault.notes.proposals.reject",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteProposalRequest>(),
+            ),
+            (
+                "vault.notes.version_tree",
+                crate::code_run::vault_read::request_schema::<crate::note::NoteAccessRequest>(),
+            ),
+            (
                 "vault.notes.history_purge",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::NoteHistoryPurgeRequest,
@@ -2947,6 +2980,14 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.delivery_window.evaluate",
     "vault.notes.read",
     "vault.notes.history",
+    "vault.notes.fork",
+    "vault.notes.forks.read",
+    "vault.notes.proposals.open",
+    "vault.notes.proposals.read",
+    "vault.notes.proposals.merge",
+    "vault.notes.proposals.switch",
+    "vault.notes.proposals.reject",
+    "vault.notes.version_tree",
     "vault.notes.history_purge",
     "vault.notes.history_purge_execute",
     "vault.notes.history_purge_receipts",
@@ -3354,6 +3395,30 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.notes.history" => crate::code_run::vault_read::request_schema::<
             crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>,
+        >(),
+        "vault.notes.fork" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteForkView>()
+        }
+        "vault.notes.forks.read" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteForkView>>,
+        >(),
+        "vault.notes.proposals.open" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteProposalView>()
+        }
+        "vault.notes.proposals.read" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteProposalView>()
+        }
+        "vault.notes.proposals.merge" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteProposalView>()
+        }
+        "vault.notes.proposals.switch" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteProposalView>()
+        }
+        "vault.notes.proposals.reject" => {
+            crate::code_run::vault_read::request_schema::<crate::note::NoteProposalView>()
+        }
+        "vault.notes.version_tree" => crate::code_run::vault_read::request_schema::<
+            crate::claim::ScopedReadResult<Option<crate::note::NoteVersionTree>>,
         >(),
         "vault.notes.history_purge" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::NoteHistoryPurgeOutcome,
@@ -6697,6 +6762,62 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.notes.fork" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.forks.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.proposals.open" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.proposals.read" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.proposals.merge" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.proposals.switch" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.proposals.reject" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.notes.version_tree" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.notes.history_purge" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -8507,6 +8628,30 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.notes.history" => {
             let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
         }
+        "vault.notes.fork" => {
+            let _input: crate::note::NoteForkRequest = decode(value.clone())?;
+        }
+        "vault.notes.forks.read" => {
+            let _input: crate::note::NoteForkReadRequest = decode(value.clone())?;
+        }
+        "vault.notes.proposals.open" => {
+            let _input: crate::note::NoteProposalOpenRequest = decode(value.clone())?;
+        }
+        "vault.notes.proposals.read" => {
+            let _input: crate::note::NoteProposalRequest = decode(value.clone())?;
+        }
+        "vault.notes.proposals.merge" => {
+            let _input: crate::note::NoteProposalRequest = decode(value.clone())?;
+        }
+        "vault.notes.proposals.switch" => {
+            let _input: crate::note::NoteProposalRequest = decode(value.clone())?;
+        }
+        "vault.notes.proposals.reject" => {
+            let _input: crate::note::NoteProposalRequest = decode(value.clone())?;
+        }
+        "vault.notes.version_tree" => {
+            let _input: crate::note::NoteAccessRequest = decode(value.clone())?;
+        }
         "vault.notes.history_purge" => {
             let _input: crate::task_verb::sdk::NoteHistoryPurgeRequest = decode(value.clone())?;
         }
@@ -9408,6 +9553,20 @@ pub fn invoke(
         "vault.notes.from_entity" => encode(vault_notes_from_entity(memory, decode(value)?)?),
         "vault.notes.read" => encode(vault_notes_read(memory, decode(value)?)?),
         "vault.notes.history" => encode(vault_notes_history(memory, decode(value)?)?),
+        "vault.notes.fork" => encode(vault_notes_fork(memory, decode(value)?)?),
+        "vault.notes.forks.read" => encode(vault_notes_forks_read(memory, decode(value)?)?),
+        "vault.notes.proposals.open" => encode(vault_notes_proposals_open(memory, decode(value)?)?),
+        "vault.notes.proposals.read" => encode(vault_notes_proposals_read(memory, decode(value)?)?),
+        "vault.notes.proposals.merge" => {
+            encode(vault_notes_proposals_merge(memory, decode(value)?)?)
+        }
+        "vault.notes.proposals.switch" => {
+            encode(vault_notes_proposals_switch(memory, decode(value)?)?)
+        }
+        "vault.notes.proposals.reject" => {
+            encode(vault_notes_proposals_reject(memory, decode(value)?)?)
+        }
+        "vault.notes.version_tree" => encode(vault_notes_version_tree(memory, decode(value)?)?),
         "vault.notes.history_purge" => encode(vault_notes_history_purge(memory, decode(value)?)?),
         "vault.notes.history_purge_execute" => {
             encode(vault_notes_history_purge_execute(memory, decode(value)?)?)
@@ -13712,6 +13871,82 @@ pub fn vault_notes_history(
     input: crate::note::NoteAccessRequest,
 ) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteHistoryView>>> {
     memory.note_history(&input)
+}
+pub fn vault_notes_fork(
+    memory: &Memory<'_>,
+    input: crate::note::NoteForkRequest,
+) -> MemoryResult<crate::note::NoteForkView> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.notes.fork",
+        &input,
+        &["/edit/text"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.fork",
+        &input,
+        &["/note_ref"],
+    )?;
+    let landed = memory.fork_note(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_notes_forks_read(
+    memory: &Memory<'_>,
+    input: crate::note::NoteForkReadRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteForkView>>> {
+    memory.read_note_fork(&input)
+}
+pub fn vault_notes_proposals_open(
+    memory: &Memory<'_>,
+    input: crate::note::NoteProposalOpenRequest,
+) -> MemoryResult<crate::note::NoteProposalView> {
+    let unlinked_prose = crate::gate::record_references::unlinked_prose_links(
+        memory,
+        "vault.notes.proposals.open",
+        &input,
+        &["/explainer"],
+    )?;
+    crate::gate::record_references::admit_row_references(
+        memory,
+        "vault.notes.proposals.open",
+        &input,
+        &["/forks/*/note_ref"],
+    )?;
+    let landed = memory.open_note_proposal(&input)?;
+    crate::gate::record_references::receipt_landed_prose(memory, &unlinked_prose);
+    Ok(landed)
+}
+pub fn vault_notes_proposals_read(
+    memory: &Memory<'_>,
+    input: crate::note::NoteProposalRequest,
+) -> MemoryResult<crate::note::NoteProposalView> {
+    memory.read_note_proposal(&input)
+}
+pub fn vault_notes_proposals_merge(
+    memory: &Memory<'_>,
+    input: crate::note::NoteProposalRequest,
+) -> MemoryResult<crate::note::NoteProposalView> {
+    memory.settle_note_proposal(&input, crate::note::NoteVerdict::Merge)
+}
+pub fn vault_notes_proposals_switch(
+    memory: &Memory<'_>,
+    input: crate::note::NoteProposalRequest,
+) -> MemoryResult<crate::note::NoteProposalView> {
+    memory.settle_note_proposal(&input, crate::note::NoteVerdict::Switch)
+}
+pub fn vault_notes_proposals_reject(
+    memory: &Memory<'_>,
+    input: crate::note::NoteProposalRequest,
+) -> MemoryResult<crate::note::NoteProposalView> {
+    memory.settle_note_proposal(&input, crate::note::NoteVerdict::Reject)
+}
+pub fn vault_notes_version_tree(
+    memory: &Memory<'_>,
+    input: crate::note::NoteAccessRequest,
+) -> MemoryResult<crate::claim::ScopedReadResult<Option<crate::note::NoteVersionTree>>> {
+    memory.note_version_tree(&input)
 }
 pub fn vault_notes_history_purge(
     memory: &Memory<'_>,
