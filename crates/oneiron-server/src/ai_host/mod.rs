@@ -35,6 +35,7 @@ mod coach_health;
 pub(crate) mod coach_host;
 mod code_fix;
 mod connector_event;
+mod contribution;
 mod dreamer;
 pub(crate) mod failure_signals;
 mod harness;
@@ -71,7 +72,8 @@ pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, WorkState, WorkStatus,
 };
 pub(crate) use weave_lens::{
-    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_listing,
+    WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_for_run,
+    render_live_weave_lens_listing,
 };
 
 use dreamer::{DreamerHost, DreamerStart};

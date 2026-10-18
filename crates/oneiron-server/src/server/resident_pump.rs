@@ -36,7 +36,7 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResultRef, SetAttem
 use oneiron::claim::CallerLocality;
 use oneiron::code_run::{
     AgentVerbDoor, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher, SpawnHostSeat,
-    park_and_bind_wait_trap,
+    TaskExposure, finalize_step_captures, park_and_bind_wait_trap,
 };
 use oneiron::compaction::output::OutputContextEntry;
 use oneiron::dreamer_runner::{CompleteDreamerAttempt, DreamerParkCause, ParkDreamerAttempt};
@@ -86,8 +86,9 @@ const WAKES_PER_PASS: usize = 16;
 const WINDOW_FULL_WAIT: Duration = Duration::from_secs(2);
 const WINDOW_FULL_TRIES: u32 = 30;
 /// How many tries in a row a run gets whose model call failed for a reason
-/// that passes (an outage, a rate limit, a spent window): the failure
-/// ladder's default bound. Each retry is a fresh attempt, so a fresh run.
+/// that passes (a rate limit, a spent window): the failure ladder's default
+/// bound. Each retry is a fresh attempt, so a fresh run. An outage parks the
+/// run instead (FIX 3194).
 const RUN_MAX_TRIES: NonZeroU16 = NonZeroU16::new(3).expect("three is nonzero");
 /// How long such a retry waits per try when its provider named no reset.
 const RUN_RETRY_BACKOFF_SECS: u64 = 30;
@@ -326,7 +327,7 @@ impl SyncServer {
         // outage (FIX 3194).
         let waits = match &ran {
             Ok(outcome) => matches!(outcome.status, EngineExecutorStatus::Waiting(_)),
-            Err(error) => error.provider_outage().is_some(),
+            Err(error) => parks_on_outage(error),
         };
         let run = EntityId::from_bytes(*id.as_bytes()).ok();
         if let Err(error) = self.live_runs.settle(run, waits, || {
@@ -335,6 +336,7 @@ impl SyncServer {
             tracing::warn!(%error, attempt = ?id, "an agent run did not settle; its lease waits for recovery");
         }
         self.desktop_seats.run_settled(run, waits);
+        self.browser_seats.run_settled(run, waits);
         false
     }
 }
@@ -418,8 +420,11 @@ fn run_bound(
         config.model = seat.model().clone();
     }
     // A project conversation run runs with its skill's SKILL.md (OF-501); a
-    // run whose skill does not load is refused, never run unskilled.
+    // run whose skill does not load is refused, never run unskilled. The
+    // body is tagged where it went, so the run's first step is captured with
+    // it marked for a contribution check (FIX 3028).
     let skills = ProjectConversationSkills::shipped(None).map_err(text)?;
+    let mut exposures = Vec::new();
     if let Some(skill) = AgentDispatcher::new(vault)
         .prepare_project_conversation_run(
             &status.attempt,
@@ -435,7 +440,14 @@ fn run_bound(
             .find(|file| file.path == "SKILL.md")
             .and_then(|file| std::str::from_utf8(&file.content).ok())
     {
-        config.task = format!("{}\n\n{}", config.task, body.trim());
+        let revision = format!("{}@{}", skill.record.skill_id, skill.record.version);
+        exposures.push(TaskExposure::append(
+            &mut config.task,
+            "\n\n",
+            body.trim(),
+            skill.entity,
+            revision,
+        ));
     }
     // Its model calls and its reader children spend under the attempt's
     // scope. An unmetered attempt's calls stay on the provider's meter, and
@@ -495,7 +507,12 @@ fn run_bound(
             server.decision_host(),
             issuer,
             &server.live_runs,
-        )?;
+            &exposures,
+        );
+        // The first step's capsule takes the rung that answered it, on the
+        // thread the entry ran its calls on.
+        finalize_step_captures(vault);
+        let outcome = outcome?;
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -539,13 +556,15 @@ fn enter_run(
     decisions: &DecisionHost,
     issuer: Option<&oneiron::authority::HostSlipIssuer>,
     live_runs: &super::LiveRuns,
+    exposures: &[TaskExposure],
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let mut bound = HostSelfDispatcher::for_leased_agent_attempt(vault, actor, &status.attempt)
         .map_err(text)?
         .with_callable_skills(Arc::clone(vault))
         .map_err(text)?
         .with_agent_verb_door(Arc::clone(door) as Arc<dyn AgentVerbDoor>)
-        .with_reader_spawn(seat.clone());
+        .with_reader_spawn(seat.clone())
+        .with_replay_exposures(exposures.to_vec());
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(planner) = planner_binding(vault, provider, config, planner)? {
         bound = bound.with_planner(planner);
@@ -756,10 +775,10 @@ fn settle(
                 "agent_run_unfinished"
             }
         },
-        // A host door's model call no provider answered (FIX 3194): the
-        // same attempt parks, its lease and spend scope held, and the run
-        // goes on from its next step once a provider recovers.
-        Err(error) if error.provider_outage().is_some() => {
+        // A model call no provider answered, the run's own step's or a host
+        // door's (FIX 3194): the same attempt parks, its lease and spend
+        // scope held, and the run goes on once a provider recovers.
+        Err(error) if parks_on_outage(&error) => {
             tracing::info!(%error, attempt = ?attempt.id, "an agent run parks on a provider outage");
             DreamerRunnerStore::new(vault).park_attempt(ParkDreamerAttempt {
                 attempt_id: attempt.id,
@@ -833,15 +852,20 @@ fn settle(
     Ok(())
 }
 
+/// Whether a run stopped on a model call no provider answered (FIX 3194):
+/// its own step's, which the run makes again once it resumes, or a host
+/// door's, after which it goes on from its next step. Either parks it.
+fn parks_on_outage(error: &EngineRunError) -> bool {
+    error.provider_outage().is_some() || error.llm().is_some_and(LlmError::is_provider_unavailable)
+}
+
 /// Whether a run's model call failed for a reason that passes, with its
 /// stable reason and the reset its provider named, if one is still ahead:
-/// an outage, a rate limit, a spent usage window, or no on-device offer
-/// until a resting one is back. Spent credit waits for the owner, and any
-/// other failure is not one a retry answers.
+/// a rate limit, a spent usage window, or no on-device offer until a
+/// resting one is back. Spent credit waits for the owner, and any other
+/// failure is not one a retry answers; an outage parks the run
+/// ([`parks_on_outage`]).
 fn passing(error: &LlmError, now: u64) -> Option<(&'static str, Option<u64>)> {
-    if error.is_provider_unavailable() {
-        return Some(("agent_run_model_unavailable", None));
-    }
     let (reason, retry_after, resets_at) = match error {
         LlmError::Retryable(RetryableLlmError::RateLimited {
             retry_after,

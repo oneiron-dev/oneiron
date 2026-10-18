@@ -20,7 +20,8 @@
 //! the minutes a person funds for them, and their pick on a delivered one,
 //! which becomes a label in the judged skill's anchor. The asks reach only
 //! the person's own digest, which `/v1/owner/proactivity/digest/assemble`
-//! assembles for them.
+//! assembles for them. A `rubric_recheck` ask, put after an edit of the
+//! judge's rubric, is answered at `/v1/owner/coach/judge-asks/regrade`.
 //! Approving a draft approves its exact content, then schedules it through
 //! the ordinary outbound gate as the Dreamer on the owner's behalf; the
 //! gate's grants, consent and windows still decide the send.
@@ -80,6 +81,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             get(judge_ask_minutes).post(fund_judge_asks),
         )
         .route("/coach/judge-asks/pick", post(pick_judge_ask))
+        .route("/coach/judge-asks/regrade", post(regrade_judge_label))
         .route("/identity/asks", get(identity_asks))
         .route("/identity/asks/answer", post(answer_identity_ask))
         .route("/self-heal/findings", get(self_heal_findings))
@@ -551,6 +553,59 @@ async fn pick_judge_ask(
     })
     .await?;
     Ok(Json(label))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RegradeJudgeLabel {
+    /// A delivered `rubric_recheck` ask's id, as 64 hex.
+    ask: String,
+    /// Whether the earlier pick still fits the edited rubric.
+    still_fits: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct JudgeRegradeView {
+    label: JudgeLabelView,
+    /// Whether the pick is back in the anchor.
+    kept: bool,
+    /// The fresh ask of the case, when the pick no longer fits.
+    fresh_ask: Option<String>,
+}
+
+/// `POST /v1/owner/coach/judge-asks/regrade`: the caller's re-grade of a pick
+/// an edit of the judge's rubric left waiting. `still_fits` puts it back in
+/// the anchor, its pick time unchanged; otherwise it leaves the anchor and
+/// its case is asked again in a later digest. The same answer again returns
+/// it; the other one fails.
+async fn regrade_judge_label(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: Result<Json<RegradeJudgeLabel>, JsonRejection>,
+) -> OwnerReply<JudgeRegradeView> {
+    let owner = owner(&auth, &server)?;
+    let request = json_payload(payload)?;
+    let regrade = blocking(move || -> OwnerResult<JudgeRegradeView> {
+        let ask = digest_id(&request.ask)
+            .ok_or_else(|| OwnerError::Invalid("ask must be a 64-hex ask id".into()))?;
+        let regrade = oneiron::skill_optimize::record_judge_label_regrade(
+            server.vault(),
+            &owner,
+            ask,
+            request.still_fits,
+        )?;
+        Ok(JudgeRegradeView {
+            label: JudgeLabelView {
+                ask: hex_id(&regrade.label.ask.id),
+                chosen: regrade.label.chosen,
+                picked_at: regrade.label.picked_at,
+            },
+            kept: regrade.fresh.is_none(),
+            fresh_ask: regrade.fresh.map(|fresh| hex_id(&fresh.id)),
+        })
+    })
+    .await?;
+    Ok(Json(regrade))
 }
 
 /// A choice card's words when the client names none; a client in another

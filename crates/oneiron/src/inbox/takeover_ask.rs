@@ -1,8 +1,10 @@
 //! CUA-001: a run guest's takeover ask as the owners' inbox Ask ("Needs
 //! you"). An agent's handover raises one Ask NOTIFICATION per live owner,
-//! naming the run, the agent's reason and the route that takes the guest
-//! over. The host clears it, seen and acked for each owner, once an owner
-//! takes the guest or hands it back, or the guest goes away.
+//! naming the run, the agent's reason (`source.detail`) and the route that
+//! takes the guest over. The host clears it, seen and acked for each owner,
+//! once an owner takes the guest or hands it back, or the guest goes away;
+//! a host that starts clears every one still open, since no guest outlives
+//! it.
 
 use super::notification::{
     NotificationEvent, NotificationKind, NotificationSource, decode_notification_body,
@@ -19,10 +21,10 @@ const NOTIFICATION_PRODUCER_TAKEOVER_ASK: &str = "guest.takeover";
 impl Vault {
     /// Raises run `run_id`'s `guest` takeover ask, asked at `asked_at_ms`
     /// for `reason`, as one inbox Ask per live owner, and returns their
-    /// rows. The source names the run, and its result is `take`, the route
-    /// that takes the guest over. The event is the ask's identity with the
-    /// agent's reason last: `<guest>:<run>:<asked_at_ms>:<owner>:<reason>`.
-    /// Raising the same ask again finds its rows.
+    /// rows. The source names the run, its result is `take`, the route that
+    /// takes the guest over, and its detail is the agent's reason. The event
+    /// is the ask's identity: `<guest>:<run>:<asked_at_ms>:<owner>`. Raising
+    /// the same ask again finds its rows.
     pub fn raise_takeover_ask(
         &self,
         guest: &str,
@@ -42,9 +44,10 @@ impl Vault {
                     kind: NotificationKind::Ask,
                     source: NotificationSource {
                         producer: NOTIFICATION_PRODUCER_TAKEOVER_ASK.to_owned(),
-                        event: format!("{guest}:{run}:{asked_at_ms}:{}:{reason}", owner.to_hex()),
+                        event: format!("{guest}:{run}:{asked_at_ms}:{}", owner.to_hex()),
                         run: Some(run.clone()),
                         result: Some(take.to_owned()),
+                        detail: Some(reason.to_owned()),
                         ..NotificationSource::default()
                     },
                     subject_refs: Vec::new(),
@@ -84,5 +87,43 @@ impl Vault {
         }
         txn.commit()?;
         Ok(())
+    }
+
+    /// Clears every takeover ask still open, each seen and acked for the
+    /// owner it was raised for, and returns how many it cleared: a host
+    /// that just started holds no run guest, so none of them can be
+    /// answered.
+    pub fn clear_open_takeover_asks(&self) -> Result<usize> {
+        let ids = self.entities_by_type(ENTITY_TYPE_NOTIFICATION)?;
+        let mut open = Vec::new();
+        {
+            let txn = self.store.env.read_txn()?;
+            for id in ids {
+                let LiveEntityRow::Live { entity_type, body } =
+                    live_entity_row_in_txn(&self.store, &txn, &id)?
+                else {
+                    continue;
+                };
+                if entity_type != ENTITY_TYPE_NOTIFICATION {
+                    continue;
+                }
+                // Another producer's row is not this one's to read.
+                let Ok(body) = decode_notification_body(&body) else {
+                    continue;
+                };
+                if body.source.producer != NOTIFICATION_PRODUCER_TAKEOVER_ASK {
+                    continue;
+                }
+                if body
+                    .recipient
+                    .as_ref()
+                    .is_some_and(|owner| body.acked_by.get(owner) != Some(&true))
+                {
+                    open.push(id);
+                }
+            }
+        }
+        self.clear_takeover_ask(&open)?;
+        Ok(open.len())
     }
 }
