@@ -660,6 +660,9 @@ class Oneiron:
         def embedding_spaces(self) -> "Oneiron._VaultEmbeddingSpacesVerbs":
             return Oneiron._VaultEmbeddingSpacesVerbs(self._client)
         @property
+        def policy(self) -> "Oneiron._VaultPolicyVerbs":
+            return Oneiron._VaultPolicyVerbs(self._client)
+        @property
         def gate(self) -> "Oneiron._VaultGateVerbs":
             return Oneiron._VaultGateVerbs(self._client)
         @property
@@ -698,6 +701,9 @@ class Oneiron:
         @property
         def workflows(self) -> "Oneiron._VaultWorkflowsVerbs":
             return Oneiron._VaultWorkflowsVerbs(self._client)
+        @property
+        def task_types(self) -> "Oneiron._VaultTaskTypesVerbs":
+            return Oneiron._VaultTaskTypesVerbs(self._client)
         @property
         def workspace(self) -> "Oneiron._VaultWorkspaceVerbs":
             return Oneiron._VaultWorkspaceVerbs(self._client)
@@ -1669,6 +1675,48 @@ class Oneiron:
         def delete(self, spec):
             """Removes one stored embedding space probe by its id."""
             return json.loads(_translate(lambda: self._client.vault_embedding_spaces_probes_delete(json.dumps(spec))))
+    class _VaultPolicyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def owner(self) -> "Oneiron._VaultPolicyOwnerVerbs":
+            return Oneiron._VaultPolicyOwnerVerbs(self._client)
+        @property
+        def outbound(self) -> "Oneiron._VaultPolicyOutboundVerbs":
+            return Oneiron._VaultPolicyOutboundVerbs(self._client)
+        @property
+        def relay(self) -> "Oneiron._VaultPolicyRelayVerbs":
+            return Oneiron._VaultPolicyRelayVerbs(self._client)
+    class _VaultPolicyOwnerVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def get(self, spec=None):
+            """The owner reads the content-policy configuration, default manifest hash and effective off/on state."""
+            return json.loads(_translate(lambda: self._client.vault_policy_owner_get(json.dumps({} if spec is None else spec))))
+        def configure(self, spec):
+            """The owner configures or toggles content policy against the current manifest hash without changing other policy tables."""
+            return json.loads(_translate(lambda: self._client.vault_policy_owner_configure(json.dumps(spec))))
+        @property
+        def row(self) -> "Oneiron._VaultPolicyOwnerRowVerbs":
+            return Oneiron._VaultPolicyOwnerRowVerbs(self._client)
+    class _VaultPolicyOwnerRowVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def change(self, spec):
+            """The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt."""
+            return json.loads(_translate(lambda: self._client.vault_policy_owner_row_change(json.dumps(spec))))
+    class _VaultPolicyOutboundVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def decide(self, spec):
+            """Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes."""
+            return json.loads(_translate(lambda: self._client.vault_policy_outbound_decide(json.dumps(spec))))
+    class _VaultPolicyRelayVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def decide(self, spec):
+            """Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer."""
+            return json.loads(_translate(lambda: self._client.vault_policy_relay_decide(json.dumps(spec))))
     class _VaultGateVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -2129,6 +2177,15 @@ class Oneiron:
         def status(self, spec):
             """The owner reads one workflow run by its root attempt: the captured step definitions, the active step attempt and each settled step's attempt and result."""
             return json.loads(_translate(lambda: self._client.vault_workflows_status(json.dumps(spec))))
+    class _VaultTaskTypesVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def pin(self, spec):
+            """The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_pin(json.dumps(spec))))
+        def get(self, spec):
+            """The owner reads the task-type tree in force, or one kept tree version, for the vault or a project."""
+            return json.loads(_translate(lambda: self._client.vault_task_types_get(json.dumps(spec))))
     class _VaultWorkspaceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

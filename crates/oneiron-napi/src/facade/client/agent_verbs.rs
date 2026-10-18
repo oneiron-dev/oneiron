@@ -1936,6 +1936,51 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_policy_owner_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.owner.get", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_owner_configure(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.owner.configure", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_owner_row_change(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.owner.row.change", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_outbound_decide(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.outbound.decide", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_policy_relay_decide(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.policy.relay.decide", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_gate_policy_get(
         &self,
         input: serde_json::Value,
@@ -2651,6 +2696,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.workflows.status", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_task_types_pin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.task_types.pin", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_task_types_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.task_types.get", input)
             .map_err(facade_error)
     }
     #[napi]

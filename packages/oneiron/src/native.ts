@@ -247,6 +247,11 @@ vaultEmbeddingSpacesMoveAbandon(input: unknown): unknown
 vaultEmbeddingSpacesProbesList(input: unknown): unknown
 vaultEmbeddingSpacesProbesPut(input: unknown): unknown
 vaultEmbeddingSpacesProbesDelete(input: unknown): unknown
+vaultPolicyOwnerGet(input: unknown): unknown
+vaultPolicyOwnerConfigure(input: unknown): unknown
+vaultPolicyOwnerRowChange(input: unknown): unknown
+vaultPolicyOutboundDecide(input: unknown): unknown
+vaultPolicyRelayDecide(input: unknown): unknown
 vaultGatePolicyGet(input: unknown): unknown
 vaultGatePolicyPut(input: unknown): unknown
 vaultGatePolicyPropose(input: unknown): unknown
@@ -324,6 +329,8 @@ vaultWorkflowsGet(input: unknown): unknown
 vaultWorkflowsUpdate(input: unknown): unknown
 vaultWorkflowsDispatch(input: unknown): unknown
 vaultWorkflowsStatus(input: unknown): unknown
+vaultTaskTypesPin(input: unknown): unknown
+vaultTaskTypesGet(input: unknown): unknown
 vaultWorkspaceEstablish(input: unknown): unknown
 vaultWorkspaceMembersOnboard(input: unknown): unknown
 vaultWorkspaceRoster(input: unknown): unknown

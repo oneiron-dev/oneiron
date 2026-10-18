@@ -3420,6 +3420,83 @@
       "section": false
     },
     {
+      "name": "vault.policy.owner.get",
+      "description": "The owner reads the content-policy configuration, default manifest hash and effective off/on state.",
+      "input": "EmptyRequest",
+      "output": "crate::policy_manifest_doors::OwnerPolicyConfigurationView",
+      "call": "crate::policy_manifest_doors::owner_policy_configuration(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.get\")?).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.policy.owner.configure",
+      "description": "The owner configures or toggles content policy against the current manifest hash without changing other policy tables.",
+      "input": "crate::policy_manifest_doors::OwnerPolicyConfigureRequest",
+      "output": "crate::policy_manifest_doors::OwnerPolicyConfigurationReceipt",
+      "call": "crate::policy_manifest_doors::configure_owner_policy(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.configure\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.policy.owner.row.change",
+      "description": "The owner adds, edits or removes a scoped content-policy row through its existing holder-governed writer and receives its change receipt.",
+      "input": "crate::policy_model::doors::PolicyRowChangeRequest",
+      "output": "crate::policy_model::PolicyRowReceipt",
+      "call": "crate::policy_model::doors::change_owner_policy_row(memory.vault(), &memory.embedded_owner(\"vault.policy.owner.row.change\")?, input).map_err(crate::memory::MemoryError::from)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.policy.outbound.decide",
+      "description": "Decide an outbound candidate under owner policy with system notices and hash-only receipts; Warn and Skipped preserve its exact bytes.",
+      "input": "crate::policy_model::doors::PolicyOutboundRequest",
+      "output": "crate::policy_model::PolicyModelEnforcement",
+      "call": "crate::policy_model::doors::enforce_owner_policy_embedded(memory, input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true,
+      "host_door_session": true
+    },
+    {
+      "name": "vault.policy.relay.decide",
+      "description": "Decide bytes carried by the host-bound attested relay under its own legal policy; outages halt with a service notice and local-model offer.",
+      "input": "crate::policy_model::doors::PolicyOutboundRequest",
+      "output": "crate::policy_model::doors::HostedRelayDecision",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.policy.relay.decide\", &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "host_door_caller": true,
+      "host_door_session": true
+    },
+    {
       "name": "vault.gate.policy.get",
       "description": "The owner reads Gate policy envelopes, actor ceilings, source permits and checker references, including inert contributions.",
       "input": "crate::policy_manifest_doors::PolicyManifestRead",
@@ -4620,6 +4697,36 @@
       "input": "crate::task_verb::sdk::WorkflowRunRequest",
       "output": "crate::task_verb::sdk::WorkflowRunView",
       "call": "crate::task_verb::sdk::read_workflow_run_as(memory.vault(), &memory.embedded_owner(\"vault.workflows.status\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.task_types.pin",
+      "description": "The owner stores an authored task-type tree on an open team-shape fork, as a candidate; the receipt says whether it is in force.",
+      "input": "crate::team::doors::TaskTypeTreePin",
+      "output": "crate::team::doors::TaskTypeTreePinReceipt",
+      "call": "crate::team::doors::pin_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.pin\")?, input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.task_types.get",
+      "description": "The owner reads the task-type tree in force, or one kept tree version, for the vault or a project.",
+      "input": "crate::team::doors::TaskTypeTreeRead",
+      "output": "crate::team::doors::TaskTypeTreeReadReply",
+      "call": "crate::team::doors::read_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.get\")?, input)?",
       "host_door": true,
       "host_door_lists": true,
       "scope": "Read",

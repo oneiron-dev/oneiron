@@ -708,6 +708,21 @@ impl OneironClient {
                 "vault.embedding_spaces.probes.delete" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleted,
                 >(client, verb, &input),
+                "vault.policy.owner.get" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::OwnerPolicyConfigurationView,
+                >(client, verb, &input),
+                "vault.policy.owner.configure" => remote_agent_verb_output::<
+                    oneiron::policy_manifest_doors::OwnerPolicyConfigurationReceipt,
+                >(client, verb, &input),
+                "vault.policy.owner.row.change" => remote_agent_verb_output::<
+                    oneiron::policy_model::PolicyRowReceipt,
+                >(client, verb, &input),
+                "vault.policy.outbound.decide" => remote_agent_verb_output::<
+                    oneiron::policy_model::PolicyModelEnforcement,
+                >(client, verb, &input),
+                "vault.policy.relay.decide" => remote_agent_verb_output::<
+                    oneiron::policy_model::doors::HostedRelayDecision,
+                >(client, verb, &input),
                 "vault.gate.policy.get" => remote_agent_verb_output::<
                     oneiron::policy_manifest_doors::PolicyManifestsView,
                 >(client, verb, &input),
@@ -944,6 +959,12 @@ impl OneironClient {
                 >(client, verb, &input),
                 "vault.workflows.status" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkflowRunView,
+                >(client, verb, &input),
+                "vault.task_types.pin" => remote_agent_verb_output::<
+                    oneiron::team::doors::TaskTypeTreePinReceipt,
+                >(client, verb, &input),
+                "vault.task_types.get" => remote_agent_verb_output::<
+                    oneiron::team::doors::TaskTypeTreeReadReply,
                 >(client, verb, &input),
                 "vault.workspace.establish" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::WorkspacePresetReceipt,
@@ -4349,6 +4370,66 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("vault.embedding_spaces.probes.delete", value)
     }
+    pub fn vault_policy_owner_get(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<oneiron::policy_manifest_doors::OwnerPolicyConfigurationView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.policy.owner.get", value)
+    }
+    pub fn vault_policy_owner_configure(
+        &self,
+        input: &oneiron::policy_manifest_doors::OwnerPolicyConfigureRequest,
+    ) -> Result<oneiron::policy_manifest_doors::OwnerPolicyConfigurationReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.policy.owner.configure", value)
+    }
+    pub fn vault_policy_owner_row_change(
+        &self,
+        input: &oneiron::policy_model::doors::PolicyRowChangeRequest,
+    ) -> Result<oneiron::policy_model::PolicyRowReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.policy.owner.row.change", value)
+    }
+    pub fn vault_policy_outbound_decide(
+        &self,
+        input: &oneiron::policy_model::doors::PolicyOutboundRequest,
+    ) -> Result<oneiron::policy_model::PolicyModelEnforcement, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.policy.outbound.decide", value)
+    }
+    pub fn vault_policy_relay_decide(
+        &self,
+        input: &oneiron::policy_model::doors::PolicyOutboundRequest,
+    ) -> Result<oneiron::policy_model::doors::HostedRelayDecision, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.policy.relay.decide", value)
+    }
     pub fn vault_gate_policy_get(
         &self,
         input: &oneiron::policy_manifest_doors::PolicyManifestRead,
@@ -5282,6 +5363,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.workflows.status", value)
+    }
+    pub fn vault_task_types_pin(
+        &self,
+        input: &oneiron::team::doors::TaskTypeTreePin,
+    ) -> Result<oneiron::team::doors::TaskTypeTreePinReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.task_types.pin", value)
+    }
+    pub fn vault_task_types_get(
+        &self,
+        input: &oneiron::team::doors::TaskTypeTreeRead,
+    ) -> Result<oneiron::team::doors::TaskTypeTreeReadReply, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.task_types.get", value)
     }
     pub fn vault_workspace_establish(
         &self,
