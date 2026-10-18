@@ -21,7 +21,7 @@ pub struct WorkspacePresetRequest {
     pub work_companion: WorkCompanionPolicy,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WorkspacePresetReceipt {
     pub workspace_ref: String,
     pub work_companion: WorkCompanionPolicy,

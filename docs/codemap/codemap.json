@@ -46779,6 +46779,7 @@
      "path": "src/sync/manager/replacement.rs",
      "purpose": "Installing a peer's window replacement in place of the live window",
      "surface": {
+      "crate-vis": 1,
       "fn": 2
      }
     },
@@ -47732,7 +47733,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "fn": 6,
       "mod": 1,
       "re-export": 8,
@@ -47769,6 +47770,7 @@
      "path": "src/sync/window/replacement.rs",
      "purpose": "Installing a window replacement: a peer's history-free snapshot takes the place of this vault's window, and…",
      "surface": {
+      "crate-vis": 2,
       "fn": 1,
       "struct": 2
      }

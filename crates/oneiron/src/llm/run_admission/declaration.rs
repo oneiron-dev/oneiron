@@ -8,7 +8,9 @@ use super::super::{ModelId, PinnedModelConfig};
 
 /// A budget line's unit. Every line names one, and the run admission never
 /// adds units of different kinds without a rate the host supplied.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 pub struct LeaseUnit(String);
 
