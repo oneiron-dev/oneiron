@@ -99,7 +99,7 @@ impl AnswerContract {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     tag = "kind",
     content = "value",
@@ -121,7 +121,7 @@ pub enum DecisionAnswer {
 /// A box in an image, as fractions from its top-left corner: `left` and `right` of its
 /// width, `top` and `bottom` of its height. Fractions hold at any size the image is
 /// drawn, so a box read on a downscaled copy places the target on the original.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImageBox {
     pub top: f64,
@@ -158,7 +158,7 @@ impl ImageBox {
 
 /// A point in an image, as fractions from its top-left corner: `x` of its width, `y` of
 /// its height. Like a box, it holds at any size the image is drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ImagePoint {
     pub x: f64,

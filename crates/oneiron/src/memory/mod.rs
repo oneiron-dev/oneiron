@@ -33,6 +33,7 @@ mod birth_position;
 mod booking;
 mod claim_admission;
 mod claim_conflict;
+mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
 mod diary_read;
@@ -43,6 +44,7 @@ pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
 mod campaign;
+mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
@@ -118,6 +120,10 @@ pub use chat::{
 pub use claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
 };
+pub use claim_stale::{
+    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
+    ClaimFilteredReadRequest, ReadFilterInput,
+};
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
@@ -136,7 +142,10 @@ pub use diary_read::{
     DiaryReadsView, DiaryReviewAnswer, DiaryReviewState,
 };
 pub use diary_read::{DiaryReader, DiaryReaderList, SealedPadReader};
-pub use dreamer::{ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView};
+pub use dreamer::{
+    ConsolidationAttemptInput, DreamerAttemptRef, DreamerAttemptView, DreamerParkCauseView,
+    DreamerParkedAttemptView,
+};
 pub use entity_erase::{
     EntityEraseOutcome, EraseOptions, EraseReason, SameBytesHold, SameBytesOutcome,
 };

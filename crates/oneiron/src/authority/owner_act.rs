@@ -95,3 +95,210 @@ pub enum KeyWork {
     /// to the readers that lacked it, or found every reader holding it.
     Enacted,
 }
+
+/// [`owner_live_at`] on a whole fold, for a signed record family outside the
+/// authority log that its readers judge against the fold they hold now (the
+/// identity-topology admission seal, mesh PR2a): an owner every human binding
+/// of whom the log revoked is removed; an owner it binds nowhere is trusted on
+/// the carrier's word ([`OWNER_UNBOUND_TRUSTS_CARRIER`]).
+pub(crate) fn owner_live_in_fold(fold: &AuthorityFold, owner: EntityId) -> bool {
+    let mut bound = false;
+    for binding in fold.actor_bindings.values() {
+        if binding.actor_ref != owner || binding.actor_class != "human" {
+            continue;
+        }
+        if binding.status == ActorBindingStatus::Active {
+            return true;
+        }
+        bound = true;
+    }
+    !bound && OWNER_UNBOUND_TRUSTS_CARRIER
+}
+
+/// Who decided an act, in process only and never on the wire (mesh contract
+/// §1). A door takes one and records it as an [`OwnerAct`]'s `by`; the
+/// supervisor's request MAC and the proof itself never enter a record.
+#[derive(Debug, Clone)]
+pub enum ActAuthority {
+    /// The owner's own proof (`owner()`, `owner_authorship()`, a host action
+    /// or a local session) and the surface it reached this install from,
+    /// which is audit only. The door revalidates the owner in its own
+    /// transaction.
+    Owner(crate::consent::AuthenticatedOwner, ActSurface),
+    /// An agent whose live Grant names the act. An agent is never relabelled
+    /// as the owner.
+    Agent(GrantedAct),
+}
+
+/// An agent's act its live Grant names: the agent, the Grant and the act kind
+/// the Grant was checked for. Only [`Vault::granted_act`] builds one, and a
+/// door checks the Grant again in its own transaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GrantedAct {
+    agent: EntityId,
+    grant: EntityId,
+    act: OwnerActKind,
+}
+
+impl GrantedAct {
+    /// The deciding agent.
+    #[must_use]
+    pub const fn agent(&self) -> EntityId {
+        self.agent
+    }
+
+    /// The Grant that names the act.
+    #[must_use]
+    pub const fn grant(&self) -> EntityId {
+        self.grant
+    }
+
+    /// The act kind the Grant was checked for.
+    #[must_use]
+    pub const fn act(&self) -> OwnerActKind {
+        self.act
+    }
+}
+
+/// Policy hook (CALLS "mesh PR2a agent act Grant line", open): the act kinds an
+/// agent's Grant may name in this build. Topology seals only; each other door
+/// takes agents when its lane writes the Grant line that names its act
+/// (contract §4).
+const AGENT_GRANTABLE_ACTS: [OwnerActKind; 1] = [OwnerActKind::TopologySeal];
+
+/// Policy hook (same CALLS row): whether FederationGrant `grant` names `act`
+/// for `agent` at `at`, as a named action grant does (`policy.change` is the
+/// precedent): its member is the agent, it confers at `at`, and its authority
+/// scope names the act's wire tag among an explicit verb set. A grant whose
+/// verbs are "all" names no act: a broad grant about other verbs never
+/// authorizes this one.
+fn grant_names_act(
+    grant: &crate::federation::FederationGrant,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+) -> bool {
+    AGENT_GRANTABLE_ACTS.contains(&act)
+        && grant.member_ref == agent
+        && grant.confers_at(at)
+        && matches!(
+            &grant.authority_scope.verbs,
+            crate::federation::ScopeAxis::Some(verbs) if verbs.contains(act.as_str())
+        )
+}
+
+/// What this replica holds of an agent act's Grant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GrantStanding {
+    /// The Grant row is live here and names the act for the agent.
+    Names,
+    /// No Grant row and no deletion of it is held here (grant travel may keep
+    /// it off): the carrier is trusted, as for the owner's say-so (CALLS "mesh
+    /// agent grant on replicas").
+    Absent,
+    /// The Grant row is deleted, revoked, another kind, or names no such act:
+    /// a known revocation refuses.
+    Refused,
+}
+
+/// How the Grant `grant` stands here for `agent`'s act `act` at `at`.
+pub(crate) fn grant_standing_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant: EntityId,
+    agent: EntityId,
+    act: OwnerActKind,
+    at: u64,
+) -> crate::error::Result<GrantStanding> {
+    Ok(
+        match crate::vault::live_entity_row_in_txn(store, txn, &grant)? {
+            crate::vault::LiveEntityRow::Live {
+                entity_type: crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                body,
+            } => match crate::federation::decode_federation_grant_body(&body) {
+                Ok(decoded) if grant_names_act(&decoded, agent, act, at) => GrantStanding::Names,
+                _ => GrantStanding::Refused,
+            },
+            crate::vault::LiveEntityRow::Live { .. }
+            | crate::vault::LiveEntityRow::DeletedShell => GrantStanding::Refused,
+            crate::vault::LiveEntityRow::Absent => {
+                if crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, &grant)?
+                    .deleted
+                {
+                    GrantStanding::Refused
+                } else {
+                    GrantStanding::Absent
+                }
+            }
+        },
+    )
+}
+
+/// The agent's Grant does not name the act here: absent, revoked, another
+/// agent's, expired, or naming other verbs. Authority; nothing was written.
+const GRANT_NAMES_NO_ACT: &str = "no live Grant of this agent names this act";
+/// The vault has no live owner whose will an agent's act could carry.
+const NO_LIVE_OWNER: &str = "this vault has no live owner whose Grant an agent's act could carry";
+
+impl crate::Vault {
+    /// The agent `agent`'s act `act`, when its live Grant `grant` names it now
+    /// (mesh contract §1, `ActAuthority::Agent`). The door that takes it
+    /// checks the Grant again in its own transaction.
+    pub fn granted_act(
+        &self,
+        agent: EntityId,
+        grant: EntityId,
+        act: OwnerActKind,
+    ) -> crate::error::Result<GrantedAct> {
+        let txn = self.store.env.read_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        if grant_standing_in_txn(&self.store, &txn, grant, agent, act, now)? != GrantStanding::Names
+        {
+            return Err(authority_refused(GRANT_NAMES_NO_ACT));
+        }
+        Ok(GrantedAct { agent, grant, act })
+    }
+
+    /// The writer's check of `granted` for `act` in its own transaction: the
+    /// Grant still names the act for the agent, now. Returns the vault owner
+    /// whose will the agent's act carries (the existing resolver: the
+    /// embedded PERSON, or the first live Owner-role member of a shared
+    /// vault).
+    pub(crate) fn granted_act_owner_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        granted: &GrantedAct,
+        act: OwnerActKind,
+    ) -> crate::error::Result<EntityId> {
+        let now = self.instant_in_txn(txn)?.secs();
+        if granted.act != act
+            || grant_standing_in_txn(&self.store, txn, granted.grant, granted.agent, act, now)?
+                != GrantStanding::Names
+        {
+            return Err(authority_refused(GRANT_NAMES_NO_ACT));
+        }
+        crate::policy_model::owners_in_txn(self, txn)?
+            .first()
+            .copied()
+            .ok_or_else(|| authority_refused(NO_LIVE_OWNER))
+    }
+}
+
+/// A typed authority refusal naming its rule (mesh PR2-reasons).
+pub(crate) fn authority_refused(reason: &'static str) -> crate::error::Error {
+    crate::error::Error::Record(crate::error::RecordError::AuthorityRefused(reason))
+}
+
+/// A door check's refusal as its branch's typed reason `reason`; a storage
+/// fault stays itself, so a failing disk never reads as a refusal.
+pub(crate) fn authority_refusal_as(
+    reason: &'static str,
+) -> impl Fn(crate::error::Error) -> crate::error::Error {
+    use crate::error::ErrorKind;
+    move |error| match error.kind() {
+        ErrorKind::Storage | ErrorKind::Io | ErrorKind::MapFull | ErrorKind::CorruptedIndex => {
+            error
+        }
+        _ => authority_refused(reason),
+    }
+}

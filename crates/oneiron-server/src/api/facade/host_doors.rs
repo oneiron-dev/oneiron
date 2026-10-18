@@ -54,6 +54,7 @@ pub(crate) use super::authority_history_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::browser_doors::*;
 pub(crate) use super::calendar_doors::*;
+pub(crate) use super::campaign_doors::*;
 pub(crate) use super::credential_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
@@ -77,11 +78,15 @@ pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;
 pub(crate) use super::live_voice_doors::*;
 pub(crate) use super::model_step_doors::*;
+// The owner's committed-run reads (DOOR-141 A/B), likewise.
+pub(crate) use super::run_read_doors::*;
 pub(crate) use super::skill_execution_doors::*;
 // The owner's courtesy delete doors (OF-273) too.
 pub(crate) use super::courtesy_delete_doors::*;
 // The owner's guest revoke door (OF-232) too.
 pub(crate) use super::coreference_doors::*;
+// The owner's subject-bound feedback and report doors, likewise.
+pub(crate) use super::feedback_doors::*;
 pub(crate) use super::federation_connect_doors::*;
 pub(crate) use super::guest_doors::*;
 pub(crate) use super::hub_doors::*;
@@ -1079,6 +1084,8 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         }
         "ai.steps.submit"
         | "ai.steps.receipt"
+        | "vault.runs.step"
+        | "vault.runs.checkpoint"
         | "ai.reply"
         | "vault.calendar.ics.import"
         | "vault.calendar.instances.move"
@@ -1181,6 +1188,11 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.craft_candidates.answer"
         | "vault.memory.signal_extraction"
         | "vault.memory.signal_extraction.result"
+        | "feedback.preview"
+        | "feedback.send"
+        | "vault.reports.disclosure"
+        | "vault.reports.route"
+        | "vault.reports.outbound"
         | "vault.claims.review"
         | "vault.claims.settle"
         | "vault.claims.vet"
@@ -1214,6 +1226,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.task_types.pin"
         | "vault.task_types.get"
         | "vault.agents.spawn.get"
+        | "vault.agents.spawn"
         | "vault.tasks.cancel_force"
         | "vault.runs.branches.get"
         | "vault.consults.get"
