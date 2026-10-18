@@ -14,6 +14,7 @@ mod live_runs;
 mod media_door;
 mod media_embedding;
 mod message_stream;
+mod note_editors;
 #[cfg(unix)]
 mod organs;
 mod oversight;
@@ -36,6 +37,7 @@ pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::desktop_seats::{RunSeats, Seat, SeatGuest};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, admit_every_pass};
 pub(crate) use self::lifecycle::LifecycleScheduler;
+pub(crate) use self::note_editors::NoteEditors;
 pub(crate) use self::live_runs::{
     HeldLiveRun, LiveRunCaller, LiveRunRefusal, LiveRuns, ResolvedLiveRun,
 };
