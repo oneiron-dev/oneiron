@@ -36,11 +36,13 @@ mod claim_conflict;
 mod claim_stale;
 mod conflict_settle;
 pub mod consolidation;
+pub mod coping_doors;
 mod diagnostics;
 mod diary_read;
 mod dreamer_revert;
 mod people_verbs;
 mod skill_authoring;
+pub mod wellness_doors;
 pub(crate) use booking::booking_error;
 pub(crate) use outbound::facade_error_from_outbound_dispatch;
 pub(crate) mod booking_publication;
@@ -95,6 +97,7 @@ mod structural;
 mod subscriptions;
 mod support;
 mod transcript;
+mod web_fetch;
 mod witness;
 
 #[cfg(test)]

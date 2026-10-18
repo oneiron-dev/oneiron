@@ -1,6 +1,39 @@
 {
   "verbs": [
     {
+      "name": "fetch",
+      "description": "Fetches one HTTP(S) page through the renderer ladder and retains its source as Imported evidence with Proposed claims; never walks links.",
+      "input": "crate::web_fetch::WebFetchRequest",
+      "output": "crate::web_fetch::FetchResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"fetch\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "crawl",
+      "description": "Crawls from one seed under an explicit attempted-page budget, same-origin by default; retains Imported evidence and Proposed claims, and returns failures and completion.",
+      "input": "crate::web_fetch::WebCrawlRequest",
+      "output": "crate::web_fetch::CrawlResult",
+      "call": "crate::task_verb::sdk::host_only(memory, \"crawl\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "host_door_caller": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true,
+        "validate": "crate::web_fetch::CrawlPageBudget::new(input.page_budget).map_err(|error| MemoryError::bad_request(error.to_string()))?;"
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "report",
       "description": "Files one feedback report on a skill or run: its subject, category and evidence; the host supplies the actor.",
       "input": "crate::feedback::ReportRequest",
@@ -1256,6 +1289,111 @@
       "output": "crate::memory::affect::AffectClaimConsolidation",
       "call": "memory.affect_claim_consolidate_as_owner(&memory.embedded_owner(\"vault.affect.claims.consolidate\")?, &input)?",
       "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.record",
+      "description": "Records a first coping outcome from two stored VAD-annotated turns for one person, with scoped claim admission and caller attribution; no factual claim is superseded.",
+      "input": "crate::memory::coping_doors::CopingOutcomeRecordRequest",
+      "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+      "call": "memory.coping_outcome_record_as_owner(&memory.embedded_owner(\"vault.affect.coping.record\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.update",
+      "description": "Updates an active coping aggregate from its strategy turn and a later annotated turn through the existing engine transaction, preserving scope and both evidence refs.",
+      "input": "crate::memory::coping_doors::CopingOutcomeUpdateRequest",
+      "output": "crate::memory::coping_doors::CopingOutcomeReceipt",
+      "call": "memory.coping_outcome_update_as_owner(&memory.embedded_owner(\"vault.affect.coping.update\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.coping.aggregate",
+      "description": "Reads all admitted active coping aggregates for one person and optional exact scope, including unsuccessful outcomes and their attribution and evidence refs.",
+      "input": "crate::memory::coping_doors::CopingAggregateRequest",
+      "output": "crate::memory::coping_doors::CopingAggregate",
+      "call": "memory.coping_aggregate_as_owner(&memory.embedded_owner(\"vault.affect.coping.aggregate\")?, &input)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.policy.get",
+      "description": "Reads the configured non-clinical wellness window, targets and advisory mode bands as the owner; absent policy stays absent.",
+      "input": "EmptyRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+      "call": "memory.wellness_policy_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.get\")?)?",
+      "scope": "Read",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.policy.configure",
+      "description": "Configures or clears the existing action-mode policy as the owner; no universal wellness cutoff or diagnostic label is supplied by the engine.",
+      "input": "crate::memory::wellness_doors::WellnessPolicyConfigureRequest",
+      "output": "Option<crate::dreamer_runner::maintenance::action_mode::ActionModePolicy>",
+      "call": "memory.wellness_policy_configure_as_owner(&memory.embedded_owner(\"vault.affect.wellness.policy.configure\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.derive",
+      "description": "Derives one person's non-clinical wellness projection using the existing state measurements and configured mode bands, with a routed receipt and source refs.",
+      "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+      "output": "crate::memory::wellness_doors::WellnessProjection",
+      "call": "memory.wellness_derive_as_owner(&memory.embedded_owner(\"vault.affect.wellness.derive\")?, &input)?",
+      "scope": "Write",
+      "host_door": true,
+      "host_door_lists": true,
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.affect.wellness.get",
+      "description": "Reads one person's measured wellness state, configured advisory mode and coping aggregates with source refs, without refreshing or revising factual claims.",
+      "input": "crate::memory::wellness_doors::WellnessPersonRequest",
+      "output": "crate::memory::wellness_doors::WellnessProjection",
+      "call": "memory.wellness_get_as_owner(&memory.embedded_owner(\"vault.affect.wellness.get\")?, &input)?",
+      "scope": "Read",
       "host_door": true,
       "host_door_lists": true,
       "admission": {
@@ -10043,6 +10181,62 @@
         "native": "agent_verb",
         "request": true
       }
+    },
+    {
+      "name": "vault.booking.availability",
+      "description": "Lists ranked public slots on a live published booking page as the caller, through the shared booking admission and solver without exposing busy sources.",
+      "input": "crate::task_verb::sdk::BookingAvailabilityRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.availability\", &input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.book",
+      "description": "Holds or confirms a real slot on a live published booking page as the caller, through the shared admission and home-node lifecycle with opaque session-bound tokens.",
+      "input": "crate::task_verb::sdk::BookingBookRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.book\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.reschedule",
+      "description": "Moves a booking on a live published page using its reschedule token, preserving EVENT and UID and replaying without another passport revision.",
+      "input": "crate::task_verb::sdk::BookingRescheduleRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.reschedule\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.booking.cancel",
+      "description": "Cancels a booking on a live published page using its cancel token, preserving EVENT and UID and replaying without another passport revision.",
+      "input": "crate::task_verb::sdk::BookingCancelRequest",
+      "output": "crate::booking::agent_api::BookingOperationResponse",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.booking.cancel\", &input)?",
+      "host_door": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
     },
     {
       "name": "vault.booking.constraint_turn",
