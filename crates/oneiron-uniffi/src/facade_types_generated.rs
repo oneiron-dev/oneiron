@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 700 facade rows, 2484 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 15; generated in and out: 657.
+// UniFFI census: 703 facade rows, 2492 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 16; generated in and out: 659.
 // WireJson rows: self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: ConsolidationEvidenceLocator.byte_range (a tuple), DeckNodeView.placeholder (a tuple), GeometryProps.extent (a tuple), GeometryProps.offset (a tuple), PptxShapeIdentity.position (a tuple), ProjectRecord.write_proof (the recursive type ProjectWriteProof), ResearchGoalPin.project (a tuple), SignalExtractionMessage.byte_range (a tuple), SignalExtractionSource.byte_range (a tuple), SufficiencyInput.paired_interval (a tuple), TaskStatusView.asks (a tuple), XlsxArea.first (a tuple), XlsxArea.last (a tuple), XlsxTable.first (a tuple), XlsxTable.last (a tuple).
 #![allow(
@@ -37498,6 +37498,86 @@ pub struct SummaryRegenerateRequest {
 pub struct SummaryProposalRequest {
     #[serde(rename = "proposal_ref")]
     pub proposal_ref: String,
+}
+
+/// `oneiron::note::kind_contract::NoteExtractionDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NoteExtractionDefault {
+    #[serde(rename = "disabled")]
+    Disabled,
+}
+
+/// `oneiron::note::kind_contract::NoteContextDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NoteContextDefault {
+    #[serde(rename = "relationship_scoped")]
+    RelationshipScoped,
+}
+
+/// `oneiron::note::kind_contract::NoteRetentionDefault`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum NoteRetentionDefault {
+    #[serde(rename = "durable")]
+    Durable,
+}
+
+/// `oneiron::note::brief_doors::BriefKindStamp`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BriefKindStamp {
+    #[serde(rename = "person_ref")]
+    pub person_ref: String,
+    #[serde(rename = "extraction")]
+    pub extraction: NoteExtractionDefault,
+    #[serde(rename = "context")]
+    pub context: NoteContextDefault,
+    #[serde(rename = "retention")]
+    pub retention: NoteRetentionDefault,
+}
+
+/// `oneiron::note::brief_doors::BriefClaimCitation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BriefClaimCitation {
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "document_ref")]
+    pub document_ref: String,
+    #[serde(rename = "start")]
+    pub start: u64,
+    #[serde(rename = "end")]
+    pub end: u64,
+}
+
+/// `oneiron::note::brief_doors::AuthorBriefRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AuthorBriefRequest {
+    #[serde(rename = "markdown")]
+    pub markdown: String,
+    #[serde(rename = "citations")]
+    pub citations: Vec<BriefClaimCitation>,
+}
+
+/// `oneiron::task_verb::sdk_share::BriefCitationFollowRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct BriefCitationFollowRequest {
+    #[serde(rename = "share_ref")]
+    pub share_ref: String,
+    #[serde(rename = "claim_ref")]
+    pub claim_ref: String,
+    #[serde(rename = "narrowing", default, skip_serializing_if = "Option::is_none")]
+    pub narrowing: Option<ShareViewNarrowing>,
+}
+
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalSharedBriefCitation`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalSharedBriefCitation {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<SharedBriefCitation>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
 }
 
 /// `oneiron::task_verb::sdk_memory::AuthorTakeTarget`.
