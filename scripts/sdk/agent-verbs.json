@@ -873,6 +873,22 @@
       }
     },
     {
+      "name": "self.credential.attenuate",
+      "description": "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted.",
+      "input": "crate::task_verb::sdk::CredentialAttenuationRequest",
+      "output": "crate::task_verb::sdk::CredentialAttenuated",
+      "call": "crate::task_verb::sdk::host_only(memory, \"self.credential.attenuate\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "credential_record_scope": true
+      },
+      "mcp_scope": "filtered",
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.scope.ceiling",
       "description": "Reads the caller credential ceiling as a typed ceiling, never as a record position.",
       "input": "EmptyRequest",

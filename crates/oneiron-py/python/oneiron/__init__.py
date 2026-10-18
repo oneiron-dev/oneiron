@@ -350,6 +350,9 @@ class Oneiron:
         def budget(self) -> "Oneiron._SelfBudgetVerbs":
             return Oneiron._SelfBudgetVerbs(self._client)
         @property
+        def credential(self) -> "Oneiron._SelfCredentialVerbs":
+            return Oneiron._SelfCredentialVerbs(self._client)
+        @property
         def off_record(self) -> "Oneiron._SelfOffRecordVerbs":
             return Oneiron._SelfOffRecordVerbs(self._client)
         def use(self, spec):
@@ -469,6 +472,12 @@ class Oneiron:
         def land(self, spec):
             """The worker parks its own dispatched attempt at its budget hold with its lease fence and exact checkpoint; the same run keeps its partial results and resumes later."""
             return json.loads(_translate(lambda: self._client.self_budget_land(json.dumps(spec))))
+    class _SelfCredentialVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def attenuate(self, spec):
+            """Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."""
+            return json.loads(_translate(lambda: self._client.self_credential_attenuate(json.dumps(spec))))
     class _SelfOffRecordVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client

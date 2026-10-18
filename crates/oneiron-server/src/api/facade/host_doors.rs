@@ -50,6 +50,7 @@ use crate::server::SyncServer;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::authority_history_doors::*;
+pub(crate) use super::credential_doors::*;
 pub(crate) use super::booking_doors::*;
 pub(crate) use super::calendar_doors::*;
 
@@ -1258,6 +1259,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.shared.policy.answer" => {
             super::shared_act_doors::person(server, auth, verb).map(drop)
         }
+        "self.credential.attenuate" => super::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" => artifact_asker(server, auth).map(drop),
         "self.memory.diary.query" => diary_reader(server, auth).map(drop),

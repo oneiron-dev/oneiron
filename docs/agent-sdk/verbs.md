@@ -52,6 +52,7 @@ both bindings and their export-census tests in one change.
 - `vault.claims.upsert`
 - `vault.recall`
 - `vault.export`
+- `self.credential.attenuate`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
 - `vault.receipts`
