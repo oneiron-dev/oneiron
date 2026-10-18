@@ -14,6 +14,7 @@ use oneiron::code_run::{
     run_contribution_forks,
 };
 use oneiron::dreamer_runner::maintenance::{ContributionForks, ContributionReplayHost};
+use oneiron::limit_ask::EngineLimit;
 use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_attribution::ContributionCandidate;
@@ -28,7 +29,6 @@ use oneiron::{
 use serde_json::{Value, json};
 
 use super::CHAT_ROLE;
-use super::code_fix::clip;
 use crate::replay_judge::{JUDGE_REVISION, ServeReplayJudge};
 use crate::server::SyncServer;
 
@@ -36,10 +36,6 @@ use crate::server::SyncServer;
 /// guard of its own at this cap, or at the pass's allowance when that is
 /// less, so the two forks get equal caps and neither can starve the other.
 const FORK_BUDGET_UNITS: u64 = 1 << 20;
-/// Most bytes of the task a fork's judgment reads.
-const TASK_BYTES: usize = 24 * 1024;
-/// Most bytes of a fork's answer its judgment reads.
-const RESPONSE_BYTES: usize = 16 * 1024;
 /// The judgment that scores a fork: the replay judge's live-axis question,
 /// whose pass rule is a decided yes at the band's high mark.
 const SCORER_JUDGMENT: &str = "live_axis";
@@ -223,8 +219,8 @@ impl ContributionForkScorer for JudgeScorer {
             judge: self.judge,
             clock,
             receipt: fork.receipt,
-            task: task_text(fork.task),
-            response: answer_text(fork.response),
+            task: task_text(vault, fork.task),
+            response: answer_text(vault, fork.response),
         };
         let notes: &dyn HeldOutReplayNotes = &notes;
         match notes.live_axis_met(candidate.skill, &blind, fork.receipt, &anchor.rubric) {
@@ -293,10 +289,12 @@ impl HeldOutReplayNotes for ForkNotes<'_> {
     }
 }
 
-/// What the step asked: its non-system messages' text, in order, cut to
-/// [`TASK_BYTES`]. The system prompt is the executor's or the agent's
-/// standing instruction, the same for every task.
-fn task_text(task: &LlmRequest) -> String {
+/// What the step asked: its non-system messages' text, in order, whole.
+/// The system prompt is the executor's or the agent's standing instruction,
+/// the same for every task. Past the
+/// `[limits] contribution_judge_task_bytes` row it asks, and the judge
+/// reads it all.
+fn task_text(vault: &Vault, task: &LlmRequest) -> String {
     let text = task
         .messages
         .iter()
@@ -308,11 +306,14 @@ fn task_text(task: &LlmRequest) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n\n");
-    clip(&text, TASK_BYTES).to_owned()
+    measure(vault, EngineLimit::ContributionJudgeTaskBytes, &text);
+    text
 }
 
-/// A fork's answer as text, cut to [`RESPONSE_BYTES`].
-fn answer_text(response: &LlmResponse) -> String {
+/// A fork's answer as text, whole. Past the
+/// `[limits] contribution_judge_answer_bytes` row it asks, and the judge
+/// reads it all.
+fn answer_text(vault: &Vault, response: &LlmResponse) -> String {
     let text: String = response
         .message
         .content
@@ -322,5 +323,12 @@ fn answer_text(response: &LlmResponse) -> String {
             _ => None,
         })
         .collect();
-    clip(&text, RESPONSE_BYTES).to_owned()
+    measure(vault, EngineLimit::ContributionJudgeAnswerBytes, &text);
+    text
+}
+
+/// Measures `text`'s bytes against `row`, which asks past its bound and
+/// never cuts the text.
+fn measure(vault: &Vault, row: EngineLimit, text: &str) {
+    vault.measure_limit(row, u64::try_from(text.len()).unwrap_or(u64::MAX));
 }

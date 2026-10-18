@@ -27,7 +27,9 @@ fn invalid(reason: &'static str) -> Error {
 /// The caller's host, lent to a callable skill. The skill's `finish` answer
 /// streams into a spool of its own, never the caller's store: it is JSON the
 /// call checks against its contract. A step that finishes answers with its
-/// finish alone, so its console lines and files reach no one.
+/// finish alone, so its console lines and files reach no one. A callable
+/// that calls another reaches the caller's host, which runs the inner one
+/// nested under the callable's own step token.
 struct SkillHost<'h> {
     host: &'h mut dyn JsCodeModeHost,
     answer: CallableSkillAnswer,
@@ -56,6 +58,24 @@ impl JsCodeModeHost for SkillHost<'_> {
 
     fn dispatch_self(&mut self, call: SelfCall) -> Result<SelfDispatchResponse> {
         self.host.dispatch_self(call)
+    }
+
+    fn dispatch_self_nested(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+    ) -> Result<SelfDispatchResponse> {
+        self.host.dispatch_self_nested(call, runtime)
+    }
+
+    fn dispatch_self_nested_cancellable(
+        &mut self,
+        call: SelfCall,
+        runtime: &mut dyn JsCodeModeRuntime,
+        cancel: &StepCancellation,
+    ) -> Result<SelfDispatchResponse> {
+        self.host
+            .dispatch_self_nested_cancellable(call, runtime, cancel)
     }
 }
 

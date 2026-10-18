@@ -1,6 +1,7 @@
 //! JS host bridge: recording dispatcher, sandbox contract, and prompt sites.
 
 use super::cancel::StepCancellation;
+use super::stack_floor::below_stack_floor;
 use super::store::{
     ByteCount, ObservationRef, RECOVERABLE_OUTPUT_CHUNK_BYTES, RESULT_READ_ROOT,
     RESULT_REPLY_INLINE_BYTES, StreamedOutputs, bridge_result_output_path, is_result_output_path,
@@ -83,6 +84,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// The run's executor, `provider/name@revision`, as the callable skills
     /// its program calls are credited to (OF-353).
     skill_executor: Option<String>,
+    /// Callable skills this host is running now, each nested in the one
+    /// before: a callable that calls another runs its step inside its own.
+    callable_depth: u32,
 }
 
 /// The name a reader child reads its parent's source by.
@@ -139,6 +143,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             left_a_gap: false,
             declined: None,
             skill_executor: None,
+            callable_depth: 0,
         }
     }
 
@@ -263,7 +268,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// The skill runs under a child of `parent`, the caller's step token: a
     /// stop of the caller stops it, and its owner's suspension stops it alone
     /// (FIX 600). A cancelled skill answers `code_step_cancelled`, and the
-    /// caller's step goes on.
+    /// caller's step goes on. A callable's own call nests inside it: past
+    /// the `[limits] callable_nest_depth` row it asks, and the call runs.
+    /// A call that would start below the thread's stack floor answers
+    /// `skills_call_stack_floor` instead.
     fn call_skill(
         &mut self,
         seq: u64,
@@ -279,6 +287,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
                 error,
             })
         };
+        // Each nested level keeps its host loop's frames on this thread.
+        if below_stack_floor() {
+            return Ok(failed("skills_call_stack_floor".to_owned()));
+        }
         let site = ExecutorCallSite {
             run_id: self.run_id,
             seq,
@@ -311,6 +323,11 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             return Ok(failed("skills_call_no_executor".to_owned()));
         };
         let (run_id, determinism) = (self.run_id, self.determinism);
+        self.callable_depth += 1;
+        lease.vault.measure_limit(
+            crate::limit_ask::EngineLimit::CallableNestDepth,
+            u64::from(self.callable_depth),
+        );
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,
@@ -325,6 +342,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             started_at_ms / 1000,
             parent,
         );
+        self.callable_depth -= 1;
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(failed("host_bridge_halted".to_owned()));
         }
