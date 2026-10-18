@@ -1,8 +1,7 @@
 //! OPC link additions and modern-comment part discovery; retained XML insertion only.
 
 use super::identities::{relationships, rels_path, resolve_target, text};
-use super::limits::PptxOperationalLimits;
-use super::package::*;
+use super::model::*;
 use super::xml::{Xml, escape};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -21,7 +20,7 @@ pub(super) fn append_extension(
     part: &str,
     common: bool,
     fragment: &str,
-    limits: &PptxOperationalLimits,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<()> {
     let xml = Xml::parse_with_limits(text(parts, part)?, limits)?;
     let root = xml.root(P, "sld")?;
@@ -47,7 +46,7 @@ pub(super) fn add_relationship(
     name: &str,
     kind: &str,
     target: &str,
-    limits: &PptxOperationalLimits,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<String> {
     let rels = relationships(parts, name, limits)?;
     let matches: Vec<_> = rels.iter().filter(|r| r.kind == kind).collect();
@@ -85,7 +84,7 @@ pub(super) fn content_type(
     allowed: &mut BTreeSet<String>,
     part: &str,
     kind: &str,
-    limits: &PptxOperationalLimits,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<()> {
     let xml = Xml::parse_with_limits(text(parts, CONTENT_TYPES)?, limits)?;
     let root = xml.root(CT, "Types")?;
@@ -114,7 +113,7 @@ pub(super) fn content_type(
 pub(super) fn comment_part(
     parts: &Parts,
     slide: &PptxSlideIdentity,
-    limits: &PptxOperationalLimits,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<Option<String>> {
     let xml = Xml::parse_with_limits(text(parts, &slide.part)?, limits)?;
     let root = xml.root(P, "sld")?;
@@ -157,16 +156,13 @@ pub(super) fn ensure_comment_part(
     parts: &mut Parts,
     allowed: &mut BTreeSet<String>,
     slide: &PptxSlideIdentity,
-    thread: crate::EntityId,
-    limits: &PptxOperationalLimits,
+    thread: &str,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<String> {
     if let Some(part) = comment_part(parts, slide, limits)? {
         return Ok(part);
     }
-    let file = format!(
-        "modernComment_{}.xml",
-        guid(thread).trim_matches(['{', '}'])
-    );
+    let file = format!("modernComment_{}.xml", thread.trim_matches(['{', '}']));
     let part = format!("ppt/comments/{file}");
     if parts.contains_key(&part) {
         return Err(PptxError::InvalidReference);
@@ -202,7 +198,7 @@ pub(super) fn ensure_author(
     parts: &mut Parts,
     allowed: &mut BTreeSet<String>,
     author: &PptxAuthor,
-    limits: &PptxOperationalLimits,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<()> {
     let id = canonical_guid(&author.guid)?;
     if author.name.trim().is_empty() || author.name.len() > limits.max_author_name_bytes {
@@ -260,7 +256,7 @@ pub(super) fn ensure_author(
     content_type(parts, allowed, AUTHORS, AUTHORS_TYPE, limits)
 }
 /// Resolve all internal links without fetching external relationships.
-pub(super) fn validate_links(parts: &Parts, limits: &PptxOperationalLimits) -> PatchResult<()> {
+pub(super) fn validate_links(parts: &Parts, limits: &PptxCommentLimits) -> PatchResult<()> {
     let types = Xml::parse_with_limits(text(parts, CONTENT_TYPES)?, limits)?;
     let root = types.root(CT, "Types")?;
     let mut names = BTreeSet::new();
@@ -299,7 +295,7 @@ pub(super) fn require_content_type(
     parts: &Parts,
     part: &str,
     kind: &str,
-    limits: &PptxOperationalLimits,
+    limits: &PptxCommentLimits,
 ) -> PatchResult<()> {
     let xml = Xml::parse_with_limits(text(parts, CONTENT_TYPES)?, limits)?;
     let root = xml.root(CT, "Types")?;
