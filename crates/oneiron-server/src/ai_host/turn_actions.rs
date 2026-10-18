@@ -118,6 +118,9 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
     let action = TurnActionAttempt::decode(attempt).map_err(|error| error.to_string())?;
     let (actor, class) = action.requester().map_err(|error| error.to_string())?;
     let settings = ai.chat_settings();
+    // The reply's newcomer barrier, marked before its history is read
+    // (FIX 1389): a Retry's second read of it runs after this mark too.
+    let mark = vault.container_output_mark();
     let context = blocking(|| {
         vault
             .memory(actor, class)
@@ -228,6 +231,7 @@ async fn act(vault: &Arc<Vault>, ai: &AiHandle, attempt: &AttemptRecord) -> Resu
                 vault: Arc::clone(vault),
             },
             keepalive,
+            mark,
         },
     )
     .map_err(|refusal| match refusal {

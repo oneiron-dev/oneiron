@@ -275,7 +275,9 @@ pub enum AgentVerb {
     SelfBrowserLibraryFind,
     SelfBrowserLibraryPropose,
     SelfBrowserLibraryRetire,
+    SelfBrowserLibraryRetired,
     SelfBrowserLibraryRun,
+    SelfBrowserHandover,
     SelfDesktopOpen,
     SelfDesktopObserve,
     SelfDesktopFind,
@@ -628,7 +630,9 @@ impl AgentVerb {
         Self::SelfBrowserLibraryFind,
         Self::SelfBrowserLibraryPropose,
         Self::SelfBrowserLibraryRetire,
+        Self::SelfBrowserLibraryRetired,
         Self::SelfBrowserLibraryRun,
+        Self::SelfBrowserHandover,
         Self::SelfDesktopOpen,
         Self::SelfDesktopObserve,
         Self::SelfDesktopFind,
@@ -988,7 +992,9 @@ impl AgentVerb {
             Self::SelfBrowserLibraryFind => "self.browser.library.find",
             Self::SelfBrowserLibraryPropose => "self.browser.library.propose",
             Self::SelfBrowserLibraryRetire => "self.browser.library.retire",
+            Self::SelfBrowserLibraryRetired => "self.browser.library.retired",
             Self::SelfBrowserLibraryRun => "self.browser.library.run",
+            Self::SelfBrowserHandover => "self.browser.handover",
             Self::SelfDesktopOpen => "self.desktop.open",
             Self::SelfDesktopObserve => "self.desktop.observe",
             Self::SelfDesktopFind => "self.desktop.find",
@@ -1400,7 +1406,9 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
+                | Self::SelfBrowserHandover
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
                 | Self::SelfDesktopFind
@@ -2088,7 +2096,9 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryFind
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
+                | Self::SelfBrowserLibraryRetired
                 | Self::SelfBrowserLibraryRun
+                | Self::SelfBrowserHandover
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopObserve
                 | Self::SelfDesktopFind
@@ -2332,6 +2342,7 @@ impl AgentVerb {
                 | Self::SelfBrowserLibraryPropose
                 | Self::SelfBrowserLibraryRetire
                 | Self::SelfBrowserLibraryRun
+                | Self::SelfBrowserHandover
                 | Self::SelfDesktopOpen
                 | Self::SelfDesktopClick
                 | Self::SelfDesktopClickAt
@@ -2681,7 +2692,9 @@ impl AgentVerb {
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
+            Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
+            Self::SelfBrowserHandover => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
             Self::SelfDesktopFind => &["spec"],
@@ -3035,7 +3048,9 @@ impl AgentVerb {
             Self::SelfBrowserLibraryFind => &["spec"],
             Self::SelfBrowserLibraryPropose => &["spec"],
             Self::SelfBrowserLibraryRetire => &["spec"],
+            Self::SelfBrowserLibraryRetired => &["spec"],
             Self::SelfBrowserLibraryRun => &["spec"],
+            Self::SelfBrowserHandover => &["spec"],
             Self::SelfDesktopOpen => &["spec"],
             Self::SelfDesktopObserve => &["spec"],
             Self::SelfDesktopFind => &["spec"],
@@ -3808,17 +3823,23 @@ impl AgentVerb {
                 "Where one held connector.call stands, by the call_ref its held or pending_delivery reply named: still pending, or the reply it settled with. Only the actor that made the call and the vault's owner read it."
             }
             Self::SelfBrowserOpen => {
-                "Opens a URL in the run's own browser session and observes the page."
+                "Opens a URL in the run's own browser session and observes the page; a long page's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfBrowserObserve => "Observes the current page of the run's browser session.",
+            Self::SelfBrowserObserve => {
+                "Observes the current page of the run's browser session, in pages: an answer with next goes on, and observe with that cursor reads the next page."
+            }
             Self::SelfBrowserFind => "Finds the page rows whose role and name match.",
-            Self::SelfBrowserClick => "Clicks one page target and observes the result.",
-            Self::SelfBrowserClickAt => {
-                "Clicks a point of a held screenshot, mapped onto the viewport."
+            Self::SelfBrowserClick => {
+                "Clicks one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
             }
-            Self::SelfBrowserType => "Types text into one page target and observes the result.",
+            Self::SelfBrowserClickAt => {
+                "Clicks a point of a held screenshot, mapped onto the viewport; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
+            Self::SelfBrowserType => {
+                "Types text into one page target and observes the result; a long page's observation comes in pages, read on with observe and its next cursor."
+            }
             Self::SelfBrowserSelect => {
-                "Picks the option of a select element by its label, text or value."
+                "Picks the option of a select element by its label, text or value; a long page's observation comes in pages, read on with observe and its next cursor."
             }
             Self::SelfBrowserWaitFor => {
                 "Waits until a page row its refs name, or else some row matching a role and name, is there."
@@ -3833,7 +3854,7 @@ impl AgentVerb {
             Self::SelfBrowserCrop => "Crops a held image to a rectangle.",
             Self::SelfBrowserZoom => "Zooms into a rectangle of a held image.",
             Self::SelfBrowserBatch => {
-                "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails."
+                "Runs one batched program of browser steps for a subgoal, stopping at the first step that fails; a long last observation comes in pages, read on with observe and the batch's next cursor."
             }
             Self::SelfBrowserLibraryFind => {
                 "The replay library's programs for a site, or for the open page's site."
@@ -3844,8 +3865,14 @@ impl AgentVerb {
             Self::SelfBrowserLibraryRetire => {
                 "Takes a program out of the replay library for every later run, and returns the card it had."
             }
+            Self::SelfBrowserLibraryRetired => {
+                "The programs retires took out of the replay library for a site, or for the open page's site, the newest first, each with when and why."
+            }
             Self::SelfBrowserLibraryRun => {
                 "Runs a replay library program live with its arguments; a missed postcondition goes back to the planner."
+            }
+            Self::SelfBrowserHandover => {
+                "Asks a person to take the browser over, saying why (to sign in or pay inside the same page); until they hand it back, every browser verb refuses browser_taken_over, and the answer after carries the takeover's record."
             }
             Self::SelfDesktopOpen => {
                 "Opens an app of the run's own desktop guest by app:name and observes its window."
@@ -4013,7 +4040,7 @@ impl AgentVerb {
                 "Records the deck oracle's receipt for its export profile, replacing the earlier one; a receipt that does not pass closes the gate a pass opened."
             }
             Self::VaultArtifactsBodyDeckPreview => {
-                "The asked slides of a deck's head as this host's review renderer draws the export it projects now: provisional images; nothing lands or is proposed."
+                "The asked slides of a deck's head, or of an open fork's merge candidate, as this host's review renderer draws its export now: provisional images kept by export key; nothing lands or is proposed."
             }
             Self::VaultArtifactsAppend => {
                 "Appends one version of bytes to a blob artifact's append-only chain."

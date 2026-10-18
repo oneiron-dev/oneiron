@@ -440,6 +440,9 @@ fn start_turn(
         )
     })?;
     let vault = Arc::clone(server.vault());
+    // The reply's newcomer barrier, marked before the first read the request
+    // is assembled from (FIX 1389).
+    let mark = vault.container_output_mark();
     let (actor, class) = principal(auth, &vault)?;
     let (agent, instructions) = assistant(auth, &vault, request.agent_ref.as_deref())?;
     let settings = server.ai.chat_settings();
@@ -602,6 +605,7 @@ fn start_turn(
             budget_units: settings.turn_budget_units,
             credential: credential.clone(),
             keepalive,
+            mark,
         },
     )
     .map_err(|refusal| match refusal {
@@ -963,6 +967,11 @@ pub(crate) struct Answer {
     pub(crate) budget_units: u64,
     pub(crate) credential: TurnCredential,
     pub(crate) keepalive: Duration,
+    /// The newcomer barrier (OF-365 P5, FIX 1389): the container output mark
+    /// the caller took before the first read its request was assembled from,
+    /// so no delta goes out into the reply's conversation once an attendee
+    /// entered it from there on.
+    pub(crate) mark: OutputMark,
 }
 
 /// Where a reply is written.
@@ -1021,11 +1030,8 @@ pub(crate) fn begin_answer(ai: &AiHandle, answer: Answer) -> Result<Answering, A
         budget_units,
         credential,
         keepalive,
+        mark,
     } = answer;
-    // The newcomer barrier (OF-365 P5): marked before the reply's stream
-    // opens, so no delta goes out into its conversation once an attendee
-    // entered it from here on.
-    let mark = vault.container_output_mark();
     // Past the vault's message-stream row the stream waits its turn (rule 5),
     // so it waits off the runtime's workers.
     let begun = crate::server::blocking(|| {

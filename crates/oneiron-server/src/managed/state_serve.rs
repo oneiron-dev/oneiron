@@ -890,9 +890,16 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Sensitive imported topics ask the owner who sees their later imports (OF-492).
+    ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
     // Documents whose signing finished are sealed as a task (OF-415).
     #[cfg(unix)]
     ladder_workers.push(crate::api::spawn_esign_seal_worker_admitted(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
+    // Held automated sign acts are asked up their role chain (OF-415).
+    ladder_workers.push(crate::api::spawn_esign_hold_worker_admitted(
         Arc::clone(&sync_server),
         admitted(),
     ));

@@ -16,14 +16,15 @@
 //! queued under its lease, where a credential's is the owner's root one. Its
 //! `connector.call` goes through the host's connector transports under the
 //! agent's own grant. Its `ai.speech` renders on the run's own line, the
-//! meter its entry's model calls spend on (FIX 3194), and its `ai.options`
-//! lists the speech rows that call could take. Any other `ai.*` media call
-//! and a hook replay are the owner's, and refused. A browser or desktop row
-//! drives the run's own guest under the browser pack, its checked
-//! connection and the vault's standing grants. The board rows, `self.focus.*` and a keyed
-//! `describe`, run the engine's board dispatcher over the agent's own board
-//! on the run's own STREAM connection, which goes when the door does. Each
-//! row's verb hooks fire once around it.
+//! meter its entry's model calls spend on (FIX 3194); one no provider
+//! answered stops the run on the typed outage, which parks it until a
+//! provider recovers. Its `ai.options` lists the speech rows that call could
+//! take. Any other `ai.*` media call and a hook replay are the owner's, and
+//! refused. A browser or desktop row drives the run's own guest under the
+//! browser pack, its checked connection and the vault's standing grants. The
+//! board rows, `self.focus.*` and a keyed `describe`, run the engine's board
+//! dispatcher over the agent's own board on the run's own STREAM connection,
+//! which goes when the door does. Each row's verb hooks fire once around it.
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -41,8 +42,8 @@ use oneiron::llm::decision::questions::{
 use oneiron::llm::media::{AiOperation, Modality};
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::memory::{
-    HostWriteOrigin, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, Memory, MemoryError,
-    MemoryResult, ProducerRows,
+    HostWriteOrigin, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_MODEL_UNAVAILABLE,
+    Memory, MemoryError, MemoryResult, ProducerRows,
 };
 use oneiron::receipt::{
     GraphAskOutcome, GraphAskRequest, QuestionAnswersRequest, QuestionBackfillRequest,
@@ -189,10 +190,15 @@ impl AgentVerbDoor for RunHostDoor {
                 output,
                 rows: Some(rows),
             })),
-            // A verb hook's stop goes back to the run as the typed stop.
-            Err(error) => match error.hook {
-                Some(stop) => Err(oneiron::Error::from(*stop)),
-                None => Ok(Err(AgentVerbRefusal { code: error.code })),
+            // A verb hook's stop goes back to the run as the typed stop, and
+            // a model call no provider answered as the typed outage, which
+            // the run parks on (FIX 3194).
+            Err(error) => match (error.hook, error.retry_after) {
+                (Some(stop), _) => Err(oneiron::Error::from(*stop)),
+                (None, Some(retry_after)) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => {
+                    Err(oneiron::Error::ProviderUnavailable { retry_after })
+                }
+                (None, _) => Ok(Err(AgentVerbRefusal { code: error.code })),
             },
         }
     }

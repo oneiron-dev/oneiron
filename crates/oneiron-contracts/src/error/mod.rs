@@ -190,6 +190,8 @@ pub enum ErrorKind {
     IndexedTextTooLarge,
     UpstreamToolFailure,
     RetrievalStageCut,
+    /// No provider answered a model call that may be sent again later.
+    ProviderUnavailable,
     #[cfg(feature = "sync")]
     CrdtDecodeError,
     #[cfg(feature = "sync")]
@@ -440,6 +442,12 @@ pub enum Error {
     /// partial work, so it never leaves the retrieval it was raised in.
     #[error("retrieval stage cut at its deadline")]
     RetrievalStageCut,
+    /// No provider answered a model call a host door made for a run (FIX
+    /// 3194): nothing kept the call, and it may be sent again in
+    /// `retry_after` seconds. A run's door raises it in place of a refusal,
+    /// so the run parks on the outage rather than its guest handling it.
+    #[error("no provider answered; retry in {retry_after} s")]
+    ProviderUnavailable { retry_after: u64 },
     /// Artifact-domain failure, see [`ArtifactError`].
     /// Transparent, so Display and `source()` are the leaf's.
     #[error(transparent)]
@@ -592,6 +600,7 @@ impl Error {
             Self::EdgeNotFound => ErrorKind::EdgeNotFound,
             Self::UpstreamToolFailure { .. } => ErrorKind::UpstreamToolFailure,
             Self::RetrievalStageCut => ErrorKind::RetrievalStageCut,
+            Self::ProviderUnavailable { .. } => ErrorKind::ProviderUnavailable,
             Self::Artifact(inner) => inner.kind(),
             Self::Claim(inner) => inner.kind(),
             Self::Code(inner) => inner.kind(),
@@ -613,6 +622,7 @@ impl Error {
         match self {
             Self::ConcurrentWrite(_) => true,
             Self::UpstreamToolFailure { .. } => true,
+            Self::ProviderUnavailable { .. } => true,
             // ONE-1449: the gate committed nothing, so the same call over a
             // settled ledger is the whole remedy. This is the one arm a
             // scheduler reads to tell "retry me" from "answered no".

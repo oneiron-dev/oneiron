@@ -93,6 +93,7 @@ mod entity;
 mod error_map;
 mod esign;
 pub(crate) use self::esign::hold_worker::spawn as spawn_esign_hold_worker;
+pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
 #[cfg(unix)]
 pub(crate) use self::esign::seal_worker::spawn as spawn_esign_seal_worker;
 #[cfg(unix)]
@@ -190,7 +191,7 @@ pub(crate) use self::reactive::*;
 pub(crate) use self::run_tree::*;
 use self::scoped_auth::{check_api_auth, scoped_read_for_legacy_api};
 pub(crate) use self::scoped_auth::{
-    credential_memory, credential_read_key, scoped_read_for_core_auth,
+    credential_memory, credential_read_key, mcp_credential_memory, scoped_read_for_core_auth,
 };
 pub(crate) use self::search::*;
 pub(crate) use self::surface_events::*;

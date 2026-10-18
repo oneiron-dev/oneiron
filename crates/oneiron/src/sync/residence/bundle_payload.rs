@@ -1,6 +1,6 @@
 //! What the vault's sealed cloud bundle carries (FIX 922 PR 2): the base section
-//! and each cloud-bound world's section a publisher seals, and how a reader takes
-//! a bundle back in. The carrier is `world_keys::bundle`; the holder and the wire
+//! and the section of each world the bundle carries for its holder that a
+//! publisher seals, and how a reader takes a bundle back in. The carrier is `world_keys::bundle`; the holder and the wire
 //! are `residence::bundle` and the residence client's.
 //!
 //! - The base section is base reality as the owner's machines hold it: the signed
@@ -8,11 +8,14 @@
 //!   everywhere, each the whole history-free snapshot the export door cuts for a
 //!   machine that may read no private world. It carries no world key pad row:
 //!   pads ride only the pad object, so erase's rewrite reaches every kept bundle.
-//! - A world section is every window of one cloud-bound world, each the whole
-//!   mirror this machine keeps for it.
-//! - A publisher seals a fresh section of each cloud-bound world it reads, and
+//! - A world section is every window of one carried world, each the whole mirror
+//!   this machine keeps for it. A holder that is a machine of the owner's also
+//!   gets the worlds whose sealed copies go to "My machines"
+//!   (`world_keys::bundle`).
+//! - A publisher seals a fresh section of each carried world it reads, and
 //!   carries every other section of the latest generation byte for byte, except
-//!   the ones it opens of a world that left the cloud or was deleted here.
+//!   the ones it opens of a world no longer eligible for this holder or deleted
+//!   here.
 //! - A take opens the sections this machine may read and merges each window into
 //!   its mirror. It never reads the base section: base syncs live between the
 //!   owner's machines. A kit restore reads it all, on an install with no machine
@@ -27,7 +30,7 @@ use zeroize::Zeroizing;
 use super::discover_local_window_keys;
 use super::policy::resolve_residence_mode;
 use crate::Vault;
-use crate::authority::{EditOrigin, EffectiveRead};
+use crate::authority::{Destination, EditOrigin, EffectiveRead};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError};
@@ -86,14 +89,16 @@ pub struct SealedKitRestore {
 }
 
 impl WindowManager {
-    /// Seals this machine's upload for UTC slot `slot`: the base section, a
-    /// fresh section of every cloud-bound world this machine reads, and every
-    /// other section of `latest` (the holder's newest generation and its pad
-    /// object) unchanged, minus the sections of worlds this machine reads that no
-    /// longer go to the cloud. Refused on an opened-item machine.
+    /// Seals this machine's upload for UTC slot `slot`, for `holder`, the home
+    /// that keeps it: the base section, a fresh section of every world the
+    /// bundle carries for `holder` that this machine reads, and every other
+    /// section of `latest` (the holder's newest generation and its pad object)
+    /// unchanged, minus the sections of worlds this machine reads that are no
+    /// longer eligible for `holder`. Refused on an opened-item machine.
     pub fn assemble_sealed_bundle(
         &self,
         slot: u64,
+        holder: Destination,
         latest: Option<(&SealedVaultBundle, &SealedKeyPads)>,
     ) -> Result<SealedVaultUpload> {
         let vault = self.vault();
@@ -105,9 +110,9 @@ impl WindowManager {
         }
         let windows = discover_local_window_keys(vault)?;
         let base = self.sealed_bundle_base(&windows)?;
-        let cloud = vault.sealed_bundle_worlds()?;
+        let eligible = vault.sealed_bundle_worlds(holder)?;
         let mut fresh = Vec::new();
-        for &world in &cloud {
+        for &world in &eligible {
             // A world this machine does not read now keeps the section it has.
             if vault.world_key(world).is_err() {
                 continue;
@@ -129,14 +134,15 @@ impl WindowManager {
                 if pads.generation() != opened.generation() {
                     return Err(refused("the pad object is another generation's"));
                 }
-                // The sections this machine opens go unless their world still
-                // rides the cloud, was not deleted here and has no fresh one.
+                // The sections this machine opens go unless their world is still
+                // eligible for this holder, was not deleted here and has no fresh
+                // one.
                 let keys = vault.bundle_reader_keys(Some(&pads), true)?;
                 let mut dropped = Vec::new();
                 for key in &keys {
                     let world = key.id().world;
                     if fresh.iter().any(|(sealed, _)| *sealed == world)
-                        || !cloud.contains(&world)
+                        || !eligible.contains(&world)
                         || deleted_here(vault, world)?
                     {
                         dropped.push(key);
@@ -149,7 +155,14 @@ impl WindowManager {
             .iter()
             .map(|(world, payload)| (*world, payload.as_slice()))
             .collect();
-        vault.seal_vault_bundle_carrying(slot, &base, &worlds, &carried, latest_pads.as_ref())
+        vault.seal_vault_bundle_carrying(
+            slot,
+            holder,
+            &base,
+            &worlds,
+            &carried,
+            latest_pads.as_ref(),
+        )
     }
 
     /// Takes `bundle` and its pad object in: opens every section this machine
