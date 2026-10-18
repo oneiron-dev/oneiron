@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 706 code-mode rows (685 host rows, 21 run rows), 2493 declarations.
-// Replies: 626 fully typed, 76 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 709 code-mode rows (688 host rows, 21 run rows), 2499 declarations.
+// Replies: 629 fully typed, 76 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 96; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1954,6 +1954,12 @@ declare namespace Sdk {
   type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding };
   type QuestionAnswer = (AnswerRecord & { kind: "graph" }) | (ArtifactAskRecord & { kind: "artifact" });
   type QuestionRefreshRequest = { id: EntityId };
+  type QuestionOutcomesRequest = { id: EntityId };
+  type QuestionOutcomes = { labels: OutcomeLabel[]; calibration: CalibrationPair[] };
+  type QuestionOutcomesProjectRequest = { id: EntityId };
+  type QuestionOutcomesProjected = { id: EntityId; projected: number };
+  type QuestionScheduleRequest = { id: EntityId };
+  type QuestionScheduleHead = { id: string; version: number; paused: boolean; last_refresh?: number | null; retry_at?: number | null };
   type DecisionBandReadRequest = { question: DecisionQuestion; reversibility: Reversibility; seed: DecisionBand };
   type BandMode = "shadow" | "enforce";
   type LearnedBand = { band: DecisionBand; version: number; mode: BandMode };
@@ -3761,10 +3767,17 @@ declare const vault: Sdk.VaultHost & {
     backfill(input: Sdk.QuestionBackfillRequest): Promise<Sdk.ScheduledBackfill | StoredResult>;
     create(input: Sdk.QuestionCreateRequest): Promise<Sdk.QuestionRecord | StoredResult>;
     edit(input: Sdk.QuestionEditRequest): Promise<Sdk.QuestionRecord | StoredResult>;
+    /** Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label. */
+    outcomes: ((input: Sdk.QuestionOutcomesRequest) => Promise<Sdk.QuestionOutcomes | StoredResult>) & {
+      /** Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label. */
+      project(input: Sdk.QuestionOutcomesProjectRequest): Promise<Sdk.QuestionOutcomesProjected | StoredResult>;
+    };
     pause(input: Sdk.QuestionPauseRequest): Promise<Sdk.QuestionPaused | StoredResult>;
     read(input: Sdk.QuestionReadRequest): Promise<Sdk.QuestionRecord | null | StoredResult>;
     /** Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it. */
     refresh(input: Sdk.QuestionRefreshRequest): Promise<Sdk.AnswerRecord[] | StoredResult>;
+    /** Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold. */
+    schedule(input: Sdk.QuestionScheduleRequest): Promise<Sdk.QuestionScheduleHead | null | StoredResult>;
   };
   /** Recalls a memory pack for a query at an effort level: ranked items with provenance, scope honesty and retrieval accounting. */
   recall(input: Sdk.RecallRequest): Promise<Sdk.MemoryPack | StoredResult>;

@@ -506,6 +506,9 @@ both bindings and their export-census tests in one change.
 - `vault.questions.read`
 - `vault.questions.answers`
 - `vault.questions.refresh`
+- `vault.questions.outcomes`
+- `vault.questions.outcomes.project`
+- `vault.questions.schedule`
 - `vault.decisions.bands.read`
 - `vault.decisions.bands.learn`
 - `vault.decisions.bands.enforce`

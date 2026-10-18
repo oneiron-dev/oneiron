@@ -7990,6 +7990,51 @@
       "section": false
     },
     {
+      "name": "vault.questions.outcomes",
+      "description": "Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label.",
+      "input": "crate::receipt::QuestionOutcomesRequest",
+      "output": "crate::receipt::QuestionOutcomes",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.questions.outcomes.project",
+      "description": "Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label.",
+      "input": "crate::receipt::QuestionOutcomesProjectRequest",
+      "output": "crate::receipt::QuestionOutcomesProjected",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.outcomes.project\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
+      "name": "vault.questions.schedule",
+      "description": "Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold.",
+      "input": "crate::receipt::QuestionScheduleRequest",
+      "output": "Option<crate::llm::decision::questions::QuestionScheduleHead>",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.schedule\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false,
+      "openapi": true
+    },
+    {
       "name": "vault.decisions.bands.read",
       "description": "The owner reads a question version's effective band on the running host; an unlearned row stays shadow at the supplied seed and version zero.",
       "input": "crate::llm::decision::DecisionBandReadRequest",

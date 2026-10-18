@@ -2198,6 +2198,15 @@ class Oneiron:
         def answers(self, spec: Facade.QuestionAnswersRequest) -> list[Facade.QuestionAnswer]: ...
         def refresh(self, spec: Facade.QuestionRefreshRequest) -> list[Facade.AnswerRecord]:
             """Refreshes the caller's standing question by hand, now, over every unit its current version covers, on the host's ladder as the standing pump answers it."""
+        @property
+        def outcomes(self) -> "Oneiron._VaultQuestionsOutcomesVerbs": ...
+        def schedule(self, spec: Facade.QuestionScheduleRequest) -> Facade.QuestionScheduleHead | None:
+            """Reads the caller's standing question scheduling head: its current version, paused state, last refresh and any failed-refresh hold."""
+    class _VaultQuestionsOutcomesVerbs:
+        def __call__(self, spec: Facade.QuestionOutcomesRequest) -> Facade.QuestionOutcomes:
+            """Reads the caller's standing question outcome labels and calibration pairs, each pairing an answer prediction and probability with its mapped label."""
+        def project(self, spec: Facade.QuestionOutcomesProjectRequest) -> Facade.QuestionOutcomesProjected:
+            """Projects the caller's standing question bound outcomes over current facts, idempotently binding each admissible fact in an answer horizon as its label."""
     class _VaultDecisionsVerbs:
         @property
         def bands(self) -> "Oneiron._VaultDecisionsBandsVerbs": ...

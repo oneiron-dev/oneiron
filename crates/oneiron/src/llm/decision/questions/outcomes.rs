@@ -4,7 +4,7 @@ use super::{
     records::*,
     store::{
         HeadKey, QUESTION_ANSWER, QUESTION_HEAD, QUESTION_LABEL, QUESTION_VERSION, VersionKey,
-        family_prefix,
+        family_prefix, owned_head,
     },
 };
 use crate::llm::decision::{DecisionAnswer, PersonChangedAnswer};
@@ -38,6 +38,33 @@ pub fn project_bound_outcomes(
     vault.with_write_txn_grouped(|txn| {
         super::arrival::project_question_in_txn(&vault.store, txn, &facts, question)
     })
+}
+
+/// The stored outcome labels of the caller's standing question, in label
+/// order. Another principal's question is not found, as its answers are
+/// not. A caller at `locality` gets no label naming a row a device-local
+/// world keeps from it, as [`calibration_pairs`] pairs none.
+pub fn outcome_labels(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    locality: crate::claim::CallerLocality,
+) -> Result<Vec<OutcomeLabel>> {
+    let txn = vault.store.env.read_txn()?;
+    owned_head(vault, &txn, principal, question)?;
+    let kept = crate::settings::device_local_worlds_at(vault, &txn, locality)?;
+    let mut labels = Vec::new();
+    for (_, label) in
+        QUESTION_LABEL.scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
+    {
+        if !kept.is_empty()
+            && kept_any(vault, &txn, &kept, &[question, label.answer, label.fact])?
+        {
+            continue;
+        }
+        labels.push(label);
+    }
+    Ok(labels)
 }
 
 /// Labels are observations of immutable answer receipts. Current facts and

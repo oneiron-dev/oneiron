@@ -4454,6 +4454,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_questions_outcomes(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.outcomes", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_outcomes_project(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.outcomes.project", input)
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_schedule(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.schedule", input)
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_decisions_bands_read(
         &self,
         input: serde_json::Value,

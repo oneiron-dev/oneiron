@@ -17,8 +17,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
 use crate::llm::decision::questions::{
-    AnswerRecord, ArtifactAskRecord, GraphAskFailure, GraphAskReceipts, QuestionCriteria,
-    QuestionDefinition,
+    AnswerRecord, ArtifactAskRecord, CalibrationPair, GraphAskFailure, GraphAskReceipts,
+    OutcomeLabel, QuestionCriteria, QuestionDefinition,
 };
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
@@ -331,6 +331,50 @@ pub struct QuestionAnswersRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionRefreshRequest {
+    pub id: EntityId,
+}
+
+/// `vault.questions.outcomes`'s input: the caller's standing question whose
+/// bound outcome labels and calibration pairs to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomesRequest {
+    pub id: EntityId,
+}
+
+/// `vault.questions.outcomes`'s answer: every stored outcome label of the
+/// question, each naming its answer and fact with the mapped label, noise
+/// weight, fact-value hash and time, and each calibration pair the current
+/// facts still support, pairing the answer's prediction and probability
+/// with its label. A silent closed window appears only as a pair.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct QuestionOutcomes {
+    pub labels: Vec<OutcomeLabel>,
+    pub calibration: Vec<CalibrationPair>,
+}
+
+/// `vault.questions.outcomes.project`'s input: the caller's standing
+/// question whose bound outcomes to project over the vault's current facts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomesProjectRequest {
+    pub id: EntityId,
+}
+
+/// `vault.questions.outcomes.project`'s answer: the question and how many
+/// labels this projection newly bound. The projection is idempotent over a
+/// fact's identity, so replaying it binds none again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct QuestionOutcomesProjected {
+    pub id: EntityId,
+    pub projected: usize,
+}
+
+/// `vault.questions.schedule`'s input: the caller's standing question whose
+/// scheduling head to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionScheduleRequest {
     pub id: EntityId,
 }
 
