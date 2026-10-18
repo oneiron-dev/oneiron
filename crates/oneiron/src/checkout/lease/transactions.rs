@@ -1,12 +1,17 @@
 //! Shared lease transitions. Door authorization and synced TASK facts run in the caller's
 //! transaction around these same transitions; the trusted service uses them too.
-use super::codec::{LEASE, SETTLEMENT, SettlementKey, load_act_in_txn,
-    load_tombstone_in_txn, store_act_in_txn};
-use super::types::*;
 use super::checkout_result_identity;
+use super::codec::{
+    LEASE, SETTLEMENT, SettlementKey, load_act_in_txn, load_tombstone_in_txn, store_act_in_txn,
+};
+use super::types::*;
 use crate::Vault;
 
-pub(crate) fn claim_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, r: CheckoutClaimRequest) -> CheckoutResult<CheckoutLeaseAct> {
+pub(crate) fn claim_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    r: CheckoutClaimRequest,
+) -> CheckoutResult<CheckoutLeaseAct> {
     CheckoutId::from_bytes(*r.checkout_id.as_bytes())?;
     if r.holder_ref.is_empty() {
         return Err(CheckoutError::Invalid("checkout holder empty"));
@@ -53,7 +58,13 @@ pub(crate) fn claim_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, r: CheckoutCl
     Ok(a)
 }
 
-pub(crate) fn renew_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, f: &CheckoutLeaseFence, ttl: u64, now: u64) -> CheckoutResult<CheckoutLeaseAct> {
+pub(crate) fn renew_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    f: &CheckoutLeaseFence,
+    ttl: u64,
+    now: u64,
+) -> CheckoutResult<CheckoutLeaseAct> {
     let mut a = fenced_in_txn(vault, t, f)?;
     require_not_regressed(&a, now)?;
     require_live(&a, now)?;
@@ -66,12 +77,19 @@ pub(crate) fn renew_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, f: &CheckoutL
     Ok(a)
 }
 
-pub(crate) fn reclaim_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, id: CheckoutId, new: String, now: u64, expected_epoch: Option<u64>, manual: bool) -> CheckoutResult<(CheckoutLeaseAct, bool)> {
+pub(crate) fn reclaim_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    id: CheckoutId,
+    new: String,
+    now: u64,
+    expected_epoch: Option<u64>,
+    manual: bool,
+) -> CheckoutResult<(CheckoutLeaseAct, bool)> {
     if new.is_empty() {
         return Err(CheckoutError::Invalid("checkout holder empty"));
     }
-    let mut a = load_act_in_txn(vault, t, id)?
-        .ok_or(CheckoutError::Invalid("checkout missing"))?;
+    let mut a = load_act_in_txn(vault, t, id)?.ok_or(CheckoutError::Invalid("checkout missing"))?;
     require_not_regressed(&a, now)?;
     require_active(&a)?;
     if a.holder_ref == new && expected_epoch.is_none() {
@@ -80,7 +98,10 @@ pub(crate) fn reclaim_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, id: Checkou
     if let Some(expected) = expected_epoch
         && a.epoch != expected
     {
-        return Err(CheckoutError::StaleEpoch { held: a.epoch, presented: expected });
+        return Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: expected,
+        });
     }
     let expiry = a
         .lease_expires_at
@@ -109,15 +130,14 @@ pub(crate) fn reclaim_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, id: Checkou
     Ok((a, true))
 }
 
-pub(crate) fn settle_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, r: &CheckoutSettlementRequest) -> CheckoutResult<(CheckoutLeaseAct, CheckoutSettlementReceipt, bool)> {
+pub(crate) fn settle_in_txn(
+    vault: &Vault,
+    t: &mut heed::RwTxn<'_>,
+    r: &CheckoutSettlementRequest,
+) -> CheckoutResult<(CheckoutLeaseAct, CheckoutSettlementReceipt, bool)> {
     let mut a = fenced_in_txn(vault, t, &r.fence)?;
     require_not_regressed(&a, r.now)?;
-    let identity = checkout_result_identity(
-        a.checkout_id,
-        a.epoch,
-        &r.observed_ref,
-        &r.result_ref,
-    );
+    let identity = checkout_result_identity(a.checkout_id, a.epoch, &r.observed_ref, &r.result_ref);
     let key = SettlementKey {
         checkout_id: a.checkout_id,
         epoch: a.epoch,
@@ -140,10 +160,7 @@ pub(crate) fn settle_in_txn(vault: &Vault, t: &mut heed::RwTxn<'_>, r: &Checkout
     require_unexpired(&a, r.now)?;
     require_settleable(&a)?;
     let receipt = CheckoutSettlementReceipt {
-        receipt_id: *blake3::hash(
-            &[identity.as_slice(), &r.now.to_le_bytes()].concat(),
-        )
-        .as_bytes(),
+        receipt_id: *blake3::hash(&[identity.as_slice(), &r.now.to_le_bytes()].concat()).as_bytes(),
         checkout_id: a.checkout_id,
         epoch: a.epoch,
         result_identity: identity,
@@ -217,7 +234,10 @@ pub(crate) fn fenced_in_txn(
 }
 pub(crate) fn require_unexpired(a: &CheckoutLeaseAct, now: u64) -> CheckoutResult<()> {
     if now < a.claimed_at || a.lease_expires_at.is_some_and(|expiry| now >= expiry) {
-        return Err(CheckoutError::StaleEpoch { held: a.epoch, presented: a.epoch });
+        return Err(CheckoutError::StaleEpoch {
+            held: a.epoch,
+            presented: a.epoch,
+        });
     }
     Ok(())
 }
@@ -241,18 +261,31 @@ pub(crate) fn publish_in_txn(
     if observed.is_empty() || candidate.is_empty() {
         return Err(CheckoutError::Invalid("publication references empty"));
     }
-    Ok(checkout_result_identity(act.checkout_id, act.epoch, observed, candidate))
+    Ok(checkout_result_identity(
+        act.checkout_id,
+        act.epoch,
+        observed,
+        candidate,
+    ))
 }
 
 pub(crate) fn finish_teardown_in_txn(
-    vault: &Vault, txn: &mut heed::RwTxn<'_>, fence: &CheckoutLeaseFence, now: u64,
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    fence: &CheckoutLeaseFence,
+    now: u64,
 ) -> CheckoutResult<CheckoutLeaseAct> {
     use super::codec::{TOMBSTONE, TombstoneRow};
     let act = fenced_in_txn(vault, txn, fence)?;
     require_not_regressed(&act, now)?;
     require_settling(&act)?;
     let prior = load_tombstone_in_txn(vault, txn, act.checkout_id)?.unwrap_or(0);
-    TOMBSTONE.put(&vault.store, txn, &act.checkout_id, &TombstoneRow(prior.max(act.epoch)))?;
+    TOMBSTONE.put(
+        &vault.store,
+        txn,
+        &act.checkout_id,
+        &TombstoneRow(prior.max(act.epoch)),
+    )?;
     LEASE.delete(&vault.store, txn, &act.checkout_id)?;
     Ok(act)
 }

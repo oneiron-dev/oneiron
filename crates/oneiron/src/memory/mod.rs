@@ -48,8 +48,8 @@ mod campaign_actions;
 pub mod caps;
 pub mod channel_doors;
 mod chat;
-mod claims;
 pub mod checkout_doors;
+mod claims;
 pub mod code_doors;
 pub mod code_run_doors;
 pub mod code_wait_doors;
@@ -121,13 +121,13 @@ pub use chat::{
 pub use claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, ScopedCommitRequest,
 };
-pub use claim_stale::{
-    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
-    ClaimFilteredReadRequest, ReadFilterInput,
-};
 pub(crate) use claim_conflict::claim_conflict_ruling_gate_refs_in_txn;
 pub use claim_conflict::{
     ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt,
+};
+pub use claim_stale::{
+    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
+    ClaimFilteredReadRequest, ReadFilterInput,
 };
 pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,

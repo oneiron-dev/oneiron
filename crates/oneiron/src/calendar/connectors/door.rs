@@ -60,7 +60,10 @@ pub struct CalendarImipTransportConfig {
 pub fn validate_endpoint(endpoint: &str) -> MemoryResult<()> {
     let url = reqwest::Url::parse(endpoint)
         .map_err(|_| MemoryError::bad_request("calendar endpoint is not a URL"))?;
-    let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]" | "::1"));
+    let local = matches!(
+        url.host_str(),
+        Some("localhost" | "127.0.0.1" | "[::1]" | "::1")
+    );
     if !(url.scheme() == "https" || url.scheme() == "http" && local)
         || url.host_str().is_none()
         || !url.username().is_empty()
@@ -75,21 +78,30 @@ pub fn validate_endpoint(endpoint: &str) -> MemoryResult<()> {
     Ok(())
 }
 
-fn check_owner(memory: &Memory<'_>, owner: &AuthenticatedOwner, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {
+fn check_owner(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    txn: &heed::RoTxn<'_>,
+) -> MemoryResult<()> {
     if owner.revalidate_in_txn(memory.vault(), txn)? != memory.actor()
         || memory.actor_class() != EdgeActorClass::Human
     {
-        return Err(MemoryError::bad_request("calendar setup must act as its authenticated owner"));
+        return Err(MemoryError::bad_request(
+            "calendar setup must act as its authenticated owner",
+        ));
     }
     Ok(())
 }
 
 pub fn configure(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: &CalendarConnectorConfigureRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: &CalendarConnectorConfigureRequest,
 ) -> MemoryResult<CalendarConnectorRegistration> {
     validate_endpoint(&input.endpoint)?;
     let seat = CalendarConnectorSeatState::new(input.config.clone());
-    seat.validate().map_err(|error| MemoryError::bad_request(error.to_string()))?;
+    seat.validate()
+        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let key = input.config.seat_ref.clone();
@@ -97,31 +109,49 @@ pub fn configure(
             if existing.endpoint == input.endpoint && existing.seat.config == input.config {
                 return Ok(existing);
             }
-            return Err(MemoryError::bad_request("a configured seat is immutable; use a new seat_ref"));
+            return Err(MemoryError::bad_request(
+                "a configured seat is immutable; use a new seat_ref",
+            ));
         }
-        let row = CalendarConnectorRegistration { endpoint: input.endpoint.clone(), seat, last_sync: None };
+        let row = CalendarConnectorRegistration {
+            endpoint: input.endpoint.clone(),
+            seat,
+            last_sync: None,
+        };
         SEATS.put(&memory.vault().store, txn, &key, &row)?;
         Ok(row)
     })
 }
 
 pub fn get(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: &CalendarConnectorRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: &CalendarConnectorRequest,
 ) -> MemoryResult<Option<CalendarConnectorRegistration>> {
-    let txn = memory.vault().store.env.read_txn().map_err(crate::Error::from)?;
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
     check_owner(memory, owner, &txn)?;
     Ok(SEATS.get(&memory.vault().store, &txn, &input.seat_ref)?)
 }
 
 pub fn kill(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: &CalendarConnectorKillRequest,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: &CalendarConnectorKillRequest,
 ) -> MemoryResult<CalendarConnectorRegistration> {
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
-        let mut row = SEATS.get(&vault.store, txn, &input.seat_ref)?
+        let mut row = SEATS
+            .get(&vault.store, txn, &input.seat_ref)?
             .ok_or_else(|| MemoryError::not_found("calendar seat is not configured"))?;
-        row.seat = row.seat.mark_killed(vault.now_recorded_at(), &input.reason_ref)
+        row.seat = row
+            .seat
+            .mark_killed(vault.now_recorded_at(), &input.reason_ref)
             .map_err(|error| MemoryError::bad_request(error.to_string()))?;
         SEATS.put(&vault.store, txn, &input.seat_ref, &row)?;
         Ok(row)
@@ -129,14 +159,17 @@ pub fn kill(
 }
 
 pub fn observe_sync(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner,
-    prior: &CalendarConnectorRegistration, outcome: &CalendarSyncOutcome,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    prior: &CalendarConnectorRegistration,
+    outcome: &CalendarSyncOutcome,
 ) -> MemoryResult<()> {
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
         let key = prior.seat.config.seat_ref.clone();
-        let mut current = SEATS.get(&vault.store, txn, &key)?
+        let mut current = SEATS
+            .get(&vault.store, txn, &key)?
             .ok_or_else(|| MemoryError::not_found("calendar seat is not configured"))?;
         if current != *prior {
             return Err(MemoryError::bad_request("calendar seat moved during sync"));
@@ -151,11 +184,18 @@ pub fn observe_sync(
 }
 
 pub fn configure_imip(
-    memory: &Memory<'_>, owner: &AuthenticatedOwner, input: &CalendarImipTransportConfig,
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    input: &CalendarImipTransportConfig,
 ) -> MemoryResult<CalendarImipTransportConfig> {
     validate_endpoint(&input.endpoint)?;
-    if input.secret_ref.is_empty() || input.secret_ref.len() > 256 || input.secret_ref.chars().any(char::is_control) {
-        return Err(MemoryError::bad_request("secret_ref must be a bounded custody name"));
+    if input.secret_ref.is_empty()
+        || input.secret_ref.len() > 256
+        || input.secret_ref.chars().any(char::is_control)
+    {
+        return Err(MemoryError::bad_request(
+            "secret_ref must be a bounded custody name",
+        ));
     }
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
@@ -164,8 +204,16 @@ pub fn configure_imip(
     })
 }
 
-pub fn get_imip(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> MemoryResult<Option<CalendarImipTransportConfig>> {
-    let txn = memory.vault().store.env.read_txn().map_err(crate::Error::from)?;
+pub fn get_imip(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+) -> MemoryResult<Option<CalendarImipTransportConfig>> {
+    let txn = memory
+        .vault()
+        .store
+        .env
+        .read_txn()
+        .map_err(crate::Error::from)?;
     check_owner(memory, owner, &txn)?;
     Ok(IMIP.get(&memory.vault().store, &txn, &())?)
 }
@@ -180,13 +228,17 @@ pub fn imip_transport(vault: &Vault) -> crate::Result<Option<CalendarImipTranspo
 /// The installed seat's standing authority at each provider call. A stopped
 /// seat, withdrawn owner credential or another sync's cursor never sends.
 pub fn check_installed_connector(
-    vault: &Vault, owner: &AuthenticatedOwner, expected: &CalendarConnectorRegistration,
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    expected: &CalendarConnectorRegistration,
 ) -> crate::Result<()> {
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
     let current = SEATS.get(&vault.store, &txn, &expected.seat.config.seat_ref)?;
     if current.as_ref() != Some(expected) || expected.seat.kill_switch_engaged() {
-        return Err(crate::Error::InvalidConfig("calendar seat is stopped or moved".to_owned()));
+        return Err(crate::Error::InvalidConfig(
+            "calendar seat is stopped or moved".to_owned(),
+        ));
     }
     Ok(())
 }

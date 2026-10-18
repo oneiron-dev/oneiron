@@ -105,7 +105,9 @@ pub struct EvalRelease {
     pub cases: Vec<EvalCase>,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 pub struct EvalExposureCounts {
     pub candidates: u64,
     pub queries: u64,

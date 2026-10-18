@@ -41,7 +41,9 @@ pub struct ResearchReservation {
 }
 
 /// The campaign's lease and what it has committed against it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct ResearchBudgetRead {
     pub max_units: u64,

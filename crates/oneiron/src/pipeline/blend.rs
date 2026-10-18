@@ -253,7 +253,11 @@ fn populate_access_factors(
         let override_factor = overrides.and_then(|overrides| overrides.get(&input.id).copied());
         let aging = profiles.policy(crate::claim::claim_aging_class(&body.predicate));
         let derived = crate::claim::claim_access_factor_with_policy(
-            body, meta.learned_at, now_secs, override_factor, aging,
+            body,
+            meta.learned_at,
+            now_secs,
+            override_factor,
+            aging,
         )?;
         input.access_factor = if override_factor.is_none() && affect.shapes_access_factor() {
             let arousal = stored_claim_vad(store, rtxn, &input.id)?.map(|vad| vad.arousal);
