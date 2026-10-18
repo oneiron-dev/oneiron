@@ -4486,6 +4486,16 @@ impl NativeClient {
             .map_err(raise)?;
         encode(&output)
     }
+    fn vault_booking_constraint_turn(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.booking.constraint_turn")?;
+        let output = py
+            .detach(|| {
+                self.inner
+                    .agent_verb("vault.booking.constraint_turn", input)
+            })
+            .map_err(raise)?;
+        encode(&output)
+    }
     fn vault_booking_page_token(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
         let input: serde_json::Value = decode(input_json, "vault.booking.page_token")?;
         let output = py

@@ -2345,6 +2345,8 @@ class Oneiron:
         def answer(self, spec: Facade.DecisionAskAnswerRequest) -> Facade.DecisionAsk: ...
         def climb(self, spec: Facade.DecisionAskClimbRequest) -> Facade.ResolvedRole | None: ...
     class _VaultBookingVerbs:
+        def constraint_turn(self, spec: Facade.BookingConstraintTurnRequest) -> Facade.BookingConstraintTurnResponse:
+            """Parses one scheduling constraint on a live published booking page as the caller, returning public slot controls, an email continuation or a deflect; this never holds or confirms a booking."""
         def page_token(self, spec: Facade.BookingPageTokenRequest) -> Facade.BookingPageTokenResponse:
             """The owner discovers the opaque token for an existing configured booking page; this does not publish the page or grant booking authority."""
     class _VaultCalendarVerbs:

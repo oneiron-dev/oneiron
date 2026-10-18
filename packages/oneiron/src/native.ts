@@ -531,6 +531,7 @@ vaultCommit(input: unknown): unknown
 vaultRemember(input: unknown): unknown
 vaultClaimsRetract(input: unknown): unknown
 vaultForget(input: unknown): unknown
+vaultBookingConstraintTurn(input: unknown): unknown
 vaultBookingPageToken(input: unknown): unknown
 vaultCalendarCreate(input: unknown): unknown
 vaultCalendarIcsImport(input: unknown): unknown

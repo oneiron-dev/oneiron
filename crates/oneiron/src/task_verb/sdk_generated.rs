@@ -2801,6 +2801,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<ForgetRequest>(),
             ),
             (
+                "vault.booking.constraint_turn",
+                crate::code_run::vault_read::request_schema::<
+                    crate::task_verb::sdk::BookingConstraintTurnRequest,
+                >(),
+            ),
+            (
                 "vault.booking.page_token",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::BookingPageTokenRequest,
@@ -3893,6 +3899,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.decisions.bands.read",
     "vault.decisions.bands.learn",
     "vault.decisions.bands.enforce",
+    "vault.booking.constraint_turn",
     "vault.booking.page_token",
     "vault.calendar.create",
     "vault.calendar.ics.import",
@@ -4625,6 +4632,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.decisions.bands.enforce" => {
             crate::code_run::vault_read::request_schema::<crate::llm::decision::LearnedBand>()
         }
+        "vault.booking.constraint_turn" => crate::code_run::vault_read::request_schema::<
+            crate::task_verb::sdk::BookingConstraintTurnResponse,
+        >(),
         "vault.booking.page_token" => crate::code_run::vault_read::request_schema::<
             crate::task_verb::sdk::BookingPageTokenResponse,
         >(),
@@ -8445,6 +8455,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.booking.constraint_turn" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.booking.page_token" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11211,6 +11228,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.forget" => {
             let _input: ForgetRequest = decode(value.clone())?;
         }
+        "vault.booking.constraint_turn" => {
+            let _input: crate::task_verb::sdk::BookingConstraintTurnRequest =
+                decode(value.clone())?;
+        }
         "vault.booking.page_token" => {
             let _input: crate::task_verb::sdk::BookingPageTokenRequest = decode(value.clone())?;
         }
@@ -12712,6 +12733,9 @@ pub fn invoke(
         "vault.remember" => encode(vault_remember(memory, decode(value)?)?),
         "vault.claims.retract" => encode(vault_claims_retract(memory, decode(value)?)?),
         "vault.forget" => encode(vault_forget(memory, decode(value)?)?),
+        "vault.booking.constraint_turn" => {
+            encode(vault_booking_constraint_turn(memory, decode(value)?)?)
+        }
         "vault.booking.page_token" => encode(vault_booking_page_token(memory, decode(value)?)?),
         "vault.calendar.create" => encode(vault_calendar_create(memory, decode(value)?)?),
         "vault.calendar.ics.import" => encode(vault_calendar_ics_import(memory, decode(value)?)?),
@@ -17478,6 +17502,12 @@ pub fn vault_forget(
         &["/claim_ref"],
     )?;
     memory_requests::forget_claims(memory, input)
+}
+pub fn vault_booking_constraint_turn(
+    memory: &Memory<'_>,
+    input: crate::task_verb::sdk::BookingConstraintTurnRequest,
+) -> MemoryResult<crate::task_verb::sdk::BookingConstraintTurnResponse> {
+    crate::task_verb::sdk::host_only(memory, "vault.booking.constraint_turn", &input)
 }
 pub fn vault_booking_page_token(
     memory: &Memory<'_>,

@@ -95,7 +95,7 @@ pub const fn lens_load_action(stored: LensVersionStamp, live: LensVersionStamp) 
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct GeneratedLens {
     kit_version: u16,
     apps_contract_version: u16,

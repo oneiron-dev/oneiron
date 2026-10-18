@@ -535,6 +535,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.remember", post(facade_route))
         .route("/vault.claims.retract", post(facade_route))
         .route("/vault.forget", post(facade_route))
+        .route("/vault.booking.constraint_turn", post(facade_route))
         .route("/vault.booking.page_token", post(facade_route))
         .route("/vault.calendar.create", post(facade_route))
         .route("/vault.calendar.ics.import", post(facade_route))

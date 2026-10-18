@@ -507,6 +507,7 @@ both bindings and their export-census tests in one change.
 - `vault.remember`
 - `vault.claims.retract`
 - `vault.forget`
+- `vault.booking.constraint_turn`
 - `vault.booking.page_token`
 - `vault.calendar.create`
 - `vault.calendar.ics.import`
