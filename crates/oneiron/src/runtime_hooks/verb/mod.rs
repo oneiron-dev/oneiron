@@ -11,6 +11,7 @@
 mod ask;
 mod chain;
 mod credential;
+mod plain_resume;
 mod record;
 mod redact;
 mod resume;
@@ -36,6 +37,7 @@ pub use credential::{
     VerbAskDoor, VerbAskDrainPermit, VerbAskDrainScope, VerbAskInstrument, VerbAskRefusal,
     VerbAskResumed, VerbAskSavedCall,
 };
+pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
 pub(crate) use state::{HookDepth, VerbHookState};
