@@ -159,6 +159,8 @@ pub use crate::lens::{
     LinkedText, ProseSpan, RecordLinks, RecordLinksRequest, RecordRef, RecordRefPreview,
     ResolveRecordRefRequest,
 };
+// FIX 2222: a host credential where no host acts as a person.
+pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
 pub use outbound::{

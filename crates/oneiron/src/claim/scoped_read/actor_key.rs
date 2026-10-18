@@ -50,6 +50,9 @@ pub struct ScopedReadActorKey {
     pub(super) worlds: Option<crate::pipeline::WorldAuthoritySet>,
     /// Whether the caller sits off this device; see [`Self::at`].
     off_device: bool,
+    /// Set only on a host action's key (FIX 2222); see
+    /// [`Self::guarded_by_host_action`].
+    host_action: Option<crate::authority::HostActionGuard>,
 }
 
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
@@ -354,6 +357,7 @@ impl ScopedReadActorKey {
             room_turn: None,
             worlds: None,
             off_device: false,
+            host_action: None,
         })
     }
 
@@ -389,7 +393,26 @@ impl ScopedReadActorKey {
             room_turn: None,
             worlds: None,
             off_device: false,
+            host_action: None,
         }
+    }
+
+    /// This key, held to the host action it was built for (FIX 2222): every
+    /// read proves again in its own snapshot that the vault is self-hosted
+    /// and that the root, or the dev mode, still acts as this owner. Only
+    /// `HostActionAuthority` builds the guard.
+    #[must_use]
+    pub(crate) fn guarded_by_host_action(
+        mut self,
+        guard: crate::authority::HostActionGuard,
+    ) -> Self {
+        self.host_action = Some(guard);
+        self
+    }
+
+    /// The host action this key reads for, when it is one's.
+    pub(crate) fn host_action_guard(&self) -> Option<&crate::authority::HostActionGuard> {
+        self.host_action.as_ref()
     }
 
     /// The owner this key was minted for, when it is the vault owner's key.

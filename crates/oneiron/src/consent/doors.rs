@@ -49,6 +49,11 @@ pub struct AuthenticatedOwner {
     /// revalidation then also requires that capability to be live and the
     /// actor to be an owner of this vault.
     credential: Option<Box<crate::authority::VerifiedSlip>>,
+    /// The host action this owner was authenticated from, when a host
+    /// authenticated a self-hosted root or the local dev mode as the owner
+    /// ([`Vault::authenticate_host_action_owner`], FIX 2222). Every
+    /// revalidation then also requires that action to still hold.
+    host_action: Option<Box<crate::authority::HostActionGuard>>,
 }
 
 impl AuthenticatedOwner {
@@ -196,6 +201,20 @@ impl AuthenticatedOwner {
             return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
                 "authenticated owner is no longer active",
             )));
+        }
+        if let Some(action) = &self.host_action {
+            // Rechecked in the caller's transaction (FIX 2222): a root
+            // revoked or a binding withdrawn while the request waited for the
+            // writer commits nothing. Off a self-hosted vault the typed
+            // refusal stands as it is.
+            action.holds_in(vault, txn).map_err(|error| match error {
+                Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_)) => {
+                    Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                        "the host action this owner was authenticated from no longer holds",
+                    ))
+                }
+                other => other,
+            })?;
         }
         if let Some(credential) = &self.credential {
             // Rechecked in the caller's transaction: a capability revoked, or
@@ -424,7 +443,40 @@ impl Vault {
             vault_path: self.store.env.path().to_path_buf(),
             vault_open: self.store.open_nonce,
             credential: None,
+            host_action: None,
         })
+    }
+
+    /// Produces an [`AuthenticatedOwner`] for one decision from a host
+    /// action (FIX 2222): the owner a self-hosted root, or the explicit local
+    /// dev mode, acts as. The proof carries the action, so every
+    /// revalidation in an acting transaction also requires the root to stay
+    /// live and keep binding this owner. A hosted operator's root never gets
+    /// here: it resolves no [`crate::authority::HostActionAuthority`].
+    ///
+    /// # Errors
+    ///
+    /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+    /// when the action no longer holds or its person is no live owner of
+    /// this vault; [`Error::HostActionRequiresSupportGrant`] on a vault that
+    /// is not self-hosted.
+    pub fn authenticate_host_action_owner(
+        &self,
+        action: &crate::authority::HostActionAuthority,
+        decision_id: GateDecisionId,
+    ) -> Result<AuthenticatedOwner> {
+        let actor = action.actor().entity_ref();
+        let owner = AuthenticatedOwner {
+            actor,
+            principal_ref: actor.to_hex(),
+            decision_id,
+            vault_path: self.store.env.path().to_path_buf(),
+            vault_open: self.store.open_nonce,
+            credential: None,
+            host_action: Some(Box::new(action.guard().clone())),
+        };
+        self.recheck_owner(&owner)?;
+        Ok(owner)
     }
 
     /// Binds `owner` to the verified, full owner-grade capability its request
