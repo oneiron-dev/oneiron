@@ -3,12 +3,13 @@
 use super::{
     DeterministicDetector, DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass,
     DiagnosticObservation, DiagnosticReplayCoordinate, DiagnosticSourceKind, DiagnosticWorkingSet,
-    MAX_EVENTS_PER_RUN, validate_working_set,
+    validate_working_set,
 };
 use crate::Vault;
 use crate::consent::{CONSENT_CONTENT_KIND, CONSENT_REASON_DENIED};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::limit_ask::EngineLimit;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use rmpv::Value;
 
@@ -94,7 +95,9 @@ impl Vault {
     /// Reads only the caller-selected receipt scope and records explicit
     /// consent refusals through the diagnostic maintenance door. The query's
     /// kinds, actor, outcome, job and time bounds are not widened. Selection
-    /// orders the facts before the pure detector sees them.
+    /// orders the facts before the pure detector sees them. Every receipt the
+    /// query returns is projected: past `limits.detector_receipt_rows` the
+    /// detector asks and reads on.
     pub fn run_consent_denied_detector(
         &self,
         scope_ref: &str,
@@ -104,11 +107,13 @@ impl Vault {
             scope_ref,
             observations: &[],
         })?;
-        if query.limit == 0 || query.limit > MAX_EVENTS_PER_RUN {
+        if query.limit == 0 {
             return Err(Error::InvariantViolation("diagnostic receipt query limit"));
         }
+        let receipts = self.receipts(query)?;
+        let _ = self.measure_limit(EngineLimit::DetectorReceiptRows, receipts.len() as u64);
         let mut observations = Vec::new();
-        for receipt in self.receipts(query)? {
+        for receipt in receipts {
             if let Some(observation) = DiagnosticObservation::from_consent_receipt(&receipt)? {
                 observations.push(observation);
             }
