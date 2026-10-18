@@ -9689,11 +9689,12 @@
      "path": "src/channel_identity_selection/mod.rs",
      "purpose": "Relationship-context channel-identity selection law (ONE-1826)",
      "surface": {
+      "crate-vis": 1,
       "re-export": 3
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/channel_identity_selection/selection_codec.rs",
@@ -9747,6 +9748,7 @@
      "path": "src/channel_identity_selection/selection_storage.rs",
      "purpose": "Vault persistence and amendment for the channel-identity selection rule set",
      "surface": {
+      "crate-vis": 1,
       "fn": 3
      }
     },
@@ -31755,7 +31757,7 @@
      "purpose": "Attributed NOTE records with built-in, plugin and registered PACK kinds",
      "surface": {
       "const": 1,
-      "crate-vis": 34,
+      "crate-vis": 36,
       "enum": 3,
       "fn": 4,
       "re-export": 12,
@@ -31963,6 +31965,7 @@
      "path": "src/note/folder_source.rs",
      "purpose": "A local folder that stays attached to the vault (OF-554, ARCH-0027)",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 6,
       "struct": 5
@@ -32048,7 +32051,7 @@
      "path": "src/note/lifecycle.rs",
      "purpose": "The one NOTE seal (ARCH-0032: `Active → Sealed → Archived → Tombstoned`)",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 5,
       "struct": 3
@@ -32128,17 +32131,20 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "NoteActor",
       "NoteFork",
       "NoteLandingReceipt",
       "NoteReviewBundle",
-      "NoteVerdict"
+      "NoteVerdict",
+      "PendingNoteForkErase"
      ],
      "path": "src/note/proposals.rs",
      "purpose": "Grant-routed fork bundles, atomic verdicts and durable head-move receipts",
      "surface": {
-      "crate-vis": 6,
-      "enum": 1,
-      "fn": 4,
+      "const": 1,
+      "crate-vis": 10,
+      "enum": 3,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -32968,7 +32974,7 @@
      "path": "src/origin/publication/mod.rs",
      "purpose": "The origin publication protocol (ARCH-0068 RA2–RA5, ONE-1910)",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 2
      }
     },
@@ -32979,7 +32985,7 @@
      "path": "src/origin/publication/publication_codec.rs",
      "purpose": "Key builders, journal row codec, bounded-failure helper, and deterministic ids and claim builders",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "fn": 5
      }
     },
@@ -33044,6 +33050,7 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "OriginActor",
       "OriginCensusDisposition",
       "OriginCensusReport",
       "OriginKeepRefKind",
@@ -33057,8 +33064,9 @@
      "purpose": "Pinned constants, protocol enums with string tables, and request/record/receipt/report types",
      "surface": {
       "const": 10,
-      "enum": 4,
-      "fn": 9,
+      "crate-vis": 1,
+      "enum": 5,
+      "fn": 11,
       "struct": 4
      }
     },
