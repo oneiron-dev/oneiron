@@ -129,6 +129,10 @@ both bindings and their export-census tests in one change.
 - `vault.skills.rules.set`
 - `vault.skills.code_auto_install.set`
 - `vault.skills.permissions.approve`
+- `vault.skills.optimize.start`
+- `vault.skills.optimize.result`
+- `vault.skills.governance.get`
+- `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
 - `vault.packs.hooks.list`
 - `vault.packs.hooks.qualify`

@@ -2875,6 +2875,102 @@ async fn vault_skills_permissions_approve(
         rows: super::host_doors::ListedRows::rows(listed),
     })
 }
+async fn vault_skills_optimize_start(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.optimize.start")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.optimize.start", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.optimize.start", value).await?;
+    let (output, listed) = super::host_doors::vault_skills_optimize_start(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_skills_optimize_result(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.optimize.result")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.optimize.result", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.optimize.result", value).await?;
+    let (output, listed) = super::host_doors::vault_skills_optimize_result(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_skills_governance_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.governance.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.governance.get", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.governance.get", value).await?;
+    let (output, listed) = super::host_doors::vault_skills_governance_get(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
+async fn vault_skills_governance_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.governance.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.governance.set", &value)?;
+    let hooks = facade_hooks_pre(server, call, "vault.skills.governance.set", value).await?;
+    let (output, listed) = super::host_doors::vault_skills_governance_set(
+        server,
+        auth,
+        facade_input(hooks.args.clone())?,
+    )
+    .await;
+    let output = facade_output(output?)?;
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::ListedRows::rows(listed),
+    })
+}
 async fn vault_packs_hooks_bind(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -16274,6 +16370,10 @@ pub(crate) async fn call_verb(
         "vault.skills.permissions.approve" => {
             vault_skills_permissions_approve(server, call, input).await
         }
+        "vault.skills.optimize.start" => vault_skills_optimize_start(server, call, input).await,
+        "vault.skills.optimize.result" => vault_skills_optimize_result(server, call, input).await,
+        "vault.skills.governance.get" => vault_skills_governance_get(server, call, input).await,
+        "vault.skills.governance.set" => vault_skills_governance_set(server, call, input).await,
         "vault.packs.hooks.bind" => vault_packs_hooks_bind(server, call, input).await,
         "vault.packs.hooks.list" => vault_packs_hooks_list(server, call, input).await,
         "vault.packs.hooks.qualify" => vault_packs_hooks_qualify(server, call, input).await,

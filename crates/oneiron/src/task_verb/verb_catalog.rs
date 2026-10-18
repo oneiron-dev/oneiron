@@ -127,6 +127,10 @@ pub enum AgentVerb {
     VaultSkillsRulesSet,
     VaultSkillsCodeAutoInstallSet,
     VaultSkillsPermissionsApprove,
+    VaultSkillsOptimizeStart,
+    VaultSkillsOptimizeResult,
+    VaultSkillsGovernanceGet,
+    VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
     VaultPacksHooksList,
     VaultPacksHooksQualify,
@@ -845,6 +849,10 @@ impl AgentVerb {
         Self::VaultSkillsRulesSet,
         Self::VaultSkillsCodeAutoInstallSet,
         Self::VaultSkillsPermissionsApprove,
+        Self::VaultSkillsOptimizeStart,
+        Self::VaultSkillsOptimizeResult,
+        Self::VaultSkillsGovernanceGet,
+        Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
         Self::VaultPacksHooksList,
         Self::VaultPacksHooksQualify,
@@ -1566,6 +1574,10 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => "vault.skills.rules.set",
             Self::VaultSkillsCodeAutoInstallSet => "vault.skills.code_auto_install.set",
             Self::VaultSkillsPermissionsApprove => "vault.skills.permissions.approve",
+            Self::VaultSkillsOptimizeStart => "vault.skills.optimize.start",
+            Self::VaultSkillsOptimizeResult => "vault.skills.optimize.result",
+            Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
+            Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
             Self::VaultPacksHooksList => "vault.packs.hooks.list",
             Self::VaultPacksHooksQualify => "vault.packs.hooks.qualify",
@@ -2299,6 +2311,10 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsOptimizeResult
+                | Self::VaultSkillsGovernanceGet
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
@@ -3039,6 +3055,10 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsOptimizeResult
+                | Self::VaultSkillsGovernanceGet
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
@@ -3839,6 +3859,10 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsOptimizeResult
+                | Self::VaultSkillsGovernanceGet
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksList
                 | Self::VaultPacksHooksQualify
@@ -4473,6 +4497,8 @@ impl AgentVerb {
                 | Self::VaultSkillsRulesSet
                 | Self::VaultSkillsCodeAutoInstallSet
                 | Self::VaultSkillsPermissionsApprove
+                | Self::VaultSkillsOptimizeStart
+                | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksQualify
                 | Self::VaultPacksPut
@@ -5002,6 +5028,10 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultSkillsOptimizeStart => &["spec"],
+            Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultSkillsGovernanceGet => &["spec"],
+            Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
@@ -5721,6 +5751,10 @@ impl AgentVerb {
             Self::VaultSkillsRulesSet => &["spec"],
             Self::VaultSkillsCodeAutoInstallSet => &["spec"],
             Self::VaultSkillsPermissionsApprove => &["spec"],
+            Self::VaultSkillsOptimizeStart => &["spec"],
+            Self::VaultSkillsOptimizeResult => &["spec"],
+            Self::VaultSkillsGovernanceGet => &["spec"],
+            Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
             Self::VaultPacksHooksList => &["spec"],
             Self::VaultPacksHooksQualify => &["spec"],
@@ -6678,6 +6712,18 @@ impl AgentVerb {
             }
             Self::VaultSkillsPermissionsApprove => {
                 "The owner answers one imported skill permission ask at its exact hub source."
+            }
+            Self::VaultSkillsOptimizeStart => {
+                "The owner starts one skill_optimize attempt on the Dreamer queue; a named identity or alignment skill is excluded and never enqueued."
+            }
+            Self::VaultSkillsOptimizeResult => {
+                "Reads a started skill_optimize job, its drafted proposal, the incumbent, its governance and every held-out verdict on the proposal."
+            }
+            Self::VaultSkillsGovernanceGet => {
+                "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."
+            }
+            Self::VaultSkillsGovernanceSet => {
+                "The owner marks or clears one skill governance tier; the mark changes no instruction content or version."
             }
             Self::VaultPacksHooksBind => {
                 "The owner consents to the installed pack hook capabilities, including a widening update; publisher identity stays foreign."
