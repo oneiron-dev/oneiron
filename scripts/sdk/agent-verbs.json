@@ -3839,6 +3839,19 @@
       "section": false
     },
     {
+      "name": "vault.packs.preview",
+      "description": "The owner previews a pack folder before vault.packs.put: the world its travelling agent would land in, with a please double-check notice when that world's current setting does not cover this machine; nothing is staged or written.",
+      "input": "crate::task_verb::sdk::PackPreviewRequest",
+      "output": "crate::skill_hub::pack_catalog::PackImportPreview",
+      "call": "crate::task_verb::sdk::pack_preview_as_owner(memory.vault(), &memory.embedded_owner(\"vault.packs.preview\")?, input)?",
+      "host_door": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.packs.connector.prepare",
       "description": "Prepares an immutable connector pack admission, comparing the resolved declaration with the installed transport and drafting an ungranted slate.",
       "input": "ConnectorPackPrepareRequest",
@@ -10078,7 +10091,7 @@
     },
     {
       "name": "vault.agents.export_pack",
-      "description": "An agent's travelling AgentPack folder, read through the caller's admission, with the born-with text the caller chose and a share receipt listing it and the knowledge kept home.",
+      "description": "An agent's travelling AgentPack folder, read through the caller's admission, with the chosen born-with text and a share receipt; the owner's own export also carries his private worlds, naming each his recipient choice would keep.",
       "input": "crate::share_travel::AgentPackExportRequest",
       "output": "crate::share_travel::AgentPackExport",
       "call": "memory.export_agent_pack(&input)?",

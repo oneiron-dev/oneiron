@@ -157,6 +157,7 @@ pub(super) fn seed_local_pack(vault: &Vault) -> Result<()> {
             skills: Vec::new(),
             agent: None,
             installed_at: 0,
+            notices: Vec::new(),
         };
         PACK_INSTALL.put(&vault.store, txn, &name, &receipt)?;
         Ok(())

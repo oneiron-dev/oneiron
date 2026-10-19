@@ -4,9 +4,9 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1053 facade rows, 3567 declarations.
-Inputs: 988 of 1053 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 943 of 1053 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Census: 1054 facade rows, 3565 declarations.
+Inputs: 989 of 1054 fully typed, 65 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 944 of 1054 fully typed, 110 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 108; unread shapes: 0.
 """
 
@@ -1499,43 +1499,18 @@ class TaskAskResult(TypedDict):
     fallback: NotRequired[TaskAskFallback | None]
     evidence: list[TaskAskEvidence]
     settlement: TaskAskSettlement
-WorldPrivacyRequestKind = Literal["proposal", "widen_ask"]
-class ReadLocationOneMachine(TypedDict):
-    OneMachine: EntityId
-ReadLocation = Literal["MyMachines", "Everywhere"] | ReadLocationOneMachine
-SealedCopies = Literal["off", "my_machines", "cloud_and_my_machines"]
-class ModelOrderOrdered(TypedDict):
-    Ordered: list[str]
-ModelOrder = Literal["Inherit"] | ModelOrderOrdered
-class WorldPrivacy(TypedDict):
-    read: ReadLocation
-    sealed: SealedCopies
-    models: ModelOrder
-class WorldPrivacyRequestStatusPending(TypedDict):
+class WorldPrivacyWaitStatusPending(TypedDict):
     state: Literal["pending"]
-class WorldPrivacyRequestStatusApplied(TypedDict):
+class WorldPrivacyWaitStatusApplied(TypedDict):
     state: Literal["applied"]
     receipt_id: str
-    holder: str
-class WorldPrivacyRequestStatusDeclined(TypedDict):
+class WorldPrivacyWaitStatusDeclined(TypedDict):
     state: Literal["declined"]
-    holder: str
-WorldPrivacyRequestStatus = WorldPrivacyRequestStatusPending | WorldPrivacyRequestStatusApplied | WorldPrivacyRequestStatusDeclined
-class WorldPrivacyRequest(TypedDict):
+WorldPrivacyWaitStatus = WorldPrivacyWaitStatusPending | WorldPrivacyWaitStatusApplied | WorldPrivacyWaitStatusDeclined
+class WorldPrivacyWaitResult(TypedDict):
     request_id: str
-    kind: WorldPrivacyRequestKind
-    agent: NotRequired[str | None]
-    opener_lineage: NotRequired[list[str]]
-    author: str
     world: str
-    settings: WorldPrivacy
-    seen: str
-    holders: list[str]
-    needs: NotRequired[list[str]]
-    yes: NotRequired[list[str]]
-    ask: NotRequired[int | None]
-    status: WorldPrivacyRequestStatus
-    at: int
+    status: WorldPrivacyWaitStatus
 class TaskAskStatusPendingBody(TypedDict):
     hold: NotRequired[TaskAskHoldReason | None]
 class TaskAskStatusPending(TypedDict):
@@ -1548,7 +1523,7 @@ class TaskAskStatusChanged(TypedDict):
 class TaskAskStatusSettled(TypedDict):
     Settled: TaskAskResult
 class TaskAskStatusWorldPrivacy(TypedDict):
-    WorldPrivacy: WorldPrivacyRequest
+    WorldPrivacy: WorldPrivacyWaitResult
 TaskAskStatus = TaskAskStatusPending | TaskAskStatusChanged | TaskAskStatusSettled | TaskAskStatusWorldPrivacy
 class TaskStatusView(TypedDict):
     handle: TaskHandle
@@ -4503,6 +4478,15 @@ class PackSection(TypedDict):
     verbs: list[SectionVerbRef]
     authority_lane: AuthorityLaneRef
     budget_policy: BudgetPolicyRef
+class WorldRecipientNotice(TypedDict):
+    notice_type: str
+    channel: str
+    voice: str
+    audience: str
+    world_ref: NotRequired[str | None]
+    world_name: NotRequired[str | None]
+    reason: str
+    body: str
 class PackInstallReceipt(TypedDict):
     source_id: str
     pack_name: str
@@ -4527,6 +4511,7 @@ class PackInstallReceipt(TypedDict):
     skills: list[str]
     agent: NotRequired[str | None]
     installed_at: int
+    notices: NotRequired[list[WorldRecipientNotice]]
 class PackPutReceipt(TypedDict):
     outcome: PackPutOutcome
     reason: NotRequired[str | None]
@@ -4930,6 +4915,15 @@ class PackBytesFile(TypedDict):
 PackFileInput = PackTextFile | PackBytesFile
 class PackPutRequest(TypedDict):
     files: list[PackFileInput]
+class PackPreviewRequest(TypedDict):
+    files: list[PackFileInput]
+    world: NotRequired[EntityId | None]
+class PackImportPreview(TypedDict):
+    pack_name: str
+    agent: bool
+    world_name: NotRequired[str | None]
+    needs_world: bool
+    notices: list[WorldRecipientNotice]
 class SlatePackSource(TypedDict):
     source_ref: str
     content_hash: str
@@ -11170,6 +11164,7 @@ class AgentPackExport(TypedDict):
     born_with: BornWith
     omitted: list[OmittedKnowledge]
     files: list[AgentPackExportFile]
+    notices: NotRequired[list[WorldRecipientNotice]]
 class BornFromRequest(TypedDict):
     task_ref: NotRequired[str | None]
     ask_ref: NotRequired[str | None]
@@ -12108,7 +12103,7 @@ class TaskAskWaitReady(TypedDict):
 class TaskAskWaitPark(TypedDict):
     Park: SelfDurableWait
 class TaskAskWaitWorldPrivacyReady(TypedDict):
-    WorldPrivacyReady: WorldPrivacyRequest
+    WorldPrivacyReady: WorldPrivacyWaitResult
 TaskAskWait = TaskAskWaitPending | TaskAskWaitChanged | TaskAskWaitReady | TaskAskWaitPark | TaskAskWaitWorldPrivacyReady
 class TaskAnswerRequest(TypedDict):
     handle: TaskAskHandle

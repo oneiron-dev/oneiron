@@ -822,8 +822,9 @@ pub enum TaskAskStatus {
         generation: u64,
     },
     Settled(Box<TaskAskResult>),
-    /// A world-privacy request a holder applied or declined (FIX 4706).
-    WorldPrivacy(Box<crate::policy_model::WorldPrivacyRequest>),
+    /// A world-privacy request a holder applied or declined (FIX 4706), as
+    /// its author's wait reads it.
+    WorldPrivacy(super::world_privacy_wait::WorldPrivacyWaitResult),
 }
 
 /// This is a signal contract, not a blocking read or a polling loop.
@@ -838,8 +839,9 @@ pub enum TaskAskWait {
     },
     Ready(Box<TaskAskResult>),
     Park(crate::code_run::SelfDurableWait),
-    /// A world-privacy request a holder applied or declined (FIX 4706).
-    WorldPrivacyReady(Box<crate::policy_model::WorldPrivacyRequest>),
+    /// A world-privacy request a holder applied or declined (FIX 4706), as
+    /// its author's wait reads it.
+    WorldPrivacyReady(super::world_privacy_wait::WorldPrivacyWaitResult),
 }
 
 #[derive(Serialize, Deserialize, schemars::JsonSchema)]

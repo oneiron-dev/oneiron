@@ -117,6 +117,7 @@ pub(crate) use wire_decode::{
 };
 mod wire_encode;
 mod world_privacy_wait;
+pub use world_privacy_wait::{WorldPrivacyWaitResult, WorldPrivacyWaitStatus};
 pub(crate) use world_privacy_wait::{
     deliver_world_privacy_wait_for_in_txn, deliver_world_privacy_wait_in_txn,
 };
@@ -328,6 +329,7 @@ mod sdk_model_manifest;
 mod sdk_note_history;
 mod sdk_off_record;
 mod sdk_off_record_rooms;
+mod sdk_pack_preview;
 mod sdk_persona;
 mod sdk_proxy;
 mod sdk_record_erase;

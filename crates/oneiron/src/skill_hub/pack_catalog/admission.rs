@@ -328,6 +328,7 @@ impl Vault {
             skills: skills.into_iter().map(|id| id.to_hex()).collect(),
             agent: None,
             installed_at: at,
+            notices: super::import_notice::import_notices_kept_in_txn(self, &*txn, travel.as_ref()),
         };
         if status == PackInstallStatus::Candidate {
             PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;

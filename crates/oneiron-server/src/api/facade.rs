@@ -113,6 +113,7 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 pub(super) mod owner_binding;
+mod pack_preview_doors;
 mod persona_doors;
 mod plugin_section_doors;
 mod policy_doors;

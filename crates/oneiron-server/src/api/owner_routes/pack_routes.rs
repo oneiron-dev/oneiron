@@ -212,7 +212,7 @@ impl From<PackInstallDisposition> for PackPut {
 
 /// A pack folder's files, relative and `/`-separated. Dot entries such as
 /// `.git` are skipped.
-fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
+pub(super) fn read_folder(root: &Path) -> Result<Vec<HubFile>, OwnerError> {
     if !root.is_absolute() {
         return Err(OwnerError::Invalid(
             "a pack path must be absolute".to_owned(),

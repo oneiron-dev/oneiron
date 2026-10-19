@@ -118,6 +118,8 @@ pub(crate) use super::foreign_code_doors::*;
 pub(crate) use super::note_doors::*;
 pub(crate) use super::off_record_doors::*;
 pub(crate) use super::off_record_room_doors::*;
+// The owner's pack preview door (FIX 5493), likewise.
+pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
@@ -1253,6 +1255,7 @@ pub(super) fn door_admits(server: &SyncServer, auth: &CoreAuth, verb: &str) -> M
         | "vault.identity.proposals.resolve"
         | "vault.identity.proposals.for_pair"
         | "vault.packs.put"
+        | "vault.packs.preview"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"
         | "vault.packs.connector.qualify"

@@ -68,6 +68,7 @@ mod legal_hold_routes;
 pub(super) mod machine_routes;
 mod model_setting_routes;
 mod owner_work_routes;
+mod pack_preview_routes;
 mod pack_routes;
 mod pad_routes;
 mod peer_confidence_routes;
@@ -155,6 +156,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .merge(proactivity_routes::routes())
         .merge(weave_routes::routes())
         .merge(pack_routes::routes())
+        .merge(pack_preview_routes::routes())
         .merge(cooperative_deletion_routes::routes())
         .merge(federation_connect_routes::routes())
         .merge(decision_ask_routes::routes())

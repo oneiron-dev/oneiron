@@ -1103,6 +1103,12 @@ pub(crate) const OWNER_ROUTES: &[OwnerRoute] = &[
         row: None,
     },
     OwnerRoute {
+        method: "post",
+        path: "/packs/preview",
+        summary: "What installing a pack folder would land, and each world it would land in that this machine's setting does not cover; stages and writes nothing (FIX 5493).",
+        row: None,
+    },
+    OwnerRoute {
         method: "get",
         path: "/packs/ref-sync",
         summary: "The ref's stored policy, or null when it follows its installed pin.",

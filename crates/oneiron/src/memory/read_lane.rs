@@ -62,6 +62,29 @@ impl Memory<'_> {
             .with_claim_status(claims))
     }
 
+    /// The owner's own lane for his agent-pack share (FIX 5493, owner ruling
+    /// 1-EXPORT = B), or `None` for every other actor, whose share reads
+    /// through [`Self::read_lane`] as before. It is his identity key as every
+    /// read verb proves it (his owner binding, his own full credential or
+    /// the host action's guard, each proved again in every read's snapshot)
+    /// inside a bound room turn's ceiling, without the machine this
+    /// surface's rows go to: his share is his will wherever it goes. Only
+    /// the export door asks for it.
+    pub(crate) fn owner_export_lane(
+        &self,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<Option<ScopedRead<'_>>> {
+        let key = self.identity_read_key()?;
+        if !key.reads_as_vault_owner() {
+            return Ok(None);
+        }
+        Ok(Some(
+            self.vault
+                .scoped_read(self.in_room_turn(key)?)
+                .with_claim_status(claims),
+        ))
+    }
+
     /// The bound actor's read key, verified in one snapshot, for the caller
     /// where it sits and the machine its rows go to (mesh PR2b).
     fn actor_read_key(&self) -> MemoryResult<ScopedReadActorKey> {

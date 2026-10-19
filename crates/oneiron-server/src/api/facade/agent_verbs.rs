@@ -248,6 +248,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.packs.hooks.grant.get", post(facade_route))
         .route("/vault.packs.hooks.qualify", post(facade_route))
         .route("/vault.packs.put", post(facade_route))
+        .route("/vault.packs.preview", post(facade_route))
         .route("/vault.packs.connector.prepare", post(facade_route))
         .route("/vault.packs.connector.get", post(facade_route))
         .route("/vault.packs.connector.qualify", post(facade_route))
