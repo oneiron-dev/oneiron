@@ -35,6 +35,7 @@ pub(super) fn reject_engine_authored_delete(
     crate::conversation::guard_room_message_delete(store, wtxn, *id)?;
     crate::blob_artifact::esign::reject_event_delete(store, wtxn, id)?;
     crate::task_authority::reject_fact_delete(store, wtxn, id)?;
+    crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
     crate::origin::lfs::reject_direct_lfs_chunk_delete(store, wtxn, id)?;
     crate::identity_topology::guard_batch_identity_delete_in_txn(store, wtxn, id)?;
     crate::workspace_roster::refuse_revision_delete(store, wtxn, id)?;
@@ -153,6 +154,7 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::workspace_roster::guard_goal_delete(store, wtxn, *id)?;
     crate::federation::reject_ruling_delete(store, wtxn, id)?;
     crate::claim::history_store::reject_machine_history_delete(store, wtxn, id)?;
+    crate::workspace_roster::reject_audience_edit_delete(store, wtxn, id)?;
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
     // and the pending tray before the entity bytes leave this transaction.
@@ -163,7 +165,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     )?;
     #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
-    crate::provenance::erase_row_provenance_in_txn(store, wtxn, id)?;
+    // A tear keeps body keys: an erase stages its retirements before it
+    // reaches here (KS-2A).
+    crate::provenance::erase_row_provenance_in_txn(store, wtxn, id, false)?;
     // Saved tags find a message's turn through its PartOf edge, so they go
     // before the edges do, and the sieve and projection rows of the same
     // words with them.

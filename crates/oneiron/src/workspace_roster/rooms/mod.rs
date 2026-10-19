@@ -1,6 +1,8 @@
 //! Room participation and addressed turn claims. Joining grants no memory scope.
 mod audience;
 mod audience_doors;
+mod audience_edit_guard;
+mod audience_erase;
 mod audience_events;
 mod audience_find;
 mod audience_overlay;
@@ -41,8 +43,16 @@ pub(crate) use audience::{
 pub use audience_doors::{
     ThreadAudienceAddRequest, ThreadAudienceReceipt, ThreadAudienceRemoveRequest,
 };
+#[cfg(feature = "sync")]
+pub(crate) use audience_edit_guard::audience_edit_unlink_refusal;
+pub(crate) use audience_edit_guard::{
+    AUDIENCE_EDIT_BOUND, reject_audience_edit_delete, reject_audience_edit_unlink,
+};
+pub(crate) use audience_erase::erase_audience_edit;
 pub use audience_events::ThreadAudienceHistory;
-pub(crate) use audience_events::{ROOM_THREAD_AUDIENCE_KEY, audience_event_put_refusal};
+pub(crate) use audience_events::{
+    ROOM_THREAD_AUDIENCE_KEY, audience_event_put_refusal, erased_audience_edit,
+};
 pub(crate) use audience_overlay::overlay_thread_binding_in;
 #[cfg(feature = "sync")]
 pub(crate) use carrier_erase::erased_side_row_here;

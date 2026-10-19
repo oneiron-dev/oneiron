@@ -42,6 +42,7 @@ pub(crate) mod custody;
 pub(crate) mod document_pins;
 pub mod documents;
 pub mod federation_burst;
+pub(crate) mod home_handoff;
 pub mod home_proof;
 mod ingest;
 pub mod lease;

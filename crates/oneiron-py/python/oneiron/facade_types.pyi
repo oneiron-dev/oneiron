@@ -6797,6 +6797,8 @@ class RecordEraseSweepRequest(TypedDict):
 class RecordEraseCustody(TypedDict):
     state: str
     pending: list[str]
+    recall: str
+    note: NotRequired[str | None]
 class RecordEraseSweep(TypedDict):
     receipt_ref: str
     request_id: str

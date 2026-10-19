@@ -224,10 +224,24 @@ impl Vault {
             &self.store.env.read_txn()?,
             id,
         )?;
+        // A privacy erase keeps a thread audience edit its live root folds,
+        // made by no one (FIX 5639); any other delete of it refuses below.
+        if reason == DeleteReason::GdprDelete
+            && let Some(outcome) = crate::workspace_roster::erase_audience_edit(
+                self,
+                id,
+                gate.as_ref()
+                    .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor),
+                |txn| reverify_deletion_authority_before_publication(gate.as_ref(), txn),
+            )?
+        {
+            return Ok(outcome);
+        }
         {
             let txn = self.store.env.read_txn()?;
             crate::federation::reject_ruling_delete(&self.store, &txn, id)?;
             crate::task_authority::reject_fact_delete(&self.store, &txn, id)?;
+            crate::workspace_roster::reject_audience_edit_delete(&self.store, &txn, id)?;
             crate::workspace_roster::precheck_goal_delete(&self.store, &txn, *id, gate.is_some())?;
             self.store.guard_pack_map_carrier_delete_in_txn(&txn, id)?;
         }
@@ -395,7 +409,7 @@ impl Vault {
             // an erase destroys them (the hard arm's purge). Its delete time
             // bounds how long a pin change still rewraps them.
             let (existed, had_vector, _ledger_changed) =
-                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+                self.soft_erase_active_store_in_txn(&mut wtxn, id, false)?;
             if existed && reason == DeleteReason::UserDelete {
                 crate::world_keys::note_world_deleted_in_txn(
                     &self.store,
@@ -589,7 +603,7 @@ impl Vault {
             let mut changed = vec![*id];
             changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
             let (existed, had_vector, _ledger_changed) =
-                self.soft_erase_active_store_in_txn(&mut wtxn, id)?;
+                self.soft_erase_active_store_in_txn(&mut wtxn, id, true)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, &mut wtxn)?;
             }

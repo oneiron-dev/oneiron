@@ -64,6 +64,7 @@ impl Vault {
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         // An erased world takes its keys with it (fix 7); a deleted one
         // keeps them, so it restores from old bundles.
         if erase {
@@ -90,7 +91,7 @@ impl Vault {
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
-        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id)?;
+        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         // Saved tags read the turn's messages through their PartOf edges, so
         // they go before the graph is torn down.
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
@@ -149,10 +150,14 @@ impl Vault {
         ))
     }
 
+    /// `erase`: the scrub of an erase (a GDPR or policy delete, a hard
+    /// erase's redirect shell), whose body keys retire; a delete's keeps
+    /// them, so its restore window stays (KS-2A).
     pub(in crate::deletion) fn soft_erase_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
+        erase: bool,
     ) -> Result<(bool, bool, bool)> {
         // A soft erase scrubs the body, so a hold refuses it too.
         self.store.reject_legal_hold_in_txn(wtxn, id.as_bytes())?;
@@ -167,6 +172,7 @@ impl Vault {
         crate::federation::reject_ruling_delete(&self.store, wtxn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
+        crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
         let had_tags = crate::tagging::erase_in_txn(self, wtxn, id)?;
         // A soft erase keeps the graph, so the sieve and projection rows of
         // the same words go here, not at the physical tear.
@@ -176,7 +182,7 @@ impl Vault {
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
         #[cfg(feature = "sync")]
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
-        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id)?;
+        crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
         let ledger_changed = self.store.redact_gate_decisions_for_claim_in_txn(
             wtxn,

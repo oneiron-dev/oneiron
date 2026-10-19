@@ -156,6 +156,15 @@ pub enum ArtifactError {
     /// validation before its payload could be used.
     #[error("invalid recovery artifact: {0}")]
     InvalidRecoveryArtifact(&'static str),
+    /// A restore needs the key of a body instance that current key custody
+    /// holds neither live nor retired: lost custody (KS-2A). Refused before
+    /// anything is made; no key is minted for it and no image key stands in.
+    #[error(
+        "body_key_custody_unavailable: {missing} body key(s) this restore needs are not in \
+         current key custody; restore where the vault's custody is, or with its custody head \
+         beside the backup"
+    )]
+    BodyKeyCustodyUnavailable { missing: usize },
     /// A recovery artifact was invalid, but every fresh random sibling
     /// `.invalid-<hex>` name quarantine tried was occupied.
     #[error(
@@ -261,6 +270,7 @@ impl ArtifactError {
             Self::AgentNotDispatchable(_) => ErrorKind::AgentNotDispatchable,
             Self::InvalidAgentDispatchInput(_) => ErrorKind::InvalidAgentDispatchInput,
             Self::InvalidRecoveryArtifact(_) => ErrorKind::InvalidRecoveryArtifact,
+            Self::BodyKeyCustodyUnavailable { .. } => ErrorKind::BodyKeyCustodyUnavailable,
             Self::RecoveryArtifactQuarantineExhausted { .. } => {
                 ErrorKind::RecoveryArtifactQuarantineExhausted
             }

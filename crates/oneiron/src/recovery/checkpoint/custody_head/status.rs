@@ -17,7 +17,10 @@ use crate::store::custody_protocol::{
     CustodyBatch, CustodySource, CustodyTarget, Lineage, PendingCode, TargetPending,
     TargetPublication, TargetSpec,
 };
-use crate::store::{MemberProgress, Publication, PublicationState, RetirementProgress};
+use crate::store::{
+    CUSTODY_COMPLETION_NEEDS_ANCHOR, MemberProgress, Publication, PublicationState,
+    ROLLBACK_NOT_PROVEN, RetirementProgress,
+};
 
 /// The owner's status read's names for where a vault's custody publication
 /// stands.
@@ -85,6 +88,12 @@ pub struct CustodyRetirement {
     pub set_revision: u64,
     /// Every member of the required set.
     pub targets: Vec<CustodyTargetState>,
+    /// "rollback not proven: no custody anchor configured" while no anchor
+    /// is configured: a retirement completes on every required target's
+    /// acknowledgement alone (CALLS CUSTODY_COMPLETION_NEEDS_ANCHOR,
+    /// overruled Engine 10-20).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<&'static str>,
 }
 
 /// One step a retirement still owes.
@@ -168,9 +177,11 @@ fn anchor_step() -> CustodyPendingStep {
 
 /// The steps still owed for retirements whose newest outstanding log
 /// position is `newest`: every member whose ack is behind it, then the
-/// anchor when it is behind it, unset, or fenced. With every member and the
-/// anchor there but the watermark not raised yet, the anchor step stands:
-/// the next pass records the completion.
+/// anchor when it is behind it or fenced. With no anchor configured the
+/// anchor is owed nothing: every member's ack completes a retirement, with
+/// rollback not proven. With every member there but the watermark not
+/// raised yet, the anchor step stands: the next pass records the
+/// completion.
 pub(super) fn owed(
     progress: &RetirementProgress,
     publication: &Publication,
@@ -187,13 +198,20 @@ pub(super) fn owed(
         .zip(publication.local)
         .filter(|(anchored, local)| anchored.epoch == local.epoch)
         .map(|(anchored, _)| anchored.seq);
+    let unanchored = publication.anchor_unset && !CUSTODY_COMPLETION_NEEDS_ANCHOR;
     if publication.state == PublicationState::Fenced
-        || anchored.is_none_or(|anchored| anchored < newest)
+        || (!unanchored && anchored.is_none_or(|anchored| anchored < newest))
         || steps.is_empty()
     {
         steps.push(anchor_step());
     }
     steps
+}
+
+/// What a retirement read says about rollback: not proven while no anchor
+/// is configured.
+pub(super) fn rollback_note(publication: &Publication) -> Option<&'static str> {
+    publication.anchor_unset.then_some(ROLLBACK_NOT_PROVEN)
 }
 
 /// The retirement status from the journal's `progress` and the count of
@@ -251,6 +269,7 @@ pub(super) fn retirement(
         completed_seq,
         set_revision,
         targets,
+        note: rollback_note(publication),
     })
 }
 

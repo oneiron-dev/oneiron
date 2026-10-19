@@ -140,7 +140,7 @@ impl Vault {
             let had_body = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &*wtxn, id)?
                 .is_some_and(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
             let (existed, had_vector, ledger_changed) =
-                self.soft_erase_active_store_in_txn(wtxn, id)?;
+                self.soft_erase_active_store_in_txn(wtxn, id, false)?;
             if had_vector {
                 crate::hnsw::increment_vector_version(&self.store, wtxn)?;
             }
@@ -358,6 +358,7 @@ impl Vault {
         crate::federation::reject_ruling_delete(&self.store, txn, id)?;
         crate::blob_artifact::esign::reject_event_delete(&self.store, txn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, txn, id)?;
+        crate::workspace_roster::reject_audience_edit_delete(&self.store, txn, id)?;
         crate::origin::lfs::reject_direct_lfs_chunk_delete(&self.store, txn, id)?;
         guard_topology_delete_request_in_txn(&self.store, txn, id, decoded)?;
         let settled = match decoded.request_id.as_ref() {
@@ -418,6 +419,8 @@ impl Vault {
                 "cleanup archives cannot be replayed as deletion intent"
             ) | Error::Record(crate::error::RecordError::InvalidTaskBody(
                 "task authority facts are immutable"
+            )) | Error::Record(crate::error::RecordError::ConversationState(
+                crate::workspace_roster::AUDIENCE_EDIT_BOUND
             )) | Error::Secret(SecretError::InvalidSecretCustodyBody(CUSTODY_SEAL_REASON))
         )
     }
