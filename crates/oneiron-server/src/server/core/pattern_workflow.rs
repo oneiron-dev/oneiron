@@ -151,6 +151,7 @@ impl HostPatternLaunchRunner {
         {
             call.request.envelope.response_format = ResponseFormat::Text;
         }
+        warn_launch_input(&self.vault, &call.request);
         let units = self.ai.chat_settings().turn_budget_units;
         let meter = BudgetGuard::with_reserve_units(
             run_id.clone(),
@@ -328,6 +329,43 @@ pub(in crate::server) fn launch_request(
         params: BTreeMap::new(),
         provider_options: BTreeMap::new(),
     })
+}
+
+/// Warns, and only warns, when the request's text reads larger than the
+/// catalog's context value for the exact model it goes to (FIX 4640). The
+/// count is an offline o200k estimate of the text parts, not the provider's
+/// own count, so the request is sent unchanged either way.
+pub(in crate::server) fn warn_launch_input(vault: &Vault, request: &LlmRequest) {
+    let window = match vault.model_registry_row(&request.model) {
+        Ok(Some(row)) if row.catalog.context_window_tokens > 0 => row.catalog.context_window_tokens,
+        Ok(_) => return,
+        Err(error) => {
+            tracing::warn!(
+                model = %request.model,
+                %error,
+                "the pattern run's model row did not read; its input goes unestimated"
+            );
+            return;
+        }
+    };
+    let estimate = request
+        .messages
+        .iter()
+        .flat_map(|message| &message.content)
+        .map(|part| match part {
+            ContentPart::Text { text } => oneiron::count_context_pack_tokens(text) as u64,
+            _ => 0,
+        })
+        .fold(0_u64, u64::saturating_add);
+    if estimate > window {
+        tracing::warn!(
+            model = %request.model,
+            estimate,
+            catalog_window = window,
+            "the pattern request's text estimate is above the model's catalog context value; \
+             an estimate only, sent unchanged"
+        );
+    }
 }
 
 /// A reply's start, as the schema shapes it.
