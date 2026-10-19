@@ -21,8 +21,8 @@ use crate::server::SyncServer;
 
 /// Checks the caller's credential and actor before a verb hook may fire.
 pub(super) fn admits(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
-    let (actor, class) = super::facade_actor(server, auth)
-        .map_err(|error| error.into_memory_error())?;
+    let (actor, class) =
+        super::facade_actor(server, auth).map_err(|error| error.into_memory_error())?;
     crate::api::credential_memory(server.vault(), Some(auth), actor, class)
         .at(auth.locality())
         .read_key()
@@ -40,7 +40,9 @@ pub(crate) async fn self_saved_query_evaluate(
     const VERB: &str = "self.saved_query.evaluate";
     admits(server, auth)?;
     if !input.candidates.is_empty() && input.after.is_some() {
-        return Err(MemoryError::bad_request("after pages people only; omit candidates when using it"));
+        return Err(MemoryError::bad_request(
+            "after pages people only; omit candidates when using it",
+        ));
     }
     let (server, auth) = (Arc::clone(server), auth.clone());
     tokio::task::spawn_blocking(move || evaluate(&server, &auth, caller, &input))
@@ -55,8 +57,7 @@ fn evaluate(
     input: &SavedQueryEvaluateRequest,
 ) -> MemoryResult<SavedQueryEvaluationReceipt> {
     let vault = server.vault();
-    let memory = crate::api::credential_memory(vault, Some(auth), actor, class)
-        .at(auth.locality());
+    let memory = crate::api::credential_memory(vault, Some(auth), actor, class).at(auth.locality());
     let record = memory.saved_query_read(input.query_ref)?.ok_or_else(|| {
         MemoryError::new(
             MEMORY_CODE_NOT_FOUND,
@@ -67,14 +68,23 @@ fn evaluate(
     let read = memory.read_key()?;
     let now = vault.now_recorded_at();
     let candidates = if input.candidates.is_empty() {
-        let wake = usize::try_from(record.definition.eval.max_entities_per_wake)
-            .unwrap_or(usize::MAX);
+        let wake =
+            usize::try_from(record.definition.eval.max_entities_per_wake).unwrap_or(usize::MAX);
         vault
-            .entities_by_type_page(SWEEP_CANDIDATE_TYPE, input.after.as_ref(), wake.saturating_add(1))
+            .entities_by_type_page(
+                SWEEP_CANDIDATE_TYPE,
+                input.after.as_ref(),
+                wake.saturating_add(1),
+            )
             .map_err(MemoryError::from)?
     } else {
         let mut seen = BTreeSet::new();
-        input.candidates.iter().copied().filter(|id| seen.insert(*id)).collect()
+        input
+            .candidates
+            .iter()
+            .copied()
+            .filter(|id| seen.insert(*id))
+            .collect()
     };
     let (visits, resume_after) =
         crate::saved_query_sweep::manual_evaluation(server, &record, &read, &candidates, now)
@@ -94,7 +104,11 @@ fn evaluate(
             entity_ref,
             verdict: outcome.decision.verdict,
             why: outcome.decision.why,
-            evidence_hash: outcome.evidence_hash.iter().map(|byte| format!("{byte:02x}")).collect(),
+            evidence_hash: outcome
+                .evidence_hash
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
             memo_hit: outcome.memo_hit,
             judge_ran: evaluated.visit.judge_ran,
             memo: evaluated.memo.as_ref().map(saved_query_memo_receipt),

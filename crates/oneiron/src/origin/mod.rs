@@ -17,5 +17,6 @@ pub mod conflict_tree;
 pub mod export;
 pub mod mirror;
 pub mod residence;
+pub mod registration;
 pub mod secret_manifest;
 pub mod tree;

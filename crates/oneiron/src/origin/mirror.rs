@@ -50,7 +50,7 @@ const TARGETS: SideTable<EntityId, OriginMirrorTarget, Named> =
     SideTable::new(&side_table::ORIGIN_MIRROR_TARGET);
 
 /// The owner's outbound mirror of one served repository.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginMirrorTarget {
     /// The served name the owner configured it under.
     pub repo: String,
@@ -70,7 +70,7 @@ pub struct OriginMirrorTarget {
 }
 
 /// One push to a mirror.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OriginMirrorRun {
     /// Seconds, on the vault clock.
     pub at: u64,
@@ -119,6 +119,19 @@ impl Vault {
         repo_name: &str,
         input: OriginMirrorTargetInput,
     ) -> Result<OriginMirrorTarget> {
+        let mut txn = self.store.env.write_txn()?;
+        let row = self.set_served_origin_mirror_in_txn(&mut txn, repo_name, input)?;
+        txn.commit()?;
+        Ok(row)
+    }
+
+    /// The shared setter, checked in the transaction that installs the target.
+    pub(crate) fn set_served_origin_mirror_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_name: &str,
+        input: OriginMirrorTargetInput,
+    ) -> Result<OriginMirrorTarget> {
         let user = input
             .user
             .unwrap_or_else(|| ORIGIN_MIRROR_DEFAULT_USER.to_owned());
@@ -133,10 +146,9 @@ impl Vault {
         if input.every_secs < ORIGIN_MIRROR_MIN_EVERY_SECS {
             return Err(invalid("mirror cadence is shorter than one minute"));
         }
-        self.check_secret_at_door(&input.secret_ref, ORIGIN_MIRROR_PUSH_EFFECTOR)?;
+        self.check_secret_at_door_in_txn(txn, &input.secret_ref, ORIGIN_MIRROR_PUSH_EFFECTOR)?;
         let repo_id = self.served_mirror_repo_id(repo_name)?;
-        let mut txn = self.store.env.write_txn()?;
-        let previous = TARGETS.get(&self.store, &txn, &repo_id)?;
+        let previous = TARGETS.get(&self.store, txn, &repo_id)?;
         let (last, pushed) = match previous {
             Some(row) if row.url == input.url => (row.last, row.pushed),
             _ => (None, Vec::new()),
@@ -150,8 +162,7 @@ impl Vault {
             last,
             pushed,
         };
-        TARGETS.put(&self.store, &mut txn, &repo_id, &row)?;
-        txn.commit()?;
+        TARGETS.put(&self.store, txn, &repo_id, &row)?;
         Ok(row)
     }
 
@@ -165,11 +176,19 @@ impl Vault {
     /// Stops mirroring a served repository. The mirror keeps what it has.
     /// `true` when a target was set.
     pub fn clear_served_origin_mirror(&self, repo_name: &str) -> Result<bool> {
-        let repo_id = self.served_mirror_repo_id(repo_name)?;
         let mut txn = self.store.env.write_txn()?;
-        let removed = TARGETS.delete(&self.store, &mut txn, &repo_id)?;
+        let removed = self.clear_served_origin_mirror_in_txn(&mut txn, repo_name)?;
         txn.commit()?;
         Ok(removed)
+    }
+
+    pub(crate) fn clear_served_origin_mirror_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_name: &str,
+    ) -> Result<bool> {
+        let repo_id = self.served_mirror_repo_id(repo_name)?;
+        TARGETS.delete(&self.store, txn, &repo_id)
     }
 
     /// Pushes a served repository to its mirror now, due or not, as the
@@ -183,6 +202,28 @@ impl Vault {
         .ok_or(Error::EntityNotFound)?;
         self.require_mirror_pusher(repo_name)?;
         Ok(self.push_mirror_target(repo_id, &target))
+    }
+
+    /// Pushes now as the caller's owner proof, rechecked when its run is written.
+    pub fn push_served_origin_mirror_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        repo_name: &str,
+    ) -> Result<OriginMirrorRun> {
+        let repo_id = self.served_mirror_repo_id(repo_name)?;
+        let target = {
+            let txn = self.store.env.read_txn()?;
+            owner.revalidate_in_txn(self, &txn)?;
+            TARGETS.get(&self.store, &txn, &repo_id)?
+        }
+        .ok_or(Error::EntityNotFound)?;
+        self.require_mirror_pusher(repo_name)?;
+        let (run, pushed) = self.attempt_mirror_target(repo_id, &target);
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        self.record_mirror_run_in_txn(&mut txn, repo_id, &target.url, &run, pushed)?;
+        txn.commit()?;
+        Ok(run)
     }
 
     /// One pass over every mirror target: each that is due, and whose
@@ -255,6 +296,18 @@ impl Vault {
         repo_id: EntityId,
         target: &OriginMirrorTarget,
     ) -> OriginMirrorRun {
+        let (run, pushed) = self.attempt_mirror_target(repo_id, target);
+        if let Err(error) = self.record_mirror_run(repo_id, &target.url, &run, pushed) {
+            tracing::warn!(kind = ?error.kind(), "mirror push run was not recorded");
+        }
+        run
+    }
+
+    fn attempt_mirror_target(
+        &self,
+        repo_id: EntityId,
+        target: &OriginMirrorTarget,
+    ) -> (OriginMirrorRun, Option<Vec<String>>) {
         let attempt = self.push_mirror_once(repo_id, target);
         let at = self.now_recorded_at();
         let (run, pushed) = match attempt {
@@ -277,10 +330,7 @@ impl Vault {
                 None,
             ),
         };
-        if let Err(error) = self.record_mirror_run(repo_id, &target.url, &run, pushed) {
-            tracing::warn!(kind = ?error.kind(), "mirror push run was not recorded");
-        }
-        run
+        (run, pushed)
     }
 
     /// The push itself: `(refs, deleted, the refs the mirror now holds)`.
@@ -373,7 +423,20 @@ impl Vault {
         pushed: Option<Vec<String>>,
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        let Some(mut row) = TARGETS.get(&self.store, &txn, &repo_id)? else {
+        self.record_mirror_run_in_txn(&mut txn, repo_id, url, run, pushed)?;
+        txn.commit()?;
+        Ok(())
+    }
+
+    fn record_mirror_run_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        repo_id: EntityId,
+        url: &str,
+        run: &OriginMirrorRun,
+        pushed: Option<Vec<String>>,
+    ) -> Result<()> {
+        let Some(mut row) = TARGETS.get(&self.store, txn, &repo_id)? else {
             return Ok(());
         };
         if row.url != url {
@@ -383,8 +446,7 @@ impl Vault {
         if let Some(pushed) = pushed {
             row.pushed = pushed;
         }
-        TARGETS.put(&self.store, &mut txn, &repo_id, &row)?;
-        txn.commit()?;
+        TARGETS.put(&self.store, txn, &repo_id, &row)?;
         Ok(())
     }
 }

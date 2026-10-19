@@ -367,7 +367,10 @@ impl ProtocolHandler for GateHandler {
             }
         };
         let mut acknowledgement = connection.open_uni().await.map_err(AcceptError::from_err)?;
-        acknowledgement.write_all(dial::ADMISSION).await.map_err(AcceptError::from_err)?;
+        acknowledgement
+            .write_all(dial::ADMISSION)
+            .await
+            .map_err(AcceptError::from_err)?;
         acknowledgement.finish().map_err(AcceptError::from_err)?;
         if let Some(receipts) = &self.receipts {
             let receipt = admission(MeshPathDirection::Inbound, &self.alpn, machine, key);

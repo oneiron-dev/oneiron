@@ -145,15 +145,20 @@ pub(super) async fn judge(
         .map_err(|error| judge_failure(error.to_string()))?;
     let (verdict, providers, cost_per_thousand, steps) = match decided {
         GeneratedDecisions::Decided { decisions, steps } => {
-            let decision = decisions.first().ok_or_else(|| {
-                judge_failure("membership read did not decide".to_owned())
-            })?;
+            let decision = decisions
+                .first()
+                .ok_or_else(|| judge_failure("membership read did not decide".to_owned()))?;
             let verdict = match &decision.answer {
                 DecisionAnswer::Noul(true) => MatchVerdict::Match,
                 DecisionAnswer::Noul(false) => MatchVerdict::NoMatch,
                 _ => return Err(judge_failure("membership read did not decide".to_owned())),
             };
-            (verdict, decision.receipt.providers.clone(), decision.receipt.cost_per_thousand, steps)
+            (
+                verdict,
+                decision.receipt.providers.clone(),
+                decision.receipt.cost_per_thousand,
+                steps,
+            )
         }
         GeneratedDecisions::Unread(GeneratedMiss::Backend(error)) => {
             return Err(judge_failure(error.to_string()));
@@ -174,7 +179,11 @@ pub(super) async fn judge(
     generations.push(why_generation);
     Ok((
         MatchDecision { verdict, why },
-        SavedQueryJudgeReceipt { providers, cost_per_thousand, generations },
+        SavedQueryJudgeReceipt {
+            providers,
+            cost_per_thousand,
+            generations,
+        },
     ))
 }
 
@@ -201,7 +210,8 @@ async fn membership_why(
             text: json!({"verdict": verdict.as_str(), "ask": wording}).to_string(),
         }],
     });
-    let request_hash = request.canonical_hash_hex()
+    let request_hash = request
+        .canonical_hash_hex()
         .map_err(|_| invalid("saved query why request cannot be hashed"))?;
     let response = binding
         .backend
@@ -221,6 +231,9 @@ async fn membership_why(
         .ok_or_else(|| judge_failure("response carried no why".to_owned()))?;
     Ok((
         why.chars().take(MAX_TEXT_BYTES).collect(),
-        SavedQueryGenerationReceipt { request_hash, usage: response.usage },
+        SavedQueryGenerationReceipt {
+            request_hash,
+            usage: response.usage,
+        },
     ))
 }

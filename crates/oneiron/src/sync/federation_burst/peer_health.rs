@@ -1,19 +1,23 @@
 //! Relative signals for one peer; policy compares ratios, never write counts.
 
 use crate::llm::NormalizedBurstInputs;
+use super::{FederationBurstBaselineState, FederationBurstOutcome, FederationBurstPolicy};
 
-#[derive(Clone, Copy)]
 pub(super) struct PeerHealth {
     pub(super) inputs: NormalizedBurstInputs,
     pub(super) streak_ratio: f32,
+    pub(super) baseline: FederationBurstBaselineState,
+    pub(super) policy: FederationBurstPolicy,
 }
 
 impl PeerHealth {
-    pub(super) fn unusual_rate(self) -> bool {
-        self.inputs.rate_ratio > 1.0
-    }
-
-    pub(super) fn isolate(self) -> bool {
-        self.unusual_rate() && self.streak_ratio > 1.0
+    pub(super) fn outcome(&self) -> FederationBurstOutcome {
+        if self.inputs.rate_ratio <= 1.0 {
+            FederationBurstOutcome::Allow
+        } else if self.streak_ratio > 1.0 {
+            self.policy.unusual_streak
+        } else {
+            self.policy.unusual_rate
+        }
     }
 }

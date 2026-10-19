@@ -317,6 +317,15 @@ pub enum AgentVerb {
     VaultFederationCoreferenceConfirm,
     VaultFederationCoreferenceShareConsent,
     VaultFederationCoreferenceUnlink,
+    VaultFederationBurstBaseline,
+    VaultFederationBurstPolicy,
+    VaultFederationBurstPolicySet,
+    VaultFederationBurstIngress,
+    VaultFederationBurstDisposition,
+    VaultFederationBurstReview,
+    VaultFederationBurstReviewRelease,
+    VaultFederationBurstReviewReject,
+    VaultFederationBurstReplay,
     VaultFederationConnectIdentity,
     VaultFederationConnectGrantsMint,
     VaultFederationConnectOffer,
@@ -587,6 +596,11 @@ pub enum AgentVerb {
     VaultResultsSlice,
     VaultCodeRepoDiff,
     VaultCodeExport,
+    VaultCodeOriginRegister,
+    VaultCodeOriginMirrorGet,
+    VaultCodeOriginMirrorSet,
+    VaultCodeOriginMirrorClear,
+    VaultCodeOriginMirrorPush,
     VaultCodeOriginAuthorityGet,
     VaultCodeOriginAuthoritySet,
     VaultCodeOriginPublications,
@@ -1369,6 +1383,15 @@ impl AgentVerb {
         Self::VaultFederationCoreferenceConfirm,
         Self::VaultFederationCoreferenceShareConsent,
         Self::VaultFederationCoreferenceUnlink,
+        Self::VaultFederationBurstBaseline,
+        Self::VaultFederationBurstPolicy,
+        Self::VaultFederationBurstPolicySet,
+        Self::VaultFederationBurstIngress,
+        Self::VaultFederationBurstDisposition,
+        Self::VaultFederationBurstReview,
+        Self::VaultFederationBurstReviewRelease,
+        Self::VaultFederationBurstReviewReject,
+        Self::VaultFederationBurstReplay,
         Self::VaultFederationConnectIdentity,
         Self::VaultFederationConnectGrantsMint,
         Self::VaultFederationConnectOffer,
@@ -1639,6 +1662,11 @@ impl AgentVerb {
         Self::VaultResultsSlice,
         Self::VaultCodeRepoDiff,
         Self::VaultCodeExport,
+        Self::VaultCodeOriginRegister,
+        Self::VaultCodeOriginMirrorGet,
+        Self::VaultCodeOriginMirrorSet,
+        Self::VaultCodeOriginMirrorClear,
+        Self::VaultCodeOriginMirrorPush,
         Self::VaultCodeOriginAuthorityGet,
         Self::VaultCodeOriginAuthoritySet,
         Self::VaultCodeOriginPublications,
@@ -2426,6 +2454,15 @@ impl AgentVerb {
                 "vault.federation.coreference.share_consent"
             }
             Self::VaultFederationCoreferenceUnlink => "vault.federation.coreference.unlink",
+            Self::VaultFederationBurstBaseline => "vault.federation.burst.baseline",
+            Self::VaultFederationBurstPolicy => "vault.federation.burst.policy",
+            Self::VaultFederationBurstPolicySet => "vault.federation.burst.policy.set",
+            Self::VaultFederationBurstIngress => "vault.federation.burst.ingress",
+            Self::VaultFederationBurstDisposition => "vault.federation.burst.disposition",
+            Self::VaultFederationBurstReview => "vault.federation.burst.review",
+            Self::VaultFederationBurstReviewRelease => "vault.federation.burst.review.release",
+            Self::VaultFederationBurstReviewReject => "vault.federation.burst.review.reject",
+            Self::VaultFederationBurstReplay => "vault.federation.burst.replay",
             Self::VaultFederationConnectIdentity => "vault.federation.connect.identity",
             Self::VaultFederationConnectGrantsMint => "vault.federation.connect.grants.mint",
             Self::VaultFederationConnectOffer => "vault.federation.connect.offer",
@@ -2712,6 +2749,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => "vault.results.slice",
             Self::VaultCodeRepoDiff => "vault.code.repo_diff",
             Self::VaultCodeExport => "vault.code.export",
+            Self::VaultCodeOriginRegister => "vault.code.origin.register",
+            Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
+            Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
+            Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
+            Self::VaultCodeOriginMirrorPush => "vault.code.origin.mirror.push",
             Self::VaultCodeOriginAuthorityGet => "vault.code.origin.authority.get",
             Self::VaultCodeOriginAuthoritySet => "vault.code.origin.authority.set",
             Self::VaultCodeOriginPublications => "vault.code.origin.publications",
@@ -3504,6 +3546,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -3774,6 +3825,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -4583,6 +4639,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -4853,6 +4918,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -5346,6 +5416,7 @@ impl AgentVerb {
                 | Self::VaultSharedStarted
                 | Self::VaultSharedMatured
                 | Self::VaultSharedEraseAsks
+                | Self::VaultFederationBurstReview
                 | Self::VaultTrustedContactsList
                 | Self::VaultTrustedContactsConcernAsks
                 | Self::VaultResidenceDirectives
@@ -5764,6 +5835,15 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstBaseline
+                | Self::VaultFederationBurstPolicy
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstDisposition
+                | Self::VaultFederationBurstReview
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectIdentity
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
@@ -6022,6 +6102,11 @@ impl AgentVerb {
                 | Self::VaultResultsSlice
                 | Self::VaultCodeRepoDiff
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthorityGet
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeOriginPublications
@@ -6642,6 +6727,11 @@ impl AgentVerb {
                 | Self::VaultFederationCoreferenceConfirm
                 | Self::VaultFederationCoreferenceShareConsent
                 | Self::VaultFederationCoreferenceUnlink
+                | Self::VaultFederationBurstPolicySet
+                | Self::VaultFederationBurstIngress
+                | Self::VaultFederationBurstReviewRelease
+                | Self::VaultFederationBurstReviewReject
+                | Self::VaultFederationBurstReplay
                 | Self::VaultFederationConnectGrantsMint
                 | Self::VaultFederationConnectOffer
                 | Self::VaultFederationConnectAccept
@@ -6808,6 +6898,10 @@ impl AgentVerb {
                 | Self::VaultCodeProposalSettle
                 | Self::VaultCodeWaitsResolve
                 | Self::VaultCodeExport
+                | Self::VaultCodeOriginRegister
+                | Self::VaultCodeOriginMirrorSet
+                | Self::VaultCodeOriginMirrorClear
+                | Self::VaultCodeOriginMirrorPush
                 | Self::VaultCodeOriginAuthoritySet
                 | Self::VaultCodeCheckoutBind
                 | Self::VaultCodeCheckoutClaim
@@ -7431,6 +7525,15 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
             Self::VaultFederationCoreferenceUnlink => &["spec"],
+            Self::VaultFederationBurstBaseline => &["spec"],
+            Self::VaultFederationBurstPolicy => &["spec"],
+            Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultFederationBurstIngress => &["spec"],
+            Self::VaultFederationBurstDisposition => &["spec"],
+            Self::VaultFederationBurstReview => &[],
+            Self::VaultFederationBurstReviewRelease => &["spec"],
+            Self::VaultFederationBurstReviewReject => &["spec"],
+            Self::VaultFederationBurstReplay => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -7701,6 +7804,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginRegister => &["spec"],
+            Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorClear => &["spec"],
+            Self::VaultCodeOriginMirrorPush => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -8484,6 +8592,15 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceConfirm => &["spec"],
             Self::VaultFederationCoreferenceShareConsent => &["spec"],
             Self::VaultFederationCoreferenceUnlink => &["spec"],
+            Self::VaultFederationBurstBaseline => &["spec"],
+            Self::VaultFederationBurstPolicy => &["spec"],
+            Self::VaultFederationBurstPolicySet => &["spec"],
+            Self::VaultFederationBurstIngress => &["spec"],
+            Self::VaultFederationBurstDisposition => &["spec"],
+            Self::VaultFederationBurstReview => &[],
+            Self::VaultFederationBurstReviewRelease => &["spec"],
+            Self::VaultFederationBurstReviewReject => &["spec"],
+            Self::VaultFederationBurstReplay => &["spec"],
             Self::VaultFederationConnectIdentity => &[],
             Self::VaultFederationConnectGrantsMint => &["spec"],
             Self::VaultFederationConnectOffer => &["spec"],
@@ -8754,6 +8871,11 @@ impl AgentVerb {
             Self::VaultResultsSlice => &["spec"],
             Self::VaultCodeRepoDiff => &["spec"],
             Self::VaultCodeExport => &["spec"],
+            Self::VaultCodeOriginRegister => &["spec"],
+            Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorSet => &["spec"],
+            Self::VaultCodeOriginMirrorClear => &["spec"],
+            Self::VaultCodeOriginMirrorPush => &["spec"],
             Self::VaultCodeOriginAuthorityGet => &["spec"],
             Self::VaultCodeOriginAuthoritySet => &["spec"],
             Self::VaultCodeOriginPublications => &["spec"],
@@ -10148,6 +10270,33 @@ impl AgentVerb {
             Self::VaultFederationCoreferenceUnlink => {
                 "The owner atomically removes both identity-link orientations and retracts link metadata while retaining the original claims."
             }
+            Self::VaultFederationBurstBaseline => {
+                "The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context."
+            }
+            Self::VaultFederationBurstPolicy => {
+                "The owner reads one grant-bound peer's relative-burst outcome policy."
+            }
+            Self::VaultFederationBurstPolicySet => {
+                "The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant."
+            }
+            Self::VaultFederationBurstIngress => {
+                "The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt."
+            }
+            Self::VaultFederationBurstDisposition => {
+                "The owner reads an authenticated batch original disposition, named baseline context and current durable replay state."
+            }
+            Self::VaultFederationBurstReview => {
+                "The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection."
+            }
+            Self::VaultFederationBurstReviewRelease => {
+                "The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority."
+            }
+            Self::VaultFederationBurstReviewReject => {
+                "The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions."
+            }
+            Self::VaultFederationBurstReplay => {
+                "The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit."
+            }
             Self::VaultFederationConnectIdentity => {
                 "The owner reads this vault identity and the host key used for reciprocal Connect consent."
             }
@@ -10941,6 +11090,21 @@ impl AgentVerb {
             }
             Self::VaultCodeExport => {
                 "Export one already-finalized and reviewed document revision through the existing origin publication protocol."
+            }
+            Self::VaultCodeOriginRegister => {
+                "Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused."
+            }
+            Self::VaultCodeOriginMirrorGet => {
+                "Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential."
+            }
+            Self::VaultCodeOriginMirrorSet => {
+                "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write."
+            }
+            Self::VaultCodeOriginMirrorClear => {
+                "Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes."
+            }
+            Self::VaultCodeOriginMirrorPush => {
+                "Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client."
             }
             Self::VaultCodeOriginAuthorityGet => {
                 "Read one served origin authority and this host identity under the owner credential."
@@ -11881,10 +12045,10 @@ impl AgentVerb {
                 "Reads one page of a code run's committed step checkpoints and the stored replies its parked calls resumed with, without attaching, resuming or dispatching the run."
             }
             Self::VaultConsolidationHomeGet => {
-                "The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything."
+                "The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything."
             }
             Self::VaultConsolidationHomePick => {
-                "The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget."
+                "The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease."
             }
             Self::VaultConsolidationLineage => {
                 "The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."

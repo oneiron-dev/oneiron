@@ -9,8 +9,8 @@
 // `reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one).
 // A call that parks the run, and every call after a park, throws "missing_host_response_field"; the host bridge's own
 // refusals throw a bare code too, such as "verb_input_over_budget" or "host_response_over_budget".
-// Census: 1063 code-mode rows (1039 host rows, 24 run rows), 3530 declarations.
-// Replies: 947 fully typed, 112 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1077 code-mode rows (1053 host rows, 24 run rows), 3554 declarations.
+// Replies: 961 fully typed, 112 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
 declare namespace Sdk {
@@ -1229,6 +1229,24 @@ declare namespace Sdk {
   type CoreferenceShareConsentRequest = { local_person: EntityId; other_person: EntityId; pact: string };
   type CoreferenceShareConsentReceipt = { local_person: EntityId; other_person: EntityId; pact: string; consent_claim: EntityId };
   type CoreferenceUnlinkReceipt = { local_person: EntityId; other_person: EntityId; unlinked: boolean; retracted_claims: EntityId[]; original_claims_retained: boolean };
+  type FederationBurstScope = { kind: "vault"; vault_id: number } | { kind: "connect"; peer_vault_id: string };
+  type FederationBurstWorld = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: EntityId };
+  type FederationBurstPeerRequest = { principal: EntityId; grant: EntityId; scope: FederationBurstScope; world: FederationBurstWorld; facets?: EntityId[]; bands?: SelectorRange[] };
+  type FederationBurstBaseline = { name: string; writes_per_sec: number; structural_streak: number };
+  type FederationBurstBaselineState = { baseline: FederationBurstBaseline; learned: boolean; vault_size: number; recent_writes: number; rate_ratio: number; streak: number; streak_ratio: number };
+  type FederationBurstOutcome = "allow" | "isolate-and-propose" | "defer";
+  type FederationBurstPolicy = { baseline?: FederationBurstBaseline | null; unusual_rate: FederationBurstOutcome; unusual_streak: FederationBurstOutcome };
+  type FederationBurstPolicySetRequest = { peer: FederationBurstPeerRequest; policy: FederationBurstPolicy };
+  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
+  type ConnectDelivery = { body: ConnectWindow; signature: string };
+  type FederationBurstDisposition = { outcome: "allow" } | { outcome: "isolate-and-propose"; bundle_ref: string; replay_ref: string } | { outcome: "defer"; replay_ref: string };
+  type FederationBurstWorkState = "pending" | "imported" | "rejected";
+  type FederationBurstReceipt = { batch_ref: string; principal: EntityId; grant: EntityId; window_key: string; disposition: FederationBurstDisposition; state: FederationBurstWorkState; baseline: FederationBurstBaselineState };
+  type FederationBurstReplayRequest = { peer: FederationBurstPeerRequest; batch_ref: string };
+  type FederationIsolatedUpdate = { request_ref: string; window: string; admitted_update: number[]; rate_ratio: number; streak_ratio: number };
+  type FederationBurstReviewBundle = { bundle_ref: string; request_refs: string[]; updates: FederationIsolatedUpdate[]; quarantined: boolean; replay_automatic: boolean };
+  type FederationBurstReviewRequest = { bundle_ref: string };
+  type FederationBurstReviewReceipt = { bundle_ref: string; batches: FederationBurstReceipt[] };
   type ConnectIdentity = { vault: string; host_key: string };
   type MintConnectGrant = { peer_vault: string; authority_scope: Scope; expires_at?: number | null };
   type ConnectGrant = { grant: string; guest_actor: string; resolved_scope: Scope; expires_at?: number | null };
@@ -1248,8 +1266,6 @@ declare namespace Sdk {
   type GuestCopyState = "unknown";
   type ConnectDisconnected = { receipt: ConnectPactReceipt; outbound_access: boolean; inbound_access: boolean; sync_stopped: boolean; copied_bytes_recallable: boolean; recipient_copy_state: GuestCopyState };
   type ConnectExportRequest = { pact: string; window_key: string; world_ref: EntityId; facets?: EntityId[]; bands?: SelectorRange[] };
-  type ConnectWindow = { pact: string; epoch: number; source_vault: string; recipient_vault: string; world_ref: EntityId; facets: EntityId[]; bands: SelectorRange[]; window_key: string; update: number[] };
-  type ConnectDelivery = { body: ConnectWindow; signature: string };
   type ConnectRejoinStatus = "imported" | "deferred";
   type ConnectRejoined = { pact: string; epoch: number; world_ref: EntityId; status: ConnectRejoinStatus; request?: string | null };
   type TrustedContactReach = { sender: EntityId; channel: string; verb: string; target: string };
@@ -2108,7 +2124,14 @@ declare namespace Sdk {
   type OriginPublicationState = "prepared" | "published" | "failed" | "conflicted";
   type OriginPublicationView = { receipt: EntityId; repo_id: EntityId; ref_name: string; git_commit: string; provenance_receipt: EntityId; publication_claim?: EntityId | null; actor?: EntityId | null; status: OriginPublicationState; failure?: string | null; created_at: number; finished_at?: number | null };
   type CodeExportResult = { revision: EntityId; git_commit: string; remote_url: string; receipt: EntityId; publication: OriginPublicationView; ref_was_already_applied: boolean; wire_replayed: boolean; wire_rejected: boolean };
+  type OriginRegisterRequest = { repo: string; default_branch: string };
+  type OriginRegistered = { repo: string; repo_id: EntityId; default_branch: string };
   type OriginRepoRequest = { repo: string };
+  type OriginMirrorRun = { at: number; refs: number; deleted: number; failure?: string | null };
+  type OriginMirrorTarget = { repo: string; url: string; secret_ref: string; user: string; every_secs: number; last?: OriginMirrorRun | null; pushed: string[] };
+  type OriginMirrorView = { repo: string; mirror?: OriginMirrorTarget | null };
+  type OriginMirrorSetRequest = { repo: string; url: string; secret_ref: string; user?: string | null; every_secs: number };
+  type OriginMirrorCleared = { repo: string; cleared: boolean };
   type OriginResidence = "local-vault" | "cloud-vault";
   type OriginAuthority = { epoch: number; residence: OriginResidence; writer: string; mirror: boolean };
   type OriginAuthorityView = { repo: string; host?: string | null; authority?: OriginAuthority | null };
@@ -3184,9 +3207,10 @@ declare namespace Sdk {
   type CheckpointResumeView = { step: number; wait_ref: string; effect: string; output_handle: string; reply?: unknown | null };
   type CheckpointView = { run_ref: string; completed_steps: number; steps: CheckpointStepView[]; resumed: CheckpointResumeView[]; next_step?: number | null };
   type ConsolidationHomeNode = { node_id: string; class: string; elected_at: number };
+  type ConsolidationHomeCandidate = { node_id: string; class?: string | null; cloud: boolean; attached: boolean; always_on_local: boolean; primary_device: boolean };
   type ConsolidationHomePickHead = { act_ref: string; machine: EntityId; node_id?: string | null; at: number };
-  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
-  type ConsolidationHomePickRequest = { node_id?: string | null };
+  type ConsolidationHomeView = { home?: ConsolidationHomeNode | null; this_node?: string | null; candidates_available: boolean; candidates: ConsolidationHomeCandidate[]; pick?: string | null; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[] };
+  type ConsolidationHomePickRequest = { node_id?: string | null; seen?: string | null };
   type ConsolidationHomePickReceipt = { pick?: string | null; act_ref: string; revision: string; heads: ConsolidationHomePickHead[]; conflict: ConsolidationHomePickHead[]; home?: ConsolidationHomeNode | null };
   type ConsolidationLineageRequest = { job_ref: string; from_step?: string | null; limit?: number | null };
   type ConsolidationTryView = { job_ref: string; kind: string; state: AttemptState; run_id?: string | null; parent_attempt?: string | null; retry_of?: string | null; folded_retries: number; attempt_count: number; lease_owner?: string | null; result_ref?: string | null; resume_point?: AttemptResumePoint | null; parked?: DreamerParkedAttemptView | null };
@@ -4524,8 +4548,20 @@ declare const vault: Sdk.VaultHost & {
         /** Cut over one existing served origin under the owner proof and expected authority epoch. */
         set(input: Sdk.OriginAuthoritySetRequest): Promise<Sdk.OriginAuthorityView | StoredResult>;
       };
+      mirror: {
+        /** Stop outbound mirroring of one served repository; the mirror retains its existing refs and bytes. */
+        clear(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorCleared | StoredResult>;
+        /** Read one served repository's outbound mirror setup, cadence, pushed refs and last recorded run under the owner's credential. */
+        get(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorView | StoredResult>;
+        /** Push one origin's published Git refs to its configured mirror now, recording the real outcome; LFS bytes are transferred separately by the mirror client. */
+        push(input: Sdk.OriginRepoRequest): Promise<Sdk.OriginMirrorRun | StoredResult>;
+        /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token and cadence; the token binding is checked in the setup write. */
+        set(input: Sdk.OriginMirrorSetRequest): Promise<Sdk.OriginMirrorTarget | StoredResult>;
+      };
       /** Read durable publication records for one served repository ref and commit without synthesizing a push acknowledgement. */
       publications(input: Sdk.OriginPublicationsRequest): Promise<Sdk.OriginPublicationsView | StoredResult>;
+      /** Register a new empty served repository for authenticated Git and vault-LFS, with an explicit default branch; existing names are refused. */
+      register(input: Sdk.OriginRegisterRequest): Promise<Sdk.OriginRegistered | StoredResult>;
     };
     /** Stage a one-file resolution of an active repository conflict as another Proposed proposal, preserving its original proposals and reconciliation task. Owner only; nothing lands. */
     proposal_resolve(input: Sdk.CodeProposalResolveRequest): Promise<Sdk.CodeProposalSubmitted | StoredResult>;
@@ -4681,9 +4717,9 @@ declare const vault: Sdk.VaultHost & {
     /** Records immutable child judgements and reference sets against an existing root pin, in any completion order, and accounts source-plus-hash corroboration without merging projects. Does not settle claims. */
     frontier(input: Sdk.ConsolidationFrontierRequest): Promise<Sdk.ConsolidationRootAccounting | StoredResult>;
     home: {
-      /** The owner reads the elected MACRO home this node's runner holds and this install's own sync client id, without electing, minting or waking anything. */
+      /** The owner reads the elected MACRO home this node's runner holds, the host's last candidate set it elected over, his home pick and this install's own sync client id, without electing, minting or waking anything. */
       get(input: Sdk.EmptyRequest): Promise<Sdk.ConsolidationHomeView | StoredResult>;
-      /** The owner picks the node that runs his vault's MACRO consolidation, or clears the pick: a signed act every linked machine folds, recorded even for a node unknown here. It re-elects this machine's home and moves no job, lease or budget. */
+      /** The owner picks or clears the node that runs his vault's MACRO consolidation: a signed act every linked machine folds, recorded even for a node unknown here; a stale seen revision refuses. It re-elects this home and moves no job or lease. */
       pick(input: Sdk.ConsolidationHomePickRequest): Promise<Sdk.ConsolidationHomePickReceipt | StoredResult>;
     };
     /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
@@ -4919,6 +4955,28 @@ declare const vault: Sdk.VaultHost & {
     spawn(input: Sdk.LiveRunRequest<Sdk.FanoutBatchInput>): Promise<Sdk.FanoutBatchView | StoredResult>;
   };
   federation: {
+    burst: {
+      /** The owner reads one peer's named or observed baseline, relative rate and streak, and current vault-size context. */
+      baseline(input: Sdk.FederationBurstPeerRequest): Promise<Sdk.FederationBurstBaselineState | StoredResult>;
+      /** The owner reads an authenticated batch original disposition, named baseline context and current durable replay state. */
+      disposition(input: Sdk.FederationBurstReplayRequest): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner admits a peer host signed Connect delivery through current federation admission and receives its discriminated burst receipt. */
+      ingress(input: Sdk.ConnectDelivery): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner reads one grant-bound peer's relative-burst outcome policy. */
+      policy: ((input: Sdk.FederationBurstPeerRequest) => Promise<Sdk.FederationBurstPolicy | StoredResult>) & {
+        /** The owner sets a named baseline and allow, isolate-and-propose or defer routing for one peer without changing its grant. */
+        set(input: Sdk.FederationBurstPolicySetRequest): Promise<Sdk.FederationBurstPolicy | StoredResult>;
+      };
+      /** The owner retries one retained authenticated batch through its current grant and federation admission without another burst debit. */
+      replay(input: Sdk.FederationBurstReplayRequest): Promise<Sdk.FederationBurstReceipt | StoredResult>;
+      /** The owner reads retained peer review bundles, coalesced once per peer and kept after replay or rejection. */
+      review: ((input: Sdk.EmptyRequest) => Promise<Sdk.FederationBurstReviewBundle[] | StoredResult>) & {
+        /** The owner rejects a bundle's pending batches while retaining its review evidence and terminal dispositions. */
+        reject(input: Sdk.FederationBurstReviewRequest): Promise<Sdk.FederationBurstReviewReceipt | StoredResult>;
+        /** The owner releases a bundle's burst hold for current-grant replay without importing evidence or widening authority. */
+        release(input: Sdk.FederationBurstReviewRequest): Promise<Sdk.FederationBurstReviewReceipt | StoredResult>;
+      };
+    };
     connect: {
       /** The owner accepts the peer host signed Connect half and receives the matching host counter-half. */
       accept(input: Sdk.AcceptConnect): Promise<Sdk.ConnectAccepted | StoredResult>;
