@@ -26727,7 +26727,7 @@
      "path": "src/feedback/conversation_training/custody.rs",
      "purpose": "Local custody of publisher training offers and controls (OF-420; TRAINING-LINK = C): what this vault…",
      "surface": {
-      "crate-vis": 30
+      "crate-vis": 36
      }
     },
     {
@@ -26764,7 +26764,7 @@
      "path": "src/feedback/conversation_training/link.rs",
      "purpose": "The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 16
      }
     },
     {
@@ -51248,7 +51248,7 @@
      "path": "src/store/mod.rs",
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…",
      "surface": {
-      "crate-vis": 21,
+      "crate-vis": 22,
       "mod": 1,
       "re-export": 14
      }
@@ -51714,7 +51714,7 @@
      "path": "src/store/training_link.rs",
      "purpose": "The training link key's custody client (TRAINING-LINK = C, TL-2): K, the one key the vault's publisher…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {

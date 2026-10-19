@@ -2057,9 +2057,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/feedback/consent.rs` | src | m | 4 struct · 2 enum · 1 trait · 20 fn · 3 const · 4 crate-vis | FeedbackApproval, FeedbackApprovalScope, FeedbackPreview, FeedbackRedactionError, FeedbackRedactor, FeedbackSendRoute, UnredactedFeedback | Feedback consent: send routes, approval scope, redaction seam, preview, disclosure card, and approval… |
 | `src/feedback/conversation_training.rs` | src | s | 2 struct · 2 enum · 1 trait · 1 fn · 5 re-export | ConversationSource, ConversationTrainingChoice, Eligibility, NoChoicesYet, Withheld | "Learn from my conversations" (FIX 4489, FIX 5502 owner rulings, OF-420): the one check real conversation… |
 | `src/feedback/conversation_training/crypto.rs` | src | s | 2 struct · 3 fn · 3 crate-vis | IntakeReceiptKey, IntakeRecipient | The publisher training files' crypto (OF-420): the install signature on what the vault writes (C1, D6), the… |
-| `src/feedback/conversation_training/custody.rs` | src | m | 30 crate-vis | — | Local custody of publisher training offers and controls (OF-420; TRAINING-LINK = C): what this vault… |
+| `src/feedback/conversation_training/custody.rs` | src | m | 36 crate-vis | — | Local custody of publisher training offers and controls (OF-420; TRAINING-LINK = C): what this vault… |
 | `src/feedback/conversation_training/lifecycle.rs` | src | m | 9 struct · 3 enum · 1 trait · 5 fn | PublisherTrainingLifecycle, ReceiptCursor, ReceivedTrainingReceipt, ReleaseDecision, SealedTrainingOffer, SignedTrainingControl, TrainingControlId, TrainingQueued +5 | The publisher training lifecycle (OF-420 A2): what an outbox takes, and what the engine decides about it |
-| `src/feedback/conversation_training/link.rs` | src | s | 13 crate-vis | — | The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources… |
+| `src/feedback/conversation_training/link.rs` | src | s | 16 crate-vis | — | The training link (TRAINING-LINK = C, TL-1): the opaque codes that stand in for this vault, its sources… |
 | `src/feedback/conversation_training/purge.rs` | src | s | 1 fn · 1 crate-vis | — | The training purge (TRAINING-LINK = C, TL-5, the engine half): before an erase destroys the vault, every… |
 | `src/feedback/conversation_training/receipts.rs` | src | s | 4 struct · 1 enum · 4 fn | PersonTrainingReceipts, PersonTrainingSubmission, TrainingCustody, TrainingReceiptsCursor, TrainingUsedRun | A person's own publisher training receipts (OF-420, FIX 5372): what the outbox holds and what the intake… |
 | `src/feedback/conversation_training/reconcile.rs` | src | m | 1 struct · 3 fn · 2 crate-vis | TrainingUpkeep | Withdrawal by reconciliation (OF-420 A4, D2), receipts (C2, C3, C5) and the outbox's upkeep |
@@ -3974,7 +3974,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/local_queue_budget.rs` | src | s | 1 crate-vis | — | Byte accounting for bounded device-local queues, separate from verdict/rate policy |
 | `src/store/local_replica.rs` | src | m | 6 crate-vis | — | Local-only removal of one canonical window's replica (OF-534 demotion) |
 | `src/store/local_replica/left_env.rs` | src | m | 3 crate-vis | — | Local purge of a left shared vault's dedicated environment (OF-158) |
-| `src/store/mod.rs` | src | s | 1 mod · 14 re-export · 21 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
+| `src/store/mod.rs` | src | s | 1 mod · 14 re-export · 22 crate-vis | — | LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the… |
 | `src/store/open_gates/embedding_transform_gates.rs` | src | s | 5 crate-vis | — | The embedding-transform pin: how a vault's vectors were made, beside the model that made them |
 | `src/store/open_gates/hnsw_model_gates.rs` | src | m | 1 fn · 18 crate-vis | — | HNSW compatibility encode/decode/format, embedding-model preflight and persist gates, temporal migration… |
 | `src/store/open_gates/manifest_storage_gates.rs` | src | m | 31 crate-vis | — | Process path registry, owned environment close semantics, manifest create/open/validate pairs, and storage… |
@@ -4015,7 +4015,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/test_hooks.rs` | src | m | 29 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
 | `src/store/tests.rs` | test | XL | — | — | — |
 | `src/store/tests/gate_claim_lookup.rs` | test | s | — | — | The lookup behind a claim write's receipt: the newest decision about a claim among the newest ledger rows… |
-| `src/store/training_link.rs` | src | s | 6 crate-vis | — | The training link key's custody client (TRAINING-LINK = C, TL-2): K, the one key the vault's publisher… |
+| `src/store/training_link.rs` | src | s | 8 crate-vis | — | The training link key's custody client (TRAINING-LINK = C, TL-2): K, the one key the vault's publisher… |
 | `src/store/writer_lease.rs` | src | m | 1 struct · 5 fn · 2 const · 6 crate-vis | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `src/store/writer_lease/tests.rs` | test | m | — | — | Focused process-owner lease and bootstrap regressions |
 | `src/subject_model.rs` | src | L | 1 struct · 2 enum · 12 fn · 3 const · 1 re-export · 8 crate-vis | ActorSubjectAnchor, PersonSubstrate, SubjectKind | Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7) |
