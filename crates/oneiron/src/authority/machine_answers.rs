@@ -270,7 +270,8 @@ impl Vault {
                 "the machine's answer changed since it was read",
             ));
         }
-        profile.seen_world_edits = super::world_privacy::live_edits_by(fold, profile.machine);
+        profile.seen_world_edits =
+            super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
         profile.carrier = Some(carrier);
         profile.act = Some(OwnerAct {
             owner: answer.owner,
@@ -355,7 +356,8 @@ impl Vault {
         fold: &AuthorityFold,
         mut profile: MachineProfile,
     ) -> Result<FoldedMachine> {
-        profile.seen_world_edits = super::world_privacy::live_edits_by(fold, profile.machine);
+        profile.seen_world_edits =
+            super::act_standing::acknowledged_by_in_txn(&self.store, txn, fold, profile.machine)?;
         profile.validate()?;
         let now = self.instant_in_txn(txn)?.secs();
         let entry = next_entry(
