@@ -116,13 +116,12 @@ pub use self::storage::{
     bind_wait_trap, park_and_bind_wait_trap,
 };
 pub(crate) use self::storage::{
-    FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_row_key,
-    code_run_inline_body_of_row, deliver_wait_in_txn, deliver_wait_listing_in_txn,
-    settled_wait_reply_in_txn,
-};
-pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
     ReceiptSource, ReceiptTree,
+};
+pub(crate) use self::storage::{
+    StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
+    deliver_wait_in_txn, deliver_wait_listing_in_txn, settled_wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     StoredRunContinuation, capsule_start_body, put_run_continuation_row_in_txn,

@@ -107,7 +107,12 @@ fn bind_in_txn(
             let held = BODY_KEYS
                 .get(store, txn, digest)?
                 .is_some_and(|row| !row.inline);
-            if !held && store.body_dir()?.open_reader(digest, *len, None)?.is_some() {
+            if !held {
+                // A file a row names and the disk lacks is no body to bind:
+                // the checkpoint refuses, as it refused before.
+                if store.body_dir()?.open_reader(digest, *len, None)?.is_none() {
+                    return Err(Error::CorruptedIndex("code-run result body file missing"));
+                }
                 BODY_KEYS.put(
                     store,
                     txn,

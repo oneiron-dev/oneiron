@@ -44,6 +44,10 @@ pub(crate) const INLINE_ASSETS: SideTable<EntityId, [u8; 16], Raw> =
 const RAW_OUTPUT_ROWS: SideTable<String, Vec<u8>, Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
+/// A result row's first byte when its body rests in it (`code_run`'s
+/// stored-body codec).
+const STORED_INLINE: u8 = 0;
+
 /// Stages the erase of `instance` in `wtxn` and notes it for `owner`'s
 /// receipt.
 fn stage_erase<D: ManifestDbs + SideTableDbs>(
@@ -90,20 +94,21 @@ pub(crate) fn erase_bodies_in_txn(
     held: &[[u8; 32]],
 ) -> Result<()> {
     for digest in held {
-        let Some(row) = BODY_KEYS.get(store, wtxn, digest)? else {
-            continue;
-        };
+        let row = BODY_KEYS.get(store, wtxn, digest)?;
         if crate::provenance::body::digest_is_held_in_txn(store, wtxn, digest)? {
-            ERASE_PENDING.put(store, wtxn, &row.instance, digest)?;
-            ERASED.put(store, wtxn, &(*owner, row.instance), &Vec::new())?;
+            if let Some(row) = row {
+                ERASE_PENDING.put(store, wtxn, &row.instance, digest)?;
+                ERASED.put(store, wtxn, &(*owner, row.instance), &Vec::new())?;
+            }
             continue;
         }
-        if row.inline {
-            RAW_OUTPUT_ROWS.delete(store, wtxn, &inline_handle(digest))?;
-            BODY_KEYS.delete(store, wtxn, digest)?;
+        // The last holder's inline result goes with it, bound or not, so no
+        // later checkpoint carries its bytes.
+        drop_inline_result_in_txn(store, wtxn, digest)?;
+        if let Some(row) = row {
+            ERASE_PENDING.delete(store, wtxn, &row.instance)?;
+            stage_erase(store, wtxn, Some(owner), &row.instance)?;
         }
-        ERASE_PENDING.delete(store, wtxn, &row.instance)?;
-        stage_erase(store, wtxn, Some(owner), &row.instance)?;
     }
     if let Some(instance) = INLINE_ASSETS.get(store, wtxn, owner)? {
         INLINE_ASSETS.delete(store, wtxn, owner)?;
@@ -140,11 +145,32 @@ pub(crate) fn release_body_in_txn<D: ManifestDbs + SideTableDbs>(
     if !ERASE_PENDING.delete(dbs, wtxn, &row.instance)? {
         return Ok(());
     }
-    if row.inline {
-        RAW_OUTPUT_ROWS.delete(dbs, wtxn, &inline_handle(digest))?;
-        BODY_KEYS.delete(dbs, wtxn, digest)?;
-    }
+    drop_inline_result_in_txn(dbs, wtxn, digest)?;
     stage_erase(dbs, wtxn, None, &row.instance)
+}
+
+/// Drops the inline result row of `digest`, and its instance row, when the
+/// body rests inline: an erased body's bytes leave the live vault with its
+/// last holder. A file's go with the collector.
+fn drop_inline_result_in_txn<D: ManifestDbs + SideTableDbs>(
+    dbs: &D,
+    wtxn: &mut RwTxn<'_>,
+    digest: &[u8; 32],
+) -> Result<()> {
+    let handle = inline_handle(digest);
+    if RAW_OUTPUT_ROWS
+        .get(dbs, wtxn, &handle)?
+        .is_some_and(|raw| raw.first() == Some(&STORED_INLINE))
+    {
+        RAW_OUTPUT_ROWS.delete(dbs, wtxn, &handle)?;
+        if BODY_KEYS
+            .get(dbs, wtxn, digest)?
+            .is_some_and(|row| row.inline)
+        {
+            BODY_KEYS.delete(dbs, wtxn, digest)?;
+        }
+    }
+    Ok(())
 }
 
 /// The body client's readiness for one retirement: no instance row and no

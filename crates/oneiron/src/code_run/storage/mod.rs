@@ -28,8 +28,7 @@ pub(crate) use self::reader_jobs::{
 pub use self::reader_jobs::{ReaderJobs, SummaryMember, SummaryRead};
 pub use self::records::{CodeRunModelHealCount, CodeRunSecretLiftProposal};
 pub(crate) use self::records::{
-    FinishedOutput, StagedSinks, code_run_body_file_of_row, code_run_body_row_key,
-    code_run_inline_body_of_row,
+    StagedSinks, code_run_body_file_of_row, code_run_body_row_key, code_run_inline_body_of_row,
 };
 pub use self::replay_capsule::step_replay_capsules;
 pub(crate) use self::replay_capsule::{

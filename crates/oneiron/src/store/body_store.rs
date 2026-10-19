@@ -181,7 +181,7 @@ impl BodyDir {
 
     /// Writes the sparse line index of the body `name` beside it. Derived:
     /// a failure leaves it to be rebuilt.
-    fn write_line_index(&self, name: &str, index: &[u64]) {
+    pub(in crate::store) fn write_line_index(&self, name: &str, index: &[u64]) {
         let Ok((mut file, temp)) = self.create_temp() else {
             return;
         };
