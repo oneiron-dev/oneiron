@@ -758,8 +758,8 @@ export class Oneiron {
       hybrid: (input: Facade.HybridSearchRequest): Facade.ScopedReadResult<Facade.HybridSearchHit[]> => this.#call(() => this.#client.vaultSearchHybrid(input) as Facade.ScopedReadResult<Facade.HybridSearchHit[]>),
       /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */
       temporal: (input: Facade.TemporalSearchRequest): Facade.ScopedReadResult<Facade.TemporalSearchResult> => this.#call(() => this.#client.vaultSearchTemporal(input) as Facade.ScopedReadResult<Facade.TemporalSearchResult>),
-      /** BM25 text search over the engine index; surfaceable claims only. */
-      bm25: (input: Facade.QueryBm25Request): Facade.ScopedReadResult<Facade.LexicalHit[]> => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.ScopedReadResult<Facade.LexicalHit[]>),
+      /** BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence. */
+      bm25: (input: Facade.QueryBm25Request): Facade.Bm25Search => this.#call(() => this.#client.vaultSearchBm25(input) as Facade.Bm25Search),
     },
     images: {
       /** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */

@@ -1026,8 +1026,8 @@ class Oneiron:
             """Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence."""
         def temporal(self, input: Facade.TemporalSearchRequest) -> Facade.ScopedReadResult[Facade.TemporalSearchResult]:
             """Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds."""
-        def bm25(self, input: Facade.QueryBm25Request) -> Facade.ScopedReadResult[list[Facade.LexicalHit]]:
-            """BM25 text search over the engine index; surfaceable claims only."""
+        def bm25(self, input: Facade.QueryBm25Request) -> Facade.Bm25Search:
+            """BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence."""
     class _VaultSearchVectorVerbs:
         def __call__(self, input: Facade.VectorSearchRequest) -> Facade.ScopedReadResult[Facade.VectorSearchResult]:
             """Searches the text index or a declared embedding space with per-kind matches and revision pins; text-index MRL reads report refinement, and explicit voice_hot skips rescore at the reduced voice limit."""

@@ -6,6 +6,7 @@
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
+use oneiron::memory::ProducerRows;
 use oneiron::runtime_hooks::HookVerdict;
 use oneiron::task_verb::sdk::AiVerdictRequest;
 use oneiron::{EdgeActorClass, EntityId};
@@ -20,15 +21,17 @@ impl ServerHookVerdict {
     pub(crate) fn new(server: &Arc<SyncServer>) -> Self {
         Self(Arc::downgrade(server))
     }
-}
 
-impl HookVerdict for ServerHookVerdict {
-    fn verdict(
+    /// One verdict for `reader`, its reads listing in `producers` and its
+    /// evidence's rows in `evidence`.
+    fn ask(
         &self,
         reader: EntityId,
         class: EdgeActorClass,
         request_json: &str,
         deadline: Instant,
+        producers: &ProducerRows,
+        evidence: &mut Vec<EntityId>,
     ) -> Result<String, String> {
         let server = self
             .0
@@ -47,13 +50,34 @@ impl HookVerdict for ServerHookVerdict {
             return Err("hook deadline exceeded".to_owned());
         }
         request.deadline_ms = Some(request.deadline_ms.map_or(left, |own| own.min(left)));
-        let memory = server.vault.memory(reader, class);
+        let memory = server
+            .vault
+            .memory(reader, class)
+            .listing_producers(producers);
         // A hook pulls no image: it has no credential lane to pull one
         // with, and no browser holds one for it.
         let verdict = crate::decision_verdict::run_verdict(
-            &server, reader, class, &memory, None, None, &request, None,
+            &server, reader, class, &memory, None, None, &request, None, evidence,
         )
         .map_err(|error| format!("{}: {}", error.code, error.message))?;
         serde_json::to_string(&verdict).map_err(|_| "the verdict did not encode".to_owned())
+    }
+}
+
+impl HookVerdict for ServerHookVerdict {
+    fn verdict(
+        &self,
+        reader: EntityId,
+        class: EdgeActorClass,
+        request_json: &str,
+        deadline: Instant,
+    ) -> (Result<String, String>, Option<Vec<EntityId>>) {
+        // The rows the ask resolved its evidence to, and any its reads
+        // listed; a refusal before it reads lists none.
+        let mut evidence = Vec::new();
+        let producers = ProducerRows::default();
+        let reply = self.ask(reader, class, request_json, deadline, &producers, &mut evidence);
+        evidence.extend(producers.take());
+        (reply, Some(evidence))
     }
 }

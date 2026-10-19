@@ -29238,10 +29238,10 @@ pub fn vault_search_temporal(
 pub fn vault_search_bm25(
     memory: &Memory<'_>,
     input: QueryBm25Request,
-) -> MemoryResult<crate::claim::ScopedReadResult<Vec<crate::memory::LexicalHit>>> {
+) -> MemoryResult<crate::task_verb::sdk::Bm25Search> {
     crate::memory::caps::check_query(&input.query)?;
     crate::memory::caps::check_limit_nonzero(input.limit)?;
-    memory.query_bm25(&input.query, input.limit)
+    crate::task_verb::sdk::search_bm25(memory, input)
 }
 pub fn vault_neighbors(
     memory: &Memory<'_>,

@@ -2702,7 +2702,7 @@ impl OneironClient {
                     oneiron::claim::ScopedReadResult<oneiron::memory::TemporalSearchResult>,
                 >(client, verb, &input),
                 "vault.search.bm25" => remote_agent_verb_output::<
-                    oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>,
+                    oneiron::task_verb::sdk::Bm25Search,
                 >(client, verb, &input),
                 "vault.neighbors" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Vec<oneiron::memory::NeighborHit>>,
@@ -13913,8 +13913,7 @@ impl OneironClient {
     pub fn vault_search_bm25(
         &self,
         input: &oneiron::task_verb::sdk::QueryBm25Request,
-    ) -> Result<oneiron::claim::ScopedReadResult<Vec<oneiron::memory::LexicalHit>>, MemoryError>
-    {
+    ) -> Result<oneiron::task_verb::sdk::Bm25Search, MemoryError> {
         oneiron::memory::caps::check_query(&input.query)?;
         oneiron::memory::caps::check_limit_nonzero(input.limit)?;
         let value = serde_json::to_value(input).map_err(|_| {

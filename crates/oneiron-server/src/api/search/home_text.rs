@@ -5,23 +5,15 @@
 //! holder proof, and one with no proof to forward not at all, never as the
 //! device's owner in its place.
 
-use std::sync::Arc;
 use std::time::Instant;
 
-use oneiron::authority::VerifiedSlip;
-use oneiron::claim::CallerLocality;
-use oneiron::memory::{
-    HomeRecallCaller, MEMORY_CODE_INTERNAL, MemoryError, MemoryResult, ProducerRows,
-    RecallResidence, RecallResidenceHit,
-};
+use oneiron::memory::{HomeRecallCaller, RecallResidence, RecallResidenceHit};
 use oneiron::sync::{DeviceResidence, ResidenceSearch, SearchSource};
-use oneiron::task_verb::sdk::{Bm25Search, QueryBm25Request};
-use oneiron::{EdgeActorClass, EntityId, Vault};
-
-use crate::server::SyncServer;
+use oneiron::task_verb::sdk::Bm25Search;
+use oneiron::{EntityId, Vault};
 
 /// What a text search's home said.
-pub(super) enum HomeText {
+pub(crate) enum HomeText {
     /// The device holds every window it may read: its page is whole.
     Whole,
     /// The home was not asked (no live connection, or a narrower caller with
@@ -39,7 +31,7 @@ pub(super) enum HomeText {
 /// Asks `vault`'s home `query` for `caller`, before `due`. A device whose
 /// own sync connection dropped still syncs only what it opened, so its page
 /// stays local-only rather than reading whole.
-pub(super) async fn ask_home_text(
+pub(crate) async fn ask_home_text(
     vault: &Vault,
     caller: &HomeRecallCaller,
     query: &str,
@@ -81,89 +73,46 @@ pub(super) async fn ask_home_text(
     }
 }
 
-impl SyncServer {
-    /// `vault.search.bm25`, the door every server transport shares: this
-    /// device's BM25 page under the caller's own read, then, on a device
-    /// that syncs only what it opened, its home's answer under `home`, the
-    /// caller as its ingress admitted it (FIX 3876). The home's references
-    /// the page does not hold ride in `residence`, apart from the page's
-    /// hits; only the home's own answer counts, so one out of reach, a
-    /// refusal or a caller with nothing to ask under leaves the page
-    /// local-only and incomplete. A room turn serves no BM25 search, as the
-    /// turn itself refuses it. Beside it, the rows the page's read admitted
-    /// and the home's references.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "a server door's parameters plus the caller it asks the home for"
-    )]
-    pub(crate) async fn bm25_home_listing(
-        self: &Arc<Self>,
-        actor: EntityId,
-        class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
-        locality: CallerLocality,
-        room: Option<EntityId>,
-        input: QueryBm25Request,
-        home: HomeRecallCaller,
-    ) -> (MemoryResult<Bm25Search>, Vec<EntityId>) {
-        const VERB: &str = "vault.search.bm25";
-        let producers = Arc::new(ProducerRows::default());
-        let listing = Arc::clone(&producers);
-        let (query, limit) = (input.query.clone(), input.limit);
-        let server = Arc::clone(self);
-        let page = tokio::task::spawn_blocking(move || {
-            let memory = server.vault().memory(actor, class);
-            let memory = match &proof {
-                Some(proof) => memory.with_read_proof(proof),
-                None => memory,
-            }
-            .at(locality)
-            .listing_producers(&listing);
-            match room {
-                Some(room) => {
-                    let value = serde_json::to_value(&input).map_err(|_| internal(VERB))?;
-                    let output = memory.for_room_turn(room)?.invoke(VERB, value)?;
-                    serde_json::from_value(output).map_err(|_| internal(VERB))
-                }
-                None => oneiron::task_verb::sdk::search_bm25(&memory, input),
-            }
-        })
-        .await
-        .unwrap_or_else(|_| Err(internal(VERB)));
-        let mut rows = producers.take();
-        let answer = match page {
-            Ok(mut page) if page.residence.is_some() => {
-                let held: Vec<String> = page
-                    .value
-                    .iter()
-                    .filter_map(|hit| hit.record.as_ref())
-                    .map(|record| record.id.clone())
-                    .collect();
-                let asked = ask_home_text(self.vault(), &home, &query, limit, None).await;
-                let residence = match asked {
-                    HomeText::Answered { search, capped }
-                        if search.source == SearchSource::Home =>
-                    {
-                        home_residence(search, capped, &held)
-                    }
-                    HomeText::Whole | HomeText::LocalOnly | HomeText::Answered { .. } => {
-                        RecallResidence::local_only()
-                    }
-                };
-                // The home's references, found under the caller's own proof.
-                rows.extend(
-                    residence
-                        .hits
-                        .iter()
-                        .filter_map(|hit| EntityId::from_hex(&hit.id).ok()),
-                );
-                page.residence = Some(residence);
-                Ok(page)
-            }
-            other => other,
-        };
-        (answer, rows)
+/// Completes `page`, a `vault.search.bm25` page read on the caller's own
+/// surface, with what the opened device's home holds beside it (FIX 3876):
+/// the home is asked `query` under `home`, the caller as its ingress
+/// admitted it, and its references the page does not hold ride in
+/// `residence`, apart from the page's hits. Only the home's own answer
+/// counts: one out of reach, a refusal or a caller with nothing to ask under
+/// leaves the page local-only and incomplete. A device that holds every
+/// window it may read keeps its page as it is. Beside it, the home's
+/// references.
+pub(crate) async fn complete_bm25_with_home(
+    vault: &Vault,
+    mut page: Bm25Search,
+    query: &str,
+    limit: usize,
+    home: &HomeRecallCaller,
+) -> (Bm25Search, Vec<EntityId>) {
+    if page.residence.is_none() {
+        return (page, Vec::new());
     }
+    let held: Vec<String> = page
+        .value
+        .iter()
+        .filter_map(|hit| hit.record.as_ref())
+        .map(|record| record.id.clone())
+        .collect();
+    let residence = match ask_home_text(vault, home, query, limit, None).await {
+        HomeText::Answered { search, capped } if search.source == SearchSource::Home => {
+            home_residence(search, capped, &held)
+        }
+        HomeText::Whole | HomeText::LocalOnly | HomeText::Answered { .. } => {
+            RecallResidence::local_only()
+        }
+    };
+    let rows = residence
+        .hits
+        .iter()
+        .filter_map(|hit| EntityId::from_hex(&hit.id).ok())
+        .collect();
+    page.residence = Some(residence);
+    (page, rows)
 }
 
 /// The home's answer as a residence beside a page holding `held`.
@@ -174,8 +123,4 @@ fn home_residence(search: ResidenceSearch, capped: bool, held: &[String]) -> Rec
         window: hit.window.to_string(),
     });
     RecallResidence::home_text(hits, search.complete, capped, held)
-}
-
-fn internal(verb: &str) -> MemoryError {
-    MemoryError::new(MEMORY_CODE_INTERNAL, format!("{verb} did not finish"), &[])
 }

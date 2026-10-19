@@ -1036,6 +1036,7 @@ pub(crate) async fn ai_verdict(
                 &input,
                 // A facade caller's verdict bills the vault owner.
                 None,
+                &mut Vec::new(),
             )
         })
         .await;
@@ -1049,7 +1050,7 @@ pub(crate) async fn ai_verdict(
 /// no run pinned previews a generative hook's verdicts on serve's own ladder.
 /// Beside it, the binding, its body's source, each entry's fact and every
 /// row a replayed read served ([`oneiron::Vault::hooks_replay_listing`]);
-/// `None` once an entry asked a verdict, whose evidence it does not list.
+/// `None` once an entry heard a verdict whose evidence rows are not known.
 pub(crate) async fn vault_hooks_replay(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

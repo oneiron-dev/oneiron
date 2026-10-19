@@ -37,6 +37,7 @@ use utoipa::ToSchema;
 
 mod deadline;
 mod home_text;
+pub(crate) use home_text::complete_bm25_with_home;
 use deadline::{
     SearchPage, read_by_deadline, search_deadline, search_page, search_page_by_deadline,
 };

@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3598 declarations.
+// Census: 1086 code-mode rows (1061 host rows, 25 run rows), 3599 declarations.
 // Replies: 969 fully typed, 113 typed down to an opaque serde_json::Value leaf, 3 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 108; unread shapes: BoardVerbOutput.
@@ -3025,6 +3025,7 @@ declare namespace Sdk {
   type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null };
   type QueryBm25Request = { query: string; limit: number };
   type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null };
+  type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; residence?: RecallResidence | null };
   type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number };
   type NeighborsRequest = { entity_ref: string; opts: NeighborOpts };
   type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null };
@@ -5852,8 +5853,8 @@ declare const vault: Sdk.VaultHost & {
     run(input: Sdk.SealRunRequest): Promise<Sdk.SealRunReceipt | StoredResult>;
   };
   search: ((input: Sdk.MemorySearchInput) => Promise<Sdk.MemorySearchOutput | StoredResult>) & {
-    /** BM25 text search over the engine index; surfaceable claims only. */
-    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.ScopedReadResult<Sdk.LexicalHit[]> | StoredResult>;
+    /** BM25 text search over the engine index; surfaceable claims only. On a device that syncs only what it opened, a server's door asks the home under the caller's own proof, and its references ride in residence. */
+    bm25(input: Sdk.QueryBm25Request): Promise<Sdk.Bm25Search | StoredResult>;
     /** Searches explicit vector, text, phonetic, temporal and PPR channels under the caller read ceiling, with optional fixed-time blend replay and per-hit score evidence. */
     hybrid(input: Sdk.HybridSearchRequest): Promise<Sdk.ScopedReadResult<Sdk.HybridSearchHit[]> | StoredResult>;
     /** Searches occurrence, learning or both temporal anchors under the caller's read ceiling, with sigma, adaptive widening, hard outer ranges, admitted dates and the effective request sigma and rounds. */

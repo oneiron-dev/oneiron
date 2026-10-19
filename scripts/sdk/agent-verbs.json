@@ -14168,9 +14168,8 @@
         "output": "LexicalHits"
       },
       "input": "QueryBm25Request",
-      "output": "Bm25Search",
+      "output": "crate::task_verb::sdk::Bm25Search",
       "call": "crate::task_verb::sdk::search_bm25(memory, input)?",
-      "server_door": "bm25_home",
       "scope": "Read",
       "admission": {
         "lane_record_scope": true,
