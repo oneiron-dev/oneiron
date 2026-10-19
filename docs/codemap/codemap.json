@@ -42983,7 +42983,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/recovery/checkpoint/artifact/sink.rs",
@@ -43281,8 +43281,8 @@
      "purpose": "Tier-C physical-row checkpoints and one restore/wake/migrate path",
      "surface": {
       "enum": 1,
-      "fn": 17,
-      "re-export": 4,
+      "fn": 19,
+      "re-export": 5,
       "struct": 3
      }
     },
@@ -43394,6 +43394,22 @@
       "crate-vis": 1,
       "enum": 1,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AtWriteFloor",
+      "RecoveryWriteBudget"
+     ],
+     "path": "src/recovery/checkpoint/write_budget.rs",
+     "purpose": "The room a backup's or a rehearsal's writes claim on a disk they share with a serving host's uploads (FIX…",
+     "surface": {
+      "crate-vis": 9,
+      "fn": 1,
+      "struct": 1,
+      "trait": 1
      }
     },
     {
@@ -60495,7 +60511,7 @@
      "purpose": "The world kit ceremony (OF-173): issue, confirm by re-entering pieces, restore, and the public inventory of…",
      "surface": {
       "const": 1,
-      "crate-vis": 8,
+      "crate-vis": 10,
       "fn": 5,
       "struct": 6
      }
@@ -60523,7 +60539,7 @@
      "surface": {
       "crate-vis": 12,
       "fn": 3,
-      "re-export": 20,
+      "re-export": 21,
       "struct": 2
      }
     },
@@ -60718,7 +60734,7 @@
      "surface": {
       "crate-vis": 10,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 3
      }
     },
@@ -60825,10 +60841,23 @@
      "path": "src/world_keys/vault_key.rs",
      "purpose": "The vault data key and the wraps that unlock it (OF-570 E1)",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "enum": 4,
       "fn": 27,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "IssuedVaultKeyKit"
+     ],
+     "path": "src/world_keys/vault_key/kit.rs",
+     "purpose": "The data-key kit (FIX 4532): the owner's 2-of-3 copy of the vault data key this handle holds, issued on his…",
+     "surface": {
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -62770,7 +62799,7 @@
      "purpose": "Unified receipt-family query surface over existing receipt emitters"
     },
     "recovery": {
-     "files": 60,
+     "files": 61,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -63225,7 +63254,7 @@
      "purpose": "Workspace roster preset + member onboarding (ONEIRON-ARCH-0065)"
     },
     "world_keys": {
-     "files": 33,
+     "files": 34,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -63241,7 +63270,7 @@
    },
    "over_bar": 196,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 3885,
+   "source_files": 3887,
    "test_files": 902
   },
   "oneiron-android": {
@@ -80024,7 +80053,7 @@
       "RecoveryKitStatusArgs"
      ],
      "path": "src/cli/recovery_kit_args.rs",
-     "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173)",
+     "purpose": "Flags for `oneiron recovery-kit`, the world kit's ceremony on a stopped vault (OF-173), and the data-key…",
      "surface": {
       "enum": 1,
       "struct": 5
@@ -80373,6 +80402,16 @@
      "surface": {
       "crate-vis": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/owner/recovery_kit/issue.rs",
+     "purpose": "`oneiron recovery-kit issue` and `issue-vault-key`: a kit's pieces, each stored piece's recovery code…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -83675,7 +83714,7 @@
      "path": "src/owner/backup.rs",
      "purpose": "Local backups of one vault: take, list, prune, rehearse and restore",
      "surface": {
-      "crate-vis": 22
+      "crate-vis": 23
      }
     },
     {
@@ -83685,6 +83724,16 @@
      "path": "src/owner/backup/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/owner/backup/write_budget.rs",
+     "purpose": "The floor uploads keep, lent to this vault's backups and rehearsals (FIX 5479)",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "s",
@@ -85494,7 +85543,7 @@
      "purpose": "The served host of code consent waits (DOOR-079 1a): it drives an answered wait's held `connector.call` on…"
     },
     "commands": {
-     "files": 38,
+     "files": 39,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "file+dir",
@@ -85753,7 +85802,7 @@
      "purpose": "The Oneironer slot: the configured tagger, its identity, and the trace of every attempt its worker settled"
     },
     "owner": {
-     "files": 26,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85874,7 +85923,7 @@
    },
    "over_bar": 56,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 838,
+   "source_files": 840,
    "test_files": 182
   },
   "oneiron-spawn": {
