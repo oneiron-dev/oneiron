@@ -739,6 +739,7 @@ impl Vault {
                 if *blake3::hash(&bytes).as_bytes() != record.content_hash {
                     return Err(Error::CorruptedIndex("blob export content hash"));
                 }
+                let bytes = self.resolve_docx_authors_in_txn(&rtxn, bytes)?; // FIX 4513
                 let size_bytes = u64::try_from(bytes.len())
                     .map_err(|_| Error::ArithmeticOverflow("blob export length"))?;
                 Ok(Some(ArtifactServedFile {

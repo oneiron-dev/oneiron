@@ -105,7 +105,10 @@ pub(crate) async fn vault_records_erase_confirm(
     let answer = off_runtime_listing(VERB, move |producers| {
         let memory = held
             .vault()
-            .memory(caller.revalidate_person(held.vault())?, EdgeActorClass::Human)
+            .memory(
+                caller.revalidate_person(held.vault())?,
+                EdgeActorClass::Human,
+            )
             .listing_producers(producers);
         sdk::confirm_record_erase(&memory, &caller, input)
     })

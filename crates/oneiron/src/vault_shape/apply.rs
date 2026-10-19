@@ -804,13 +804,7 @@ impl Vault {
                     .and_then(|(_, entity)| *entity)
                 })?;
                 self.provision_shape_channel(
-                    owner,
-                    channel,
-                    address,
-                    provision,
-                    binding,
-                    now,
-                    sources,
+                    owner, channel, address, provision, binding, now, sources,
                 )
             }
             (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
@@ -886,8 +880,14 @@ impl Vault {
                 Some(ShapeRow::Manifest { body, .. }),
             ) => {
                 let narrowing = item.class == ShapeItemClass::Receipted;
-                let installed = self
-                    .install_shape_manifest(owner, manifest_ref, body, narrowing, now, sources)?;
+                let installed = self.install_shape_manifest(
+                    owner,
+                    manifest_ref,
+                    body,
+                    narrowing,
+                    now,
+                    sources,
+                )?;
                 // The door installs at the id the row names.
                 if let Ok(id) = EntityId::from_hex(manifest_ref) {
                     sources.list(id);
