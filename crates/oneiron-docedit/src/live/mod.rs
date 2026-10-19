@@ -12,18 +12,23 @@
 //! to the Grant; nothing here decides authority. Until the eight-step
 //! import-then-export check passes on the oracle ([`deck_export::Gate`]),
 //! blob versions remain authoritative and this body is a proposal surface.
+mod chart_labels;
+mod conversion;
 mod convert;
 pub mod deck_export;
+mod diagram;
 mod held;
 pub mod oracle_run;
+mod points;
 pub mod pptx;
 mod reshape;
 
-pub use convert::{Conversion, effect_receipt};
+pub use conversion::{Conversion, effect_receipt};
 pub use deck_export::{
     ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport,
     StepOutcome, attach_evidence, check_picture, project, relationship_changes, roundtrip_check,
 };
+pub use points::{Coord, GeomPath, PathCommand, PathFill, PathPoint};
 pub use pptx::{
     ApproveScope, AttributionIndex, ChangeKind, ChartKind, ChartSeries, ChartSource, Conflict,
     ConnectorEnd, DeckDiff, DeckFork, DeckNode, DeckOp, GeometryProps, HeldMedia, Landing,

@@ -6,6 +6,7 @@
 //! export projector reads it again to write only what the live model changed.
 
 use super::LiveError;
+use super::points::{self, GeomPath};
 use super::pptx::{
     ChartKind, ChartSeries, ChartSource, ConnectorEnd, HeldMedia, NodeId, NodePayload, SmartArtNode,
 };
@@ -53,14 +54,9 @@ pub(crate) fn payload(
 ) -> Option<NodePayload> {
     let at = shape.node.index;
     match shape.kind {
-        ShapeKind::Shape => {
-            let geometry = xml::path(tree, at, &[(P, "spPr"), (A, "custGeom")])?;
-            let paths = xml::child(tree, geometry, A, "pathLst")
-                .map_or(0, |list| children(tree, list, A, "path").count());
-            Some(NodePayload::CustomGeometry {
-                paths: u32::try_from(paths).unwrap_or(u32::MAX),
-            })
-        }
+        ShapeKind::Shape => Some(NodePayload::CustomGeometry {
+            paths: custom_paths(tree, at)?,
+        }),
         ShapeKind::Picture => Some(NodePayload::HeldPicture {
             media: picture_media(package, part, tree, at)?,
         }),
@@ -105,6 +101,12 @@ pub(crate) fn payload(
         }
         ShapeKind::Group => None,
     }
+}
+
+/// A shape's custom geometry paths, when it is drawn from custom geometry.
+pub(crate) fn custom_paths(tree: &XmlTree, shape: usize) -> Option<Vec<GeomPath>> {
+    let geometry = xml::path(tree, shape, &[(P, "spPr"), (A, "custGeom")])?;
+    Some(points::read(tree, geometry))
 }
 
 pub(crate) fn children<'t>(
@@ -398,8 +400,8 @@ pub(crate) fn label(cell: &Cell) -> String {
     }
 }
 
-/// A SmartArt frame's text outline from its data part (see
-/// [`smart_art_points`]).
+/// A SmartArt frame's outline from its data part, each node by its model id
+/// (see [`smart_art_points`]).
 fn smart_art(package: &Package, part: &str, tree: &XmlTree, data: usize) -> Option<NodePayload> {
     let read = smart_art_points(package, part, tree, data)?;
     Some(NodePayload::SmartArt {
@@ -499,6 +501,7 @@ fn smart_art_points(
                     SmartArtNode {
                         text: text.clone(),
                         level,
+                        id: Some(id.clone()),
                     },
                 ));
                 level.saturating_add(1)
@@ -514,7 +517,14 @@ fn smart_art_points(
     for id in order {
         if !seen.contains(&id) {
             let text = content.remove(&id).unwrap_or_default();
-            nodes.push((id, SmartArtNode { text, level: 0 }));
+            nodes.push((
+                id.clone(),
+                SmartArtNode {
+                    text,
+                    level: 0,
+                    id: Some(id),
+                },
+            ));
         }
     }
     Some(SmartArtPoints {
