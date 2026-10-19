@@ -918,6 +918,13 @@ set it ("Training is on. Set by <admin>." and, when people may opt out, "You can
 messages out."). Nothing leaves while no machine-only intake is configured. Training a model of
 your own on your own data (the training pack) needs no sharing.
 
+`oneiron init` asks this once, when it creates the vault on a terminal: only `y` or `yes` turns it
+on, and Enter, `n`, `no` or no terminal leave it off and write nothing. A yes is written as the
+vault's owner on this install, once the configured auth secret (`auth_secret` or
+`ONEIRON_AUTH_SECRET`) has rooted the vault and enrolled this install as `serve`'s first start
+would. With no auth secret configured, init says the setting stays off and how to turn it on
+later. A rerun over an existing vault never asks.
+
 While it is on, everything in the vault counts: every live conversation, offered once, with the
 turns of people, agents and guests alike. A turn counts when its writer is a live actor of this
 vault; imports, system and tool rows, attachments, results, any metadata and deleted rows never

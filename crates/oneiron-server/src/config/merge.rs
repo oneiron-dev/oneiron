@@ -73,6 +73,12 @@ impl EnvConfig {
         Self::from_lookup(|key| values.get(key).cloned())
     }
 
+    /// The vault directory the environment names (`ONEIRON_VAULT_PATH`),
+    /// which stands over a config file's.
+    pub(crate) fn vault_path(&self) -> Option<&Path> {
+        self.values.vault_path.as_deref()
+    }
+
     fn from_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> anyhow::Result<Self> {
         let mut values = PartialServeConfig::default();
         let config_path = lookup("ONEIRON_CONFIG").map(PathBuf::from);
